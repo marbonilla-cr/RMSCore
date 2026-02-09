@@ -109,5 +109,17 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 - Added available portions validation in send-round and QR submit (rejects with 400)
 - KDS notification sound upgraded to Web Audio API 3-tone alert
 - Added "No QR" badge in admin products list
-- Added /api/pos/send-ticket endpoint (email ticket stub with audit)
+- Added /api/pos/send-ticket endpoint with real SMTP email support (nodemailer)
 - Added "Enviar Ticket por Email" button in POS payment dialog
+- Added GET /api/qr/:tableCode/my-items endpoint (client sees previous QR items)
+- Added "Tu Pedido" section in QR client UI showing previously sent items with status
+
+## Email Configuration (Optional)
+To enable email ticket sending, set these environment variables:
+- SMTP_HOST: SMTP server hostname
+- SMTP_USER: SMTP username/email
+- SMTP_PASS: SMTP password
+- SMTP_PORT: (optional, default 587)
+- SMTP_SECURE: (optional, "true" for SSL)
+- SMTP_FROM: (optional, defaults to SMTP_USER)
+When not configured, ticket sending logs the request but skips actual email delivery.

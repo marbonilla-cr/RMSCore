@@ -1096,7 +1096,7 @@ export async function registerRoutes(
     }
   });
 
-  // ==================== POS: SEND TICKET (email stub) ====================
+  // ==================== POS: SEND TICKET (email) ====================
   app.post("/api/pos/send-ticket", requireRole("CASHIER", "MANAGER"), async (req, res) => {
     try {
       const { orderId, clientName, clientEmail } = req.body;
@@ -1109,12 +1109,66 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      // If order is already PAID, only MANAGER can resend
       if (order.status === "PAID") {
         const user = await storage.getUser(userId);
         if (!user || user.role !== "MANAGER") {
           return res.status(403).json({ message: "Solo gerente puede reenviar ticket después de pagar" });
         }
+      }
+
+      const items = await storage.getOrderItems(orderId);
+      const activeItems = items.filter(i => i.status !== "VOIDED");
+      const table = await storage.getTable(order.tableId);
+      const total = activeItems.reduce((s, i) => s + Number(i.productPriceSnapshot) * i.qty, 0);
+
+      let emailSent = false;
+      let emailError = "";
+
+      const smtpHost = process.env.SMTP_HOST;
+      const smtpUser = process.env.SMTP_USER;
+      const smtpPass = process.env.SMTP_PASS;
+      const smtpFrom = process.env.SMTP_FROM || smtpUser;
+
+      if (smtpHost && smtpUser && smtpPass) {
+        try {
+          const nodemailer = await import("nodemailer");
+          const transporter = nodemailer.default.createTransport({
+            host: smtpHost,
+            port: Number(process.env.SMTP_PORT || "587"),
+            secure: process.env.SMTP_SECURE === "true",
+            auth: { user: smtpUser, pass: smtpPass },
+          });
+
+          const itemRows = activeItems.map(i =>
+            `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${i.productNameSnapshot}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:center">${i.qty}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right">₡${(Number(i.productPriceSnapshot) * i.qty).toLocaleString()}</td></tr>`
+          ).join("");
+
+          const html = `
+            <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+              <h2 style="color:#333">Ticket de Consumo</h2>
+              <p><strong>Mesa:</strong> ${table?.tableName || "N/A"}</p>
+              ${clientName ? `<p><strong>Cliente:</strong> ${clientName}</p>` : ""}
+              <p><strong>Fecha:</strong> ${new Date().toLocaleString("es-CR")}</p>
+              <table style="width:100%;border-collapse:collapse;margin:16px 0">
+                <thead><tr style="background:#f5f5f5"><th style="padding:6px 8px;text-align:left">Producto</th><th style="padding:6px 8px;text-align:center">Cant</th><th style="padding:6px 8px;text-align:right">Subtotal</th></tr></thead>
+                <tbody>${itemRows}</tbody>
+              </table>
+              <p style="font-size:18px;font-weight:bold;text-align:right">Total: ₡${total.toLocaleString()}</p>
+              <p style="color:#999;font-size:12px;margin-top:24px;text-align:center">Gracias por su visita</p>
+            </div>`;
+
+          await transporter.sendMail({
+            from: smtpFrom,
+            to: clientEmail,
+            subject: `Ticket - ${table?.tableName || "Restaurante"} - ₡${total.toLocaleString()}`,
+            html,
+          });
+          emailSent = true;
+        } catch (mailErr: any) {
+          emailError = mailErr.message;
+        }
+      } else {
+        emailError = "SMTP no configurado (variables: SMTP_HOST, SMTP_USER, SMTP_PASS)";
       }
 
       await storage.createAuditEvent({
@@ -1124,10 +1178,14 @@ export async function registerRoutes(
         entityType: "order",
         entityId: orderId,
         tableId: order.tableId,
-        metadata: { clientName, clientEmail, orderStatus: order.status, sentAt: new Date().toISOString() },
+        metadata: { clientName, clientEmail, orderStatus: order.status, sentAt: new Date().toISOString(), emailSent, emailError: emailError || undefined },
       });
 
-      res.json({ ok: true, message: "Ticket registrado para envío" });
+      if (emailSent) {
+        res.json({ ok: true, message: "Ticket enviado por email" });
+      } else {
+        res.json({ ok: true, message: `Ticket registrado. ${emailError}`, emailConfigured: false });
+      }
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
