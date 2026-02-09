@@ -1,16 +1,878 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import session from "express-session";
+import { WebSocketServer, WebSocket } from "ws";
+import QRCode from "qrcode";
+import * as storage from "./storage";
+import { loginSchema } from "@shared/schema";
+
+declare module "express-session" {
+  interface SessionData {
+    userId?: number;
+  }
+}
+
+// WebSocket broadcast
+const wsClients = new Set<WebSocket>();
+
+function broadcast(type: string, payload: any) {
+  const msg = JSON.stringify({ type, payload });
+  wsClients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+  });
+}
+
+// Auth middleware
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "No autenticado" });
+  }
+  next();
+}
+
+function requireRole(...roles: string[]) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user || !roles.includes(user.role)) {
+      return res.status(403).json({ message: "Sin permisos" });
+    }
+    (req as any).user = user;
+    next();
+  };
+}
+
+function getBusinessDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // put application routes here
-  // prefix all routes with /api
+  // Session setup
+  const sessionSecret = process.env.SESSION_SECRET || "restaurant-secret-key-dev";
+  const MemoryStore = (await import("memorystore")).default(session);
 
-  // use storage to perform CRUD operations on the storage interface
-  // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
+  app.use(
+    session({
+      secret: sessionSecret,
+      resave: false,
+      saveUninitialized: false,
+      store: new MemoryStore({ checkPeriod: 86400000 }),
+      cookie: {
+        maxAge: 24 * 60 * 60 * 1000,
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax",
+      },
+    })
+  );
+
+  // Seed data
+  await storage.seedData();
+
+  // ==================== AUTH ====================
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { username, password } = loginSchema.parse(req.body);
+      const user = await storage.getUserByUsername(username);
+      if (!user || !user.active) {
+        return res.status(401).json({ message: "Usuario o contraseña incorrectos" });
+      }
+      const valid = await storage.verifyPassword(password, user.password);
+      if (!valid) {
+        return res.status(401).json({ message: "Usuario o contraseña incorrectos" });
+      }
+      req.session.userId = user.id;
+      const { password: _, ...safeUser } = user;
+      res.json({ user: safeUser });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy(() => {});
+    res.json({ ok: true });
+  });
+
+  app.get("/api/auth/me", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "No autenticado" });
+    const { password: _, ...safeUser } = user;
+    res.json(safeUser);
+  });
+
+  // ==================== ADMIN: TABLES ====================
+  app.get("/api/admin/tables", requireRole("MANAGER"), async (_req, res) => {
+    res.json(await storage.getAllTables());
+  });
+
+  app.post("/api/admin/tables", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const table = await storage.createTable(req.body);
+      res.json(table);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/tables/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const table = await storage.updateTable(parseInt(req.params.id), req.body);
+      res.json(table);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/admin/tables/:id/qr", async (req, res) => {
+    const table = await storage.getTable(parseInt(req.params.id));
+    if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+    const host = req.headers.host || "localhost:5000";
+    const protocol = req.headers["x-forwarded-proto"] || "http";
+    const url = `${protocol}://${host}/qr/${table.tableCode}`;
+    const svg = await QRCode.toString(url, { type: "svg", margin: 2, width: 300 });
+    const html = `<!DOCTYPE html><html><head><title>QR - ${table.tableName}</title>
+    <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;margin:0;padding:20px}
+    h1{margin-bottom:20px;font-size:24px}p{color:#666;margin-top:10px}</style></head>
+    <body><h1>${table.tableName}</h1>${svg}<p>${url}</p></body></html>`;
+    res.set("Content-Type", "text/html").send(html);
+  });
+
+  // ==================== ADMIN: CATEGORIES ====================
+  app.get("/api/admin/categories", requireAuth, async (_req, res) => {
+    res.json(await storage.getAllCategories());
+  });
+
+  app.post("/api/admin/categories", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const cat = await storage.createCategory(req.body);
+      res.json(cat);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/categories/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const cat = await storage.updateCategory(parseInt(req.params.id), req.body);
+      res.json(cat);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== ADMIN: PRODUCTS ====================
+  app.get("/api/admin/products", requireAuth, async (_req, res) => {
+    res.json(await storage.getAllProducts());
+  });
+
+  app.post("/api/admin/products", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const product = await storage.createProduct(req.body);
+      res.json(product);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/products/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const product = await storage.updateProduct(parseInt(req.params.id), req.body);
+      res.json(product);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== ADMIN: PAYMENT METHODS ====================
+  app.get("/api/admin/payment-methods", requireAuth, async (_req, res) => {
+    res.json(await storage.getAllPaymentMethods());
+  });
+
+  app.post("/api/admin/payment-methods", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const pm = await storage.createPaymentMethod(req.body);
+      res.json(pm);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/payment-methods/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const pm = await storage.updatePaymentMethod(parseInt(req.params.id), req.body);
+      res.json(pm);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== ADMIN: USERS ====================
+  app.get("/api/admin/users", requireRole("MANAGER"), async (_req, res) => {
+    const all = await storage.getAllUsers();
+    res.json(all.map(({ password, ...u }) => u));
+  });
+
+  app.post("/api/admin/users", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const user = await storage.createUser(req.body);
+      const { password: _, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/users/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const user = await storage.updateUser(parseInt(req.params.id), req.body);
+      if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
+      const { password: _, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== WAITER: TABLES ====================
+  app.get("/api/waiter/tables", requireAuth, async (_req, res) => {
+    const allTables = await storage.getAllTables();
+    const result = [];
+    for (const t of allTables) {
+      const order = await storage.getOpenOrderForTable(t.id);
+      let waiterName = null;
+      let pendingQrCount = 0;
+      let itemCount = 0;
+      if (order) {
+        if (order.responsibleWaiterId) {
+          const waiter = await storage.getUser(order.responsibleWaiterId);
+          waiterName = waiter?.displayName || null;
+        }
+        const subs = await storage.getPendingSubmissions(order.id);
+        pendingQrCount = subs.length;
+        const items = await storage.getOrderItems(order.id);
+        itemCount = items.filter(i => i.status !== "VOIDED").length;
+      }
+      result.push({
+        id: t.id,
+        tableCode: t.tableCode,
+        tableName: t.tableName,
+        active: t.active,
+        hasOpenOrder: !!order,
+        orderId: order?.id || null,
+        orderStatus: order?.status || null,
+        responsibleWaiterName: waiterName,
+        openedAt: order?.openedAt?.toISOString() || null,
+        pendingQrCount,
+        itemCount,
+        totalAmount: order?.totalAmount || null,
+      });
+    }
+    res.json(result);
+  });
+
+  app.get("/api/waiter/tables/:id", requireAuth, async (req, res) => {
+    const table = await storage.getTable(parseInt(req.params.id));
+    if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+    res.json(table);
+  });
+
+  app.get("/api/waiter/tables/:id/order", requireAuth, async (req, res) => {
+    const tableId = parseInt(req.params.id);
+    const order = await storage.getOpenOrderForTable(tableId);
+    if (!order) return res.json({ order: null, items: [], pendingSubmissions: [] });
+
+    const items = await storage.getOrderItems(order.id);
+    const pendingSubs = await storage.getPendingSubmissions(order.id);
+
+    const subsWithItems = [];
+    for (const sub of pendingSubs) {
+      const subItems = items.filter(i => i.qrSubmissionId === sub.id);
+      subsWithItems.push({ ...sub, items: subItems });
+    }
+
+    res.json({ order, items, pendingSubmissions: subsWithItems });
+  });
+
+  app.get("/api/waiter/menu", requireAuth, async (_req, res) => {
+    res.json(await storage.getActiveProducts());
+  });
+
+  // Waiter: Send round to kitchen
+  app.post("/api/waiter/tables/:id/send-round", requireAuth, async (req, res) => {
+    try {
+      const tableId = parseInt(req.params.id);
+      const userId = req.session.userId!;
+      const { items } = req.body;
+      if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
+
+      const table = await storage.getTable(tableId);
+      if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+
+      // Get or create order
+      let order = await storage.getOpenOrderForTable(tableId);
+      if (!order) {
+        order = await storage.createOrder({
+          tableId,
+          status: "OPEN",
+          responsibleWaiterId: userId,
+          businessDate: getBusinessDate(),
+        });
+      }
+
+      // Assign waiter if not assigned
+      if (!order.responsibleWaiterId) {
+        order = await storage.updateOrder(order.id, { responsibleWaiterId: userId });
+      }
+
+      // Get max round number
+      const existingItems = await storage.getOrderItems(order.id);
+      const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
+      const roundNumber = maxRound + 1;
+
+      // Create kitchen ticket
+      const ticket = await storage.createKitchenTicket({
+        orderId: order.id,
+        tableId,
+        tableNameSnapshot: table.tableName,
+        status: "NEW",
+      });
+
+      // Create items
+      const allCategories = await storage.getAllCategories();
+      for (const item of items) {
+        const product = await storage.getProduct(item.productId);
+        if (!product) continue;
+
+        const category = allCategories.find(c => c.id === product.categoryId);
+
+        const orderItem = await storage.createOrderItem({
+          orderId: order.id,
+          productId: product.id,
+          productNameSnapshot: product.name,
+          productPriceSnapshot: product.price,
+          qty: item.qty,
+          notes: item.notes || null,
+          origin: "WAITER",
+          createdByUserId: userId,
+          responsibleWaiterId: userId,
+          status: "SENT",
+          roundNumber,
+          qrSubmissionId: null,
+        });
+
+        await storage.updateOrderItem(orderItem.id, { sentToKitchenAt: new Date() });
+
+        await storage.createKitchenTicketItem({
+          kitchenTicketId: ticket.id,
+          orderItemId: orderItem.id,
+          productNameSnapshot: product.name,
+          qty: item.qty,
+          notes: item.notes || null,
+          status: "NEW",
+        });
+
+        // Decrement portions
+        await storage.decrementPortions(product.id, item.qty);
+
+        // Sales ledger
+        await storage.createSalesLedgerItem({
+          businessDate: getBusinessDate(),
+          tableId,
+          tableNameSnapshot: table.tableName,
+          orderId: order.id,
+          orderItemId: orderItem.id,
+          productId: product.id,
+          productCodeSnapshot: product.productCode,
+          productNameSnapshot: product.name,
+          categoryId: product.categoryId,
+          categoryCodeSnapshot: category?.categoryCode || null,
+          categoryNameSnapshot: category?.name || null,
+          qty: item.qty,
+          unitPrice: product.price,
+          lineSubtotal: (Number(product.price) * item.qty).toFixed(2),
+          origin: "WAITER",
+          createdByUserId: userId,
+          responsibleWaiterId: userId,
+          status: "OPEN",
+          sentToKitchenAt: new Date(),
+        });
+
+        // Audit
+        await storage.createAuditEvent({
+          actorType: "USER",
+          actorUserId: userId,
+          action: "ORDER_ITEM_CREATED",
+          entityType: "order_item",
+          entityId: orderItem.id,
+          tableId,
+          metadata: { productName: product.name, qty: item.qty },
+        });
+      }
+
+      // Update order status and total
+      await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
+      await storage.recalcOrderTotal(order.id);
+
+      broadcast("kitchen_ticket_created", { ticketId: ticket.id, tableId, tableName: table.tableName });
+      broadcast("order_updated", { tableId, orderId: order.id });
+      broadcast("table_status_changed", { tableId });
+
+      res.json({ ok: true, ticketId: ticket.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== WAITER: QR SUBMISSION ACCEPT ====================
+  app.post("/api/waiter/qr-submissions/:id/accept", requireAuth, async (req, res) => {
+    try {
+      const subId = parseInt(req.params.id);
+      const userId = req.session.userId!;
+      const sub = await storage.getSubmission(subId);
+      if (!sub || sub.status !== "PENDING") return res.status(400).json({ message: "Submission no válida" });
+
+      const order = await storage.getOpenOrderForTable(sub.tableId);
+      if (!order) return res.status(400).json({ message: "Orden no encontrada" });
+
+      const table = await storage.getTable(sub.tableId);
+      if (!table) return res.status(400).json({ message: "Mesa no encontrada" });
+
+      // Update waiter on order if not set
+      if (!order.responsibleWaiterId) {
+        await storage.updateOrder(order.id, { responsibleWaiterId: userId });
+      }
+
+      // Accept submission
+      await storage.updateSubmission(subId, {
+        status: "ACCEPTED",
+        acceptedByUserId: userId,
+        acceptedAt: new Date(),
+      });
+
+      // Get pending items for this submission
+      const orderItemsList = await storage.getOrderItems(order.id);
+      const subItems = orderItemsList.filter(i => i.qrSubmissionId === subId);
+
+      if (subItems.length === 0) {
+        return res.json({ ok: true });
+      }
+
+      // Create kitchen ticket
+      const ticket = await storage.createKitchenTicket({
+        orderId: order.id,
+        tableId: sub.tableId,
+        tableNameSnapshot: table.tableName,
+        status: "NEW",
+      });
+
+      const allCategories = await storage.getAllCategories();
+
+      for (const item of subItems) {
+        // Update item status
+        await storage.updateOrderItem(item.id, {
+          status: "SENT",
+          sentToKitchenAt: new Date(),
+          responsibleWaiterId: userId,
+        });
+
+        await storage.createKitchenTicketItem({
+          kitchenTicketId: ticket.id,
+          orderItemId: item.id,
+          productNameSnapshot: item.productNameSnapshot,
+          qty: item.qty,
+          notes: item.notes,
+          status: "NEW",
+        });
+
+        // Decrement portions
+        await storage.decrementPortions(item.productId, item.qty);
+
+        // Update ledger
+        await storage.updateSalesLedgerItems(item.id, {
+          sentToKitchenAt: new Date(),
+          responsibleWaiterId: userId,
+        });
+      }
+
+      // Update order status
+      await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
+      await storage.recalcOrderTotal(order.id);
+
+      // Audit
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "QR_SUBMISSION_ACCEPTED",
+        entityType: "qr_submission",
+        entityId: subId,
+        tableId: sub.tableId,
+        metadata: { itemCount: subItems.length },
+      });
+
+      broadcast("kitchen_ticket_created", { ticketId: ticket.id, tableId: sub.tableId, tableName: table.tableName });
+      broadcast("order_updated", { tableId: sub.tableId, orderId: order.id });
+      broadcast("table_status_changed", { tableId: sub.tableId });
+
+      res.json({ ok: true, ticketId: ticket.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== QR CLIENT ====================
+  app.get("/api/qr/:tableCode/info", async (req, res) => {
+    const table = await storage.getTableByCode(req.params.tableCode);
+    if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
+    res.json({ tableName: table.tableName, tableCode: table.tableCode });
+  });
+
+  app.get("/api/qr/:tableCode/menu", async (req, res) => {
+    const table = await storage.getTableByCode(req.params.tableCode);
+    if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
+
+    const prods = await storage.getQRProducts();
+    const cats = await storage.getAllCategories();
+    const catMap = new Map(cats.map(c => [c.id, c.name]));
+
+    const result = prods
+      .filter(p => p.availablePortions === null || p.availablePortions > 0)
+      .map(p => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        price: p.price,
+        categoryName: p.categoryId ? catMap.get(p.categoryId) || null : null,
+        availablePortions: p.availablePortions,
+      }));
+
+    res.json(result);
+  });
+
+  app.post("/api/qr/:tableCode/submit", async (req, res) => {
+    try {
+      const table = await storage.getTableByCode(req.params.tableCode);
+      if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
+
+      const { items } = req.body;
+      if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
+
+      // Get or create order
+      let order = await storage.getOpenOrderForTable(table.id);
+      if (!order) {
+        order = await storage.createOrder({
+          tableId: table.id,
+          status: "OPEN",
+          responsibleWaiterId: null,
+          businessDate: getBusinessDate(),
+        });
+      }
+
+      // Get max round number
+      const existingItems = await storage.getOrderItems(order.id);
+      const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
+      const roundNumber = maxRound + 1;
+
+      // Create QR submission
+      const sub = await storage.createQrSubmission({
+        orderId: order.id,
+        tableId: table.id,
+        status: "PENDING",
+      });
+
+      const allCategories = await storage.getAllCategories();
+
+      for (const item of items) {
+        const product = await storage.getProduct(item.productId);
+        if (!product || !product.active) continue;
+
+        const category = allCategories.find(c => c.id === product.categoryId);
+
+        const orderItem = await storage.createOrderItem({
+          orderId: order.id,
+          productId: product.id,
+          productNameSnapshot: product.name,
+          productPriceSnapshot: product.price,
+          qty: item.qty,
+          notes: null,
+          origin: "QR",
+          createdByUserId: null,
+          responsibleWaiterId: order.responsibleWaiterId,
+          status: "PENDING",
+          roundNumber,
+          qrSubmissionId: sub.id,
+        });
+
+        // Sales ledger
+        await storage.createSalesLedgerItem({
+          businessDate: getBusinessDate(),
+          tableId: table.id,
+          tableNameSnapshot: table.tableName,
+          orderId: order.id,
+          orderItemId: orderItem.id,
+          productId: product.id,
+          productCodeSnapshot: product.productCode,
+          productNameSnapshot: product.name,
+          categoryId: product.categoryId,
+          categoryCodeSnapshot: category?.categoryCode || null,
+          categoryNameSnapshot: category?.name || null,
+          qty: item.qty,
+          unitPrice: product.price,
+          lineSubtotal: (Number(product.price) * item.qty).toFixed(2),
+          origin: "QR",
+          createdByUserId: null,
+          responsibleWaiterId: order.responsibleWaiterId,
+          status: "OPEN",
+        });
+      }
+
+      await storage.recalcOrderTotal(order.id);
+
+      // Audit
+      await storage.createAuditEvent({
+        actorType: "QR",
+        actorUserId: null,
+        action: "QR_SUBMISSION_CREATED",
+        entityType: "qr_submission",
+        entityId: sub.id,
+        tableId: table.id,
+        metadata: { itemCount: items.length },
+      });
+
+      broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id });
+      broadcast("order_updated", { tableId: table.id, orderId: order.id });
+
+      res.json({ ok: true, submissionId: sub.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== KDS ====================
+  app.get("/api/kds/tickets/:type", requireAuth, async (req, res) => {
+    const type = req.params.type;
+    let tickets;
+    if (type === "active") {
+      tickets = await storage.getActiveKitchenTickets();
+    } else {
+      tickets = await storage.getHistoryKitchenTickets();
+    }
+
+    const result = [];
+    for (const t of tickets) {
+      const items = await storage.getKitchenTicketItems(t.id);
+      result.push({
+        ...t,
+        createdAt: t.createdAt?.toISOString() || new Date().toISOString(),
+        items: items.map(i => ({
+          ...i,
+          prepStartedAt: i.prepStartedAt?.toISOString() || null,
+          readyAt: i.readyAt?.toISOString() || null,
+        })),
+      });
+    }
+    res.json(result);
+  });
+
+  app.patch("/api/kds/items/:id", requireAuth, async (req, res) => {
+    try {
+      const itemId = parseInt(req.params.id);
+      const { status } = req.body;
+      const data: any = { status };
+      if (status === "PREPARING") data.prepStartedAt = new Date();
+      if (status === "READY") data.readyAt = new Date();
+
+      const item = await storage.updateKitchenTicketItem(itemId, data);
+
+      // Update order item status too
+      if (item) {
+        const orderItemStatus = status === "PREPARING" ? "PREPARING" : status === "READY" ? "READY" : item.status;
+        await storage.updateOrderItem(item.orderItemId, { status: orderItemStatus });
+        if (status === "READY") {
+          await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+        }
+      }
+
+      broadcast("kitchen_item_status_changed", { itemId, status });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/kds/tickets/:id", requireAuth, async (req, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const { status } = req.body;
+      await storage.updateKitchenTicket(ticketId, { status });
+
+      // Also mark all items READY
+      const items = await storage.getKitchenTicketItems(ticketId);
+      for (const item of items) {
+        if (item.status !== "READY") {
+          await storage.updateKitchenTicketItem(item.id, { status: "READY", readyAt: new Date() });
+          await storage.updateOrderItem(item.orderItemId, { status: "READY" });
+          await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+        }
+      }
+
+      broadcast("kitchen_item_status_changed", { ticketId, status: "READY" });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/kds/clear-history", requireAuth, async (_req, res) => {
+    await storage.clearKitchenHistory();
+    res.json({ ok: true });
+  });
+
+  // ==================== POS ====================
+  app.get("/api/pos/tables", requireAuth, async (_req, res) => {
+    const allTables = await storage.getAllTables();
+    const result = [];
+    for (const t of allTables) {
+      const order = await storage.getOpenOrderForTable(t.id);
+      if (!order) continue;
+      const items = await storage.getOrderItems(order.id);
+      const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PENDING");
+      if (activeItems.length === 0) continue;
+      result.push({
+        id: t.id,
+        tableName: t.tableName,
+        orderId: order.id,
+        totalAmount: order.totalAmount,
+        itemCount: activeItems.length,
+        items: activeItems,
+      });
+    }
+    res.json(result);
+  });
+
+  app.post("/api/pos/pay", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+    try {
+      const { orderId, paymentMethodId, amount, clientName, clientEmail } = req.body;
+      const userId = req.session.userId!;
+
+      const payment = await storage.createPayment({
+        orderId,
+        splitId: null,
+        amount: amount.toString(),
+        paymentMethodId,
+        cashierUserId: userId,
+        status: "PAID",
+        clientNameSnapshot: clientName || null,
+        clientEmailSnapshot: clientEmail || null,
+        businessDate: getBusinessDate(),
+      });
+
+      // Mark order as PAID
+      await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() });
+
+      // Update ledger items
+      const items = await storage.getOrderItems(orderId);
+      for (const item of items) {
+        if (item.status !== "VOIDED") {
+          await storage.updateOrderItem(item.id, { status: "PAID" });
+          await storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: new Date() });
+        }
+      }
+
+      // Update cash session expected cash if payment is CASH
+      const pm = (await storage.getAllPaymentMethods()).find(m => m.id === paymentMethodId);
+      if (pm?.paymentCode === "CASH") {
+        const session = await storage.getActiveCashSession();
+        if (session) {
+          const newExpected = Number(session.expectedCash || session.openingCash) + Number(amount);
+          await storage.updateCashSession(session.id, { expectedCash: newExpected.toFixed(2) });
+        }
+      }
+
+      // Audit
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "PAYMENT_CREATED",
+        entityType: "payment",
+        entityId: payment.id,
+        tableId: null,
+        metadata: { orderId, amount, paymentMethodId },
+      });
+
+      broadcast("payment_completed", { orderId });
+      broadcast("table_status_changed", {});
+
+      res.json({ ok: true, paymentId: payment.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== CASH SESSION ====================
+  app.get("/api/pos/cash-session", requireAuth, async (_req, res) => {
+    const session = await storage.getLatestCashSession();
+    res.json(session || {});
+  });
+
+  app.post("/api/pos/cash-session/open", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+    try {
+      const existing = await storage.getActiveCashSession();
+      if (existing) return res.status(400).json({ message: "Ya hay una caja abierta" });
+
+      const session = await storage.createCashSession({
+        openedByUserId: req.session.userId!,
+        openingCash: req.body.openingCash || "0",
+      });
+
+      await storage.updateCashSession(session.id, { expectedCash: req.body.openingCash || "0" });
+
+      res.json(session);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/pos/cash-session/close", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+    try {
+      const session = await storage.getActiveCashSession();
+      if (!session) return res.status(400).json({ message: "No hay caja abierta" });
+
+      const countedCash = parseFloat(req.body.countedCash || "0");
+      const expected = parseFloat(session.expectedCash?.toString() || session.openingCash);
+      const difference = countedCash - expected;
+
+      const updated = await storage.updateCashSession(session.id, {
+        closedAt: new Date(),
+        closedByUserId: req.session.userId!,
+        countedCash: countedCash.toFixed(2),
+        difference: difference.toFixed(2),
+        notes: req.body.notes || null,
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== DASHBOARD ====================
+  app.get("/api/dashboard", requireRole("MANAGER"), async (_req, res) => {
+    const data = await storage.getDashboardData();
+    res.json(data);
+  });
+
+  // ==================== WEBSOCKET ====================
+  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  wss.on("connection", (ws) => {
+    wsClients.add(ws);
+    ws.on("close", () => wsClients.delete(ws));
+    ws.on("error", () => wsClients.delete(ws));
+  });
 
   return httpServer;
 }
