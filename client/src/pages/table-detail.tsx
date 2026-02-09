@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { wsManager } from "@/lib/ws";
 import {
@@ -24,7 +23,7 @@ interface TableCurrentView {
   pendingQrSubmissions: any[];
 }
 
-type ViewMode = "order" | "menu";
+type ViewMode = "order" | "menu" | "cart";
 
 export default function TableDetailPage() {
   const [, params] = useRoute("/tables/:id");
@@ -35,7 +34,6 @@ export default function TableDetailPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("order");
   const [cart, setCart] = useState<{ productId: number; name: string; price: string; qty: number; notes: string }[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [showOrderDetail, setShowOrderDetail] = useState(false);
   const [badgePop, setBadgePop] = useState(false);
   const bottomBarRef = useRef<HTMLDivElement>(null);
   const badgeRef = useRef<HTMLSpanElement>(null);
@@ -81,7 +79,6 @@ export default function TableDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       setCart([]);
       setViewMode("order");
-      setShowOrderDetail(false);
       toast({ title: "Ronda enviada a cocina" });
     },
     onError: (err: any) => {
@@ -269,11 +266,89 @@ export default function TableDetailPage() {
             <Plus className="w-4 h-4 mr-1" />
             <span className="hidden sm:inline">Menu</span>
           </Button>
+          {cart.length > 0 && (
+            <Button
+              size="sm"
+              variant={viewMode === "cart" ? "default" : "ghost"}
+              onClick={() => setViewMode("cart")}
+              data-testid="button-view-cart"
+              className="relative"
+            >
+              <ShoppingBag className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Pedido</span>
+              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">{cartCount}</span>
+            </Button>
+          )}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto" style={{ paddingBottom: cart.length > 0 ? "140px" : "16px" }}>
-        {viewMode === "order" ? (
+      <div className="flex-1 overflow-y-auto" style={{ paddingBottom: cart.length > 0 && viewMode !== "cart" ? "140px" : "16px" }}>
+        {viewMode === "cart" ? (
+          <div className="p-3 max-w-lg mx-auto">
+            <h2 className="font-bold text-lg flex items-center gap-2 mb-3">
+              <ShoppingBag className="w-5 h-5" /> Nueva Ronda ({cartCount} items)
+            </h2>
+            <div className="space-y-2">
+              {cart.map((item) => (
+                <Card key={item.productId} data-testid={`cart-item-${item.productId}`}>
+                  <CardContent className="p-3">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-base font-medium">{item.name}</p>
+                        <p className="text-sm text-muted-foreground">₡{Number(item.price).toLocaleString()} c/u</p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <Button size="icon" variant="outline" onClick={() => updateCartQty(item.productId, item.qty - 1)} data-testid={`button-qty-minus-${item.productId}`}>
+                          <Minus className="w-4 h-4" />
+                        </Button>
+                        <span className="w-8 text-center text-base font-bold">{item.qty}</span>
+                        <Button size="icon" variant="outline" onClick={() => updateCartQty(item.productId, item.qty + 1)} data-testid={`button-qty-plus-${item.productId}`}>
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => removeFromCart(item.productId)} data-testid={`button-remove-${item.productId}`}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    <Input
+                      placeholder="Notas..."
+                      value={item.notes}
+                      onChange={(e) =>
+                        setCart(cart.map((c) => (c.productId === item.productId ? { ...c, notes: e.target.value } : c)))
+                      }
+                      className="mt-2 text-sm min-h-[40px]"
+                      data-testid={`input-notes-${item.productId}`}
+                    />
+                    <p className="text-right text-sm font-semibold mt-1">₡{(Number(item.price) * item.qty).toLocaleString()}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <div className="flex items-center justify-between pt-4 pb-2 font-bold text-lg">
+              <span>Total</span>
+              <span>₡{cartTotal.toLocaleString()}</span>
+            </div>
+            <div className="flex gap-2 pb-4">
+              <Button
+                variant="outline"
+                className="flex-1 min-h-[48px] text-base"
+                onClick={() => setViewMode("menu")}
+                data-testid="button-back-to-menu"
+              >
+                <Plus className="w-5 h-5 mr-2" /> Agregar Más
+              </Button>
+              <Button
+                className="flex-1 min-h-[48px] text-base"
+                onClick={() => sendRoundMutation.mutate()}
+                disabled={sendRoundMutation.isPending}
+                data-testid="button-send-round-cart"
+              >
+                {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Send className="w-5 h-5 mr-2" />}
+                Enviar a Cocina
+              </Button>
+            </div>
+          </div>
+        ) : viewMode === "order" ? (
           <div className="p-3 max-w-lg mx-auto space-y-3">
             {pendingSubmissions.length > 0 && (
               <Card className="ring-2 ring-orange-500">
@@ -437,7 +512,7 @@ export default function TableDetailPage() {
         )}
       </div>
 
-      {cart.length > 0 && (
+      {cart.length > 0 && viewMode !== "cart" && (
         <div
           ref={bottomBarRef}
           className="fixed bottom-0 left-0 right-0 z-[90] bg-card border-t"
@@ -472,7 +547,7 @@ export default function TableDetailPage() {
               <Button
                 variant="outline"
                 className="min-h-[44px] text-base"
-                onClick={() => setShowOrderDetail(true)}
+                onClick={() => setViewMode("cart")}
                 data-testid="button-view-order-detail"
               >
                 <Eye className="w-5 h-5 mr-1" /> Ver pedido
@@ -491,59 +566,6 @@ export default function TableDetailPage() {
         </div>
       )}
 
-      <Dialog open={showOrderDetail} onOpenChange={setShowOrderDetail}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg">
-              <ShoppingBag className="w-5 h-5" /> Nueva Ronda
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            {cart.map((item) => (
-              <div key={item.productId} className="flex items-center gap-2 py-2 border-b last:border-0" data-testid={`cart-item-${item.productId}`}>
-                <div className="flex-1 min-w-0">
-                  <p className="text-base font-medium">{item.name}</p>
-                  <p className="text-sm text-muted-foreground">₡{Number(item.price).toLocaleString()} c/u</p>
-                  <Input
-                    placeholder="Notas..."
-                    value={item.notes}
-                    onChange={(e) =>
-                      setCart(cart.map((c) => (c.productId === item.productId ? { ...c, notes: e.target.value } : c)))
-                    }
-                    className="mt-1 text-sm min-h-[36px]"
-                    data-testid={`input-notes-${item.productId}`}
-                  />
-                </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <Button size="icon" variant="outline" onClick={() => updateCartQty(item.productId, item.qty - 1)} data-testid={`button-qty-minus-${item.productId}`}>
-                    <Minus className="w-4 h-4" />
-                  </Button>
-                  <span className="w-8 text-center text-base font-bold">{item.qty}</span>
-                  <Button size="icon" variant="outline" onClick={() => updateCartQty(item.productId, item.qty + 1)} data-testid={`button-qty-plus-${item.productId}`}>
-                    <Plus className="w-4 h-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" onClick={() => removeFromCart(item.productId)} data-testid={`button-remove-${item.productId}`}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center justify-between pt-3 border-t font-bold text-lg">
-            <span>Total</span>
-            <span>₡{cartTotal.toLocaleString()}</span>
-          </div>
-          <Button
-            className="w-full min-h-[48px] text-base mt-2"
-            onClick={() => sendRoundMutation.mutate()}
-            disabled={sendRoundMutation.isPending}
-            data-testid="button-send-round-modal"
-          >
-            {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Send className="w-5 h-5 mr-2" />}
-            Enviar Ronda a Cocina
-          </Button>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
