@@ -136,8 +136,8 @@ export default function TableDetailPage() {
     switch (status) {
       case "PENDING": return <Badge variant="secondary">Pendiente</Badge>;
       case "SENT": return <Badge>En Cocina</Badge>;
-      case "PREPARING": return <Badge className="bg-blue-600 text-white">Preparando</Badge>;
-      case "READY": return <Badge className="bg-green-600 text-white">Listo</Badge>;
+      case "PREPARING": return <Badge className="bg-blue-600 dark:bg-blue-700 text-white">Preparando</Badge>;
+      case "READY": return <Badge className="bg-green-600 dark:bg-green-700 text-white">Listo</Badge>;
       default: return <Badge variant="secondary">{status}</Badge>;
     }
   };
@@ -164,7 +164,7 @@ export default function TableDetailPage() {
       </div>
 
       {orderDetail?.pendingSubmissions && orderDetail.pendingSubmissions.length > 0 && (
-        <Card className="mb-4 border-orange-500 border-2">
+        <Card className="mb-4 ring-2 ring-orange-500">
           <CardHeader className="pb-2 flex flex-row items-center gap-2">
             <AlertCircle className="w-5 h-5 text-orange-500" />
             <h2 className="font-bold text-orange-600">Pedidos QR Pendientes</h2>

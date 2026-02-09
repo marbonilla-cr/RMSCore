@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, desc, asc, sql, isNull, ne } from "drizzle-orm";
+import { eq, and, desc, asc, sql, isNull, ne, inArray } from "drizzle-orm";
 import {
   users, tables, categories, products, paymentMethods,
   orders, orderItems, qrSubmissions, kitchenTickets, kitchenTicketItems,
@@ -161,7 +161,10 @@ export async function updatePaymentMethod(id: number, data: Partial<InsertPaymen
 // Orders
 export async function getOpenOrderForTable(tableId: number) {
   const [order] = await db.select().from(orders)
-    .where(and(eq(orders.tableId, tableId), eq(orders.status, "OPEN")));
+    .where(and(
+      eq(orders.tableId, tableId),
+      inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"])
+    ));
   return order;
 }
 

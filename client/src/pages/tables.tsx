@@ -55,9 +55,9 @@ export default function TablesPage() {
   }, []);
 
   const getStatusColor = (t: TableView) => {
-    if (t.pendingQrCount > 0) return "border-l-4 border-l-orange-500";
-    if (t.orderStatus === "IN_KITCHEN") return "border-l-4 border-l-blue-500";
-    if (t.hasOpenOrder) return "border-l-4 border-l-green-500";
+    if (t.pendingQrCount > 0) return "ring-2 ring-orange-500";
+    if (t.orderStatus === "IN_KITCHEN") return "ring-2 ring-blue-500";
+    if (t.hasOpenOrder) return "ring-2 ring-green-500";
     return "";
   };
 

@@ -179,7 +179,7 @@ export default function KDSPage() {
                       ))}
                     </div>
                     {ticket.items.every((i) => i.status === "READY") ? (
-                      <Button className="w-full bg-green-600 hover:bg-green-700" disabled={markTicketReadyMutation.isPending} onClick={() => markTicketReadyMutation.mutate(ticket.id)} data-testid={`button-complete-ticket-${ticket.id}`}>
+                      <Button className="w-full bg-green-600 dark:bg-green-700 text-white" disabled={markTicketReadyMutation.isPending} onClick={() => markTicketReadyMutation.mutate(ticket.id)} data-testid={`button-complete-ticket-${ticket.id}`}>
                         <CheckCircle className="w-4 h-4 mr-1" /> Ticket Completo
                       </Button>
                     ) : (
