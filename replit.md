@@ -104,3 +104,10 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 - Added backend requireRole middleware to KDS/POS/Dashboard/Waiter endpoints
 - Added "Open QR Client UI" button in Admin Tables
 - Added salonero/caja seed users
+- Added /api/pos/payment-methods endpoint (CASHIER+MANAGER access)
+- Added product description required validation (400 on empty)
+- Added available portions validation in send-round and QR submit (rejects with 400)
+- KDS notification sound upgraded to Web Audio API 3-tone alert
+- Added "No QR" badge in admin products list
+- Added /api/pos/send-ticket endpoint (email ticket stub with audit)
+- Added "Enviar Ticket por Email" button in POS payment dialog

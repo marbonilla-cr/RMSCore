@@ -189,6 +189,9 @@ export default function AdminProductsPage() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <span className="font-semibold text-sm">₡{Number(p.price).toLocaleString()}</span>
+                  {!p.visibleQr && p.active && (
+                    <Badge variant="outline" className="text-xs">No QR</Badge>
+                  )}
                   <Badge variant={p.active ? "default" : "secondary"}>
                     {p.active ? "Activo" : "Inactivo"}
                   </Badge>

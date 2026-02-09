@@ -1,0 +1,236 @@
+Necesito que actúes como QA/Dev en Replit y prepares un set de pruebas funcionales en formato “Historias de Usuario” con criterios de aceptación. El objetivo es validar que el MVP v1 FUNCIONA (aunque la UI no sea perfecta). No inventes features nuevas. Cada historia debe ser comprobable con pasos simples y “Pass/Fail”.
+
+============================================================
+HISTORIA 1 — Autenticación básica
+============================================================
+Como usuario del sistema, quiero poder iniciar sesión, para usar el módulo que me corresponde.
+
+Criterios de aceptación:
+- Dado el usuario gerente/1234, puedo iniciar sesión.
+- Dado el usuario salonero/1234, puedo iniciar sesión.
+- Dado el usuario cocina/1234, puedo iniciar sesión.
+- Dado el usuario caja/1234, puedo iniciar sesión.
+- Si ingreso credenciales incorrectas, se rechaza.
+
+============================================================
+HISTORIA 2 — Restricción por rol (UI y acceso real)
+============================================================
+Como dueño/gerente, quiero que cada rol solo vea y ejecute lo que puede, para proteger funciones y datos críticos.
+
+Criterios de aceptación:
+- Salonero NO ve Admin, NO ve Auditoría, NO ve configuraciones sensibles.
+- Cocina SOLO ve KDS y NO ve precios/totales/datos cliente.
+- Caja ve POS/Caja y cierre; NO ve Admin de usuarios.
+- Cliente QR no ve navegación global ni módulos internos.
+- Si un rol intenta entrar por URL a un módulo no permitido, recibe “No autorizado”.
+- Si un rol intenta llamar un endpoint no permitido, el backend bloquea (401/403).
+
+============================================================
+HISTORIA 3 — Gestión de mesas (Admin)
+============================================================
+Como gerente, quiero crear/editar mesas, para que existan en todo el sistema y tengan QR.
+
+Criterios de aceptación:
+- Puedo crear mesa y aparece en lista.
+- Puedo editar el nombre y se refleja.
+- Al crear mesa se genera QR asociado.
+- El nombre de mesa se ve en Mesas, KDS, POS y registros.
+
+============================================================
+HISTORIA 4 — Probar flujo QR desde Admin Mesas
+============================================================
+Como gerente, quiero abrir el flujo QR de una mesa con un link, para probar la UI del cliente sin escanear.
+
+Criterios de aceptación:
+- En Admin Mesas existe un botón/link “Abrir UI Cliente”.
+- Al presionarlo se abre el flujo de esa mesa (QR cliente).
+
+============================================================
+HISTORIA 5 — Menú: productos con descripción obligatoria
+============================================================
+Como gerente, quiero que todos los productos tengan descripción, para evitar confusión en operación.
+
+Criterios de aceptación:
+- No puedo guardar un producto sin descripción.
+- Un producto con descripción se muestra correctamente.
+
+============================================================
+HISTORIA 6 — Visibilidad de productos (active/inactive + visible QR)
+============================================================
+Como gerente, quiero activar/desactivar productos y controlar si son visibles en QR, para evitar vender lo que no tengo.
+
+Criterios de aceptación:
+- Producto inactivo no aparece en menú de cliente QR.
+- Producto inactivo no aparece en selector del salonero (si aplica).
+- Producto active pero visible_qr=false no aparece en QR y sí puede aparecer para operación interna (si así está diseñado).
+
+============================================================
+HISTORIA 7 — Porciones disponibles auto-desactivan el producto
+============================================================
+Como gerente, quiero manejar “cantidad disponible” por producto, para que se auto-oculte al agotarse.
+
+Criterios de aceptación:
+- Un producto con available_portions=2 se reduce al enviar a cocina.
+- Al llegar a 0, el producto se auto-desactiva y desaparece del menú.
+- No se puede pedir un producto con porciones=0.
+
+============================================================
+HISTORIA 8 — Cliente QR: crear orden (1 orden por mesa)
+============================================================
+Como cliente, quiero pedir desde el QR, para que el pedido llegue al restaurante.
+
+Criterios de aceptación:
+- Al abrir el QR de una mesa, puedo seleccionar ítems.
+- Para enviar, aparece confirmación consciente (swipe).
+- Al confirmar, se crea una orden/submisión pendiente (NO llega directo a cocina).
+- Solo existe 1 orden abierta por mesa.
+
+============================================================
+HISTORIA 9 — Cliente QR: agregar adicionales a la misma orden
+============================================================
+Como cliente, quiero agregar más ítems después, para pedir adicionales sin esperar al salonero.
+
+Criterios de aceptación:
+- Puedo volver al QR y agregar ítems adicionales.
+- Cada adicional requiere swipe antes de enviar.
+- Los adicionales se agregan a la misma orden abierta (no crea otra orden).
+- El cliente no puede editar ítems ya enviados.
+
+============================================================
+HISTORIA 10 — Notificación al salonero cuando entra orden QR
+============================================================
+Como salonero, quiero enterarme cuando entra una orden por QR, para atender rápido.
+
+Criterios de aceptación:
+- Cuando el cliente envía orden/adicional, el salonero recibe un toast/popup pequeño “Nueva orden QR en Mesa X”.
+- La mesa queda marcada como “pendiente”.
+- No requiere refresh.
+
+============================================================
+HISTORIA 11 — Persistencia: la orden QR no puede desaparecer al abrir mesa
+============================================================
+Como salonero, quiero que al abrir una mesa con orden QR pendiente se vean los ítems siempre, para revisarlos y aceptarlos.
+
+Criterios de aceptación:
+- Si una mesa está marcada pendiente, al abrirla se muestran los ítems del cliente.
+- Si refresco la pantalla dentro de la mesa, los ítems siguen visibles.
+- No existe un estado “en blanco” cuando hay data.
+
+============================================================
+HISTORIA 12 — Aceptar orden QR y enviar a KDS (conectado al flujo existente)
+============================================================
+Como salonero, quiero aceptar la orden del cliente y enviarla a cocina, para que aparezca en el KDS sin cabos sueltos.
+
+Criterios de aceptación:
+- En la vista mesa existe “Orden QR pendiente” con botón Aceptar.
+- Al Aceptar, se crea/actualiza el ticket en KDS usando el flujo existente.
+- La mesa deja de estar “pendiente” y pasa a estado “en cocina”.
+- No puede quedar “accepted” sin ticket ni ticket sin orden/ítems asociados.
+- Se registra auditoría de la aceptación.
+
+============================================================
+HISTORIA 13 — KDS: recepción en tiempo real y sonido
+============================================================
+Como cocina, quiero ver tickets en tiempo real y oír cuando entran, para trabajar sin perder órdenes.
+
+Criterios de aceptación:
+- Al aceptar una orden, aparece ticket en KDS en tiempo real.
+- Suena una alerta al entrar ticket nuevo.
+- Se muestran ítems con estados NEW/PREPARING/READY.
+
+============================================================
+HISTORIA 14 — KDS: marcar ítems y ticket completo
+============================================================
+Como cocina, quiero marcar ítems listos y cerrar ticket, para llevar control del despacho.
+
+Criterios de aceptación:
+- Puedo cambiar estado de cada ítem NEW→PREPARING→READY.
+- Puedo marcar el ticket completo como READY.
+- Quedan registrados timestamps por etapa.
+
+============================================================
+HISTORIA 15 — KDS: historial y limpiar vista sin borrar DB
+============================================================
+Como cocina, quiero ver historial de tickets cerrados y poder vaciar la vista, para mantener orden visual.
+
+Criterios de aceptación:
+- Existe un historial de tickets cerrados.
+- Botón “Vaciar historial” limpia la vista pero NO elimina registros en DB.
+
+============================================================
+HISTORIA 16 — POS: ver consumo por mesa
+============================================================
+Como caja, quiero ver el consumo de una mesa, para cobrar correctamente.
+
+Criterios de aceptación:
+- Puedo abrir una mesa en POS y ver ítems y total.
+- Totales coinciden con lo consumido.
+
+============================================================
+HISTORIA 17 — POS: dividir cuenta por ítems (subcuentas)
+============================================================
+Como caja, quiero dividir una cuenta en subcuentas, para cobrar grupos distintos en una misma mesa.
+
+Criterios de aceptación:
+- Puedo crear 2+ subcuentas.
+- Puedo asignar ítems a cada subcuenta.
+- Totales por subcuenta se calculan bien.
+
+============================================================
+HISTORIA 18 — POS: cobrar subcuentas por método de pago
+============================================================
+Como caja (o usuario autorizado), quiero cobrar por método y registrar pagos, para cerrar caja y reportar.
+
+Criterios de aceptación:
+- Puedo cobrar una subcuenta con CASH, otra con CARD, otra con SINPE.
+- Se registran payments con método, monto, hora y estado.
+- La orden pasa a PAID cuando todo está pagado.
+- No puedo cobrar dos veces lo mismo.
+
+============================================================
+HISTORIA 19 — Caja: apertura y cierre con arqueo
+============================================================
+Como caja, quiero abrir y cerrar caja con arqueo, para controlar efectivo y diferencias.
+
+Criterios de aceptación:
+- Puedo abrir sesión con monto inicial.
+- Al cierre, veo totales por método.
+- Puedo ingresar efectivo contado y ver diferencia vs esperado.
+- Se guarda el cierre en histórico.
+
+============================================================
+HISTORIA 20 — Ticket por email con reglas de permiso
+============================================================
+Como caja/salonero autorizado, quiero enviar ticket por email, y como gerente quiero poder corregirlo después de pagar.
+
+Criterios de aceptación:
+- Antes de pagar: puedo capturar nombre/email y enviar ticket.
+- Después de pagar: solo GERENTE puede modificar datos y reenviar.
+- Se registra log del envío (fecha, usuario, resultado).
+
+============================================================
+HISTORIA 21 — Sales Ledger por ítem (reportable)
+============================================================
+Como gerente, quiero un libro de ventas por ítem, para reportes y export QBO.
+
+Criterios de aceptación:
+- Cada ítem vendido genera fila en sales_ledger_items con:
+  mesa+hora+producto+categoría+qty+precio+origen(QR/WAITER)+created_by+responsible_waiter+status
+- Al pagar, los ítems pasan a PAID y quedan con paid_at, payment_id, paid_method_code.
+- Si se anula (cuando exista permiso), pasa a VOIDED.
+- Se registra auditoría en acciones críticas.
+
+============================================================
+HISTORIA 22 — Prueba de estrés básica (10 mesas)
+============================================================
+Como gerente, quiero asegurar que el sistema soporta un volumen pequeño real, para operar sin perder órdenes.
+
+Criterios de aceptación:
+- Se crean 10 órdenes QR y se notifican.
+- Se abren 5 mesas consecutivas y ninguna queda en blanco.
+- Se aceptan 5 y aparecen en KDS sin fallos.
+- Se cobran 5 con split y payments quedan correctos.
+- No hay desincronización que requiera “refrescar para ver”.
+
+Entrega:
+- Para cada historia, registrar Pass/Fail y evidencia (captura o nota).

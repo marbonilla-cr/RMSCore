@@ -1,0 +1,45 @@
+HISTORIA — Permisos finos por funcionalidad (roles fijos + overrides por usuario)
+
+Como gerente, quiero que el sistema tenga roles fijos (no customizables) pero que yo pueda habilitar o restringir funcionalidades específicas por usuario, para que por ejemplo un salonero pueda usar caja para cobrar y enviar ticket, pero no pueda anular ni reabrir cuentas.
+
+Contexto:
+- Los roles existen “por detrás” y son fijos: MANAGER, WAITER, KITCHEN, CASHIER.
+- Necesitamos permisos por acción (capabilities) y overrides por usuario.
+
+Requisitos:
+1) Definir una lista fija de capabilities (acciones) que cubra todas las funciones del sistema:
+   - Mesas/Órdenes, KDS, POS/cobro, caja/cierres, admin, reportes, auditoría.
+2) Cada usuario debe tener:
+   - role (uno de los fijos)
+   - permission_overrides: ALLOW/DENY por capability (lista)
+3) Regla de autorización:
+   - DENY gana siempre
+   - ALLOW permite aunque el rol base no lo tenga
+   - si no hay override se usa el set base del rol
+4) Backend enforcement:
+   - cada endpoint crítico debe requerir capability (no solo ocultar UI)
+   - además aplicar data scoping: cocina nunca recibe precios/totales/pagos/datos cliente.
+5) Frontend:
+   - navegación y botones se muestran según capabilities
+   - si un usuario intenta entrar a pantalla no permitida: “No autorizado”
+6) Crear sets base por rol:
+   - WAITER: puede ver mesas/órdenes, aceptar QR, enviar cocina; puede usar POS para cobrar/dividir/capturar cliente/enviar ticket; NO puede anular ni reabrir.
+   - CASHIER: puede cobrar/dividir/capturar cliente/enviar ticket; puede abrir/cerrar caja; NO reabrir; void solo si override.
+   - KITCHEN: solo KDS ver/actualizar estados; no ver precios/totales ni clientes.
+   - MANAGER: todo.
+7) UI Admin “Usuarios”:
+   - al editar un usuario, mostrar checklist de capabilities con estado:
+     - heredado del rol (solo lectura)
+     - override allow/deny (seleccionable)
+   - objetivo: permitir “salonero con acceso a caja” sin cambiar el rol.
+
+Criterios de aceptación (caso solicitado):
+- Un usuario con rol WAITER y override habilitado para POS:
+  - puede dividir cuenta
+  - puede cobrar
+  - puede capturar nombre/email del cliente
+  - puede enviar ticket por email
+  - NO puede anular orden
+  - NO puede anular pago
+  - NO puede reabrir una orden pagada
+- Todo esto se cumple aunque intente por URL o API.

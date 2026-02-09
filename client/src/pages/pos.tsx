@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   CreditCard, DollarSign, Loader2, Receipt,
   Banknote, ArrowLeft, Lock, Unlock,
-  Split, Trash2, XCircle,
+  Split, Trash2, XCircle, Mail,
 } from "lucide-react";
 import type { PaymentMethod } from "@shared/schema";
 
@@ -65,7 +65,7 @@ export default function POSPage() {
   });
 
   const { data: paymentMethods = [] } = useQuery<PaymentMethod[]>({
-    queryKey: ["/api/admin/payment-methods"],
+    queryKey: ["/api/pos/payment-methods"],
   });
 
   const { data: cashSession } = useQuery<any>({
@@ -209,6 +209,22 @@ export default function POSPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       toast({ title: "Orden reabierta" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const sendTicketMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", "/api/pos/send-ticket", {
+        orderId: selectedTable!.orderId,
+        clientName: clientName || null,
+        clientEmail: clientEmail,
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Ticket enviado", description: `Ticket registrado para ${clientEmail}` });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -676,6 +692,22 @@ export default function POSPage() {
               <Label>Email (opcional)</Label>
               <Input data-testid="input-client-email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="email@example.com" type="email" />
             </div>
+            {clientEmail && (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => sendTicketMutation.mutate()}
+                disabled={!clientEmail || sendTicketMutation.isPending}
+                data-testid="button-send-ticket"
+              >
+                {sendTicketMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                ) : (
+                  <Mail className="w-4 h-4 mr-1" />
+                )}
+                Enviar Ticket por Email
+              </Button>
+            )}
             <Button
               className="w-full"
               onClick={() => payingSplitId ? paySplitMutation.mutate() : payMutation.mutate()}

@@ -36,7 +36,6 @@ function formatElapsed(dateStr: string) {
 
 export default function KDSPage() {
   const [tab, setTab] = useState("active");
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastTicketCountRef = useRef(0);
 
   const { data: activeTickets = [], isLoading } = useQuery<KDSTicket[]>({
@@ -54,10 +53,22 @@ export default function KDSPage() {
     const unsub = wsManager.on("kitchen_ticket_created", () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
       try {
-        if (!audioRef.current) {
-          audioRef.current = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbsGczJjqRzNnIfjMhN4fM3dKYWjIvdL/c3a91Lio0gL/j37h0KR4zfr7j4MR7LCM2gMDn5cx/KCEyecDj4cR5Iyo0fL3h3sZ8LSc4gsTq6tKFLCc1ecDi38R7Ki89j8zy8d6RMCo0dr3f3cF3JjBBmNX2+umYNS80dLzd2714IjJCmtX1+eeUMi8zc7zc2rp1IC9Amc/w9N6NLSgvbrfa17NuHCxEmc7s8NqLKycubbXZ1bJrGSk/lszp7daGJygva7LW0q5nFSdBmcnp69eIKiwtZ6/UzatjDydAk8Pj5tB/JCQrY6vQyqdeBiRAk8Li5dF/IyIoX6bNxaJZAyQ+j77d4ct6HyIoXKPKwp5VACM9jLjY3cZzHSEnW6DJv5xSASM+irkA");
-        }
-        audioRef.current.play().catch(() => {});
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const playTone = (freq: number, start: number, duration: number) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = freq;
+          osc.type = "sine";
+          gain.gain.setValueAtTime(0.3, ctx.currentTime + start);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + start + duration);
+          osc.start(ctx.currentTime + start);
+          osc.stop(ctx.currentTime + start + duration);
+        };
+        playTone(880, 0, 0.15);
+        playTone(1100, 0.18, 0.15);
+        playTone(1320, 0.36, 0.25);
       } catch {}
     });
 

@@ -180,6 +180,9 @@ export async function registerRoutes(
 
   app.post("/api/admin/products", requireRole("MANAGER"), async (req, res) => {
     try {
+      if (!req.body.description || req.body.description.trim() === "") {
+        return res.status(400).json({ message: "La descripción es obligatoria" });
+      }
       const product = await storage.createProduct(req.body);
       res.json(product);
     } catch (err: any) {
@@ -189,6 +192,9 @@ export async function registerRoutes(
 
   app.patch("/api/admin/products/:id", requireRole("MANAGER"), async (req, res) => {
     try {
+      if (req.body.description !== undefined && req.body.description.trim() === "") {
+        return res.status(400).json({ message: "La descripción es obligatoria" });
+      }
       const product = await storage.updateProduct(parseInt(req.params.id), req.body);
       res.json(product);
     } catch (err: any) {
@@ -388,7 +394,11 @@ export async function registerRoutes(
       const allCategories = await storage.getAllCategories();
       for (const item of items) {
         const product = await storage.getProduct(item.productId);
-        if (!product) continue;
+        if (!product || !product.active) continue;
+
+        if (product.availablePortions !== null && product.availablePortions < item.qty) {
+          return res.status(400).json({ message: `${product.name}: solo ${product.availablePortions} porciones disponibles` });
+        }
 
         const category = allCategories.find(c => c.id === product.categoryId);
 
@@ -655,6 +665,10 @@ export async function registerRoutes(
         const product = await storage.getProduct(item.productId);
         if (!product || !product.active) continue;
 
+        if (product.availablePortions !== null && product.availablePortions < item.qty) {
+          return res.status(400).json({ message: `${product.name}: solo ${product.availablePortions} porciones disponibles` });
+        }
+
         const category = allCategories.find(c => c.id === product.categoryId);
 
         const orderItem = await storage.createOrderItem({
@@ -797,6 +811,11 @@ export async function registerRoutes(
   app.post("/api/kds/clear-history", requireRole("KITCHEN", "MANAGER"), async (_req, res) => {
     await storage.clearKitchenHistory();
     res.json({ ok: true });
+  });
+
+  // ==================== POS: PAYMENT METHODS (for cashier access) ====================
+  app.get("/api/pos/payment-methods", requireRole("CASHIER", "MANAGER"), async (_req, res) => {
+    res.json(await storage.getAllPaymentMethods());
   });
 
   // ==================== POS ====================
@@ -1052,6 +1071,43 @@ export async function registerRoutes(
       broadcast("table_status_changed", {});
 
       res.json({ ok: true, paymentId: payment.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== POS: SEND TICKET (email stub) ====================
+  app.post("/api/pos/send-ticket", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+    try {
+      const { orderId, clientName, clientEmail } = req.body;
+      const userId = req.session.userId!;
+
+      if (!orderId || !clientEmail) {
+        return res.status(400).json({ message: "orderId y clientEmail son requeridos" });
+      }
+
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      // If order is already PAID, only MANAGER can resend
+      if (order.status === "PAID") {
+        const user = await storage.getUser(userId);
+        if (!user || user.role !== "MANAGER") {
+          return res.status(403).json({ message: "Solo gerente puede reenviar ticket después de pagar" });
+        }
+      }
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "TICKET_SENT",
+        entityType: "order",
+        entityId: orderId,
+        tableId: order.tableId,
+        metadata: { clientName, clientEmail, orderStatus: order.status, sentAt: new Date().toISOString() },
+      });
+
+      res.json({ ok: true, message: "Ticket registrado para envío" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
