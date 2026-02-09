@@ -622,6 +622,26 @@ export async function registerRoutes(
     res.json(result);
   });
 
+  app.get("/api/qr/:tableCode/my-items", async (req, res) => {
+    const table = await storage.getTableByCode(req.params.tableCode);
+    if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
+
+    const order = await storage.getOpenOrderForTable(table.id);
+    if (!order) return res.json([]);
+
+    const items = await storage.getOrderItems(order.id);
+    const qrItems = items
+      .filter(i => i.origin === "QR" && i.status !== "VOIDED")
+      .map(i => ({
+        id: i.id,
+        productName: i.productNameSnapshot,
+        qty: i.qty,
+        price: i.productPriceSnapshot,
+        status: i.status,
+      }));
+    res.json(qrItems);
+  });
+
   app.post("/api/qr/:tableCode/submit", async (req, res) => {
     try {
       const tableCode = req.params.tableCode;

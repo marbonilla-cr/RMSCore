@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   UtensilsCrossed, ShoppingCart, Plus, Minus, Trash2,
-  Send, Loader2, Check, ChevronRight, ArrowRight,
+  Send, Loader2, Check, ChevronRight, ArrowRight, ClipboardList,
 } from "lucide-react";
 
 interface QRProduct {
@@ -42,6 +42,11 @@ export default function QRClientPage() {
     enabled: !!tableCode,
   });
 
+  const { data: previousItems = [] } = useQuery<{ id: number; productName: string; qty: number; price: string; status: string }[]>({
+    queryKey: ["/api/qr", tableCode, "my-items"],
+    enabled: !!tableCode,
+  });
+
   const submitMutation = useMutation({
     mutationFn: async () => {
       return apiRequest("POST", `/api/qr/${tableCode}/submit`, { items: cart });
@@ -51,6 +56,7 @@ export default function QRClientPage() {
       setConfirmSlide(false);
       setSlideProgress(0);
       setSubmitted(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/qr", tableCode, "my-items"] });
       toast({ title: "Pedido enviado", description: "Un salonero revisará tu pedido pronto." });
     },
     onError: (err: any) => {
@@ -179,6 +185,35 @@ export default function QRClientPage() {
       </div>
 
       <div className="max-w-lg mx-auto p-4">
+        {previousItems.length > 0 && (
+          <Card className="mb-4" data-testid="card-previous-items">
+            <CardHeader className="pb-2 flex flex-row items-center gap-2">
+              <ClipboardList className="w-4 h-4 text-muted-foreground" />
+              <h3 className="font-bold text-sm">Tu Pedido</h3>
+              <Badge variant="secondary" className="ml-auto text-xs">{previousItems.length} items</Badge>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="space-y-1">
+                {previousItems.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between text-sm" data-testid={`prev-item-${item.id}`}>
+                    <span className="text-muted-foreground">{item.qty}x {item.productName}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">₡{(Number(item.price) * item.qty).toLocaleString()}</span>
+                      <Badge variant={item.status === "PENDING" ? "secondary" : "default"} className="text-[10px]">
+                        {item.status === "PENDING" ? "Pendiente" : item.status === "SENT" ? "En cocina" : item.status === "READY" ? "Listo" : item.status}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t mt-2 pt-2 flex justify-between font-medium text-sm">
+                <span>Subtotal pedido</span>
+                <span>₡{previousItems.reduce((s, i) => s + Number(i.price) * i.qty, 0).toLocaleString()}</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Input
           placeholder="Buscar en el menú..."
           value={searchTerm}
