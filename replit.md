@@ -18,10 +18,12 @@ Restaurant management system (PWA) for a small restaurant (20-30 concurrent orde
 
 ## Default Login Credentials (All use password: 1234)
 - gerente / 1234 (MANAGER)
+- salonero / 1234 (WAITER)
 - salonero1 / 1234 (WAITER)
 - salonero2 / 1234 (WAITER)
 - cocina / 1234 (KITCHEN)
 - cajero / 1234 (CASHIER)
+- caja / 1234 (CASHIER)
 
 ## Key Routes
 - `/` - Tables view (waiters)
@@ -73,6 +75,17 @@ Restaurant management system (PWA) for a small restaurant (20-30 concurrent orde
 All tables defined in `shared/schema.ts` using Drizzle ORM:
 users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, qbo_export_jobs
 
+## API Endpoints (New)
+- `GET /api/tables/:id/current` - Single source of truth: table + activeOrder + orderItems + pendingQrSubmissions
+
+## Role-Based Access Control
+- Frontend: RoleGuard component redirects unauthorized users to their default route
+- Backend: requireRole middleware on all sensitive endpoints
+  - WAITER: /api/waiter/*, /api/tables/:id/current
+  - KITCHEN: /api/kds/*
+  - CASHIER: /api/pos/*
+  - MANAGER: all routes + /api/admin/* + /api/dashboard
+
 ## Recent Changes
 - Added QR swipe-to-confirm gesture (drag 85% threshold)
 - Added split accounts (division de cuenta) with full POS UI
@@ -83,3 +96,11 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 - Added dashboard drill-down with expandable rows
 - Added tables page time columns and column selector
 - Added payment method totals to dashboard from backend
+- Added GET /api/tables/:id/current (single source of truth endpoint)
+- Fixed table-detail to use /current endpoint with loading skeleton (no more blank screen)
+- Added toast notification in tables page for new QR orders (with table name)
+- Improved QR acceptance: returns full payload, audit WAITER_ACCEPTED_QR
+- Added frontend role-based route protection (RoleGuard component)
+- Added backend requireRole middleware to KDS/POS/Dashboard/Waiter endpoints
+- Added "Open QR Client UI" button in Admin Tables
+- Added salonero/caja seed users

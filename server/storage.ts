@@ -465,10 +465,12 @@ export async function seedData() {
   const hash = await bcrypt.hash("1234", 10);
   await db.insert(users).values([
     { username: "gerente", password: hash, displayName: "Carlos Gerente", role: "MANAGER", active: true },
+    { username: "salonero", password: hash, displayName: "Salonero", role: "WAITER", active: true },
     { username: "salonero1", password: hash, displayName: "María Salonera", role: "WAITER", active: true },
     { username: "salonero2", password: hash, displayName: "Juan Salonero", role: "WAITER", active: true },
     { username: "cocina", password: hash, displayName: "Ana Cocina", role: "KITCHEN", active: true },
     { username: "cajero", password: hash, displayName: "Pedro Cajero", role: "CASHIER", active: true },
+    { username: "caja", password: hash, displayName: "Caja", role: "CASHIER", active: true },
   ]);
 
   // Default payment methods

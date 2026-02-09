@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
 import { Grid3x3, Clock, ChefHat, AlertCircle, Users, DollarSign, Timer } from "lucide-react";
 import { wsManager } from "@/lib/ws";
 
@@ -44,6 +45,7 @@ const COLUMN_OPTIONS: { key: ColumnKey; label: string }[] = [
 ];
 
 export default function TablesPage() {
+  const { toast } = useToast();
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(
     () => new Set<ColumnKey>(["waiter", "items", "amount", "time"])
   );
@@ -59,15 +61,19 @@ export default function TablesPage() {
       wsManager.on("table_status_changed", () => {
         queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       }),
-      wsManager.on("qr_submission_created", () => {
+      wsManager.on("qr_submission_created", (p: any) => {
         queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+        toast({
+          title: "Nueva orden QR",
+          description: p?.tableName ? `Nueva orden QR en ${p.tableName}` : "Un cliente ha enviado un pedido QR",
+        });
       }),
       wsManager.on("order_updated", () => {
         queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, []);
+  }, [toast]);
 
   const toggleColumn = (key: ColumnKey) => {
     setVisibleColumns((prev) => {

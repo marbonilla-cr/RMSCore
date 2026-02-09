@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { wsManager } from "@/lib/ws";
@@ -16,10 +16,11 @@ import {
 } from "lucide-react";
 import type { Product, Category } from "@shared/schema";
 
-interface OrderDetail {
-  order: any;
-  items: any[];
-  pendingSubmissions: any[];
+interface TableCurrentView {
+  table: any;
+  activeOrder: any;
+  orderItems: any[];
+  pendingQrSubmissions: any[];
 }
 
 export default function TableDetailPage() {
@@ -32,13 +33,8 @@ export default function TableDetailPage() {
   const [cart, setCart] = useState<{ productId: number; name: string; price: string; qty: number; notes: string }[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
 
-  const { data: tableData } = useQuery<any>({
-    queryKey: ["/api/waiter/tables", tableId],
-    enabled: !!tableId,
-  });
-
-  const { data: orderDetail } = useQuery<OrderDetail>({
-    queryKey: ["/api/waiter/tables", tableId, "order"],
+  const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
+    queryKey: ["/api/tables", tableId, "current"],
     enabled: !!tableId,
     refetchInterval: 10000,
   });
@@ -56,13 +52,13 @@ export default function TableDetailPage() {
     const unsubs = [
       wsManager.on("order_updated", (p: any) => {
         if (p.tableId === tableId) {
-          queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables", tableId, "order"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
         }
       }),
       wsManager.on("qr_submission_created", (p: any) => {
         if (p.tableId === tableId) {
-          queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables", tableId, "order"] });
-          toast({ title: "Nuevo pedido QR", description: "Un cliente ha enviado un pedido desde QR" });
+          queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+          toast({ title: "Nuevo pedido QR", description: p.tableName ? `Pedido recibido en ${p.tableName}` : "Un cliente ha enviado un pedido desde QR" });
         }
       }),
     ];
@@ -74,7 +70,7 @@ export default function TableDetailPage() {
       return apiRequest("POST", `/api/waiter/tables/${tableId}/send-round`, { items: cart });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables", tableId, "order"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       setCart([]);
       setShowMenu(false);
@@ -87,10 +83,20 @@ export default function TableDetailPage() {
 
   const acceptSubmissionMutation = useMutation({
     mutationFn: async (submissionId: number) => {
-      return apiRequest("POST", `/api/waiter/qr-submissions/${submissionId}/accept`);
+      const res = await apiRequest("POST", `/api/waiter/qr-submissions/${submissionId}/accept`);
+      return res;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables", tableId, "order"] });
+    onSuccess: (data: any) => {
+      if (data.activeOrder) {
+        queryClient.setQueryData(["/api/tables", tableId, "current"], {
+          table: data.table || currentView?.table,
+          activeOrder: data.activeOrder,
+          orderItems: data.orderItems || [],
+          pendingQrSubmissions: data.pendingQrSubmissions || [],
+        });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       toast({ title: "Pedido QR aceptado y enviado a cocina" });
     },
@@ -140,12 +146,19 @@ export default function TableDetailPage() {
     return (catA?.sortOrder ?? 999) - (catB?.sortOrder ?? 999);
   });
 
-  const groupedItems = (orderDetail?.items || []).reduce((acc: Record<number, any[]>, item: any) => {
-    const round = item.roundNumber || 1;
-    if (!acc[round]) acc[round] = [];
-    acc[round].push(item);
-    return acc;
-  }, {});
+  const orderItems = currentView?.orderItems || [];
+  const pendingSubmissions = currentView?.pendingQrSubmissions || [];
+  const activeOrder = currentView?.activeOrder;
+  const tableData = currentView?.table;
+
+  const groupedItems = orderItems
+    .filter((item: any) => item.status !== "PENDING" || !item.qrSubmissionId)
+    .reduce((acc: Record<number, any[]>, item: any) => {
+      const round = item.roundNumber || 1;
+      if (!acc[round]) acc[round] = [];
+      acc[round].push(item);
+      return acc;
+    }, {});
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -157,10 +170,24 @@ export default function TableDetailPage() {
     }
   };
 
-  const getCategoryName = (id: number | null) => {
-    if (!id) return null;
-    return categories.find((c) => c.id === id)?.name;
-  };
+  if (isLoadingCurrent) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <div className="flex items-center gap-2 mb-6">
+          <Button size="icon" variant="ghost" onClick={() => navigate("/tables")} data-testid="button-back">
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <Skeleton className="h-8 w-40 mb-1" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+        </div>
+        <Skeleton className="h-32 w-full mb-4" />
+        <Skeleton className="h-24 w-full mb-4" />
+        <Skeleton className="h-10 w-full" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">
@@ -173,25 +200,25 @@ export default function TableDetailPage() {
             {tableData?.tableName || `Mesa ${tableId}`}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {orderDetail?.order ? `Orden #${orderDetail.order.id}` : "Sin orden abierta"}
+            {activeOrder ? `Orden #${activeOrder.id}` : "Sin orden abierta"}
           </p>
         </div>
       </div>
 
-      {orderDetail?.pendingSubmissions && orderDetail.pendingSubmissions.length > 0 && (
+      {pendingSubmissions.length > 0 && (
         <Card className="mb-4 ring-2 ring-orange-500">
           <CardHeader className="pb-2 flex flex-row items-center gap-2">
             <AlertCircle className="w-5 h-5 text-orange-500" />
-            <h2 className="font-bold text-orange-600">Pedidos QR Pendientes</h2>
+            <h2 className="font-bold text-orange-600" data-testid="text-pending-qr-title">Pedidos QR Pendientes</h2>
           </CardHeader>
           <CardContent>
-            {orderDetail.pendingSubmissions.map((sub: any) => (
-              <div key={sub.id} className="mb-4 last:mb-0">
+            {pendingSubmissions.map((sub: any) => (
+              <div key={sub.id} className="mb-4 last:mb-0" data-testid={`pending-submission-${sub.id}`}>
                 <div className="space-y-2 mb-3">
                   {sub.items?.map((item: any) => (
-                    <div key={item.id} className="flex items-center justify-between text-sm py-1">
+                    <div key={item.id} className="flex items-center justify-between text-sm py-1" data-testid={`qr-item-${item.id}`}>
                       <span>{item.qty}x {item.productNameSnapshot}</span>
-                      <span className="text-muted-foreground">₡{Number(item.productPriceSnapshot * item.qty).toLocaleString()}</span>
+                      <span className="text-muted-foreground">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
                     </div>
                   ))}
                 </div>
@@ -243,11 +270,11 @@ export default function TableDetailPage() {
                   ))}
                 </div>
               ))}
-            {orderDetail?.order?.totalAmount && (
+            {activeOrder?.totalAmount && (
               <div className="pt-3 border-t mt-3">
                 <div className="flex items-center justify-between font-bold">
                   <span>Total</span>
-                  <span>₡{Number(orderDetail.order.totalAmount).toLocaleString()}</span>
+                  <span>₡{Number(activeOrder.totalAmount).toLocaleString()}</span>
                 </div>
               </div>
             )}
@@ -310,7 +337,7 @@ export default function TableDetailPage() {
       <Dialog open={showMenu} onOpenChange={setShowMenu}>
         <DialogContent className="max-h-[85vh] overflow-y-auto max-w-lg">
           <DialogHeader>
-            <DialogTitle>Menú</DialogTitle>
+            <DialogTitle>Menu</DialogTitle>
           </DialogHeader>
           <Input
             placeholder="Buscar producto..."
@@ -322,8 +349,8 @@ export default function TableDetailPage() {
           <div className="space-y-4">
             {sortedCategoryIds.map((catId) => {
               const catName = catId === "sin-categoria"
-                ? "Sin Categoría"
-                : categories.find((c) => c.id === Number(catId))?.name || "Categoría";
+                ? "Sin Categoria"
+                : categories.find((c) => c.id === Number(catId))?.name || "Categoria";
               const items = productsByCategory[catId];
               return (
                 <div key={catId}>

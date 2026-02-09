@@ -247,7 +247,7 @@ export async function registerRoutes(
   });
 
   // ==================== WAITER: TABLES ====================
-  app.get("/api/waiter/tables", requireAuth, async (_req, res) => {
+  app.get("/api/waiter/tables", requireRole("WAITER", "MANAGER"), async (_req, res) => {
     const allTables = await storage.getAllTables();
     const result = [];
     for (const t of allTables) {
@@ -297,6 +297,32 @@ export async function registerRoutes(
     res.json(table);
   });
 
+  app.get("/api/tables/:id/current", requireAuth, async (req, res) => {
+    try {
+      const tableId = parseInt(req.params.id);
+      const table = await storage.getTable(tableId);
+      if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+
+      const order = await storage.getOpenOrderForTable(tableId);
+      if (!order) {
+        return res.json({ table, activeOrder: null, orderItems: [], pendingQrSubmissions: [] });
+      }
+
+      const items = await storage.getOrderItems(order.id);
+      const pendingSubs = await storage.getPendingSubmissions(order.id);
+
+      const subsWithItems = [];
+      for (const sub of pendingSubs) {
+        const subItems = items.filter(i => i.qrSubmissionId === sub.id);
+        subsWithItems.push({ ...sub, items: subItems });
+      }
+
+      res.json({ table, activeOrder: order, orderItems: items, pendingQrSubmissions: subsWithItems });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/waiter/tables/:id/order", requireAuth, async (req, res) => {
     const tableId = parseInt(req.params.id);
     const order = await storage.getOpenOrderForTable(tableId);
@@ -319,7 +345,7 @@ export async function registerRoutes(
   });
 
   // Waiter: Send round to kitchen
-  app.post("/api/waiter/tables/:id/send-round", requireAuth, async (req, res) => {
+  app.post("/api/waiter/tables/:id/send-round", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const tableId = parseInt(req.params.id);
       const userId = req.session.userId!;
@@ -445,7 +471,7 @@ export async function registerRoutes(
   });
 
   // ==================== WAITER: QR SUBMISSION ACCEPT ====================
-  app.post("/api/waiter/qr-submissions/:id/accept", requireAuth, async (req, res) => {
+  app.post("/api/waiter/qr-submissions/:id/accept", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const subId = parseInt(req.params.id);
       const userId = req.session.userId!;
@@ -474,67 +500,84 @@ export async function registerRoutes(
       const orderItemsList = await storage.getOrderItems(order.id);
       const subItems = orderItemsList.filter(i => i.qrSubmissionId === subId);
 
-      if (subItems.length === 0) {
-        return res.json({ ok: true });
-      }
+      let ticketId: number | null = null;
 
-      // Create kitchen ticket
-      const ticket = await storage.createKitchenTicket({
-        orderId: order.id,
-        tableId: sub.tableId,
-        tableNameSnapshot: table.tableName,
-        status: "NEW",
-      });
-
-      const allCategories = await storage.getAllCategories();
-
-      for (const item of subItems) {
-        // Update item status
-        await storage.updateOrderItem(item.id, {
-          status: "SENT",
-          sentToKitchenAt: new Date(),
-          responsibleWaiterId: userId,
-        });
-
-        await storage.createKitchenTicketItem({
-          kitchenTicketId: ticket.id,
-          orderItemId: item.id,
-          productNameSnapshot: item.productNameSnapshot,
-          qty: item.qty,
-          notes: item.notes,
+      if (subItems.length > 0) {
+        // Create kitchen ticket
+        const ticket = await storage.createKitchenTicket({
+          orderId: order.id,
+          tableId: sub.tableId,
+          tableNameSnapshot: table.tableName,
           status: "NEW",
         });
+        ticketId = ticket.id;
 
-        // Decrement portions
-        await storage.decrementPortions(item.productId, item.qty);
+        for (const item of subItems) {
+          await storage.updateOrderItem(item.id, {
+            status: "SENT",
+            sentToKitchenAt: new Date(),
+            responsibleWaiterId: userId,
+          });
 
-        // Update ledger
-        await storage.updateSalesLedgerItems(item.id, {
-          sentToKitchenAt: new Date(),
-          responsibleWaiterId: userId,
-        });
+          await storage.createKitchenTicketItem({
+            kitchenTicketId: ticket.id,
+            orderItemId: item.id,
+            productNameSnapshot: item.productNameSnapshot,
+            qty: item.qty,
+            notes: item.notes,
+            status: "NEW",
+          });
+
+          // Decrement portions
+          await storage.decrementPortions(item.productId, item.qty);
+
+          // Update ledger
+          await storage.updateSalesLedgerItems(item.id, {
+            sentToKitchenAt: new Date(),
+            responsibleWaiterId: userId,
+          });
+        }
+
+        // Update order status
+        await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
+        await storage.recalcOrderTotal(order.id);
       }
-
-      // Update order status
-      await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
-      await storage.recalcOrderTotal(order.id);
 
       // Audit
       await storage.createAuditEvent({
         actorType: "USER",
         actorUserId: userId,
-        action: "QR_SUBMISSION_ACCEPTED",
+        action: "WAITER_ACCEPTED_QR",
         entityType: "qr_submission",
         entityId: subId,
         tableId: sub.tableId,
-        metadata: { itemCount: subItems.length },
+        metadata: { itemCount: subItems.length, submissionId: subId },
       });
 
-      broadcast("kitchen_ticket_created", { ticketId: ticket.id, tableId: sub.tableId, tableName: table.tableName });
+      if (ticketId) {
+        broadcast("kitchen_ticket_created", { ticketId, tableId: sub.tableId, tableName: table.tableName });
+      }
       broadcast("order_updated", { tableId: sub.tableId, orderId: order.id });
       broadcast("table_status_changed", { tableId: sub.tableId });
 
-      res.json({ ok: true, ticketId: ticket.id });
+      // Return full current view payload for immediate UI refresh
+      const updatedOrder = await storage.getOpenOrderForTable(sub.tableId);
+      const updatedItems = updatedOrder ? await storage.getOrderItems(updatedOrder.id) : [];
+      const updatedPendingSubs = updatedOrder ? await storage.getPendingSubmissions(updatedOrder.id) : [];
+      const updatedSubsWithItems = [];
+      for (const s of updatedPendingSubs) {
+        const sItems = updatedItems.filter(i => i.qrSubmissionId === s.id);
+        updatedSubsWithItems.push({ ...s, items: sItems });
+      }
+
+      res.json({
+        ok: true,
+        ticketId,
+        table,
+        activeOrder: updatedOrder,
+        orderItems: updatedItems,
+        pendingQrSubmissions: updatedSubsWithItems,
+      });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -665,7 +708,7 @@ export async function registerRoutes(
         metadata: { itemCount: items.length },
       });
 
-      broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id });
+      broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id, itemsCount: items.length });
       broadcast("order_updated", { tableId: table.id, orderId: order.id });
 
       qrRateLimitMap.set(tableCode, Date.now());
@@ -677,7 +720,7 @@ export async function registerRoutes(
   });
 
   // ==================== KDS ====================
-  app.get("/api/kds/tickets/:type", requireAuth, async (req, res) => {
+  app.get("/api/kds/tickets/:type", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     const type = req.params.type;
     let tickets;
     if (type === "active") {
@@ -702,7 +745,7 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.patch("/api/kds/items/:id", requireAuth, async (req, res) => {
+  app.patch("/api/kds/items/:id", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     try {
       const itemId = parseInt(req.params.id);
       const { status } = req.body;
@@ -728,7 +771,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/kds/tickets/:id", requireAuth, async (req, res) => {
+  app.patch("/api/kds/tickets/:id", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     try {
       const ticketId = parseInt(req.params.id);
       const { status } = req.body;
@@ -751,13 +794,13 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/kds/clear-history", requireAuth, async (_req, res) => {
+  app.post("/api/kds/clear-history", requireRole("KITCHEN", "MANAGER"), async (_req, res) => {
     await storage.clearKitchenHistory();
     res.json({ ok: true });
   });
 
   // ==================== POS ====================
-  app.get("/api/pos/tables", requireAuth, async (_req, res) => {
+  app.get("/api/pos/tables", requireRole("CASHIER", "MANAGER"), async (_req, res) => {
     const allTables = await storage.getAllTables();
     const result = [];
     for (const t of allTables) {
@@ -838,7 +881,7 @@ export async function registerRoutes(
   });
 
   // ==================== CASH SESSION ====================
-  app.get("/api/pos/cash-session", requireAuth, async (_req, res) => {
+  app.get("/api/pos/cash-session", requireRole("CASHIER", "MANAGER"), async (_req, res) => {
     const session = await storage.getLatestCashSession();
     res.json(session || {});
   });
