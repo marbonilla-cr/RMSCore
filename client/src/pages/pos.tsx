@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { wsManager } from "@/lib/ws";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,6 +59,29 @@ export default function POSPage() {
 
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [splitLabel, setSplitLabel] = useState("");
+
+  useEffect(() => {
+    wsManager.connect();
+    const unsub1 = wsManager.on("order_updated", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      if (selectedTable?.orderId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "splits"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "payments"] });
+      }
+    });
+    const unsub2 = wsManager.on("table_status_changed", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+    });
+    const unsub3 = wsManager.on("payment_completed", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
+    });
+    const unsub4 = wsManager.on("payment_voided", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
+    });
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+  }, [selectedTable?.orderId]);
 
   const { data: posTables = [], isLoading } = useQuery<POSTable[]>({
     queryKey: ["/api/pos/tables"],

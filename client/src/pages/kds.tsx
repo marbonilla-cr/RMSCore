@@ -76,7 +76,11 @@ export default function KDSPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
     });
 
-    return () => { unsub(); unsub2(); };
+    const unsub3 = wsManager.on("order_updated", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
+    });
+
+    return () => { unsub(); unsub2(); unsub3(); };
   }, []);
 
   const updateItemMutation = useMutation({

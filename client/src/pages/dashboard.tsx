@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
+import { wsManager } from "@/lib/ws";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -145,6 +147,20 @@ function ExpandableRow({
 }
 
 export default function DashboardPage() {
+  useEffect(() => {
+    wsManager.connect();
+    const unsub1 = wsManager.on("order_updated", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+    });
+    const unsub2 = wsManager.on("payment_completed", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+    });
+    const unsub3 = wsManager.on("payment_voided", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+    });
+    return () => { unsub1(); unsub2(); unsub3(); };
+  }, []);
+
   const { data, isLoading } = useQuery<DashboardData>({
     queryKey: ["/api/dashboard"],
     refetchInterval: 30000,
