@@ -66,8 +66,6 @@ function AuthenticatedLayout() {
 function AppContent() {
   const { user, loading } = useAuth();
 
-  console.log("[AppContent] render:", { loading, hasUser: !!user, role: user?.role });
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
