@@ -36,6 +36,7 @@ interface DashboardData {
   openOrders: { count: number; amount: number };
   paidOrders: { count: number; amount: number };
   cancelledOrders: { count: number; amount: number };
+  voidedItemsSummary: { count: number; amount: number };
   topProducts: { name: string; qty: number; amount: number }[];
   topCategories: { name: string; qty: number; amount: number }[];
   ledgerDetails: LedgerDetail[];
@@ -253,19 +254,19 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card data-testid="card-cancelled-orders">
+        <Card data-testid="card-voided-items">
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2 mb-2">
               <span className="text-sm text-muted-foreground">
-                Canceladas / Anuladas
+                Ítems Anulados
               </span>
               <XCircle className="w-4 h-4 text-destructive" />
             </div>
             <p className="text-2xl font-bold">
-              {data?.cancelledOrders.count || 0}
+              {data?.voidedItemsSummary?.count || 0}
             </p>
             <p className="text-sm text-muted-foreground">
-              ₡{(data?.cancelledOrders.amount || 0).toLocaleString()}
+              ₡{(data?.voidedItemsSummary?.amount || 0).toLocaleString()}
             </p>
           </CardContent>
         </Card>

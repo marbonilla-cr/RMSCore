@@ -496,10 +496,16 @@ export async function getDashboardData() {
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 10);
 
+  const todayVoidedItems = await db.select().from(voidedItems)
+    .where(eq(voidedItems.businessDate, today));
+  const voidedItemsCount = todayVoidedItems.reduce((s, v) => s + v.qtyVoided, 0);
+  const voidedItemsAmount = todayVoidedItems.reduce((s, v) => s + (v.qtyVoided * Number(v.unitPriceSnapshot || 0)), 0);
+
   return {
     openOrders: { count: openOrders.length, amount: sumAmount(openOrders) },
     paidOrders: { count: paidOrders.length, amount: sumAmount(paidOrders) },
     cancelledOrders: { count: cancelledOrders.length, amount: sumAmount(cancelledOrders) },
+    voidedItemsSummary: { count: voidedItemsCount, amount: voidedItemsAmount },
     topProducts,
     topCategories,
   };
