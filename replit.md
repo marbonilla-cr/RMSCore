@@ -94,6 +94,11 @@ All tables defined in `shared/schema.ts` using Drizzle ORM:
 users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, voided_items, qbo_export_jobs
 
 ## Recent Changes
+- Added order consecutives: dailyNumber (resets daily) and globalNumber (never resets, configurable start via ORDER_GLOBAL_START env var)
+- Dashboard drill-down: click summary cards (Open/Paid/Voided) to expand order lists; click order row to open detail dialog with items and payments
+- Added GET /api/dashboard/orders/:id endpoint for order detail (items + payments)
+- KDS now properly removes voided items from kitchen tickets (voidKitchenTicketItemsByOrderItem)
+- Dashboard "Ítems Anulados" card now shows real voided items count/amount from voided_items table
 - Added item voiding system: WAITER can void items (soft delete to voided_items table), MANAGER can hard delete
 - Added voided_items table with full traceability (who, when, why, qty, price snapshot)
 - Added order_items.voidedAt and voidedByUserId fields

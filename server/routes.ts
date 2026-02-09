@@ -1541,6 +1541,17 @@ export async function registerRoutes(
     res.json({ ...data, ledgerDetails, paymentMethodTotals });
   });
 
+  app.get("/api/dashboard/orders/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.id);
+      const detail = await storage.getOrderDetail(orderId);
+      if (!detail) return res.status(404).json({ message: "Orden no encontrada" });
+      res.json(detail);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== WEBSOCKET ====================
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
   wss.on("connection", (ws) => {

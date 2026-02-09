@@ -173,7 +173,16 @@ export async function getOpenOrderForTable(tableId: number) {
 }
 
 export async function createOrder(data: InsertOrder) {
-  const [order] = await db.insert(orders).values(data).returning();
+  const dailyMax = await db.select({ max: sql<number>`COALESCE(MAX(${orders.dailyNumber}), 0)` })
+    .from(orders).where(eq(orders.businessDate, data.businessDate));
+  const dailyNumber = (dailyMax[0]?.max || 0) + 1;
+
+  const globalMax = await db.select({ max: sql<number>`COALESCE(MAX(${orders.globalNumber}), 0)` })
+    .from(orders);
+  const GLOBAL_START = parseInt(process.env.ORDER_GLOBAL_START || "0", 10);
+  const globalNumber = Math.max((globalMax[0]?.max || 0) + 1, GLOBAL_START);
+
+  const [order] = await db.insert(orders).values({ ...data, dailyNumber, globalNumber }).returning();
   return order;
 }
 
@@ -501,13 +510,80 @@ export async function getDashboardData() {
   const voidedItemsCount = todayVoidedItems.reduce((s, v) => s + v.qtyVoided, 0);
   const voidedItemsAmount = todayVoidedItems.reduce((s, v) => s + (v.qtyVoided * Number(v.unitPriceSnapshot || 0)), 0);
 
+  const allTables = await getAllTables();
+  const tableMap = new Map(allTables.map(t => [t.id, t.tableName]));
+
+  const mapOrders = (list: typeof allOrders) => list.map(o => ({
+    id: o.id,
+    dailyNumber: o.dailyNumber,
+    globalNumber: o.globalNumber,
+    tableName: tableMap.get(o.tableId) || `Mesa ${o.tableId}`,
+    status: o.status,
+    totalAmount: Number(o.totalAmount || 0),
+    openedAt: o.openedAt?.toISOString() || null,
+    closedAt: o.closedAt?.toISOString() || null,
+  }));
+
   return {
-    openOrders: { count: openOrders.length, amount: sumAmount(openOrders) },
-    paidOrders: { count: paidOrders.length, amount: sumAmount(paidOrders) },
-    cancelledOrders: { count: cancelledOrders.length, amount: sumAmount(cancelledOrders) },
-    voidedItemsSummary: { count: voidedItemsCount, amount: voidedItemsAmount },
+    openOrders: { count: openOrders.length, amount: sumAmount(openOrders), orders: mapOrders(openOrders) },
+    paidOrders: { count: paidOrders.length, amount: sumAmount(paidOrders), orders: mapOrders(paidOrders) },
+    cancelledOrders: { count: cancelledOrders.length, amount: sumAmount(cancelledOrders), orders: mapOrders(cancelledOrders) },
+    voidedItemsSummary: {
+      count: voidedItemsCount,
+      amount: voidedItemsAmount,
+      items: todayVoidedItems.map(v => ({
+        id: v.id,
+        tableName: tableMap.get(v.tableId!) || v.tableNameSnapshot || "—",
+        productName: v.productNameSnapshot || "—",
+        qtyVoided: v.qtyVoided,
+        unitPrice: Number(v.unitPriceSnapshot || 0),
+        total: v.qtyVoided * Number(v.unitPriceSnapshot || 0),
+        reason: v.voidReason,
+        notes: v.notes,
+        voidedAt: v.voidedAt?.toISOString() || null,
+      })),
+    },
     topProducts,
     topCategories,
+  };
+}
+
+export async function getOrderDetail(orderId: number) {
+  const order = await getOrder(orderId);
+  if (!order) return null;
+  const items = await getOrderItems(orderId);
+  const paymentsList = await db.select().from(payments).where(eq(payments.orderId, orderId));
+  const allPayMethods = await db.select().from(paymentMethods);
+  const pmMap = new Map(allPayMethods.map(p => [p.id, p.paymentName]));
+  const allTbls = await getAllTables();
+  const tblMap = new Map(allTbls.map(t => [t.id, t.tableName]));
+
+  return {
+    id: order.id,
+    dailyNumber: order.dailyNumber,
+    globalNumber: order.globalNumber,
+    tableName: tblMap.get(order.tableId) || `Mesa ${order.tableId}`,
+    status: order.status,
+    totalAmount: Number(order.totalAmount || 0),
+    openedAt: order.openedAt?.toISOString() || null,
+    closedAt: order.closedAt?.toISOString() || null,
+    items: items.map(i => ({
+      id: i.id,
+      productName: i.productNameSnapshot,
+      qty: i.qty,
+      unitPrice: Number(i.productPriceSnapshot),
+      subtotal: Number(i.productPriceSnapshot) * i.qty,
+      status: i.status,
+      origin: i.origin,
+      notes: i.notes,
+    })),
+    payments: paymentsList.map(p => ({
+      id: p.id,
+      amount: Number(p.amount),
+      method: pmMap.get(p.paymentMethodId) || `Método ${p.paymentMethodId}`,
+      paidAt: p.paidAt?.toISOString() || null,
+      status: p.status,
+    })),
   };
 }
 

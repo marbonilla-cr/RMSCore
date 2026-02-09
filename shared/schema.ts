@@ -69,6 +69,8 @@ export const orders = pgTable("orders", {
   closedAt: timestamp("closed_at"),
   businessDate: text("business_date").notNull(),
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).default("0"),
+  dailyNumber: integer("daily_number"),
+  globalNumber: integer("global_number"),
 });
 
 export const orderItems = pgTable("order_items", {
