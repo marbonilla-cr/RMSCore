@@ -273,6 +273,25 @@ export async function updateKitchenTicketItem(id: number, data: any) {
   return item;
 }
 
+export async function voidKitchenTicketItemsByOrderItem(orderItemId: number, qtyToVoid: number, isFullVoid: boolean) {
+  if (isFullVoid) {
+    await db.update(kitchenTicketItems)
+      .set({ status: "VOIDED" })
+      .where(eq(kitchenTicketItems.orderItemId, orderItemId));
+  } else {
+    const items = await db.select().from(kitchenTicketItems)
+      .where(eq(kitchenTicketItems.orderItemId, orderItemId));
+    for (const kti of items) {
+      const newQty = Math.max(0, kti.qty - qtyToVoid);
+      if (newQty === 0) {
+        await db.update(kitchenTicketItems).set({ status: "VOIDED" }).where(eq(kitchenTicketItems.id, kti.id));
+      } else {
+        await db.update(kitchenTicketItems).set({ qty: newQty }).where(eq(kitchenTicketItems.id, kti.id));
+      }
+    }
+  }
+}
+
 // Payments
 export async function createPayment(data: InsertPayment) {
   const [payment] = await db.insert(payments).values(data).returning();

@@ -673,6 +673,7 @@ export async function registerRoutes(
 
       if (item.sentToKitchenAt) {
         await storage.incrementPortions(item.productId, effectiveQty);
+        await storage.voidKitchenTicketItemsByOrderItem(itemId, effectiveQty, isFullVoid);
       }
 
       await storage.recalcOrderTotal(orderId);
@@ -697,6 +698,9 @@ export async function registerRoutes(
 
       broadcast("order_updated", { tableId: order.tableId, orderId });
       broadcast("table_status_changed", { tableId: order.tableId });
+      if (item.sentToKitchenAt) {
+        broadcast("kitchen_item_status_changed", { orderItemId: itemId, status: "VOIDED" });
+      }
 
       res.json({ ok: true });
     } catch (err: any) {
@@ -946,10 +950,12 @@ export async function registerRoutes(
     const result = [];
     for (const t of tickets) {
       const items = await storage.getKitchenTicketItems(t.id);
+      const nonVoided = items.filter(i => i.status !== "VOIDED");
+      if (type === "active" && nonVoided.length === 0) continue;
       result.push({
         ...t,
         createdAt: t.createdAt?.toISOString() || new Date().toISOString(),
-        items: items.map(i => ({
+        items: nonVoided.map(i => ({
           ...i,
           prepStartedAt: i.prepStartedAt?.toISOString() || null,
           readyAt: i.readyAt?.toISOString() || null,
