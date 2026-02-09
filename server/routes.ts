@@ -68,7 +68,8 @@ export async function registerRoutes(
       cookie: {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
-        sameSite: "lax",
+        secure: true,
+        sameSite: "none",
       },
     })
   );
