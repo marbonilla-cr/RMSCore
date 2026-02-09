@@ -85,7 +85,7 @@ function AppRouter() {
   return (
     <Switch>
       <Route path="/qr/:tableCode" component={QRClientPage} />
-      <Route path="/:rest*" component={AppContent} />
+      <Route component={AppContent} />
     </Switch>
   );
 }
