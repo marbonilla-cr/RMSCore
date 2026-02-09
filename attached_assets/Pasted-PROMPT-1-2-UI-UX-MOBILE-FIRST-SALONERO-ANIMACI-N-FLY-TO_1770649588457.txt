@@ -1,0 +1,94 @@
+PROMPT 1/2 — UI/UX MOBILE-FIRST SALONERO + ANIMACIÓN “FLY TO ORDER”
+================================================================================
+TAREA ÚNICA (NO TOCAR BACKEND / NO TOCAR QR CLIENTE / NO TOCAR KDS / NO TOCAR POS):
+Mejorar SOLO el UI/UX MOBILE-FIRST de la vista SALONERO donde se seleccionan productos para agregar a la orden (ya sea orden creada por salonero o editando una orden que viene de QR). La lógica actual debe quedar EXACTAMENTE IGUAL.
+
+ALCANCE EXACTO:
+- Solo cambios de frontend (layout, componentes visuales, animaciones).
+- No cambiar endpoints, no cambiar estructura de datos, no cambiar websockets, no cambiar estados del negocio.
+- No agregar librerías pesadas de animación.
+- Debe funcionar en navegador base de iOS/Android/Huawei.
+
+REQUISITOS MOBILE-FIRST (SALONERO):
+1) En móvil debe ser 1 columna (nada de paneles lado a lado).
+2) Controles táctiles grandes:
+   - altura mínima 44px por acción
+   - texto mínimo 16px
+3) Implementar “Bottom Order Bar” fija (siempre visible) con:
+   - badge con cantidad total de ítems
+   - total de la orden
+   - chips con los últimos 3–5 ítems agregados (nombre corto + qty)
+   - botón grande “Ver pedido” (abre el detalle del pedido con el mecanismo existente: modal/panel/ruta actual). NO inventar un flujo nuevo.
+4) Asegurar que la lista de productos no queda tapada por la barra inferior (agregar padding-bottom suficiente).
+5) Evitar efectos pesados (NO blur, NO sombras enormes).
+
+ANIMACIÓN LIVIANA “FLY TO ORDER” (SALONERO):
+Cuando el salonero toque un producto para agregarlo:
+- Se agrega al pedido inmediatamente (como hoy).
+- Se ejecuta una animación visual clara y liviana:
+  a) se crea un “ghost”/clon del card/botón del producto tocado
+  b) el ghost se mueve hacia el badge del Bottom Order Bar (ancla)
+  c) al finalizar, el badge hace “pop” (scale 1 → 1.15 → 1)
+- Duración total 250–350ms.
+- Implementación: Web Animations API o CSS keyframes usando transform translate/scale (NO animar width/left).
+- Accesibilidad:
+  - Si prefers-reduced-motion=reduce, NO hay “vuelo”; solo el “pop” del badge.
+
+Requisitos técnicos de viewport (si aplica):
+- Asegurar meta viewport: width=device-width, initial-scale=1, viewport-fit=cover
+- Evitar 100vh rígido; usar min-height:100dvh en móvil.
+
+Criterios de aceptación:
+- En móvil 360x800 y iPhone SE: puedo agregar 10 ítems seguidos y siempre veo feedback (ghost + chips + total).
+- No hay ningún cambio de comportamiento de negocio (solo UI).
+- No se modificó el flujo QR cliente: este ticket es SOLO SALONERO.
+- Entregar evidencia: video/gif corto mostrando el “fly to order”.
+
+
+PROMPT 2/2 — ENVÍO DE TICKET POR EMAIL CON NODEMAILER (GMAIL SMTP)
+================================================================================
+Implementar envío de ticket por correo con Nodemailer usando el remitente fijo: gmg.srl.cr@gmail.com.
+No cambiar lógica de pagos, órdenes, split, ni estados. Solo agregar envío de email + registro (logging).
+
+CONFIGURACIÓN (GMAIL SMTP CON APP PASSWORD — preferido):
+1) La cuenta gmg.srl.cr@gmail.com debe tener 2FA activado.
+2) Generar un App Password (Google Account > Security > App passwords).
+3) Configurar variables de entorno en Replit:
+   - SMTP_HOST=smtp.gmail.com
+   - SMTP_PORT=465 (secure) o 587 (STARTTLS)
+   - SMTP_USER=gmg.srl.cr@gmail.com
+   - SMTP_PASS=<APP_PASSWORD>   (NO usar la contraseña normal)
+
+REQUISITOS DE ENVÍO:
+- From fijo: "La Antigua Lechería <gmg.srl.cr@gmail.com>"
+- Enviar email con:
+  - subject estándar: "Ticket - Mesa {table_name} - {YYYY-MM-DD}"
+  - HTML (ticket formateado) + texto plano (fallback)
+- El ticket debe poder enviarse:
+  A) antes de pagar (capturando nombre/email del cliente)
+  B) después de pagar SOLO por gerente (resend y/o editar datos cliente)
+
+REGLAS DE PERMISOS:
+- Salonero/Caja: puede capturar email (si tiene permiso en el sistema) y enviar ticket antes o durante pago según el flujo actual.
+- Gerente: puede editar datos del cliente y reenviar incluso después de pagar.
+- Usuarios sin permiso: no ven el botón y el backend debe bloquear el endpoint.
+
+LOG / AUDITORÍA (OBLIGATORIO):
+- Guardar registro de cada envío:
+  - order_id / subaccount_id (si aplica)
+  - sent_to_email
+  - sent_at
+  - sent_by_user_id
+  - status (SUCCESS/FAILED)
+  - error_message (si failed)
+- Mostrar feedback al usuario (toast) “Enviado” o “Falló” (sin exponer secretos).
+
+CRITERIOS DE ACEPTACIÓN:
+- Con SMTP configurado, puedo enviar un ticket a un correo de prueba y llega.
+- Si falla SMTP, el sistema no se cae: muestra error y guarda log FAILED.
+- Solo gerente puede reenviar post-pago.
+- No se modifica la lógica de órdenes/pagos; solo se agrega envío de email + logs.
+
+NOTAS:
+- No usar librerías pesadas para PDF si no es requerido; enviar HTML es suficiente por ahora.
+- Si más adelante se necesita PDF, se agregará como nueva tarea separada.

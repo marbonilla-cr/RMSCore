@@ -1127,7 +1127,8 @@ export async function registerRoutes(
       const smtpHost = process.env.SMTP_HOST;
       const smtpUser = process.env.SMTP_USER;
       const smtpPass = process.env.SMTP_PASS;
-      const smtpFrom = process.env.SMTP_FROM || smtpUser;
+      const smtpFrom = process.env.SMTP_FROM || (smtpUser ? `La Antigua Lechería <${smtpUser}>` : undefined);
+      const dateStr = new Date().toISOString().split("T")[0];
 
       if (smtpHost && smtpUser && smtpPass) {
         try {
@@ -1157,11 +1158,26 @@ export async function registerRoutes(
               <p style="color:#999;font-size:12px;margin-top:24px;text-align:center">Gracias por su visita</p>
             </div>`;
 
+          const textLines = activeItems.map(i => `${i.qty}x ${i.productNameSnapshot} - ₡${(Number(i.productPriceSnapshot) * i.qty).toLocaleString()}`);
+          const text = [
+            `Ticket de Consumo`,
+            `Mesa: ${table?.tableName || "N/A"}`,
+            clientName ? `Cliente: ${clientName}` : "",
+            `Fecha: ${new Date().toLocaleString("es-CR")}`,
+            `---`,
+            ...textLines,
+            `---`,
+            `Total: ₡${total.toLocaleString()}`,
+            ``,
+            `Gracias por su visita`,
+          ].filter(Boolean).join("\n");
+
           await transporter.sendMail({
             from: smtpFrom,
             to: clientEmail,
-            subject: `Ticket - ${table?.tableName || "Restaurante"} - ₡${total.toLocaleString()}`,
+            subject: `Ticket - ${table?.tableName || "Mesa"} - ${dateStr}`,
             html,
+            text,
           });
           emailSent = true;
         } catch (mailErr: any) {

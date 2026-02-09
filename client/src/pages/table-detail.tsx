@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useRoute, useLocation } from "wouter";
@@ -12,7 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { wsManager } from "@/lib/ws";
 import {
   ArrowLeft, Plus, Send, Check, Trash2, Loader2,
-  ShoppingBag, AlertCircle, ChefHat,
+  ShoppingBag, AlertCircle, ChefHat, Minus, Search, X,
+  ClipboardList, Eye,
 } from "lucide-react";
 import type { Product, Category } from "@shared/schema";
 
@@ -23,15 +24,21 @@ interface TableCurrentView {
   pendingQrSubmissions: any[];
 }
 
+type ViewMode = "order" | "menu";
+
 export default function TableDetailPage() {
   const [, params] = useRoute("/tables/:id");
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const tableId = params?.id ? parseInt(params.id) : 0;
 
-  const [showMenu, setShowMenu] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("order");
   const [cart, setCart] = useState<{ productId: number; name: string; price: string; qty: number; notes: string }[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showOrderDetail, setShowOrderDetail] = useState(false);
+  const [badgePop, setBadgePop] = useState(false);
+  const bottomBarRef = useRef<HTMLDivElement>(null);
+  const badgeRef = useRef<HTMLSpanElement>(null);
 
   const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
     queryKey: ["/api/tables", tableId, "current"],
@@ -73,7 +80,8 @@ export default function TableDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       setCart([]);
-      setShowMenu(false);
+      setViewMode("order");
+      setShowOrderDetail(false);
       toast({ title: "Ronda enviada a cocina" });
     },
     onError: (err: any) => {
@@ -105,12 +113,47 @@ export default function TableDetailPage() {
     },
   });
 
-  const addToCart = (product: Product) => {
+  const triggerFlyAnimation = useCallback((sourceEl: HTMLElement) => {
+    const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    setBadgePop(true);
+    setTimeout(() => setBadgePop(false), 350);
+
+    if (prefersReduced || !badgeRef.current) return;
+
+    const sourceRect = sourceEl.getBoundingClientRect();
+    const targetRect = badgeRef.current.getBoundingClientRect();
+
+    const ghost = document.createElement("div");
+    ghost.style.cssText = `
+      position:fixed;z-index:9999;pointer-events:none;
+      width:40px;height:40px;border-radius:50%;
+      background:hsl(var(--primary));opacity:0.85;
+      left:${sourceRect.left + sourceRect.width / 2 - 20}px;
+      top:${sourceRect.top + sourceRect.height / 2 - 20}px;
+    `;
+    document.body.appendChild(ghost);
+
+    const dx = (targetRect.left + targetRect.width / 2 - 20) - (sourceRect.left + sourceRect.width / 2 - 20);
+    const dy = (targetRect.top + targetRect.height / 2 - 20) - (sourceRect.top + sourceRect.height / 2 - 20);
+
+    ghost.animate([
+      { transform: "translate(0, 0) scale(1)", opacity: 0.85 },
+      { transform: `translate(${dx}px, ${dy}px) scale(0.3)`, opacity: 0.2 },
+    ], { duration: 300, easing: "ease-in", fill: "forwards" });
+
+    setTimeout(() => ghost.remove(), 320);
+  }, []);
+
+  const addToCart = (product: Product, e?: React.MouseEvent) => {
     const existing = cart.find((c) => c.productId === product.id);
     if (existing) {
       setCart(cart.map((c) => (c.productId === product.id ? { ...c, qty: c.qty + 1 } : c)));
     } else {
       setCart([...cart, { productId: product.id, name: product.name, price: product.price, qty: 1, notes: "" }]);
+    }
+    if (e?.currentTarget) {
+      triggerFlyAnimation(e.currentTarget as HTMLElement);
     }
   };
 
@@ -160,6 +203,10 @@ export default function TableDetailPage() {
       return acc;
     }, {});
 
+  const cartTotal = cart.reduce((s, c) => s + Number(c.price) * c.qty, 0);
+  const cartCount = cart.reduce((s, c) => s + c.qty, 0);
+  const lastChips = cart.slice(-5);
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "PENDING": return <Badge variant="secondary">Pendiente</Badge>;
@@ -172,216 +219,329 @@ export default function TableDetailPage() {
 
   if (isLoadingCurrent) {
     return (
-      <div className="p-4 md:p-6 max-w-4xl mx-auto">
-        <div className="flex items-center gap-2 mb-6">
+      <div className="p-4 max-w-lg mx-auto">
+        <div className="flex items-center gap-2 mb-4">
           <Button size="icon" variant="ghost" onClick={() => navigate("/tables")} data-testid="button-back">
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <Skeleton className="h-8 w-40 mb-1" />
+            <Skeleton className="h-7 w-36 mb-1" />
             <Skeleton className="h-4 w-24" />
           </div>
         </div>
-        <Skeleton className="h-32 w-full mb-4" />
-        <Skeleton className="h-24 w-full mb-4" />
-        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-28 w-full mb-3" />
+        <Skeleton className="h-20 w-full mb-3" />
+        <Skeleton className="h-12 w-full" />
       </div>
     );
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
-      <div className="flex items-center gap-2 mb-6">
+    <div className="flex flex-col" style={{ minHeight: "100dvh" }}>
+      <div className="sticky top-0 z-[100] bg-background border-b px-3 py-2 flex items-center gap-2">
         <Button size="icon" variant="ghost" onClick={() => navigate("/tables")} data-testid="button-back">
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div>
-          <h1 className="text-2xl font-bold" data-testid="text-table-name">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg font-bold leading-tight truncate" data-testid="text-table-name">
             {tableData?.tableName || `Mesa ${tableId}`}
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {activeOrder ? `Orden #${activeOrder.id}` : "Sin orden abierta"}
           </p>
         </div>
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant={viewMode === "order" ? "default" : "ghost"}
+            onClick={() => setViewMode("order")}
+            data-testid="button-view-order"
+          >
+            <ClipboardList className="w-4 h-4 mr-1" />
+            <span className="hidden sm:inline">Orden</span>
+          </Button>
+          <Button
+            size="sm"
+            variant={viewMode === "menu" ? "default" : "ghost"}
+            onClick={() => setViewMode("menu")}
+            data-testid="button-view-menu"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            <span className="hidden sm:inline">Menu</span>
+          </Button>
+        </div>
       </div>
 
-      {pendingSubmissions.length > 0 && (
-        <Card className="mb-4 ring-2 ring-orange-500">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-orange-500" />
-            <h2 className="font-bold text-orange-600" data-testid="text-pending-qr-title">Pedidos QR Pendientes</h2>
-          </CardHeader>
-          <CardContent>
-            {pendingSubmissions.map((sub: any) => (
-              <div key={sub.id} className="mb-4 last:mb-0" data-testid={`pending-submission-${sub.id}`}>
-                <div className="space-y-2 mb-3">
-                  {sub.items?.map((item: any) => (
-                    <div key={item.id} className="flex items-center justify-between text-sm py-1" data-testid={`qr-item-${item.id}`}>
-                      <span>{item.qty}x {item.productNameSnapshot}</span>
-                      <span className="text-muted-foreground">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
+      <div className="flex-1 overflow-y-auto" style={{ paddingBottom: cart.length > 0 ? "140px" : "16px" }}>
+        {viewMode === "order" ? (
+          <div className="p-3 max-w-lg mx-auto space-y-3">
+            {pendingSubmissions.length > 0 && (
+              <Card className="ring-2 ring-orange-500">
+                <CardHeader className="pb-2 flex flex-row items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-orange-500" />
+                  <h2 className="font-bold text-orange-600 text-base" data-testid="text-pending-qr-title">Pedidos QR Pendientes</h2>
+                </CardHeader>
+                <CardContent>
+                  {pendingSubmissions.map((sub: any) => (
+                    <div key={sub.id} className="mb-4 last:mb-0" data-testid={`pending-submission-${sub.id}`}>
+                      <div className="space-y-1 mb-3">
+                        {sub.items?.map((item: any) => (
+                          <div key={item.id} className="flex items-center justify-between text-base py-1" data-testid={`qr-item-${item.id}`}>
+                            <span>{item.qty}x {item.productNameSnapshot}</span>
+                            <span className="text-muted-foreground">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <Button
+                        onClick={() => acceptSubmissionMutation.mutate(sub.id)}
+                        disabled={acceptSubmissionMutation.isPending}
+                        className="w-full min-h-[44px] text-base"
+                        data-testid={`button-accept-qr-${sub.id}`}
+                      >
+                        {acceptSubmissionMutation.isPending ? (
+                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        ) : (
+                          <Check className="w-5 h-5 mr-2" />
+                        )}
+                        Aceptar y Enviar a Cocina
+                      </Button>
                     </div>
                   ))}
-                </div>
-                <Button
-                  onClick={() => acceptSubmissionMutation.mutate(sub.id)}
-                  disabled={acceptSubmissionMutation.isPending}
-                  className="w-full"
-                  data-testid={`button-accept-qr-${sub.id}`}
-                >
-                  {acceptSubmissionMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                  ) : (
-                    <Check className="w-4 h-4 mr-1" />
+                </CardContent>
+              </Card>
+            )}
+
+            {Object.keys(groupedItems).length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <h2 className="font-bold flex items-center gap-2 text-base">
+                    <ChefHat className="w-5 h-5" /> Items de la Orden
+                  </h2>
+                </CardHeader>
+                <CardContent>
+                  {Object.entries(groupedItems)
+                    .sort(([a], [b]) => Number(a) - Number(b))
+                    .map(([round, items]) => (
+                      <div key={round} className="mb-4 last:mb-0">
+                        <p className="text-xs font-medium text-muted-foreground mb-2">
+                          Ronda {round} {(items as any[])[0]?.origin === "QR" ? "(QR)" : ""}
+                        </p>
+                        {(items as any[]).map((item: any) => (
+                          <div key={item.id} className="flex items-center justify-between py-2 border-b last:border-0">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-base font-medium">{item.qty}x {item.productNameSnapshot}</p>
+                              {item.notes && <p className="text-sm text-muted-foreground">{item.notes}</p>}
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className="text-sm">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
+                              {getStatusBadge(item.status)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  {activeOrder?.totalAmount && (
+                    <div className="pt-3 border-t mt-3">
+                      <div className="flex items-center justify-between font-bold text-base">
+                        <span>Total</span>
+                        <span>₡{Number(activeOrder.totalAmount).toLocaleString()}</span>
+                      </div>
+                    </div>
                   )}
-                  Aceptar y Enviar a Cocina
+                </CardContent>
+              </Card>
+            )}
+
+            {Object.keys(groupedItems).length === 0 && pendingSubmissions.length === 0 && (
+              <div className="text-center py-12 text-muted-foreground">
+                <ShoppingBag className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p className="text-base">No hay items en la orden</p>
+                <Button variant="outline" className="mt-4 min-h-[44px] text-base" onClick={() => setViewMode("menu")} data-testid="button-start-adding">
+                  <Plus className="w-5 h-5 mr-2" /> Agregar Items
                 </Button>
               </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      {Object.keys(groupedItems).length > 0 && (
-        <Card className="mb-4">
-          <CardHeader className="pb-2">
-            <h2 className="font-bold flex items-center gap-2">
-              <ChefHat className="w-5 h-5" /> Items de la Orden
-            </h2>
-          </CardHeader>
-          <CardContent>
-            {Object.entries(groupedItems)
-              .sort(([a], [b]) => Number(a) - Number(b))
-              .map(([round, items]) => (
-                <div key={round} className="mb-4 last:mb-0">
-                  <p className="text-xs font-medium text-muted-foreground mb-2">
-                    Ronda {round} {(items as any[])[0]?.origin === "QR" ? "(QR)" : ""}
-                  </p>
-                  {(items as any[]).map((item: any) => (
-                    <div key={item.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{item.qty}x {item.productNameSnapshot}</p>
-                        {item.notes && <p className="text-xs text-muted-foreground">{item.notes}</p>}
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className="text-sm">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
-                        {getStatusBadge(item.status)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            {activeOrder?.totalAmount && (
-              <div className="pt-3 border-t mt-3">
-                <div className="flex items-center justify-between font-bold">
-                  <span>Total</span>
-                  <span>₡{Number(activeOrder.totalAmount).toLocaleString()}</span>
-                </div>
-              </div>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        ) : (
+          <div className="p-3 max-w-lg mx-auto">
+            <div className="sticky top-0 z-10 bg-background pb-2 -mx-3 px-3 pt-1">
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar producto..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9 pr-9 min-h-[44px] text-base"
+                  data-testid="input-search-menu"
+                />
+                {searchTerm && (
+                  <button
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    onClick={() => setSearchTerm("")}
+                    data-testid="button-clear-search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4 mt-2">
+              {sortedCategoryIds.map((catId) => {
+                const catName = catId === "sin-categoria"
+                  ? "Sin Categoria"
+                  : categories.find((c) => c.id === Number(catId))?.name || "Categoria";
+                const items = productsByCategory[catId];
+                return (
+                  <div key={catId}>
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1" data-testid={`text-category-${catId}`}>
+                      {catName}
+                    </h3>
+                    <div className="space-y-1.5">
+                      {items.map((p) => {
+                        const inCart = cart.find(c => c.productId === p.id);
+                        return (
+                          <div
+                            key={p.id}
+                            className="flex items-center justify-between p-3 rounded-md border hover-elevate cursor-pointer active:scale-[0.98] transition-transform duration-100 min-h-[56px]"
+                            onClick={(e) => addToCart(p, e)}
+                            data-testid={`menu-item-${p.id}`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-base leading-tight">{p.name}</p>
+                              {p.description && <p className="text-sm text-muted-foreground truncate">{p.description}</p>}
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                              <span className="font-semibold text-base">₡{Number(p.price).toLocaleString()}</span>
+                              {p.availablePortions !== null && (
+                                <Badge variant="secondary">{p.availablePortions}</Badge>
+                              )}
+                              {inCart && (
+                                <Badge className="bg-primary text-primary-foreground min-w-[24px] text-center">{inCart.qty}</Badge>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              {sortedCategoryIds.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p className="text-base">No se encontraron productos</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {cart.length > 0 && (
-        <Card className="mb-4">
-          <CardHeader className="pb-2">
-            <h2 className="font-bold flex items-center gap-2">
+        <div
+          ref={bottomBarRef}
+          className="fixed bottom-0 left-0 right-0 z-[90] bg-card border-t"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+          data-testid="bottom-order-bar"
+        >
+          <div className="max-w-lg mx-auto px-3 py-2 space-y-2">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+              {lastChips.map((item) => (
+                <span
+                  key={item.productId}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-sm whitespace-nowrap flex-shrink-0"
+                  data-testid={`chip-item-${item.productId}`}
+                >
+                  {item.name.length > 12 ? item.name.slice(0, 12) + "…" : item.name}
+                  <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-xs">{item.qty}</Badge>
+                </span>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span
+                ref={badgeRef}
+                className={`inline-flex items-center justify-center w-9 h-9 rounded-full bg-primary text-primary-foreground font-bold text-base transition-transform duration-200 ${badgePop ? "scale-[1.2]" : "scale-100"}`}
+                data-testid="badge-cart-count"
+              >
+                {cartCount}
+              </span>
+              <span className="font-bold text-lg flex-1">
+                ₡{cartTotal.toLocaleString()}
+              </span>
+              <Button
+                variant="outline"
+                className="min-h-[44px] text-base"
+                onClick={() => setShowOrderDetail(true)}
+                data-testid="button-view-order-detail"
+              >
+                <Eye className="w-5 h-5 mr-1" /> Ver pedido
+              </Button>
+              <Button
+                className="min-h-[44px] text-base"
+                onClick={() => sendRoundMutation.mutate()}
+                disabled={sendRoundMutation.isPending}
+                data-testid="button-send-round"
+              >
+                {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin mr-1" /> : <Send className="w-5 h-5 mr-1" />}
+                Enviar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Dialog open={showOrderDetail} onOpenChange={setShowOrderDetail}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
               <ShoppingBag className="w-5 h-5" /> Nueva Ronda
-            </h2>
-          </CardHeader>
-          <CardContent>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
             {cart.map((item) => (
-              <div key={item.productId} className="flex items-center justify-between py-2 border-b last:border-0 gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">{item.name}</p>
+              <div key={item.productId} className="flex items-center gap-2 py-2 border-b last:border-0" data-testid={`cart-item-${item.productId}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-base font-medium">{item.name}</p>
+                  <p className="text-sm text-muted-foreground">₡{Number(item.price).toLocaleString()} c/u</p>
                   <Input
                     placeholder="Notas..."
                     value={item.notes}
                     onChange={(e) =>
                       setCart(cart.map((c) => (c.productId === item.productId ? { ...c, notes: e.target.value } : c)))
                     }
-                    className="mt-1 text-xs h-7"
+                    className="mt-1 text-sm min-h-[36px]"
+                    data-testid={`input-notes-${item.productId}`}
                   />
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <Button size="icon" variant="ghost" onClick={() => updateCartQty(item.productId, item.qty - 1)} className="h-7 w-7">
-                    <span className="text-lg">-</span>
+                  <Button size="icon" variant="outline" onClick={() => updateCartQty(item.productId, item.qty - 1)} data-testid={`button-qty-minus-${item.productId}`}>
+                    <Minus className="w-4 h-4" />
                   </Button>
-                  <span className="w-6 text-center text-sm font-medium">{item.qty}</span>
-                  <Button size="icon" variant="ghost" onClick={() => updateCartQty(item.productId, item.qty + 1)} className="h-7 w-7">
-                    <span className="text-lg">+</span>
+                  <span className="w-8 text-center text-base font-bold">{item.qty}</span>
+                  <Button size="icon" variant="outline" onClick={() => updateCartQty(item.productId, item.qty + 1)} data-testid={`button-qty-plus-${item.productId}`}>
+                    <Plus className="w-4 h-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" onClick={() => removeFromCart(item.productId)}>
+                  <Button size="icon" variant="ghost" onClick={() => removeFromCart(item.productId)} data-testid={`button-remove-${item.productId}`}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
                 </div>
               </div>
             ))}
-            <Button
-              className="w-full mt-3"
-              onClick={() => sendRoundMutation.mutate()}
-              disabled={sendRoundMutation.isPending}
-              data-testid="button-send-round"
-            >
-              {sendRoundMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Send className="w-4 h-4 mr-1" />}
-              Enviar Ronda a Cocina
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      <Button variant="outline" className="w-full" onClick={() => setShowMenu(true)} data-testid="button-add-items">
-        <Plus className="w-4 h-4 mr-1" /> Agregar Items
-      </Button>
-
-      <Dialog open={showMenu} onOpenChange={setShowMenu}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Menu</DialogTitle>
-          </DialogHeader>
-          <Input
-            placeholder="Buscar producto..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="mb-3"
-            data-testid="input-search-menu"
-          />
-          <div className="space-y-4">
-            {sortedCategoryIds.map((catId) => {
-              const catName = catId === "sin-categoria"
-                ? "Sin Categoria"
-                : categories.find((c) => c.id === Number(catId))?.name || "Categoria";
-              const items = productsByCategory[catId];
-              return (
-                <div key={catId}>
-                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1" data-testid={`text-category-${catId}`}>
-                    {catName}
-                  </h3>
-                  <div className="space-y-1.5">
-                    {items.map((p) => (
-                      <div
-                        key={p.id}
-                        className="flex items-center justify-between p-2.5 md:p-3 rounded-md border hover-elevate cursor-pointer"
-                        onClick={() => addToCart(p)}
-                        data-testid={`menu-item-${p.id}`}
-                      >
-                        <div className="min-w-0">
-                          <p className="font-medium text-sm">{p.name}</p>
-                          {p.description && <p className="text-xs text-muted-foreground truncate">{p.description}</p>}
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className="font-semibold text-sm">₡{Number(p.price).toLocaleString()}</span>
-                          {p.availablePortions !== null && (
-                            <Badge variant="secondary" className="text-xs">{p.availablePortions}</Badge>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
           </div>
+          <div className="flex items-center justify-between pt-3 border-t font-bold text-lg">
+            <span>Total</span>
+            <span>₡{cartTotal.toLocaleString()}</span>
+          </div>
+          <Button
+            className="w-full min-h-[48px] text-base mt-2"
+            onClick={() => sendRoundMutation.mutate()}
+            disabled={sendRoundMutation.isPending}
+            data-testid="button-send-round-modal"
+          >
+            {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Send className="w-5 h-5 mr-2" />}
+            Enviar Ronda a Cocina
+          </Button>
         </DialogContent>
       </Dialog>
     </div>
