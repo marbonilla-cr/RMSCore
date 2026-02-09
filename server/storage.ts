@@ -4,7 +4,7 @@ import {
   users, tables, categories, products, paymentMethods,
   orders, orderItems, qrSubmissions, kitchenTickets, kitchenTicketItems,
   payments, cashSessions, splitAccounts, splitItems,
-  salesLedgerItems, auditEvents,
+  salesLedgerItems, auditEvents, qboExportJobs,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -17,6 +17,9 @@ import {
   type InsertPayment, type Payment,
   type InsertCashSession, type CashSession,
   type InsertAuditEvent,
+  type InsertSplitAccount,
+  type InsertSplitItem,
+  type InsertQboExportJob,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -318,6 +321,92 @@ export async function updateSalesLedgerItems(orderItemId: number, data: any) {
 // Audit Events
 export async function createAuditEvent(data: InsertAuditEvent) {
   await db.insert(auditEvents).values(data);
+}
+
+// Split Accounts
+export async function createSplitAccount(data: InsertSplitAccount) {
+  const [split] = await db.insert(splitAccounts).values(data).returning();
+  return split;
+}
+
+export async function getSplitAccountsForOrder(orderId: number) {
+  return db.select().from(splitAccounts).where(eq(splitAccounts.orderId, orderId));
+}
+
+export async function createSplitItem(data: InsertSplitItem) {
+  const [item] = await db.insert(splitItems).values(data).returning();
+  return item;
+}
+
+export async function getSplitItemsForSplit(splitId: number) {
+  return db.select().from(splitItems).where(eq(splitItems.splitId, splitId));
+}
+
+export async function getSplitAccount(id: number) {
+  const [split] = await db.select().from(splitAccounts).where(eq(splitAccounts.id, id));
+  return split;
+}
+
+export async function deleteSplitAccount(id: number) {
+  await db.delete(splitItems).where(eq(splitItems.splitId, id));
+  await db.delete(splitAccounts).where(eq(splitAccounts.id, id));
+}
+
+export async function getPaymentsForOrder(orderId: number) {
+  return db.select().from(payments).where(eq(payments.orderId, orderId));
+}
+
+export async function voidPayment(id: number) {
+  const [payment] = await db.update(payments).set({ status: "VOIDED" }).where(eq(payments.id, id)).returning();
+  return payment;
+}
+
+export async function getPaymentsByDateGrouped(date: string) {
+  const allPayments = await db.select().from(payments)
+    .where(and(eq(payments.businessDate, date), eq(payments.status, "PAID")));
+  const allMethods = await db.select().from(paymentMethods);
+  const methodMap = new Map(allMethods.map(m => [m.id, m.paymentName]));
+
+  const grouped: Record<string, number> = {};
+  for (const p of allPayments) {
+    const methodName = methodMap.get(p.paymentMethodId) || "Otro";
+    grouped[methodName] = (grouped[methodName] || 0) + Number(p.amount);
+  }
+  return grouped;
+}
+
+// QBO Export Jobs
+export async function createQboExportJob(data: InsertQboExportJob) {
+  const [job] = await db.insert(qboExportJobs).values(data).returning();
+  return job;
+}
+
+export async function getQboExportJobs(date: string) {
+  return db.select().from(qboExportJobs).where(eq(qboExportJobs.businessDate, date));
+}
+
+export async function updateQboExportJob(id: number, data: any) {
+  const [job] = await db.update(qboExportJobs).set(data).where(eq(qboExportJobs.id, id)).returning();
+  return job;
+}
+
+export async function getOrder(id: number) {
+  const [order] = await db.select().from(orders).where(eq(orders.id, id));
+  return order;
+}
+
+export async function getPayment(id: number) {
+  const [payment] = await db.select().from(payments).where(eq(payments.id, id));
+  return payment;
+}
+
+export async function getLedgerItemsForDate(date: string, status?: string) {
+  if (status) {
+    return db.select().from(salesLedgerItems)
+      .where(and(eq(salesLedgerItems.businessDate, date), eq(salesLedgerItems.status, status)));
+  }
+  return db.select().from(salesLedgerItems)
+    .where(eq(salesLedgerItems.businessDate, date));
 }
 
 // Dashboard queries

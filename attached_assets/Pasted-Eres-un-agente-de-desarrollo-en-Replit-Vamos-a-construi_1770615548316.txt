@@ -1,0 +1,296 @@
+Eres un agente de desarrollo en Replit. Vamos a construir un MVP v1 de un “Sistema Restaurante” (PWA web modular) para un restaurante pequeño (20–30 órdenes simultáneas máximo). TODO debe correr dentro del mismo proyecto en Replit (frontend + backend + DB). El MVP debe estar listo para operar lo antes posible: pedidos de salonero + pedidos QR cliente, aceptación de pedidos QR por salonero, KDS, POS/caja con división de cuentas, cierre de caja con arqueo, auditoría/metrics por ítem, dashboard, y un modelo de export diario a QuickBooks Online (QBO) basado en un “sales ledger” desde v1. NO implementar impresión física todavía (Epson ePOS queda fuera del MVP).
+
+============================================================
+PRINCIPIOS Y REGLAS CLAVE (OBLIGATORIAS)
+============================================================
+1) UNA sola orden abierta por mesa. NO se crean múltiples órdenes por mesa. Los adicionales del cliente QR se agregan a la misma orden.
+2) Cliente QR puede agregar ítems adicionales a la misma orden, pero antes de enviar debe confirmar con “SWIPE” consciente. El cliente NO puede editar ítems ya enviados.
+3) Cuando un cliente envía una orden (o adicional) por QR, NO se envía directo a cocina. Queda PENDIENTE y dispara NOTIFICACIÓN a saloneros. Un salonero debe ir a la mesa, revisar, puede editar, y ACEPTA. Solo al aceptar se envía al KDS/cocina.
+4) El salonero puede agregar ítems, editar los del cliente antes de aceptar/enviar, y enviar rondas a cocina.
+5) Menú: cada producto debe tener DESCRIPCIÓN obligatoria. Productos activos/inactivos. Si está inactivo, NO debe verse en menús (salonero ni cliente QR).
+6) Productos tienen “porciones disponibles” (available_portions). Al enviar a cocina se rebaja. Cuando llega a 0, el producto se auto-desactiva y deja de mostrarse.
+7) POS/caja: división de cuenta SOLO en caja (subcuentas por ítem). Cobros por métodos de pago configurables (defaults: efectivo/tarjeta/SINPE + permitir agregar otros).
+8) Caja: apertura y cierre con arqueo: efectivo esperado vs real, diferencia, historial.
+9) Ticket por email: capturar datos cliente (nombre/email) antes de pagar; después de pagar solo GERENTE puede agregar/modificar y reenviar. Envío por subcuenta o total. Guardar log de envíos.
+10) Auditoría y métricas: registrar TODO por ítem vendido: mesa, hora, artículo, cantidad, precio, origen (QR o salonero), usuario que lo creó, y “salonero responsable” del ítem. Responsabilidad es por mesa y por ítem. Mantener action logs.
+11) Mesas: listado simple y editable desde Admin. Al crear mesa se genera QR. El NOMBRE de mesa debe mostrarse en POS, KDS y registros.
+12) Pantalla Mesas: mostrar tiempos por mesa con selector de columnas de tiempo. Defaults: (a) tiempo abierto total, (b) duración en cocina.
+13) KDS: tiempo real + sonido. Estados por ítem: NEW / PREPARING / READY. Historial de órdenes cerradas y botón “Vaciar” que limpia vista (NO borra DB).
+14) Dashboard gerente: totales del día (órdenes abiertas/cobradas/canceladas con cantidad y monto), top artículos y top categorías (cantidad y monto) con drill-down.
+15) NO asumir categorías del menú ni hardcodearlas. Aunque luego habrá import, por ahora permitir administrar categorías/productos desde admin sin inventar valores.
+
+============================================================
+STACK / TECNOLOGÍA EN REPLIT (SUGERIDO)
+============================================================
+- Node.js + TypeScript
+- Backend: Fastify o Express
+- ORM: Prisma
+- DB: PostgreSQL (preferido) o SQLite (si Postgres no está disponible)
+- Realtime: WebSocket (Socket.IO o ws)
+- Frontend: React + Vite (PWA), React Router
+- Auth: JWT en cookie httpOnly + refresh, o session segura
+- Email: nodemailer (SMTP via env vars)
+
+============================================================
+MÓDULOS / PANTALLAS MVP
+============================================================
+
+A) AUTH + ROLES
+- Login con usuario/contraseña
+- Roles: WAITER, KITCHEN, CASHIER, MANAGER
+- Middleware de permisos por endpoint y por pantalla
+
+B) ADMIN PANEL
+1) Admin Mesas
+- CRUD: table_code (único), table_name, active, sort_order
+- Al crear mesa => generar QR (link a /qr/:table_code)
+- Vista/descarga de QR (imagen o printable)
+2) Admin Categorías
+- CRUD: category_code (único), name, parent_category_code opcional, active, sort_order
+3) Admin Productos
+- CRUD: product_code (único), name, description (obligatorio), category_code (opcional pero soportado), price, active, visible_qr, available_portions (nullable)
+- Reglas:
+  - si available_portions == 0 => auto set active=false y ocultar en menús
+4) Admin Métodos de pago
+- CRUD: payment_code, payment_name, active, sort_order
+- Defaults a crear: CASH, CARD, SINPE
+- Debe permitir agregar otros
+5) Admin Usuarios
+- CRUD usuario, rol, activo
+
+C) MODULO MESAS (SALONERO)
+Pantallas:
+1) Lista simple de mesas:
+- nombre mesa
+- estado
+- salonero responsable actual de mesa (si aplica)
+- TIEMPOS (columnas configurables):
+  - Default: tiempo abierto total de la mesa
+  - Default: duración en cocina
+- Selector de columnas “tiempos a mostrar” (guardar preferencia por usuario)
+2) Vista Mesa:
+- orden actual (única)
+- ítems agrupados por origen/ronda (QR vs salonero)
+- notas por ítem y por ronda
+- agregar ítems
+- enviar ronda a cocina
+- si existe QR submission pendiente: UI de revisión/edición + botón ACEPTAR (dispara envío a cocina/KDS)
+
+Reglas:
+- Actualización realtime: si el cliente QR agrega ítems, el salonero lo ve inmediatamente
+- Responsabilidad por ítem:
+  - created_by_user_id (null si QR)
+  - origin (QR/WAITER)
+  - responsible_waiter_id: default al responsable actual de la mesa al momento de crear el ítem. Si lo crea QR y no hay responsable aún, queda null hasta que un salonero acepte/tome la mesa (y al aceptar, setear responsible_waiter_id para ítems QR sin responsable).
+
+D) MODULO CLIENTE QR
+- Ruta /qr/:table_code
+- Menú solo muestra productos active=true, visible_qr=true, y (available_portions is null OR >0)
+- Cliente arma carrito
+- Antes de enviar: texto “Confirme la solicitud de este adicional” + SWIPE para confirmar
+- Al confirmar:
+  - si no existe orden abierta => crear orden abierta para mesa
+  - crear “QR submission” PENDING_WAITER_ACCEPT (NO cocina)
+  - agregar items como “pending” dentro de esa submission
+- Cliente puede volver a entrar y agregar más items a la misma orden abierta
+- Cliente NO puede editar items ya enviados / ya aceptados
+- Rate limit anti-spam por mesa
+
+E) NOTIFICACIONES A SALONEROS + ACEPTACIÓN
+- Cuando se crea un QR submission pendiente:
+  - emitir evento realtime a todos los saloneros activos: “Nueva orden QR pendiente en Mesa X”
+- Un salonero debe abrir la mesa, revisar, puede editar items pendientes (antes de aceptar) y presionar ACEPTAR
+- Al ACEPTAR:
+  - cambiar status QR submission a ACCEPTED
+  - crear KitchenTicket y KitchenTicketItems
+  - actualizar order status a IN_KITCHEN si aplica
+  - rebajar available_portions por ítem aceptado al momento de ENVIAR a cocina (aceptación)
+  - emitir evento realtime a KDS
+- Guardar audit_event de acceptance
+
+F) KDS (COCINA)
+- Pantalla KDS realtime
+- Sonido al entrar ticket NEW
+- Estados por ítem: NEW -> PREPARING -> READY
+- Marcar ticket completo READY
+- Historial de tickets cerrados + botón “Vaciar historial”
+  - “vaciar” solo limpia vista (set flag cleared_at) NO borra DB
+- Registrar timestamps por etapa para métricas:
+  - order_opened_at
+  - first_sent_to_kds_at
+  - per-item: prep_started_at, ready_at
+  - kds_last_ready_at
+
+G) POS / CAJA
+1) POS - Mesas por cobrar
+- Lista de mesas con orden abierta y consumos
+2) POS - Detalle mesa
+- Ver items, totales
+- Dividir cuenta (subcuentas por ítem): A/B/C
+- Cobrar subcuenta o total
+- Métodos de pago configurables
+- Permisos: void/anular, reabrir mesa (solo manager)
+3) Caja - Apertura/Cierre con arqueo
+- Apertura: opening_cash, usuario, timestamp
+- Cierre:
+  - totals por método
+  - efectivo esperado vs real
+  - diferencia, notas
+  - persistir en histórico
+
+H) EMAIL TICKET
+- Antes de pagar (POS): capturar nombre y email (modal)
+- Enviar email por subcuenta o total
+- Después de pagar: solo manager puede editar cliente y reenviar
+- Guardar EmailLog con status + auditoría
+
+I) DASHBOARD GERENTE
+- KPIs del día:
+  - órdenes abiertas (count, amount)
+  - órdenes pagadas (count, amount)
+  - órdenes canceladas/anuladas (count, amount)
+- Top items por cantidad y monto
+- Top categorías por cantidad y monto
+- Drill-down para ver detalle
+
+============================================================
+MODELO DE DATOS “REPORTABLE” (OBLIGATORIO DESDE v1)
+============================================================
+Diseñar DB para que TODO sea reportable y para que el export QBO salga de registros consistentes, no de consultas improvisadas.
+
+1) audit_events (bitácora)
+- id, created_at
+- actor_type: USER|QR
+- actor_user_id nullable
+- action (string enum)
+- entity_type, entity_id
+- table_id nullable
+- metadata JSON
+
+2) sales_ledger_items (LIBRO DE VENTAS POR ÍTEM - LA VERDAD PARA REPORTES/QBO)
+1 fila por ítem vendido (o por agregado de qty). NO se borra.
+Campos:
+- id
+- business_date (CR)
+- created_at
+- table_id, table_name_snapshot
+- order_id, order_item_id
+- product_id, product_code_snapshot, product_name_snapshot
+- category_id, category_code_snapshot, category_name_snapshot (si no hay categoría, permitir null pero soportarlo)
+- qty, unit_price, line_subtotal
+- origin: QR|WAITER
+- created_by_user_id nullable
+- responsible_waiter_id nullable
+- status: OPEN|PAID|VOIDED
+- sent_to_kitchen_at, kds_ready_at, delivered_at nullable
+- paid_at nullable
+
+Reglas:
+- Al agregar ítem (QR o salonero): crear ledger OPEN.
+- Al pagar: marcar paid_at y status=PAID para ítems incluidos en ese pago (por subcuenta o total).
+- Si se cancela ítem: status=VOIDED.
+- Si se revierte un pago (VOID payment): revertir ítems a OPEN o una estrategia clara; registrar audit_event.
+
+3) payments
+- id, business_date
+- order_id, split_id nullable
+- amount
+- payment_method_id
+- paid_at
+- cashier_user_id
+- status: PAID|VOIDED
+- client_name_snapshot, client_email_snapshot nullable
+
+4) cash_sessions
+- id
+- opened_at, closed_at
+- opened_by_user_id, closed_by_user_id
+- opening_cash
+- expected_cash
+- counted_cash
+- difference
+- totals_by_method JSON (o tabla cash_session_totals)
+- notes
+
+5) split_accounts (subcuentas)
+- id, order_id, name/label
+- mapping de order_items a split (tabla join split_items)
+
+6) orders / order_items / qr_submissions / kitchen_tickets / kitchen_items / etc.
+(Implementación estándar, pero asegurar timestamps y links a ledger)
+
+============================================================
+EXPORT DIARIO A QUICKBOOKS ONLINE (QBO) - DISEÑO DESDE v1
+============================================================
+No implementar conexión OAuth completa todavía si nos retrasa, pero sí dejar el modelo y el job listos (y stub de integración). El export debe basarse en ledger+payments.
+
+Estructura recomendada:
+- 1 SalesReceipt por MÉTODO DE PAGO por día (simplifica conciliación):
+  - POS-YYYYMMDD-CASH
+  - POS-YYYYMMDD-CARD
+  - POS-YYYYMMDD-SINPE
+  - etc.
+
+Crear tabla:
+qbo_export_jobs
+- id
+- business_date
+- status: PENDING|RUNNING|SUCCESS|FAILED
+- started_at, finished_at
+- error_message
+- qbo_refs JSON (ids creados)
+- retry_count
+
+Reglas del job:
+- Solo exporta ventas PAID del business_date.
+- Calcula totals por método desde payments (status=PAID).
+- Calcula ventas por categoría o producto desde sales_ledger_items (status=PAID) para ese día.
+- Validación: suma ledger == suma payments (tolerancia por redondeo). Si no cuadra => FAILED y no exporta.
+- Debe poder ejecutarse manualmente desde Manager (botón “Exportar a QBO” en el cierre de caja), y luego automatizarse más adelante.
+- Guardar result y permitir reintentar.
+
+============================================================
+ESTADOS SUGERIDOS
+============================================================
+Order: OPEN, PENDING_WAITER_ACCEPT, IN_KITCHEN, READY, PAYABLE, PAID, CANCELLED, VOID
+QR Submission: PENDING, ACCEPTED, CANCELLED
+KitchenTicket: NEW, PREPARING, READY, CLEARED
+KitchenItem: NEW, PREPARING, READY
+Payment: PAID, VOIDED
+
+============================================================
+REALTIME EVENTS (WEBSOCKET)
+============================================================
+- qr_submission_created (mesa, items, timestamp)
+- order_updated (mesa, items, totals)
+- kitchen_ticket_created
+- kitchen_item_status_changed
+- payment_completed
+- table_status_changed
+
+============================================================
+IMPLEMENTACIÓN POR FASES (NO TE SALTES)
+============================================================
+Fase 0: Scaffold del repo (frontend+backend+prisma+db), seed roles/users.
+Fase 1: Admin Mesas/QR + Admin Categorías/Productos (desc/active/porciones) + Orders (1 por mesa) + Salonero UI básico.
+Fase 2: QR Cliente + swipe confirm + qr_submissions pendientes + notificación salonero + aceptar (envía a KDS).
+Fase 3: KDS realtime + sonido + estados + historial/vaciar + timestamps.
+Fase 4: POS + split + payments + cash_sessions (apertura/cierre/arqueo).
+Fase 5: Email ticket + permisos + logs.
+Fase 6: sales_ledger_items completo (si no estaba ya), reportes básicos, dashboard.
+Fase 7: pantalla Mesas con selector de tiempos (defaults: abierto total y duración cocina).
+Fase 8: qbo_export_jobs stub + validaciones + ejecución manual desde cierre (sin OAuth si falta).
+
+============================================================
+ENTREGABLE MVP v1
+============================================================
+- PWA operable con módulos anteriores
+- DB persistente
+- Realtime funcionando
+- Seguridad por roles
+- Sin impresión
+- Sin import masivo (después)
+- Modelo reportable desde v1 (audit + ledger + payments + cash sessions)
+- Export QBO job model + ejecución manual + validación de cuadre (aunque conexión real se complete luego)
+
+Empieza construyendo el scaffolding completo (monorepo o single repo), prisma schema, seed, y luego fase 1. No inventes datos del menú: permitir crearlos desde admin.

@@ -46,6 +46,8 @@ function getBusinessDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+const qrRateLimitMap = new Map<string, number>();
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -247,6 +249,7 @@ export async function registerRoutes(
       let waiterName = null;
       let pendingQrCount = 0;
       let itemCount = 0;
+      let lastSentToKitchenAt: string | null = null;
       if (order) {
         if (order.responsibleWaiterId) {
           const waiter = await storage.getUser(order.responsibleWaiterId);
@@ -256,6 +259,12 @@ export async function registerRoutes(
         pendingQrCount = subs.length;
         const items = await storage.getOrderItems(order.id);
         itemCount = items.filter(i => i.status !== "VOIDED").length;
+        const sentTimes = items
+          .filter(i => i.status !== "VOIDED" && i.sentToKitchenAt)
+          .map(i => new Date(i.sentToKitchenAt!).getTime());
+        if (sentTimes.length > 0) {
+          lastSentToKitchenAt = new Date(Math.max(...sentTimes)).toISOString();
+        }
       }
       result.push({
         id: t.id,
@@ -270,6 +279,7 @@ export async function registerRoutes(
         pendingQrCount,
         itemCount,
         totalAmount: order?.totalAmount || null,
+        lastSentToKitchenAt,
       });
     }
     res.json(result);
@@ -555,7 +565,13 @@ export async function registerRoutes(
 
   app.post("/api/qr/:tableCode/submit", async (req, res) => {
     try {
-      const table = await storage.getTableByCode(req.params.tableCode);
+      const tableCode = req.params.tableCode;
+      const lastSubmission = qrRateLimitMap.get(tableCode);
+      if (lastSubmission && Date.now() - lastSubmission < 30000) {
+        return res.status(429).json({ message: "Espere un momento antes de enviar otro pedido" });
+      }
+
+      const table = await storage.getTableByCode(tableCode);
       if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const { items } = req.body;
@@ -645,6 +661,8 @@ export async function registerRoutes(
 
       broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id });
       broadcast("order_updated", { tableId: table.id, orderId: order.id });
+
+      qrRateLimitMap.set(tableCode, Date.now());
 
       res.json({ ok: true, submissionId: sub.id });
     } catch (err: any) {
@@ -846,24 +864,296 @@ export async function registerRoutes(
       const expected = parseFloat(session.expectedCash?.toString() || session.openingCash);
       const difference = countedCash - expected;
 
+      const totalsByMethod = await storage.getPaymentsByDateGrouped(getBusinessDate());
+
       const updated = await storage.updateCashSession(session.id, {
         closedAt: new Date(),
         closedByUserId: req.session.userId!,
         countedCash: countedCash.toFixed(2),
         difference: difference.toFixed(2),
+        totalsByMethod,
         notes: req.body.notes || null,
       });
 
-      res.json(updated);
+      res.json({ ...updated, totalsByMethod });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
 
+  // ==================== POS: ORDER PAYMENTS ====================
+  app.get("/api/pos/orders/:orderId/payments", requireAuth, async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId as string);
+      const orderPayments = await storage.getPaymentsForOrder(orderId);
+      const allMethods = await storage.getAllPaymentMethods();
+      const methodMap = new Map(allMethods.map(m => [m.id, m.paymentName]));
+      const result = orderPayments.map(p => ({
+        ...p,
+        paymentMethodName: methodMap.get(p.paymentMethodId) || "Otro",
+      }));
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== POS: SPLIT ACCOUNTS ====================
+  app.get("/api/pos/orders/:orderId/splits", requireAuth, async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const splits = await storage.getSplitAccountsForOrder(orderId);
+      const result = [];
+      for (const split of splits) {
+        const items = await storage.getSplitItemsForSplit(split.id);
+        result.push({ ...split, items });
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/pos/orders/:orderId/splits", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const { label, orderItemIds } = req.body;
+      if (!label || !orderItemIds || !orderItemIds.length) {
+        return res.status(400).json({ message: "Label y orderItemIds son requeridos" });
+      }
+
+      const split = await storage.createSplitAccount({ orderId, label });
+
+      for (const orderItemId of orderItemIds) {
+        await storage.createSplitItem({ splitId: split.id, orderItemId });
+      }
+
+      const items = await storage.getSplitItemsForSplit(split.id);
+      broadcast("order_updated", { orderId });
+      res.json({ ...split, items });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/pos/splits/:id", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteSplitAccount(id);
+      broadcast("order_updated", {});
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/pos/pay-split", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+    try {
+      const { splitId, paymentMethodId, clientName, clientEmail } = req.body;
+      const userId = req.session.userId!;
+
+      const splitItems = await storage.getSplitItemsForSplit(splitId);
+      if (!splitItems.length) return res.status(400).json({ message: "Split sin items" });
+
+      const splitAccount = await storage.getSplitAccount(splitId);
+      if (!splitAccount) return res.status(404).json({ message: "Split no encontrado" });
+
+      const orderId = splitAccount.orderId;
+      const orderItemsList = await storage.getOrderItems(orderId);
+
+      let splitTotal = 0;
+      for (const si of splitItems) {
+        const oi = orderItemsList.find(i => i.id === si.orderItemId);
+        if (oi) splitTotal += Number(oi.productPriceSnapshot) * oi.qty;
+      }
+
+      const payment = await storage.createPayment({
+        orderId,
+        splitId,
+        amount: splitTotal.toFixed(2),
+        paymentMethodId,
+        cashierUserId: userId,
+        status: "PAID",
+        clientNameSnapshot: clientName || null,
+        clientEmailSnapshot: clientEmail || null,
+        businessDate: getBusinessDate(),
+      });
+
+      for (const si of splitItems) {
+        await storage.updateOrderItem(si.orderItemId, { status: "PAID" });
+        await storage.updateSalesLedgerItems(si.orderItemId, { status: "PAID", paidAt: new Date() });
+      }
+
+      const pm = (await storage.getAllPaymentMethods()).find(m => m.id === paymentMethodId);
+      if (pm?.paymentCode === "CASH") {
+        const cashSession = await storage.getActiveCashSession();
+        if (cashSession) {
+          const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + splitTotal;
+          await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
+        }
+      }
+
+      const allItems = await storage.getOrderItems(orderId);
+      const allPaid = allItems.filter(i => i.status !== "VOIDED").every(i => i.status === "PAID");
+      if (allPaid) {
+        await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() });
+      }
+
+      broadcast("payment_completed", { orderId });
+      broadcast("table_status_changed", {});
+
+      res.json({ ok: true, paymentId: payment.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== POS: VOID PAYMENT ====================
+  app.post("/api/pos/void-payment/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const paymentId = parseInt(req.params.id);
+      const userId = req.session.userId!;
+
+      const payment = await storage.getPayment(paymentId);
+      if (!payment) return res.status(404).json({ message: "Pago no encontrado" });
+
+      await storage.voidPayment(paymentId);
+
+      const orderItemsList = await storage.getOrderItems(payment.orderId);
+      for (const item of orderItemsList) {
+        if (item.status === "PAID") {
+          await storage.updateOrderItem(item.id, { status: "OPEN" });
+          await storage.updateSalesLedgerItems(item.id, { status: "OPEN", paidAt: null });
+        }
+      }
+
+      await storage.updateOrder(payment.orderId, { status: "OPEN", closedAt: null });
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "PAYMENT_VOIDED",
+        entityType: "payment",
+        entityId: paymentId,
+        tableId: null,
+        metadata: { orderId: payment.orderId, amount: payment.amount },
+      });
+
+      broadcast("payment_voided", { orderId: payment.orderId, paymentId });
+      broadcast("table_status_changed", {});
+      broadcast("order_updated", { orderId: payment.orderId });
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== POS: REOPEN TABLE ====================
+  app.post("/api/pos/reopen/:orderId", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const userId = req.session.userId!;
+
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+      if (order.status !== "PAID") return res.status(400).json({ message: "Solo se pueden reabrir ordenes pagadas" });
+
+      await storage.updateOrder(orderId, { status: "OPEN", closedAt: null });
+
+      const orderItemsList = await storage.getOrderItems(orderId);
+      for (const item of orderItemsList) {
+        if (item.status === "PAID") {
+          await storage.updateOrderItem(item.id, { status: "OPEN" });
+          await storage.updateSalesLedgerItems(item.id, { status: "OPEN", paidAt: null });
+        }
+      }
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "ORDER_REOPENED",
+        entityType: "order",
+        entityId: orderId,
+        tableId: order.tableId,
+        metadata: {},
+      });
+
+      broadcast("order_updated", { orderId, tableId: order.tableId });
+      broadcast("table_status_changed", { tableId: order.tableId });
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== QBO EXPORT ====================
+  app.post("/api/qbo/export", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const date = getBusinessDate();
+
+      const job = await storage.createQboExportJob({
+        businessDate: date,
+        status: "PENDING",
+        startedAt: new Date(),
+        retryCount: 0,
+      });
+
+      const ledgerItems = await storage.getLedgerItemsForDate(date, "PAID");
+      const paidPayments = await storage.getPaymentsForDate(date);
+      const activePaidPayments = paidPayments.filter(p => p.status === "PAID");
+
+      const ledgerSum = ledgerItems.reduce((s, i) => s + Number(i.lineSubtotal), 0);
+      const paymentSum = activePaidPayments.reduce((s, p) => s + Number(p.amount), 0);
+
+      if (Math.abs(ledgerSum - paymentSum) < 0.01) {
+        await storage.updateQboExportJob(job.id, {
+          status: "SUCCESS",
+          finishedAt: new Date(),
+          qboRefs: { ledgerTotal: ledgerSum, paymentTotal: paymentSum, itemCount: ledgerItems.length },
+        });
+      } else {
+        await storage.updateQboExportJob(job.id, {
+          status: "FAILED",
+          finishedAt: new Date(),
+          errorMessage: `Mismatch: ledger=${ledgerSum.toFixed(2)}, payments=${paymentSum.toFixed(2)}`,
+        });
+      }
+
+      const updatedJob = await storage.getQboExportJobs(date);
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "QBO_EXPORT_CREATED",
+        entityType: "qbo_export_job",
+        entityId: job.id,
+        tableId: null,
+        metadata: { date, ledgerSum, paymentSum },
+      });
+
+      res.json(updatedJob);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== QBO: GET EXPORT JOBS ====================
+  app.get("/api/qbo/export", requireRole("MANAGER"), async (_req, res) => {
+    const today = getBusinessDate();
+    const jobs = await storage.getQboExportJobs(today);
+    res.json(jobs);
+  });
+
   // ==================== DASHBOARD ====================
   app.get("/api/dashboard", requireRole("MANAGER"), async (_req, res) => {
     const data = await storage.getDashboardData();
-    res.json(data);
+    const today = getBusinessDate();
+    const ledgerDetails = await storage.getLedgerItemsForDate(today);
+    const paymentMethodTotals = await storage.getPaymentsByDateGrouped(today);
+    res.json({ ...data, ledgerDetails, paymentMethodTotals });
   });
 
   // ==================== WEBSOCKET ====================

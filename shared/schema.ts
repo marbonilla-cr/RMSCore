@@ -199,6 +199,17 @@ export const auditEvents = pgTable("audit_events", {
   metadata: jsonb("metadata"),
 });
 
+export const qboExportJobs = pgTable("qbo_export_jobs", {
+  id: serial("id").primaryKey(),
+  businessDate: text("business_date").notNull(),
+  status: text("status").notNull().default("PENDING"),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  errorMessage: text("error_message"),
+  qboRefs: jsonb("qbo_refs"),
+  retryCount: integer("retry_count").notNull().default(0),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
@@ -215,6 +226,7 @@ export const insertCashSessionSchema = createInsertSchema(cashSessions).omit({ i
 export const insertSplitAccountSchema = createInsertSchema(splitAccounts).omit({ id: true });
 export const insertSplitItemSchema = createInsertSchema(splitItems).omit({ id: true });
 export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true });
+export const insertQboExportJobSchema = createInsertSchema(qboExportJobs).omit({ id: true });
 
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -249,6 +261,8 @@ export type InsertSalesLedgerItem = typeof salesLedgerItems.$inferInsert;
 export type SalesLedgerItem = typeof salesLedgerItems.$inferSelect;
 export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
 export type AuditEvent = typeof auditEvents.$inferSelect;
+export type InsertQboExportJob = z.infer<typeof insertQboExportJobSchema>;
+export type QboExportJob = typeof qboExportJobs.$inferSelect;
 
 // Login schema
 export const loginSchema = z.object({

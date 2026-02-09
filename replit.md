@@ -11,7 +11,7 @@ Restaurant management system (PWA) for a small restaurant (20-30 concurrent orde
 - **Auth**: Session-based (express-session + memorystore)
 
 ## User Roles
-- **MANAGER**: Full access to all modules + admin panel
+- **MANAGER**: Full access to all modules + admin panel + void/reopen
 - **WAITER**: Table management, order taking, QR acceptance
 - **KITCHEN**: KDS (Kitchen Display System)
 - **CASHIER**: POS / Cash register
@@ -40,17 +40,25 @@ Restaurant management system (PWA) for a small restaurant (20-30 concurrent orde
 - `GET/POST/PATCH /api/admin/products` - Product CRUD
 - `GET/POST/PATCH /api/admin/payment-methods` - Payment method CRUD
 - `GET/POST/PATCH /api/admin/users` - User CRUD
-- `GET /api/waiter/tables` - Tables with order status
+- `GET /api/waiter/tables` - Tables with order status (includes lastSentToKitchenAt)
 - `POST /api/waiter/tables/:id/send-round` - Send items to kitchen
 - `POST /api/waiter/qr-submissions/:id/accept` - Accept QR order
 - `GET /api/qr/:tableCode/menu` - QR menu
-- `POST /api/qr/:tableCode/submit` - QR order submission
+- `POST /api/qr/:tableCode/submit` - QR order submission (30s rate limit per table)
 - `GET /api/kds/tickets/:type` - KDS tickets (active/history)
 - `PATCH /api/kds/items/:id` - Update kitchen item status
 - `GET /api/pos/tables` - Tables ready for payment
-- `POST /api/pos/pay` - Process payment
-- `GET/POST /api/pos/cash-session/*` - Cash session management
-- `GET /api/dashboard` - Dashboard metrics
+- `POST /api/pos/pay` - Process full payment
+- `GET /api/pos/orders/:orderId/payments` - Get payments for an order
+- `GET /api/pos/orders/:orderId/splits` - Get split accounts for order
+- `POST /api/pos/orders/:orderId/splits` - Create split account
+- `DELETE /api/pos/splits/:id` - Delete split account
+- `POST /api/pos/pay-split` - Pay a split account
+- `POST /api/pos/void-payment/:id` - Void payment (MANAGER only)
+- `POST /api/pos/reopen/:orderId` - Reopen paid order (MANAGER only)
+- `GET/POST /api/pos/cash-session/*` - Cash session management (close includes totalsByMethod)
+- `GET/POST /api/qbo/export` - QBO export job (MANAGER only)
+- `GET /api/dashboard` - Dashboard metrics (includes ledgerDetails, paymentMethodTotals)
 
 ## WebSocket Events
 - `qr_submission_created` - New QR order
@@ -58,8 +66,20 @@ Restaurant management system (PWA) for a small restaurant (20-30 concurrent orde
 - `kitchen_ticket_created` - New kitchen ticket
 - `kitchen_item_status_changed` - Item status update
 - `payment_completed` - Payment processed
+- `payment_voided` - Payment voided
 - `table_status_changed` - Table status change
 
 ## Database Schema
 All tables defined in `shared/schema.ts` using Drizzle ORM:
-users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events
+users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, qbo_export_jobs
+
+## Recent Changes
+- Added QR swipe-to-confirm gesture (drag 85% threshold)
+- Added split accounts (division de cuenta) with full POS UI
+- Added void payment and reopen order (manager only)
+- Added cash closing totals by payment method
+- Added QBO export validation stub
+- Added QR rate limiting (30s cooldown per table)
+- Added dashboard drill-down with expandable rows
+- Added tables page time columns and column selector
+- Added payment method totals to dashboard from backend

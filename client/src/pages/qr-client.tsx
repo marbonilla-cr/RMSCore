@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   UtensilsCrossed, ShoppingCart, Plus, Minus, Trash2,
-  Send, Loader2, Check, ChevronRight,
+  Send, Loader2, Check, ChevronRight, ArrowRight,
 } from "lucide-react";
 
 interface QRProduct {
@@ -89,9 +89,37 @@ export default function QRClientPage() {
     return acc;
   }, {});
 
-  const handleSlide = (e: React.TouchEvent | React.MouseEvent) => {
-    // Simplified swipe: use button instead for MVP
-  };
+  const swipeTrackRef = useRef<HTMLDivElement>(null);
+  const swipeThumbRef = useRef<HTMLDivElement>(null);
+  const [swipeX, setSwipeX] = useState(0);
+  const [swiping, setSwiping] = useState(false);
+  const startXRef = useRef(0);
+  const trackWidthRef = useRef(0);
+  const SWIPE_THRESHOLD = 0.85;
+
+  const handleSwipeStart = useCallback((clientX: number) => {
+    if (!swipeTrackRef.current) return;
+    setSwiping(true);
+    startXRef.current = clientX;
+    trackWidthRef.current = swipeTrackRef.current.offsetWidth - 56;
+  }, []);
+
+  const handleSwipeMove = useCallback((clientX: number) => {
+    if (!swiping) return;
+    const dx = clientX - startXRef.current;
+    const clamped = Math.max(0, Math.min(dx, trackWidthRef.current));
+    setSwipeX(clamped);
+  }, [swiping]);
+
+  const handleSwipeEnd = useCallback(() => {
+    if (!swiping) return;
+    setSwiping(false);
+    const pct = swipeX / trackWidthRef.current;
+    if (pct >= SWIPE_THRESHOLD && !submitMutation.isPending) {
+      submitMutation.mutate();
+    }
+    setSwipeX(0);
+  }, [swiping, swipeX, submitMutation]);
 
   if (tableLoading) {
     return (
@@ -236,19 +264,43 @@ export default function QRClientPage() {
                 <p className="text-xs text-center text-muted-foreground">
                   Confirme la solicitud de este pedido
                 </p>
-                <Button
-                  className="w-full"
-                  onClick={() => submitMutation.mutate()}
-                  disabled={submitMutation.isPending}
-                  data-testid="button-confirm-order"
-                >
-                  {submitMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                  ) : (
-                    <Send className="w-4 h-4 mr-1" />
-                  )}
-                  Confirmar Pedido
-                </Button>
+                {submitMutation.isPending ? (
+                  <div className="flex items-center justify-center py-3">
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                    <span className="text-sm font-medium">Enviando pedido...</span>
+                  </div>
+                ) : (
+                  <div
+                    ref={swipeTrackRef}
+                    className="relative h-14 rounded-md bg-primary/10 overflow-hidden select-none"
+                    data-testid="swipe-confirm-track"
+                    onTouchStart={(e) => handleSwipeStart(e.touches[0].clientX)}
+                    onTouchMove={(e) => handleSwipeMove(e.touches[0].clientX)}
+                    onTouchEnd={handleSwipeEnd}
+                    onMouseDown={(e) => handleSwipeStart(e.clientX)}
+                    onMouseMove={(e) => handleSwipeMove(e.clientX)}
+                    onMouseUp={handleSwipeEnd}
+                    onMouseLeave={handleSwipeEnd}
+                  >
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <span className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                        Desliza para confirmar <ArrowRight className="w-4 h-4" />
+                      </span>
+                    </div>
+                    <div
+                      className="absolute inset-y-0 left-0 bg-primary/20 rounded-md transition-none"
+                      style={{ width: swipeX + 56 }}
+                    />
+                    <div
+                      ref={swipeThumbRef}
+                      className="absolute top-1 bottom-1 left-1 w-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground cursor-grab active:cursor-grabbing"
+                      style={{ transform: `translateX(${swipeX}px)`, transition: swiping ? 'none' : 'transform 0.3s ease' }}
+                      data-testid="swipe-confirm-thumb"
+                    >
+                      <Send className="w-4 h-4" />
+                    </div>
+                  </div>
+                )}
                 <Button variant="outline" className="w-full" onClick={() => setConfirmSlide(false)}>
                   Volver al Menú
                 </Button>
