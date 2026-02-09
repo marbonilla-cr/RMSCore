@@ -14,7 +14,7 @@ import { wsManager } from "@/lib/ws";
 import {
   ArrowLeft, Plus, Send, Check, Trash2, Loader2,
   ShoppingBag, AlertCircle, ChefHat, Minus, Search, X,
-  ClipboardList, Ban, ChevronDown, ChevronRight, Clock,
+  ClipboardList, Ban, ChevronDown, ChevronRight, Clock, Eye,
 } from "lucide-react";
 import type { Product, Category } from "@shared/schema";
 
