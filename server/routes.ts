@@ -136,7 +136,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/admin/tables/:id/qr", async (req, res) => {
+  app.get("/api/admin/tables/:id/qr", requireRole("MANAGER"), async (req, res) => {
     const table = await storage.getTable(parseInt(req.params.id));
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     const host = req.headers.host || "localhost:5000";
@@ -151,7 +151,7 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: CATEGORIES ====================
-  app.get("/api/admin/categories", requireAuth, async (_req, res) => {
+  app.get("/api/admin/categories", requireRole("MANAGER"), async (_req, res) => {
     res.json(await storage.getAllCategories());
   });
 
@@ -174,7 +174,7 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: PRODUCTS ====================
-  app.get("/api/admin/products", requireAuth, async (_req, res) => {
+  app.get("/api/admin/products", requireRole("MANAGER"), async (_req, res) => {
     res.json(await storage.getAllProducts());
   });
 
@@ -197,7 +197,7 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: PAYMENT METHODS ====================
-  app.get("/api/admin/payment-methods", requireAuth, async (_req, res) => {
+  app.get("/api/admin/payment-methods", requireRole("MANAGER"), async (_req, res) => {
     res.json(await storage.getAllPaymentMethods());
   });
 
@@ -291,13 +291,13 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.get("/api/waiter/tables/:id", requireAuth, async (req, res) => {
+  app.get("/api/waiter/tables/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const table = await storage.getTable(parseInt(req.params.id));
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     res.json(table);
   });
 
-  app.get("/api/tables/:id/current", requireAuth, async (req, res) => {
+  app.get("/api/tables/:id/current", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const tableId = parseInt(req.params.id);
       const table = await storage.getTable(tableId);
@@ -323,7 +323,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/waiter/tables/:id/order", requireAuth, async (req, res) => {
+  app.get("/api/waiter/tables/:id/order", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const tableId = parseInt(req.params.id);
     const order = await storage.getOpenOrderForTable(tableId);
     if (!order) return res.json({ order: null, items: [], pendingSubmissions: [] });
@@ -340,7 +340,7 @@ export async function registerRoutes(
     res.json({ order, items, pendingSubmissions: subsWithItems });
   });
 
-  app.get("/api/waiter/menu", requireAuth, async (_req, res) => {
+  app.get("/api/waiter/menu", requireRole("WAITER", "MANAGER"), async (_req, res) => {
     res.json(await storage.getActiveProducts());
   });
 
@@ -931,7 +931,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: ORDER PAYMENTS ====================
-  app.get("/api/pos/orders/:orderId/payments", requireAuth, async (req, res) => {
+  app.get("/api/pos/orders/:orderId/payments", requireRole("CASHIER", "MANAGER"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId as string);
       const orderPayments = await storage.getPaymentsForOrder(orderId);
@@ -948,7 +948,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: SPLIT ACCOUNTS ====================
-  app.get("/api/pos/orders/:orderId/splits", requireAuth, async (req, res) => {
+  app.get("/api/pos/orders/:orderId/splits", requireRole("CASHIER", "MANAGER"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId);
       const splits = await storage.getSplitAccountsForOrder(orderId);

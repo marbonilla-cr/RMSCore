@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Switch, Route, useLocation, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -46,43 +47,54 @@ function canAccessRoute(role: string, path: string): boolean {
   return false;
 }
 
-function RoleGuard({ children }: { children: React.ReactNode }) {
+function useRoleGuard(allowedRoles: string[]) {
   const { user } = useAuth();
-  const [location] = useLocation();
+  const allowed = user ? allowedRoles.includes(user.role) : false;
 
-  if (!user) return null;
+  useEffect(() => {
+    if (user && !allowed) {
+      const target = getDefaultRoute(user.role);
+      window.location.replace(target);
+    }
+  }, [user, allowed]);
 
-  const role = user.role || "WAITER";
-
-  if (location === "/" && role !== "WAITER" && role !== "MANAGER") {
-    return <Redirect to={getDefaultRoute(role)} />;
-  }
-
-  if (!canAccessRoute(role, location)) {
-    return <Redirect to={getDefaultRoute(role)} />;
-  }
-
-  return <>{children}</>;
+  return allowed;
 }
 
 function AuthenticatedRouter() {
+  const { user } = useAuth();
+
+  if (!user) return null;
+
+  const role = user.role;
+  const path = window.location.pathname;
+
+  if (path === "/" && role !== "WAITER" && role !== "MANAGER") {
+    window.location.replace(getDefaultRoute(role));
+    return null;
+  }
+
+  if (!canAccessRoute(role, path)) {
+    const target = getDefaultRoute(role);
+    window.location.replace(target);
+    return null;
+  }
+
   return (
-    <RoleGuard>
-      <Switch>
-        <Route path="/" component={TablesPage} />
-        <Route path="/tables" component={TablesPage} />
-        <Route path="/tables/:id" component={TableDetailPage} />
-        <Route path="/kds" component={KDSPage} />
-        <Route path="/pos" component={POSPage} />
-        <Route path="/dashboard" component={DashboardPage} />
-        <Route path="/admin/tables" component={AdminTablesPage} />
-        <Route path="/admin/categories" component={AdminCategoriesPage} />
-        <Route path="/admin/products" component={AdminProductsPage} />
-        <Route path="/admin/payment-methods" component={AdminPaymentMethodsPage} />
-        <Route path="/admin/users" component={AdminUsersPage} />
-        <Route component={NotFound} />
-      </Switch>
-    </RoleGuard>
+    <Switch>
+      <Route path="/" component={TablesPage} />
+      <Route path="/tables" component={TablesPage} />
+      <Route path="/tables/:id" component={TableDetailPage} />
+      <Route path="/kds" component={KDSPage} />
+      <Route path="/pos" component={POSPage} />
+      <Route path="/dashboard" component={DashboardPage} />
+      <Route path="/admin/tables" component={AdminTablesPage} />
+      <Route path="/admin/categories" component={AdminCategoriesPage} />
+      <Route path="/admin/products" component={AdminProductsPage} />
+      <Route path="/admin/payment-methods" component={AdminPaymentMethodsPage} />
+      <Route path="/admin/users" component={AdminUsersPage} />
+      <Route component={NotFound} />
+    </Switch>
   );
 }
 
