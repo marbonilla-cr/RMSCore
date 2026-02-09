@@ -1,0 +1,96 @@
+NUEVA FUNCIONALIDAD (AGREGAR SIN TOCAR LO EXISTENTE):
+Agregar “Anulación de ítems” desde la pantalla de Mesas (salonero) con trazabilidad completa. No cambiar flujos actuales de QR/KDS/POS/pagos. No refactor masivo. Solo agregar esta capacidad con el mínimo impacto.
+
+OBJETIVO:
+- Permitir que un SALONERO pueda “borrar” ítems de una orden, pero en realidad NO se borran: se mueven a una “Orden de Anulación” única (por mesa/orden) con registro de:
+  - quién anuló
+  - de qué mesa venía
+  - qué ítem se anuló
+  - cuándo
+- Solo GERENTE puede eliminar definitivamente un ítem (hard delete).
+
+REGLAS DE NEGOCIO:
+1) Salonero:
+   - Puede “Eliminar” ítems solo desde Pantalla de Mesas (detalle de mesa/orden).
+   - La acción del salonero NO borra: mueve a “Anulaciones”.
+   - Debe quedar trazabilidad: mesa, orden original, ítem, qty, precio, usuario, timestamp, razón (opcional).
+2) Gerente:
+   - Puede “Eliminar definitivamente” (hard delete) ítems (solo si se requiere), desde la misma pantalla o admin.
+   - Hard delete debe estar protegido por permisos y dejar audit_event.
+3) Estado del ítem anulado:
+   - Al mover a anulaciones, el ítem debe dejar de contar para el total de la orden y para el cobro.
+   - No debe aparecer en KDS como pendiente (si aún no fue enviado).
+   - Si ya fue enviado a KDS, la acción debe:
+     a) marcar el ítem como ANULADO (no borrar),
+     b) opcional: generar un “ticket de anulación”/nota para cocina (solo si ya estaba en preparación) — si esto es complejo, dejar como “NO hacer” por ahora y solo marcar anulado para reportes.
+4) Inventario/porciones:
+   - Si las porciones se rebajan al “enviar a cocina”, entonces anular antes de enviar NO requiere revertir.
+   - Si ya estaba rebajado, al anular debe revertir porciones (solo si hoy la lógica lo soporta). Si no, registrar TODO y dejar revert como mejora posterior. No romper el sistema.
+5) Reportes/Ledger:
+   - Todo movimiento a anulación debe quedar registrable para auditoría y reportes.
+   - No alterar el ledger histórico ya pagado: si la orden ya está pagada, la anulación debe estar bloqueada para salonero; solo gerente con flujo especial (si aplica) o se deja fuera.
+
+MODELO DE DATOS (MINIMO, SIN ROMPER):
+Agregar una entidad/tabla para anulaciones por ítem (recomendado):
+- voided_items:
+  - id
+  - business_date
+  - table_id, table_name snapshot
+  - order_id (orden original)
+  - order_item_id (ítem original)
+  - product_id, product_name snapshot, category snapshot
+  - qty_voided
+  - unit_price snapshot
+  - void_reason (nullable)
+  - voided_by_user_id
+  - voided_by_role
+  - voided_at
+  - status (VOIDED)
+  - notes (nullable)
+
+Y en order_items agregar campo:
+- status: ACTIVE | VOIDED
+- voided_at, voided_by_user_id (opcionales)
+(para que el ítem deje de sumar sin borrarlo)
+
+AUDITORÍA (OBLIGATORIO):
+Registrar audit_event en cada acción:
+- action: ORDER_ITEM_VOIDED
+- metadata: table_id, order_id, item_id, qty, user_id, role, reason
+Y para hard delete:
+- action: ORDER_ITEM_DELETED_HARD
+- metadata similar
+
+ENDPOINTS / PERMISOS:
+- Salonero: POST /orders/{order_id}/items/{item_id}/void
+  - valida permiso: orders:edit_item (o nuevo permiso orders:void_item)
+  - valida que la orden no esté PAID (si lo está => 403)
+  - ejecuta:
+    - marcar order_item.status=VOIDED (o reducir qty si soporta parcial)
+    - insertar voided_items row
+    - audit_event
+    - recalcular total de orden (excluyendo VOIDED)
+- Gerente: DELETE /orders/{order_id}/items/{item_id}
+  - valida permiso: orders:hard_delete_item
+  - solo si reglas lo permiten
+  - audit_event
+
+UI (SOLO EN MESAS / DETALLE DE ORDEN):
+1) En cada ítem de la orden, agregar acción:
+- Para SALONERO: botón “Anular” (no “Eliminar”)
+- Para GERENTE: botón “Eliminar definitivo” adicional
+2) Al anular:
+- pedir confirmación simple (modal liviano)
+- (opcional) campo “motivo” corto (puede ser dropdown o texto)
+3) Luego:
+- el ítem desaparece de la lista activa (o se muestra tachado en sección “Anulaciones”)
+- agregar una sección/accordion “Anulaciones” en la misma pantalla mostrando:
+  - producto, qty, quién anuló, hora, mesa
+4) No tocar POS: POS solo debe ver ítems ACTIVE para cobrar.
+
+Criterios de aceptación:
+- Salonero anula un ítem => no aparece en total ni cobro, aparece en sección “Anulaciones” con quién/hora/mesa.
+- Gerente puede hacer hard delete (y queda audit_event).
+- La anulación no rompe KDS/POS ni genera inconsistencias.
+- Todo queda trazable (voided_items + audit_event).
+- Se cumple: “solo desde Mesas”, salonero solo mueve a anulaciones, gerente puede borrar definitivo.
