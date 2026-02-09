@@ -120,19 +120,45 @@ export async function registerRoutes(
 
   app.post("/api/admin/tables", requireRole("MANAGER"), async (req, res) => {
     try {
-      const table = await storage.createTable(req.body);
+      const { tableCode, tableName, active, sortOrder } = req.body;
+      if (!tableCode || typeof tableCode !== "string" || !tableCode.trim()) {
+        return res.status(400).json({ message: "El código de mesa es requerido" });
+      }
+      if (!tableName || typeof tableName !== "string" || !tableName.trim()) {
+        return res.status(400).json({ message: "El nombre de mesa es requerido" });
+      }
+      const data = {
+        tableCode: tableCode.trim(),
+        tableName: tableName.trim(),
+        active: active !== undefined ? Boolean(active) : true,
+        sortOrder: typeof sortOrder === "number" ? sortOrder : parseInt(String(sortOrder)) || 0,
+      };
+      const table = await storage.createTable(data);
       res.json(table);
     } catch (err: any) {
-      res.status(400).json({ message: err.message });
+      const msg = err.message || "Error al crear mesa";
+      if (msg.includes("unique constraint")) {
+        return res.status(400).json({ message: `Ya existe una mesa con el código "${req.body.tableCode}"` });
+      }
+      res.status(400).json({ message: msg });
     }
   });
 
   app.patch("/api/admin/tables/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const table = await storage.updateTable(parseInt(req.params.id), req.body);
+      const updates: any = {};
+      if (req.body.tableCode !== undefined) updates.tableCode = String(req.body.tableCode).trim();
+      if (req.body.tableName !== undefined) updates.tableName = String(req.body.tableName).trim();
+      if (req.body.active !== undefined) updates.active = Boolean(req.body.active);
+      if (req.body.sortOrder !== undefined) updates.sortOrder = typeof req.body.sortOrder === "number" ? req.body.sortOrder : parseInt(String(req.body.sortOrder)) || 0;
+      const table = await storage.updateTable(parseInt(req.params.id), updates);
       res.json(table);
     } catch (err: any) {
-      res.status(400).json({ message: err.message });
+      const msg = err.message || "Error al actualizar mesa";
+      if (msg.includes("unique constraint")) {
+        return res.status(400).json({ message: `Ya existe una mesa con el código "${req.body.tableCode}"` });
+      }
+      res.status(400).json({ message: msg });
     }
   });
 
