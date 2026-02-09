@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   LayoutDashboard,
-  UtensilsCrossed,
   ChefHat,
   CreditCard,
   Settings,
@@ -26,6 +25,7 @@ import {
   Wallet,
   LogOut,
 } from "lucide-react";
+import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
 const waiterItems = [
   { title: "Mesas", url: "/tables", icon: Grid3x3 },
@@ -75,10 +75,8 @@ export function AppSidebar() {
       <SidebarContent>
         <div className="p-4 pb-2">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-              <UtensilsCrossed className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <span className="font-bold text-sm">Restaurante</span>
+            <img src={logoImg} alt="La Antigua Lechería" className="w-8 h-8 rounded-full object-cover" data-testid="img-sidebar-logo" />
+            <span className="font-bold text-sm">La Antigua Lechería</span>
           </div>
         </div>
 

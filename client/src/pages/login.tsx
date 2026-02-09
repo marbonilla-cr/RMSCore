@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { UtensilsCrossed, LogIn, Loader2 } from "lucide-react";
+import { LogIn, Loader2 } from "lucide-react";
+import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -30,10 +31,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center mb-4">
-            <UtensilsCrossed className="w-8 h-8 text-primary-foreground" />
-          </div>
-          <h1 className="text-2xl font-bold" data-testid="text-app-title">Sistema Restaurante</h1>
+          <img src={logoImg} alt="La Antigua Lechería" className="w-28 h-28 rounded-full object-cover mb-4" data-testid="img-logo" />
+          <h1 className="text-2xl font-bold" data-testid="text-app-title">La Antigua Lechería</h1>
           <p className="text-muted-foreground text-sm mt-1">Ingrese sus credenciales para continuar</p>
         </div>
 
