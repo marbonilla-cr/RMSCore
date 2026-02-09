@@ -56,16 +56,19 @@ export async function registerRoutes(
   const sessionSecret = process.env.SESSION_SECRET || "restaurant-secret-key-dev";
   const MemoryStore = (await import("memorystore")).default(session);
 
+  app.set("trust proxy", 1);
+
   app.use(
     session({
       secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
       store: new MemoryStore({ checkPeriod: 86400000 }),
+      proxy: true,
       cookie: {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
-        secure: false,
+        secure: "auto" as any,
         sameSite: "lax",
       },
     })
