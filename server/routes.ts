@@ -606,14 +606,14 @@ export async function registerRoutes(
     }
   });
 
-  // ==================== WAITER: VOID ORDER ITEM ====================
+  // ==================== WAITER: VOID ORDER ITEM (full or partial) ====================
   app.post("/api/waiter/orders/:orderId/items/:itemId/void", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId);
       const itemId = parseInt(req.params.itemId);
       const userId = req.session.userId!;
       const user = (req as any).user;
-      const { reason } = req.body;
+      const { reason, qtyToVoid } = req.body;
 
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
@@ -631,16 +631,27 @@ export async function registerRoutes(
         return res.status(400).json({ message: "El ítem ya está anulado" });
       }
 
+      const effectiveQty = (typeof qtyToVoid === "number" && qtyToVoid > 0 && qtyToVoid <= item.qty) ? qtyToVoid : item.qty;
+      const isFullVoid = effectiveQty >= item.qty;
+
       const table = await storage.getTable(order.tableId);
       const product = await storage.getProduct(item.productId);
       const allCategories = await storage.getAllCategories();
       const category = allCategories.find(c => c.id === product?.categoryId);
 
-      await storage.updateOrderItem(itemId, {
-        status: "VOIDED",
-        voidedAt: new Date(),
-        voidedByUserId: userId,
-      });
+      if (isFullVoid) {
+        await storage.updateOrderItem(itemId, {
+          status: "VOIDED",
+          voidedAt: new Date(),
+          voidedByUserId: userId,
+        });
+        await storage.updateSalesLedgerItems(itemId, { status: "VOIDED" });
+      } else {
+        const newQty = item.qty - effectiveQty;
+        await storage.updateOrderItem(itemId, { qty: newQty });
+        const newSubtotal = (Number(item.productPriceSnapshot) * newQty).toFixed(2);
+        await storage.updateSalesLedgerItems(itemId, { qty: newQty, lineSubtotal: newSubtotal });
+      }
 
       await storage.createVoidedItem({
         businessDate: order.businessDate || getBusinessDate(),
@@ -651,20 +662,18 @@ export async function registerRoutes(
         productId: item.productId,
         productNameSnapshot: item.productNameSnapshot,
         categorySnapshot: category?.name || null,
-        qtyVoided: item.qty,
+        qtyVoided: effectiveQty,
         unitPriceSnapshot: item.productPriceSnapshot,
         voidReason: reason || null,
         voidedByUserId: userId,
         voidedByRole: user.role,
         status: "VOIDED",
-        notes: null,
+        notes: isFullVoid ? null : `Parcial: ${effectiveQty} de ${item.qty}`,
       });
 
       if (item.sentToKitchenAt) {
-        await storage.incrementPortions(item.productId, item.qty);
+        await storage.incrementPortions(item.productId, effectiveQty);
       }
-
-      await storage.updateSalesLedgerItems(itemId, { status: "VOIDED" });
 
       await storage.recalcOrderTotal(orderId);
 
@@ -678,7 +687,9 @@ export async function registerRoutes(
         metadata: {
           orderId,
           productName: item.productNameSnapshot,
-          qty: item.qty,
+          qtyVoided: effectiveQty,
+          originalQty: item.qty,
+          partial: !isFullVoid,
           reason: reason || null,
           role: user.role,
         },

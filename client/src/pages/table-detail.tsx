@@ -41,6 +41,7 @@ export default function TableDetailPage() {
   const [badgePop, setBadgePop] = useState(false);
   const [voidDialogItem, setVoidDialogItem] = useState<any>(null);
   const [voidReason, setVoidReason] = useState("");
+  const [voidQty, setVoidQty] = useState(1);
   const [showVoidedSection, setShowVoidedSection] = useState(false);
   const bottomBarRef = useRef<HTMLDivElement>(null);
   const badgeRef = useRef<HTMLSpanElement>(null);
@@ -119,14 +120,15 @@ export default function TableDetailPage() {
   });
 
   const voidItemMutation = useMutation({
-    mutationFn: async ({ orderId, itemId, reason }: { orderId: number; itemId: number; reason: string }) => {
-      return apiRequest("POST", `/api/waiter/orders/${orderId}/items/${itemId}/void`, { reason });
+    mutationFn: async ({ orderId, itemId, reason, qtyToVoid: qty }: { orderId: number; itemId: number; reason: string; qtyToVoid: number }) => {
+      return apiRequest("POST", `/api/waiter/orders/${orderId}/items/${itemId}/void`, { reason, qtyToVoid: qty });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       setVoidDialogItem(null);
       setVoidReason("");
+      setVoidQty(1);
       toast({ title: "Ítem anulado" });
     },
     onError: (err: any) => {
@@ -454,7 +456,7 @@ export default function TableDetailPage() {
                                   size="icon"
                                   variant="ghost"
                                   className="text-destructive"
-                                  onClick={() => { setVoidDialogItem(item); setVoidReason(""); }}
+                                  onClick={() => { setVoidDialogItem(item); setVoidReason(""); setVoidQty(item.qty); }}
                                   data-testid={`button-void-item-${item.id}`}
                                 >
                                   <Ban className="w-4 h-4" />
@@ -498,6 +500,7 @@ export default function TableDetailPage() {
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0 flex-1">
                             <p className="text-base line-through text-muted-foreground">{vi.qtyVoided}x {vi.productNameSnapshot}</p>
+                            {vi.notes && <p className="text-xs text-muted-foreground italic">{vi.notes}</p>}
                             {vi.voidReason && <p className="text-xs text-muted-foreground">Motivo: {vi.voidReason}</p>}
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
@@ -677,15 +680,46 @@ export default function TableDetailPage() {
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50" data-testid="void-dialog-overlay">
           <Card className="w-[90%] max-w-sm mx-4">
             <CardHeader className="pb-2">
-              <h3 className="font-bold text-base">Anular Ítem</h3>
+              <h3 className="font-bold text-base">Ajustar / Anular Ítem</h3>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-sm">
-                {voidDialogItem.qty}x <strong>{voidDialogItem.productNameSnapshot}</strong>
+            <CardContent className="space-y-4">
+              <p className="text-sm font-medium">
+                <strong>{voidDialogItem.productNameSnapshot}</strong>
               </p>
-              <p className="text-sm text-muted-foreground">
-                ₡{Number(Number(voidDialogItem.productPriceSnapshot) * voidDialogItem.qty).toLocaleString()}
-              </p>
+              <div className="flex items-center justify-between gap-2 p-3 rounded-md bg-muted/50">
+                <span className="text-sm text-muted-foreground">Cantidad a anular</span>
+                <div className="flex items-center gap-3">
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    onClick={() => setVoidQty(q => Math.max(1, q - 1))}
+                    disabled={voidQty <= 1}
+                    data-testid="button-void-qty-minus"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </Button>
+                  <span className="text-lg font-bold w-8 text-center" data-testid="text-void-qty">{voidQty}</span>
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    onClick={() => setVoidQty(q => Math.min(voidDialogItem.qty, q + 1))}
+                    disabled={voidQty >= voidDialogItem.qty}
+                    data-testid="button-void-qty-plus"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">
+                  {voidQty < voidDialogItem.qty
+                    ? `Quedan: ${voidDialogItem.qty - voidQty} unidad${(voidDialogItem.qty - voidQty) !== 1 ? "es" : ""}`
+                    : "Anulación total"}
+                </span>
+                <span className="font-medium">
+                  ₡{Number(Number(voidDialogItem.productPriceSnapshot) * voidQty).toLocaleString()}
+                </span>
+              </div>
               <Textarea
                 placeholder="Motivo de anulación (opcional)"
                 value={voidReason}
@@ -698,7 +732,7 @@ export default function TableDetailPage() {
                 <Button
                   variant="outline"
                   className="flex-1"
-                  onClick={() => { setVoidDialogItem(null); setVoidReason(""); }}
+                  onClick={() => { setVoidDialogItem(null); setVoidReason(""); setVoidQty(1); }}
                   data-testid="button-cancel-void"
                 >
                   Cancelar
@@ -709,13 +743,13 @@ export default function TableDetailPage() {
                   disabled={voidItemMutation.isPending}
                   onClick={() => {
                     if (activeOrder) {
-                      voidItemMutation.mutate({ orderId: activeOrder.id, itemId: voidDialogItem.id, reason: voidReason });
+                      voidItemMutation.mutate({ orderId: activeOrder.id, itemId: voidDialogItem.id, reason: voidReason, qtyToVoid: voidQty });
                     }
                   }}
                   data-testid="button-confirm-void"
                 >
                   {voidItemMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Ban className="w-4 h-4 mr-1" />}
-                  Anular
+                  {voidQty < voidDialogItem.qty ? `Anular ${voidQty}` : "Anular todo"}
                 </Button>
               </div>
             </CardContent>
