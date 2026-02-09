@@ -16,14 +16,17 @@ import { useToast } from "@/hooks/use-toast";
 import {
   CreditCard, DollarSign, Loader2, Receipt,
   Banknote, ArrowLeft, Lock, Unlock,
-  Split, Trash2, XCircle, Mail,
+  Split, Trash2, XCircle, Mail, Printer,
 } from "lucide-react";
 import type { PaymentMethod } from "@shared/schema";
+import { printReceipt } from "@/lib/print-receipt";
 
 interface POSTable {
   id: number;
   tableName: string;
   orderId: number;
+  dailyNumber?: number | null;
+  globalNumber?: number | null;
   totalAmount: string;
   itemCount: number;
   items: { id: number; productNameSnapshot: string; qty: number; productPriceSnapshot: string; status: string }[];
@@ -125,6 +128,31 @@ export default function POSPage() {
     return `Subcuenta ${letters[idx % letters.length]}`;
   };
 
+  const { data: businessCfg } = useQuery<any>({
+    queryKey: ["/api/business-config"],
+  });
+
+  const triggerReceiptPrint = (items: { name: string; qty: number; price: number; total: number }[], total: number, pmName: string, tblName: string, ordNum: string, clName?: string) => {
+    const cfg = businessCfg || {};
+    printReceipt({
+      businessName: cfg.businessName || "",
+      legalName: cfg.legalName || "",
+      taxId: cfg.taxId || "",
+      address: cfg.address || "",
+      phone: cfg.phone || "",
+      email: cfg.email || "",
+      legalNote: cfg.legalNote || "",
+      orderNumber: ordNum,
+      tableName: tblName,
+      items,
+      totalAmount: total,
+      paymentMethod: pmName,
+      clientName: clName || undefined,
+      cashierName: user?.displayName || undefined,
+      date: new Date().toLocaleString("es-CR"),
+    });
+  };
+
   const payMutation = useMutation({
     mutationFn: async () => {
       return apiRequest("POST", "/api/pos/pay", {
@@ -136,6 +164,17 @@ export default function POSPage() {
       });
     },
     onSuccess: () => {
+      const tbl = selectedTable!;
+      const pm = paymentMethods.find((m) => m.id === parseInt(paymentMethodId));
+      const receiptItems = tbl.items.filter(i => i.status !== "VOIDED").map((i) => ({
+        name: i.productNameSnapshot,
+        qty: i.qty,
+        price: Number(i.productPriceSnapshot),
+        total: Number(i.productPriceSnapshot) * i.qty,
+      }));
+      const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
+      triggerReceiptPrint(receiptItems, Number(tbl.totalAmount), pm?.paymentName || "", tbl.tableName, orderNum, clientName || undefined);
+
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
@@ -161,6 +200,23 @@ export default function POSPage() {
       });
     },
     onSuccess: () => {
+      const tbl = selectedTable!;
+      const pm = paymentMethods.find((m) => m.id === parseInt(paymentMethodId));
+      const split = splits.find((s) => s.id === payingSplitId);
+      let receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
+      let total = 0;
+      if (split && tbl) {
+        receiptItems = split.items.map((si) => {
+          const oi = tbl.items.find((i) => i.id === si.orderItemId);
+          const price = oi ? Number(oi.productPriceSnapshot) : 0;
+          const qty = oi ? oi.qty : 0;
+          return { name: oi?.productNameSnapshot || "", qty, price, total: price * qty };
+        });
+        total = receiptItems.reduce((s, i) => s + i.total, 0);
+      }
+      const orderNum = tbl?.globalNumber ? `G-${tbl.globalNumber}` : (tbl?.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl?.orderId}`);
+      triggerReceiptPrint(receiptItems, total, pm?.paymentName || "", tbl?.tableName || "", `${orderNum} (${split?.label || ""})`, clientName || undefined);
+
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });

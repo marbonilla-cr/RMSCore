@@ -24,6 +24,8 @@ import {
   ShoppingBag,
   Wallet,
   LogOut,
+  Building2,
+  Printer,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
@@ -49,6 +51,8 @@ const adminItems = [
   { title: "Productos", url: "/admin/products", icon: ShoppingBag },
   { title: "Métodos de Pago", url: "/admin/payment-methods", icon: Wallet },
   { title: "Usuarios", url: "/admin/users", icon: Users },
+  { title: "Config. Negocio", url: "/admin/business-config", icon: Building2 },
+  { title: "Impresoras", url: "/admin/printers", icon: Printer },
 ];
 
 export function AppSidebar() {

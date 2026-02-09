@@ -20,6 +20,8 @@ import AdminCategoriesPage from "@/pages/admin/categories";
 import AdminProductsPage from "@/pages/admin/products";
 import AdminPaymentMethodsPage from "@/pages/admin/payment-methods";
 import AdminUsersPage from "@/pages/admin/users";
+import AdminBusinessConfigPage from "@/pages/admin/business-config";
+import AdminPrintersPage from "@/pages/admin/printers";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRoute(role: string): string {
@@ -93,6 +95,8 @@ function AuthenticatedRouter() {
       <Route path="/admin/products" component={AdminProductsPage} />
       <Route path="/admin/payment-methods" component={AdminPaymentMethodsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
+      <Route path="/admin/business-config" component={AdminBusinessConfigPage} />
+      <Route path="/admin/printers" component={AdminPrintersPage} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -4,7 +4,7 @@ import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
 import * as storage from "./storage";
-import { loginSchema } from "@shared/schema";
+import { loginSchema, insertBusinessConfigSchema, insertPrinterSchema } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -273,6 +273,69 @@ export async function registerRoutes(
       if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
       const { password: _, ...safeUser } = user;
       res.json(safeUser);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== ADMIN: BUSINESS CONFIG ====================
+  app.get("/api/admin/business-config", requireRole("MANAGER"), async (_req, res) => {
+    const config = await storage.getBusinessConfig();
+    res.json(config || { businessName: "", legalName: "", taxId: "", address: "", phone: "", email: "", legalNote: "" });
+  });
+
+  app.put("/api/admin/business-config", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const parsed = insertBusinessConfigSchema.parse(req.body);
+      const config = await storage.upsertBusinessConfig(parsed);
+      res.json(config);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // Also expose business config for receipt printing (CASHIER + WAITER + MANAGER)
+  app.get("/api/business-config", requireAuth, async (_req, res) => {
+    const config = await storage.getBusinessConfig();
+    res.json(config || { businessName: "", legalName: "", taxId: "", address: "", phone: "", email: "", legalNote: "" });
+  });
+
+  // ==================== ADMIN: PRINTERS ====================
+  app.get("/api/admin/printers", requireRole("MANAGER"), async (_req, res) => {
+    res.json(await storage.getAllPrinters());
+  });
+
+  app.post("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const parsed = insertPrinterSchema.parse({
+        ...req.body,
+        port: Number(req.body.port) || 9100,
+        paperWidth: Number(req.body.paperWidth) || 80,
+      });
+      const printer = await storage.createPrinter(parsed);
+      res.json(printer);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/printers/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const data = { ...req.body };
+      if (data.port !== undefined) data.port = Number(data.port) || 9100;
+      if (data.paperWidth !== undefined) data.paperWidth = Number(data.paperWidth) || 80;
+      const printer = await storage.updatePrinter(parseInt(req.params.id), data);
+      if (!printer) return res.status(404).json({ message: "Impresora no encontrada" });
+      res.json(printer);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/admin/printers/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      await storage.deletePrinter(parseInt(req.params.id));
+      res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
@@ -1064,6 +1127,8 @@ export async function registerRoutes(
         id: t.id,
         tableName: t.tableName,
         orderId: order.id,
+        dailyNumber: order.dailyNumber,
+        globalNumber: order.globalNumber,
         totalAmount: order.totalAmount,
         itemCount: activeItems.length,
         items: activeItems,

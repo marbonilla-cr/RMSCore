@@ -291,6 +291,38 @@ export type AuditEvent = typeof auditEvents.$inferSelect;
 export type InsertQboExportJob = z.infer<typeof insertQboExportJobSchema>;
 export type QboExportJob = typeof qboExportJobs.$inferSelect;
 
+// Business config (singleton row)
+export const businessConfig = pgTable("business_config", {
+  id: serial("id").primaryKey(),
+  businessName: text("business_name").notNull().default(""),
+  legalName: text("legal_name").notNull().default(""),
+  taxId: text("tax_id").notNull().default(""),
+  address: text("address").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  email: text("email").notNull().default(""),
+  legalNote: text("legal_note").notNull().default(""),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const printers = pgTable("printers", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  type: text("type").notNull().default("caja"),
+  ipAddress: text("ip_address").notNull().default(""),
+  port: integer("port").notNull().default(9100),
+  paperWidth: integer("paper_width").notNull().default(80),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBusinessConfigSchema = createInsertSchema(businessConfig).omit({ id: true, updatedAt: true });
+export const insertPrinterSchema = createInsertSchema(printers).omit({ id: true, createdAt: true });
+
+export type InsertBusinessConfig = z.infer<typeof insertBusinessConfigSchema>;
+export type BusinessConfig = typeof businessConfig.$inferSelect;
+export type InsertPrinter = z.infer<typeof insertPrinterSchema>;
+export type Printer = typeof printers.$inferSelect;
+
 // Login schema
 export const loginSchema = z.object({
   username: z.string().min(1),

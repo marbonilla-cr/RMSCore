@@ -136,6 +136,14 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 - Added GET /api/qr/:tableCode/my-items endpoint (client sees previous QR items)
 - Added "Tu Pedido" section in QR client UI showing previously sent items with status
 
+- Added business_config table and admin page for business legal data (name, tax ID, address, phone, email, legal note for tiquete electrónico)
+- Added printers table and admin page for configuring multiple printers (name, type: caja/cocina/bar, IP, port, paper width, enabled)
+- Added thermal receipt auto-print on POS payment: generates 80mm formatted receipt with business data, items, totals, payment method, legal note
+- Added GET/PUT /api/admin/business-config and full CRUD /api/admin/printers endpoints
+- Added GET /api/business-config endpoint for receipt printing (authenticated access)
+- POS tables response now includes dailyNumber/globalNumber for proper order numbering on receipts
+- Receipt uses global/daily order number format (G-XXX or D-XXX)
+
 ## Email Configuration (Optional)
 To enable email ticket sending, set these environment variables:
 - SMTP_HOST: SMTP server hostname

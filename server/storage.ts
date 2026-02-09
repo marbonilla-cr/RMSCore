@@ -5,6 +5,7 @@ import {
   orders, orderItems, qrSubmissions, kitchenTickets, kitchenTicketItems,
   payments, cashSessions, splitAccounts, splitItems,
   salesLedgerItems, auditEvents, qboExportJobs, voidedItems,
+  businessConfig, printers,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -21,6 +22,8 @@ import {
   type InsertSplitItem,
   type InsertQboExportJob,
   type InsertVoidedItem,
+  type InsertBusinessConfig, type BusinessConfig,
+  type InsertPrinter, type Printer,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -706,4 +709,47 @@ export async function seedData() {
   ]);
 
   console.log("Seed data created successfully");
+}
+
+// Business Config
+export async function getBusinessConfig(): Promise<BusinessConfig | undefined> {
+  const [config] = await db.select().from(businessConfig).limit(1);
+  return config;
+}
+
+export async function upsertBusinessConfig(data: InsertBusinessConfig): Promise<BusinessConfig> {
+  const existing = await getBusinessConfig();
+  if (existing) {
+    const [updated] = await db.update(businessConfig)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(businessConfig.id, existing.id))
+      .returning();
+    return updated;
+  }
+  const [created] = await db.insert(businessConfig).values(data).returning();
+  return created;
+}
+
+// Printers
+export async function getAllPrinters(): Promise<Printer[]> {
+  return db.select().from(printers).orderBy(asc(printers.name));
+}
+
+export async function getPrinter(id: number): Promise<Printer | undefined> {
+  const [printer] = await db.select().from(printers).where(eq(printers.id, id));
+  return printer;
+}
+
+export async function createPrinter(data: InsertPrinter): Promise<Printer> {
+  const [printer] = await db.insert(printers).values(data).returning();
+  return printer;
+}
+
+export async function updatePrinter(id: number, data: Partial<InsertPrinter>): Promise<Printer> {
+  const [printer] = await db.update(printers).set(data).where(eq(printers.id, id)).returning();
+  return printer;
+}
+
+export async function deletePrinter(id: number): Promise<void> {
+  await db.delete(printers).where(eq(printers.id, id));
 }
