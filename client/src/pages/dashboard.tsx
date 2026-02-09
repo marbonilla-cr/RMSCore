@@ -17,10 +17,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   LayoutDashboard, ShoppingBag, DollarSign,
   TrendingUp, XCircle, Clock, ChevronDown, ChevronRight,
-  FileText, Loader2, CreditCard, Eye,
+  FileText, Loader2, CreditCard, Eye, History, CalendarDays, ArrowLeft,
 } from "lucide-react";
 
 interface LedgerDetail {
@@ -429,24 +437,87 @@ function ExpandableRow({
   );
 }
 
+type PeriodType = "day" | "month" | "year" | "range" | "hour";
+
+function getToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getDateRange(period: PeriodType, dateValue: string): { from: string; to: string } {
+  if (period === "day") {
+    return { from: dateValue, to: dateValue };
+  }
+  if (period === "month") {
+    const [y, m] = dateValue.split("-");
+    const lastDay = new Date(Number(y), Number(m), 0).getDate();
+    return { from: `${y}-${m}-01`, to: `${y}-${m}-${String(lastDay).padStart(2, "0")}` };
+  }
+  if (period === "year") {
+    return { from: `${dateValue}-01-01`, to: `${dateValue}-12-31` };
+  }
+  return { from: dateValue, to: dateValue };
+}
+
+function formatPeriodLabel(period: PeriodType, dateValue: string): string {
+  if (period === "day") {
+    try {
+      return new Date(dateValue + "T12:00:00").toLocaleDateString("es-CR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    } catch { return dateValue; }
+  }
+  if (period === "month") {
+    const [y, m] = dateValue.split("-");
+    try {
+      const d = new Date(Number(y), Number(m) - 1, 15);
+      return d.toLocaleDateString("es-CR", { month: "long", year: "numeric" });
+    } catch { return dateValue; }
+  }
+  if (period === "year") {
+    return `Año ${dateValue}`;
+  }
+  return dateValue;
+}
+
 export default function DashboardPage() {
+  const [historicalMode, setHistoricalMode] = useState(false);
+  const [period, setPeriod] = useState<PeriodType>("day");
+  const [dateValue, setDateValue] = useState(getToday());
+  const [rangeFrom, setRangeFrom] = useState(getToday());
+  const [rangeTo, setRangeTo] = useState(getToday());
+  const [hourFrom, setHourFrom] = useState(0);
+  const [hourTo, setHourTo] = useState(23);
+
+  const queryParams = (() => {
+    if (!historicalMode) return "";
+    if (period === "range") {
+      return `?from=${rangeFrom}&to=${rangeTo}`;
+    }
+    if (period === "hour") {
+      return `?from=${dateValue}&to=${dateValue}&hourFrom=${hourFrom}&hourTo=${hourTo}`;
+    }
+    const { from, to } = getDateRange(period, dateValue);
+    return `?from=${from}&to=${to}`;
+  })();
+
   useEffect(() => {
+    if (historicalMode) return;
     wsManager.connect();
-    const unsub1 = wsManager.on("order_updated", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
-    });
-    const unsub2 = wsManager.on("payment_completed", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
-    });
-    const unsub3 = wsManager.on("payment_voided", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
-    });
+    const invalidate = () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard", ""] });
+    };
+    const unsub1 = wsManager.on("order_updated", invalidate);
+    const unsub2 = wsManager.on("payment_completed", invalidate);
+    const unsub3 = wsManager.on("payment_voided", invalidate);
     return () => { unsub1(); unsub2(); unsub3(); };
-  }, []);
+  }, [historicalMode]);
 
   const { data, isLoading } = useQuery<DashboardData>({
-    queryKey: ["/api/dashboard"],
-    refetchInterval: 30000,
+    queryKey: ["/api/dashboard", queryParams],
+    queryFn: async () => {
+      const res = await fetch(`/api/dashboard${queryParams}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Error cargando datos");
+      return res.json();
+    },
+    refetchInterval: historicalMode ? false : 30000,
   });
 
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
@@ -480,6 +551,33 @@ export default function DashboardPage() {
     setExpandedCard(prev => prev === key ? null : key);
   };
 
+  const handlePeriodChange = (newPeriod: PeriodType) => {
+    setPeriod(newPeriod);
+    if (newPeriod === "day") {
+      setDateValue(getToday());
+    } else if (newPeriod === "month") {
+      setDateValue(getToday().slice(0, 7));
+    } else if (newPeriod === "year") {
+      setDateValue(String(new Date().getFullYear()));
+    } else if (newPeriod === "range") {
+      setRangeFrom(getToday());
+      setRangeTo(getToday());
+    } else if (newPeriod === "hour") {
+      setDateValue(getToday());
+      setHourFrom(0);
+      setHourTo(23);
+    }
+  };
+
+  const currentYears = (() => {
+    const curr = new Date().getFullYear();
+    const years: string[] = [];
+    for (let y = curr; y >= curr - 5; y--) {
+      years.push(String(y));
+    }
+    return years;
+  })();
+
   if (isLoading) {
     return (
       <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -498,13 +596,149 @@ export default function DashboardPage() {
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="mb-6">
-        <h1
-          className="text-2xl font-bold flex items-center gap-2"
-          data-testid="text-page-title"
-        >
-          <LayoutDashboard className="w-6 h-6" /> Dashboard
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">Resumen del día</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1
+            className="text-2xl font-bold flex items-center gap-2"
+            data-testid="text-page-title"
+          >
+            <LayoutDashboard className="w-6 h-6" /> Dashboard
+          </h1>
+          {!historicalMode ? (
+            <Button
+              variant="outline"
+              onClick={() => { setHistoricalMode(true); handlePeriodChange("day"); }}
+              data-testid="button-historical"
+            >
+              <History className="w-4 h-4 mr-2" />
+              Histórico
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => setHistoricalMode(false)}
+              data-testid="button-back-today"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Volver a Hoy
+            </Button>
+          )}
+        </div>
+        {!historicalMode ? (
+          <p className="text-sm text-muted-foreground mt-1">Resumen del día</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-muted-foreground" />
+              <Select value={period} onValueChange={(v) => handlePeriodChange(v as PeriodType)}>
+                <SelectTrigger className="w-[140px]" data-testid="select-period">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="day">Por Día</SelectItem>
+                  <SelectItem value="month">Por Mes</SelectItem>
+                  <SelectItem value="year">Por Año</SelectItem>
+                  <SelectItem value="hour">Por Hora</SelectItem>
+                  <SelectItem value="range">Rango</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {period === "day" && (
+                <Input
+                  type="date"
+                  value={dateValue}
+                  onChange={(e) => setDateValue(e.target.value)}
+                  className="w-[180px]"
+                  data-testid="input-date-day"
+                />
+              )}
+
+              {period === "month" && (
+                <Input
+                  type="month"
+                  value={dateValue}
+                  onChange={(e) => setDateValue(e.target.value)}
+                  className="w-[180px]"
+                  data-testid="input-date-month"
+                />
+              )}
+
+              {period === "year" && (
+                <Select value={dateValue} onValueChange={setDateValue}>
+                  <SelectTrigger className="w-[120px]" data-testid="select-year">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currentYears.map(y => (
+                      <SelectItem key={y} value={y}>{y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {period === "hour" && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Input
+                    type="date"
+                    value={dateValue}
+                    onChange={(e) => setDateValue(e.target.value)}
+                    className="w-[160px]"
+                    data-testid="input-date-hour"
+                  />
+                  <span className="text-sm text-muted-foreground">De:</span>
+                  <Select value={String(hourFrom)} onValueChange={(v) => setHourFrom(Number(v))}>
+                    <SelectTrigger className="w-[90px]" data-testid="select-hour-from">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <SelectItem key={i} value={String(i)}>{String(i).padStart(2, "0")}:00</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <span className="text-sm text-muted-foreground">A:</span>
+                  <Select value={String(hourTo)} onValueChange={(v) => setHourTo(Number(v))}>
+                    <SelectTrigger className="w-[90px]" data-testid="select-hour-to">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <SelectItem key={i} value={String(i)}>{String(i).padStart(2, "0")}:59</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {period === "range" && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm text-muted-foreground">Desde:</span>
+                  <Input
+                    type="date"
+                    value={rangeFrom}
+                    onChange={(e) => setRangeFrom(e.target.value)}
+                    className="w-[160px]"
+                    data-testid="input-range-from"
+                  />
+                  <span className="text-sm text-muted-foreground">Hasta:</span>
+                  <Input
+                    type="date"
+                    value={rangeTo}
+                    onChange={(e) => setRangeTo(e.target.value)}
+                    className="w-[160px]"
+                    data-testid="input-range-to"
+                  />
+                </div>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground" data-testid="text-period-label">
+              {period === "range"
+                ? `${rangeFrom} al ${rangeTo}`
+                : period === "hour"
+                  ? `${dateValue} de ${String(hourFrom).padStart(2, "0")}:00 a ${String(hourTo).padStart(2, "0")}:59`
+                  : formatPeriodLabel(period, dateValue)}
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -626,7 +860,7 @@ export default function DashboardPage() {
           <CardContent>
             {!data?.topProducts || data.topProducts.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">
-                Sin datos para hoy
+                Sin datos para este período
               </p>
             ) : (
               <div className="space-y-1">
@@ -659,7 +893,7 @@ export default function DashboardPage() {
           <CardContent>
             {!data?.topCategories || data.topCategories.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">
-                Sin datos para hoy
+                Sin datos para este período
               </p>
             ) : (
               <div className="space-y-1">
@@ -694,7 +928,7 @@ export default function DashboardPage() {
           <CardContent>
             {paymentTotals.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">
-                Sin pagos registrados hoy
+                Sin pagos registrados en este período
               </p>
             ) : (
               <div className="space-y-3">

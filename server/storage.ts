@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, desc, asc, sql, isNull, ne, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, sql, isNull, ne, inArray, gte, lte } from "drizzle-orm";
 import {
   users, tables, categories, products, paymentMethods,
   orders, orderItems, qrSubmissions, kitchenTickets, kitchenTicketItems,
@@ -467,11 +467,57 @@ export async function getLedgerItemsForDate(date: string, status?: string) {
     .where(eq(salesLedgerItems.businessDate, date));
 }
 
-// Dashboard queries
-export async function getDashboardData() {
-  const today = getBusinessDate();
+export async function getLedgerItemsForDateRange(fromDate: string, toDate: string) {
+  return db.select().from(salesLedgerItems)
+    .where(and(gte(salesLedgerItems.businessDate, fromDate), lte(salesLedgerItems.businessDate, toDate)));
+}
 
-  const allOrders = await db.select().from(orders).where(eq(orders.businessDate, today));
+export async function getPaymentsByDateRangeGrouped(fromDate: string, toDate: string) {
+  const allPayments = await db.select().from(payments)
+    .where(and(gte(payments.businessDate, fromDate), lte(payments.businessDate, toDate), eq(payments.status, "PAID")));
+  const allMethods = await db.select().from(paymentMethods);
+  const methodMap = new Map(allMethods.map(m => [m.id, m.paymentName]));
+
+  const grouped: Record<string, number> = {};
+  for (const p of allPayments) {
+    const methodName = methodMap.get(p.paymentMethodId) || "Otro";
+    grouped[methodName] = (grouped[methodName] || 0) + Number(p.amount);
+  }
+  return grouped;
+}
+
+// Dashboard queries
+export async function getDashboardData(dateFrom?: string, dateTo?: string, hourFrom?: number, hourTo?: number) {
+  const today = getBusinessDate();
+  const fromDate = dateFrom || today;
+  const toDate = dateTo || fromDate;
+
+  let allOrders = fromDate === toDate
+    ? await db.select().from(orders).where(eq(orders.businessDate, fromDate))
+    : await db.select().from(orders).where(
+        and(gte(orders.businessDate, fromDate), lte(orders.businessDate, toDate))
+      );
+
+  const validHourFilter = hourFrom !== undefined && hourTo !== undefined
+    && !isNaN(hourFrom) && !isNaN(hourTo) && hourFrom >= 0 && hourTo <= 23 && hourFrom <= hourTo;
+
+  const filterByHour = <T extends { [key: string]: any }>(items: T[], dateField: string): T[] => {
+    if (!validHourFilter) return items;
+    return items.filter(item => {
+      const dateVal = item[dateField];
+      if (!dateVal) return false;
+      const h = new Date(dateVal).getHours();
+      return h >= hourFrom! && h <= hourTo!;
+    });
+  };
+
+  if (validHourFilter) {
+    allOrders = allOrders.filter(o => {
+      if (!o.openedAt) return false;
+      const h = new Date(o.openedAt).getHours();
+      return h >= hourFrom! && h <= hourTo!;
+    });
+  }
 
   const openOrders = allOrders.filter(o => o.status === "OPEN" || o.status === "IN_KITCHEN" || o.status === "READY");
   const paidOrders = allOrders.filter(o => o.status === "PAID");
@@ -479,8 +525,12 @@ export async function getDashboardData() {
 
   const sumAmount = (orders: any[]) => orders.reduce((s, o) => s + Number(o.totalAmount || 0), 0);
 
-  const ledgerItems = await db.select().from(salesLedgerItems)
-    .where(and(eq(salesLedgerItems.businessDate, today), eq(salesLedgerItems.status, "PAID")));
+  let ledgerItems = fromDate === toDate
+    ? await db.select().from(salesLedgerItems)
+        .where(and(eq(salesLedgerItems.businessDate, fromDate), eq(salesLedgerItems.status, "PAID")))
+    : await db.select().from(salesLedgerItems)
+        .where(and(gte(salesLedgerItems.businessDate, fromDate), lte(salesLedgerItems.businessDate, toDate), eq(salesLedgerItems.status, "PAID")));
+  ledgerItems = filterByHour(ledgerItems, "paidAt");
 
   const productMap = new Map<string, { qty: number; amount: number }>();
   const categoryMap = new Map<string, { qty: number; amount: number }>();
@@ -505,8 +555,12 @@ export async function getDashboardData() {
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 10);
 
-  const todayVoidedItems = await db.select().from(voidedItems)
-    .where(eq(voidedItems.businessDate, today));
+  let todayVoidedItems = fromDate === toDate
+    ? await db.select().from(voidedItems).where(eq(voidedItems.businessDate, fromDate))
+    : await db.select().from(voidedItems).where(
+        and(gte(voidedItems.businessDate, fromDate), lte(voidedItems.businessDate, toDate))
+      );
+  todayVoidedItems = filterByHour(todayVoidedItems, "voidedAt");
   const voidedItemsCount = todayVoidedItems.reduce((s, v) => s + v.qtyVoided, 0);
   const voidedItemsAmount = todayVoidedItems.reduce((s, v) => s + (v.qtyVoided * Number(v.unitPriceSnapshot || 0)), 0);
 

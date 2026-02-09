@@ -94,6 +94,9 @@ All tables defined in `shared/schema.ts` using Drizzle ORM:
 users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, voided_items, qbo_export_jobs
 
 ## Recent Changes
+- Added dashboard historical mode: "Histórico" button with period filters (day, month, year, custom range)
+- Dashboard API accepts ?from=YYYY-MM-DD&to=YYYY-MM-DD query params for date range filtering
+- Added getLedgerItemsForDateRange and getPaymentsByDateRangeGrouped storage functions
 - Added order consecutives: dailyNumber (resets daily) and globalNumber (never resets, configurable start via ORDER_GLOBAL_START env var)
 - Dashboard drill-down: click summary cards (Open/Paid/Voided) to expand order lists; click order row to open detail dialog with items and payments
 - Added GET /api/dashboard/orders/:id endpoint for order detail (items + payments)

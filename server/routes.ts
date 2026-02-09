@@ -1533,11 +1533,20 @@ export async function registerRoutes(
   });
 
   // ==================== DASHBOARD ====================
-  app.get("/api/dashboard", requireRole("MANAGER"), async (_req, res) => {
-    const data = await storage.getDashboardData();
-    const today = getBusinessDate();
-    const ledgerDetails = await storage.getLedgerItemsForDate(today);
-    const paymentMethodTotals = await storage.getPaymentsByDateGrouped(today);
+  app.get("/api/dashboard", requireRole("MANAGER"), async (req, res) => {
+    const dateFrom = typeof req.query.from === "string" ? req.query.from : undefined;
+    const dateTo = typeof req.query.to === "string" ? req.query.to : undefined;
+    const hourFrom = typeof req.query.hourFrom === "string" ? parseInt(req.query.hourFrom) : undefined;
+    const hourTo = typeof req.query.hourTo === "string" ? parseInt(req.query.hourTo) : undefined;
+    const data = await storage.getDashboardData(dateFrom, dateTo, hourFrom, hourTo);
+    const resolvedFrom = dateFrom || getBusinessDate();
+    const resolvedTo = dateTo || resolvedFrom;
+    const ledgerDetails = resolvedFrom === resolvedTo
+      ? await storage.getLedgerItemsForDate(resolvedFrom)
+      : await storage.getLedgerItemsForDateRange(resolvedFrom, resolvedTo);
+    const paymentMethodTotals = resolvedFrom === resolvedTo
+      ? await storage.getPaymentsByDateGrouped(resolvedFrom)
+      : await storage.getPaymentsByDateRangeGrouped(resolvedFrom, resolvedTo);
     res.json({ ...data, ledgerDetails, paymentMethodTotals });
   });
 
