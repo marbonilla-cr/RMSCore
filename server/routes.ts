@@ -88,7 +88,10 @@ export async function registerRoutes(
       }
       req.session.userId = user.id;
       const { password: _, ...safeUser } = user;
-      res.json({ user: safeUser });
+      req.session.save((err) => {
+        if (err) return res.status(500).json({ message: "Error de sesión" });
+        res.json({ user: safeUser });
+      });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
