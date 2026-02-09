@@ -125,6 +125,21 @@ export default function TableDetailPage() {
         p.productCode.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
+  const productsByCategory = filteredProducts.reduce((acc: Record<number | string, Product[]>, p) => {
+    const catId = p.categoryId ?? "sin-categoria";
+    if (!acc[catId]) acc[catId] = [];
+    acc[catId].push(p);
+    return acc;
+  }, {});
+
+  const sortedCategoryIds = Object.keys(productsByCategory).sort((a, b) => {
+    if (a === "sin-categoria") return 1;
+    if (b === "sin-categoria") return -1;
+    const catA = categories.find((c) => c.id === Number(a));
+    const catB = categories.find((c) => c.id === Number(b));
+    return (catA?.sortOrder ?? 999) - (catB?.sortOrder ?? 999);
+  });
+
   const groupedItems = (orderDetail?.items || []).reduce((acc: Record<number, any[]>, item: any) => {
     const round = item.roundNumber || 1;
     if (!acc[round]) acc[round] = [];
@@ -304,29 +319,41 @@ export default function TableDetailPage() {
             className="mb-3"
             data-testid="input-search-menu"
           />
-          <div className="space-y-2">
-            {filteredProducts.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center justify-between p-3 rounded-md border hover-elevate cursor-pointer"
-                onClick={() => addToCart(p)}
-                data-testid={`menu-item-${p.id}`}
-              >
-                <div className="min-w-0">
-                  <p className="font-medium text-sm">{p.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{p.description}</p>
-                  {getCategoryName(p.categoryId) && (
-                    <Badge variant="secondary" className="text-xs mt-1">{getCategoryName(p.categoryId)}</Badge>
-                  )}
+          <div className="space-y-4">
+            {sortedCategoryIds.map((catId) => {
+              const catName = catId === "sin-categoria"
+                ? "Sin Categoría"
+                : categories.find((c) => c.id === Number(catId))?.name || "Categoría";
+              const items = productsByCategory[catId];
+              return (
+                <div key={catId}>
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1" data-testid={`text-category-${catId}`}>
+                    {catName}
+                  </h3>
+                  <div className="space-y-1.5">
+                    {items.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-center justify-between p-2.5 md:p-3 rounded-md border hover-elevate cursor-pointer"
+                        onClick={() => addToCart(p)}
+                        data-testid={`menu-item-${p.id}`}
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm">{p.name}</p>
+                          {p.description && <p className="text-xs text-muted-foreground truncate">{p.description}</p>}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="font-semibold text-sm">₡{Number(p.price).toLocaleString()}</span>
+                          {p.availablePortions !== null && (
+                            <Badge variant="secondary" className="text-xs">{p.availablePortions}</Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="font-semibold text-sm">₡{Number(p.price).toLocaleString()}</span>
-                  {p.availablePortions !== null && (
-                    <Badge variant="secondary" className="text-xs">{p.availablePortions}</Badge>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </DialogContent>
       </Dialog>
