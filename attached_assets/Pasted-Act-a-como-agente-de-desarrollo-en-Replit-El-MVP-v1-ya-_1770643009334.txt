@@ -1,0 +1,123 @@
+Actúa como agente de desarrollo en Replit. El MVP v1 ya funciona, pero necesitamos cerrar gaps críticos sin inventar diseños ni romper el flujo actual. Implementa las siguientes historias de usuario con criterios de aceptación y reglas técnicas.
+
+============================================================
+HISTORIA 1 — Roles y permisos reales (UI + API + DATA)
+============================================================
+Como dueño/gerente, quiero que cada usuario vea y pueda hacer SOLO lo que le corresponde según su rol, para proteger data crítica y evitar errores operativos.
+
+Roles:
+- Gerente (superadmin)
+- Salonero
+- Cocina
+- Caja
+- Cliente QR (sin login)
+
+Criterios de aceptación:
+1) Un salonero SOLO puede ver y usar: Mesas / Ordenes de mesa / aceptar orden QR / enviar a cocina / editar orden antes de pagar.
+2) Cocina SOLO puede ver y usar: KDS (mesa + items + notas + tiempos). NO debe ver precios, totales, pagos ni datos del cliente.
+3) Caja SOLO puede ver y usar: POS/Caja (cobrar, dividir cuenta, ver totales, registrar pagos, apertura/cierre con arqueo). NO debe ver admin de usuarios ni configuraciones sensibles.
+4) Gerente puede ver todo: Mesas, KDS, POS/Caja, Dashboard, Admin, Reportes, Auditoría.
+5) Cliente QR SOLO ve el flujo QR (menú, carrito, swipe confirmación, estado). NO ve módulos internos ni navegación.
+6) No basta con ocultar botones: si un usuario sin permiso intenta acceder por URL o API, el backend debe bloquearlo.
+7) Deben existir usuarios de prueba:
+   - gerente / 1234
+   - salonero / 1234
+   - cocina / 1234
+   - caja / 1234
+
+Reglas técnicas:
+- En backend, cada acción importante debe requerir permiso/rol (middleware).
+- Filtrar datos por rol: cocina nunca recibe precios/totales aunque intente “verlos”.
+- Registrar auditoría para acciones sensibles: aceptar QR, enviar cocina, cobrar, anular, apertura/cierre de caja, cambios de admin.
+
+============================================================
+HISTORIA 2 — Cliente QR debe ser ultra liviano (navegador base)
+============================================================
+Como cliente que abre desde QR, quiero una interfaz simple y liviana que corra bien en el navegador base del teléfono, para poder pedir sin fricción.
+
+Criterios de aceptación:
+1) En el módulo QR NO existe menú lateral ni navegación global.
+2) El cliente ve únicamente: menú, carrito/resumen, swipe de confirmación, estado del pedido.
+3) La pantalla carga rápido y no depende de efectos pesados (blur, overlays complejos, animaciones grandes).
+
+Reglas técnicas:
+- El layout/backoffice no debe renderizarse en el flujo QR.
+- Evitar dependencias pesadas en QR.
+
+============================================================
+HISTORIA 3 — Probar UI QR desde Admin Mesas
+============================================================
+Como gerente, quiero que al lado del QR de cada mesa exista un botón/link “Abrir UI Cliente”, para probar rápido el flujo QR sin escanear con el celular.
+
+Criterios de aceptación:
+1) En Admin Mesas, cada mesa muestra un botón/link que abre directamente el flujo cliente QR de esa mesa.
+2) Eso permite probar el UI del cliente en el navegador.
+
+============================================================
+HISTORIA 4 — Notificación al salonero cuando entra una orden QR
+============================================================
+Como salonero, quiero que cuando un cliente envía una orden por QR me salga un aviso pequeño, para enterarme y atender de inmediato.
+
+Criterios de aceptación:
+1) Cuando el cliente hace swipe y envía una orden/adicional, el salonero recibe en tiempo real un toast/popup pequeño: “Nueva orden QR en Mesa X”.
+2) La mesa se marca como “pendiente” (ej. resaltada) y ese estado persiste hasta que se atienda.
+3) No se requiere refresh manual.
+
+Reglas técnicas:
+- Emitir evento realtime al crear la orden/submisión QR pendiente.
+- El toast es solo aviso; el sistema debe tener data persistente para poder verla al abrir la mesa.
+
+============================================================
+HISTORIA 5 — Bug crítico: la orden QR NO puede desaparecer al abrir la mesa
+============================================================
+Como salonero, quiero que si una mesa tiene una orden QR pendiente, al abrir la mesa yo vea los ítems del cliente SIEMPRE, para poder revisarlos y aceptarlos sin perder información.
+
+Problema actual:
+- La mesa aparece resaltada, pero al abrir se ve en blanco, se pierde la orden.
+
+Criterios de aceptación:
+1) Si existe orden QR pendiente para una mesa, al abrirla se muestran los ítems del cliente.
+2) Si refresco el navegador estando dentro de la mesa, la información sigue apareciendo (no depende de memoria del frontend).
+3) No debe existir un estado “en blanco” que oculte data existente.
+
+Reglas técnicas:
+- La vista de mesa debe cargar su estado desde el backend (fuente de verdad).
+- Debe existir un endpoint o respuesta backend que devuelva en un solo payload:
+  - la orden activa de la mesa (si existe)
+  - ítems de la orden
+  - y la submisión QR pendiente con sus ítems
+- En frontend, mostrar “Cargando…” hasta recibir ese payload; no pintar vacío.
+
+============================================================
+HISTORIA 6 — Aceptar orden QR debe quedar conectado al flujo KDS que YA EXISTE (sin loose end)
+============================================================
+Como salonero, quiero que al aceptar la orden QR se envíe a cocina/KDS usando el flujo actual del sistema, para que no queden órdenes aceptadas sin ticket, ni tickets sin orden.
+
+Criterios de aceptación:
+1) Al presionar “Aceptar orden QR”, se genera/actualiza el ticket en KDS y aparece en cocina.
+2) Al aceptar, la mesa deja de estar “pendiente” y pasa al estado correcto (“en cocina”).
+3) Nunca puede quedar:
+   - submisión QR en ACCEPTED sin ticket en KDS
+   - ticket en KDS sin estar conectado a la orden/ítems correctos
+4) El sistema registra auditoría de la aceptación (usuario, mesa, hora, items).
+
+Reglas técnicas:
+- No duplicar lógica: reutilizar el servicio/flujo existente que ya crea tickets KDS.
+- Ejecutar aceptación como operación consistente (idealmente transacción):
+  - marcar submisión aceptada + timestamps
+  - confirmar/adjuntar ítems a la orden
+  - rebajar porciones si corresponde en el mismo punto que hoy
+  - crear ticket KDS usando el flujo actual
+  - emitir eventos realtime a KDS y a mesas
+
+============================================================
+ORDEN DE IMPLEMENTACIÓN (para no romper)
+============================================================
+1) Arreglar persistencia de data al abrir mesa (Historia 5)
+2) Notificación realtime al salonero (Historia 4)
+3) Conectar aceptación QR a KDS sin loose ends (Historia 6)
+4) Roles/permisos reales + usuarios de prueba (Historia 1)
+5) QR liviano sin navegación global (Historia 2)
+6) Botón “Abrir UI Cliente” en Admin Mesas (Historia 3)
+
+Entregar cada historia con evidencia de prueba (login con cada rol y validación visual/funcional).

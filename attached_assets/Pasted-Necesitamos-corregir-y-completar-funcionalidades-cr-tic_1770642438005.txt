@@ -1,0 +1,112 @@
+Necesitamos corregir y completar funcionalidades críticas del MVP v1. Enfocarse en: (1) control de roles/visibilidad, (2) herramientas de prueba QR, (3) notificación de nueva orden QR, (4) persistencia/consistencia de datos entre pantallas (bug: orden aparece roja pero al abrir se ve vacío).
+
+============================================================
+1) GESTIÓN DE ROLES + UI FILTRADA POR PERMISOS (OBLIGATORIO)
+============================================================
+Implementar control de acceso y visibilidad por rol para que cada usuario solo vea lo que puede ver.
+
+Roles mínimos:
+- MANAGER (superadmin)
+- WAITER
+- KITCHEN
+- CASHIER
+- QR_CLIENT (sin login; acceso solo a /qr/*)
+
+Requisitos:
+A) Navegación (sidebar/bottom nav) debe filtrar opciones por rol.
+   - WAITER: Mesas
+   - KITCHEN: KDS
+   - CASHIER: POS/Caja
+   - MANAGER: Mesas + KDS + POS + Dashboard + Admin
+   - QR_CLIENT: NO ver navegación global (solo flujo QR)
+B) Backend: proteger endpoints con middleware de permisos. No basta con ocultar UI.
+C) Agregar un “Switch role view / Impersonate” SOLO PARA MANAGER (opcional pero recomendado) o al menos permitir login con usuarios de cada rol para validar.
+D) Crear usuarios de prueba seed:
+   - gerente / 1234 (MANAGER)
+   - salonero / 1234 (WAITER)
+   - cocina / 1234 (KITCHEN)
+   - caja / 1234 (CASHIER)
+
+============================================================
+2) ADMIN MESAS: LINK DE PRUEBA PARA UI QR CLIENTE (OBLIGATORIO)
+============================================================
+En Admin > Mesas:
+- Además de mostrar/descargar el QR, agregar un botón/ícono “Abrir UI Cliente” que abra:
+  /qr/{table_code}
+Esto es solo para pruebas internas, no requiere login del cliente.
+
+============================================================
+3) NOTIFICACIÓN EN SALONERO CUANDO ENTRA ORDEN QR (OBLIGATORIO)
+============================================================
+Actualmente el cliente agrega ítems y no aparece el aviso de “nueva orden”.
+
+Requisitos:
+A) Cuando el cliente confirme (swipe) y se cree un QR submission PENDING:
+   - Emitir evento realtime websocket: qr_submission_created con:
+     table_id/table_code, table_name, submission_id, created_at, items_count
+B) En el módulo Mesas (salonero), al recibir ese evento:
+   - Mostrar un toast/popup pequeño (no modal) por 3–5 segundos:
+     “Nueva orden QR en {Mesa}”
+   - Sonido corto opcional (si ya hay sonidos globales)
+C) Persistencia: el toast no es suficiente, también debe actualizar el estado y la data en store/cache para que al abrir la mesa se vea la orden.
+
+============================================================
+4) BUG CRÍTICO: ORDEN QR SE PIERDE AL ABRIR LA MESA (OBLIGATORIO)
+============================================================
+Síntoma:
+- En lista de mesas: mesa aparece resaltada (roja) por orden QR pendiente.
+- Al tocar/abrir mesa: pantalla queda en blanco sin los ítems del cliente. Eso es incorrecto. Debe persistir y mostrar la orden completa (pendiente de aceptación).
+
+Objetivo:
+- La orden del cliente (QR submission/items) debe estar disponible en:
+  - Lista de Mesas (indicator)
+  - Vista de Mesa (detalle)
+  - Y no puede “desaparecer” por navegación, refresh, o cambio de pantalla.
+
+Requisitos técnicos:
+A) Single source of truth:
+   - Al abrir una mesa, hacer fetch al backend de:
+     - Order abierta (si existe) + order_items
+     - QR submissions pendientes de esa mesa + submission_items
+   Endpoint sugerido:
+     GET /api/tables/{table_id}/current
+     Response:
+       { table, activeOrder, orderItems, pendingQrSubmissions[] (con items) }
+B) Al recibir evento realtime qr_submission_created:
+   - Actualizar en memoria (state/store) el indicador de mesa y opcionalmente precargar data.
+   - Pero la fuente final debe ser el fetch al abrir mesa (no depender solo del socket).
+C) Aceptación:
+   - En la vista mesa debe mostrarse una sección “Orden QR pendiente” con items.
+   - Botón “Aceptar” que:
+     - puede permitir editar (si ya estaba definido)
+     - al aceptar: cambia status, crea kitchen ticket, rebaja porciones, etc.
+D) Evitar race conditions:
+   - Si al abrir la mesa el frontend navega antes de que termine el fetch, mostrar skeleton/loading.
+   - No renderizar “vacío” por default; renderizar estado “Cargando…” y luego data.
+E) Confirmar persistencia:
+   - Si recargo la página en /tables/{id}, debe seguir mostrando la orden QR pendiente (porque viene del backend).
+
+Checklist de debugging:
+- Verificar que el backend realmente guarda submission_items y los asocia a table/order.
+- Verificar que no se limpia state al cambiar de ruta.
+- Verificar que la lista y el detalle usan las mismas claves (table_id vs table_code).
+- Revisar logs: cuando se abre mesa, el response debe incluir la submission pendiente.
+
+============================================================
+5) ORDEN DE EJECUCIÓN (PARA NO ROMPER)
+============================================================
+1) Backend: endpoint GET /api/tables/{id}/current con activeOrder + pendingQrSubmissions
+2) Frontend: vista Mesa usar ese endpoint y mostrar pending QR items siempre
+3) Websocket: emitir qr_submission_created y toast en Mesas
+4) Roles UI + protección endpoints + usuarios seed
+5) Admin Mesas: botón “Abrir UI Cliente” (/qr/{table_code})
+
+============================================================
+6) CRITERIOS DE ACEPTACIÓN (NO NEGOCIABLE)
+============================================================
+- Login con salonero/cocina/caja muestra SOLO sus módulos.
+- Ruta /qr/* no muestra menú global.
+- En Admin Mesas hay botón para abrir /qr/{table_code}.
+- Cuando cliente hace swipe y envía: salonero recibe toast de “Nueva orden”.
+- Mesa resaltada por QR pendiente: al abrir mesa se ven los ítems del cliente SIEMPRE.
+- Refresh de la vista mesa no pierde la data (viene del backend).

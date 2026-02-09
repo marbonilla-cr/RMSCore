@@ -1,0 +1,42 @@
+============================================================
+4.C) ACEPTACIÓN QR: CONECTAR 100% AL FLUJO EXISTENTE DE KDS (SIN “LOOSE ENDS”)
+============================================================
+El flujo de envío a KDS al aceptar YA EXISTE. Esta tarea NO es reinventarlo, es conectarlo correctamente desde la vista de mesa y asegurar consistencia de estados y datos.
+
+Requisitos obligatorios al presionar “Aceptar orden QR”:
+
+1) Reutilizar el mismo servicio/función backend que ya crea el ticket KDS y sus items.
+   - NO duplicar lógica.
+   - Identificar el handler existente (ej: acceptQrSubmission / sendToKitchen / createKitchenTicketFromOrder).
+
+2) Operación transaccional (DB transaction):
+   Al aceptar, en una sola transacción:
+   a) Marcar qr_submission status = ACCEPTED, accepted_at, accepted_by_user_id
+   b) Convertir submission_items -> order_items (si aún no están como order_items) o marcar esos ítems como “confirmed” dentro de la orden
+   c) Rebajar available_portions (si aplica) exactamente en el mismo punto definido: al enviar a cocina / aceptar
+   d) Crear KitchenTicket + KitchenTicketItems usando el flujo existente
+   e) Actualizar estados/timestamps:
+      - order.first_sent_to_kds_at si es la primera vez
+      - order.last_sent_to_kds_at
+      - para cada ledger/order_item: sent_to_kitchen_at
+   f) Registrar audit_event: WAITER_ACCEPTED_QR (metadata: table_id, submission_id, items_count)
+
+3) Respuesta del endpoint de aceptación debe retornar:
+   - updated table current view payload (activeOrder + orderItems + pendingQrSubmissions[])
+   - kitchen_ticket_id (si se crea)
+   Esto permite que el frontend refresque y no quede en estado inconsistente.
+
+4) Realtime: emitir eventos para mantener UI sincronizada:
+   - Emitir kitchen_ticket_created a KDS con kitchen_ticket_id y mesa
+   - Emitir order_updated a saloneros (mesa) para reflejar que ya no está pendiente y ahora está en cocina
+
+5) Frontend (Vista Mesa):
+   - Al presionar Aceptar, debe:
+     a) mostrar loading (disabled button)
+     b) llamar endpoint accept
+     c) al éxito: refrescar estado local con response (no dejar “pantalla en blanco”)
+     d) remover highlight rojo de “pendiente” y reflejar estado “en cocina”
+   - Si falla: mostrar error y NO limpiar data.
+
+Criterio de aceptación:
+- “Aceptar” SIEMPRE genera/actualiza ticket KDS usando el flujo existente, y la UI queda consistente en: Mesas -> Mesa -> KDS. No debe quedar submission aceptada sin ticket, ni ticket sin orden/ledger consistente.
