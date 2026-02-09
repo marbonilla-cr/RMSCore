@@ -87,6 +87,8 @@ export const orderItems = pgTable("order_items", {
   qrSubmissionId: integer("qr_submission_id"),
   sentToKitchenAt: timestamp("sent_to_kitchen_at"),
   createdAt: timestamp("created_at").defaultNow(),
+  voidedAt: timestamp("voided_at"),
+  voidedByUserId: integer("voided_by_user_id"),
 });
 
 export const qrSubmissions = pgTable("qr_submissions", {
@@ -199,6 +201,26 @@ export const auditEvents = pgTable("audit_events", {
   metadata: jsonb("metadata"),
 });
 
+export const voidedItems = pgTable("voided_items", {
+  id: serial("id").primaryKey(),
+  businessDate: text("business_date").notNull(),
+  tableId: integer("table_id"),
+  tableNameSnapshot: text("table_name_snapshot"),
+  orderId: integer("order_id").notNull(),
+  orderItemId: integer("order_item_id").notNull(),
+  productId: integer("product_id"),
+  productNameSnapshot: text("product_name_snapshot"),
+  categorySnapshot: text("category_snapshot"),
+  qtyVoided: integer("qty_voided").notNull(),
+  unitPriceSnapshot: numeric("unit_price_snapshot", { precision: 10, scale: 2 }),
+  voidReason: text("void_reason"),
+  voidedByUserId: integer("voided_by_user_id").notNull(),
+  voidedByRole: text("voided_by_role").notNull(),
+  voidedAt: timestamp("voided_at").defaultNow(),
+  status: text("status").notNull().default("VOIDED"),
+  notes: text("notes"),
+});
+
 export const qboExportJobs = pgTable("qbo_export_jobs", {
   id: serial("id").primaryKey(),
   businessDate: text("business_date").notNull(),
@@ -217,7 +239,7 @@ export const insertCategorySchema = createInsertSchema(categories).omit({ id: tr
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
 export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({ id: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, openedAt: true, closedAt: true, totalAmount: true });
-export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, createdAt: true, sentToKitchenAt: true });
+export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, createdAt: true, sentToKitchenAt: true, voidedAt: true, voidedByUserId: true });
 export const insertQrSubmissionSchema = createInsertSchema(qrSubmissions).omit({ id: true, createdAt: true, acceptedAt: true });
 export const insertKitchenTicketSchema = createInsertSchema(kitchenTickets).omit({ id: true, createdAt: true, clearedAt: true });
 export const insertKitchenTicketItemSchema = createInsertSchema(kitchenTicketItems).omit({ id: true, prepStartedAt: true, readyAt: true });
@@ -225,6 +247,7 @@ export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true,
 export const insertCashSessionSchema = createInsertSchema(cashSessions).omit({ id: true, openedAt: true, closedAt: true });
 export const insertSplitAccountSchema = createInsertSchema(splitAccounts).omit({ id: true });
 export const insertSplitItemSchema = createInsertSchema(splitItems).omit({ id: true });
+export const insertVoidedItemSchema = createInsertSchema(voidedItems).omit({ id: true, voidedAt: true });
 export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true });
 export const insertQboExportJobSchema = createInsertSchema(qboExportJobs).omit({ id: true });
 
@@ -259,6 +282,8 @@ export type InsertSplitItem = z.infer<typeof insertSplitItemSchema>;
 export type SplitItem = typeof splitItems.$inferSelect;
 export type InsertSalesLedgerItem = typeof salesLedgerItems.$inferInsert;
 export type SalesLedgerItem = typeof salesLedgerItems.$inferSelect;
+export type InsertVoidedItem = z.infer<typeof insertVoidedItemSchema>;
+export type VoidedItem = typeof voidedItems.$inferSelect;
 export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type InsertQboExportJob = z.infer<typeof insertQboExportJobSchema>;

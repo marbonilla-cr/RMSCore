@@ -4,15 +4,17 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useRoute, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { wsManager } from "@/lib/ws";
 import {
   ArrowLeft, Plus, Send, Check, Trash2, Loader2,
   ShoppingBag, AlertCircle, ChefHat, Minus, Search, X,
-  ClipboardList, Eye,
+  ClipboardList, Ban, ChevronDown, ChevronRight, Clock,
 } from "lucide-react";
 import type { Product, Category } from "@shared/schema";
 
@@ -21,6 +23,7 @@ interface TableCurrentView {
   activeOrder: any;
   orderItems: any[];
   pendingQrSubmissions: any[];
+  voidedItems?: any[];
 }
 
 type ViewMode = "order" | "menu" | "cart";
@@ -29,14 +32,19 @@ export default function TableDetailPage() {
   const [, params] = useRoute("/tables/:id");
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const tableId = params?.id ? parseInt(params.id) : 0;
 
   const [viewMode, setViewMode] = useState<ViewMode>("order");
   const [cart, setCart] = useState<{ productId: number; name: string; price: string; qty: number; notes: string }[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [badgePop, setBadgePop] = useState(false);
+  const [voidDialogItem, setVoidDialogItem] = useState<any>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [showVoidedSection, setShowVoidedSection] = useState(false);
   const bottomBarRef = useRef<HTMLDivElement>(null);
   const badgeRef = useRef<HTMLSpanElement>(null);
+  const isManager = user?.role === "MANAGER";
 
   const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
     queryKey: ["/api/tables", tableId, "current"],
@@ -104,6 +112,36 @@ export default function TableDetailPage() {
       }
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       toast({ title: "Pedido QR aceptado y enviado a cocina" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const voidItemMutation = useMutation({
+    mutationFn: async ({ orderId, itemId, reason }: { orderId: number; itemId: number; reason: string }) => {
+      return apiRequest("POST", `/api/waiter/orders/${orderId}/items/${itemId}/void`, { reason });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      setVoidDialogItem(null);
+      setVoidReason("");
+      toast({ title: "Ítem anulado" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const hardDeleteMutation = useMutation({
+    mutationFn: async ({ orderId, itemId }: { orderId: number; itemId: number }) => {
+      return apiRequest("DELETE", `/api/waiter/orders/${orderId}/items/${itemId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      toast({ title: "Ítem eliminado definitivamente" });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -190,9 +228,10 @@ export default function TableDetailPage() {
   const pendingSubmissions = currentView?.pendingQrSubmissions || [];
   const activeOrder = currentView?.activeOrder;
   const tableData = currentView?.table;
+  const voidedItemsList = currentView?.voidedItems || [];
 
   const groupedItems = orderItems
-    .filter((item: any) => item.status !== "PENDING" || !item.qrSubmissionId)
+    .filter((item: any) => item.status !== "VOIDED" && (item.status !== "PENDING" || !item.qrSubmissionId))
     .reduce((acc: Record<number, any[]>, item: any) => {
       const round = item.roundNumber || 1;
       if (!acc[round]) acc[round] = [];
@@ -402,14 +441,25 @@ export default function TableDetailPage() {
                           Ronda {round} {(items as any[])[0]?.origin === "QR" ? "(QR)" : ""}
                         </p>
                         {(items as any[]).map((item: any) => (
-                          <div key={item.id} className="flex items-center justify-between py-2 border-b last:border-0">
+                          <div key={item.id} className="flex items-center justify-between py-2 border-b last:border-0 gap-2" data-testid={`order-item-${item.id}`}>
                             <div className="min-w-0 flex-1">
                               <p className="text-base font-medium">{item.qty}x {item.productNameSnapshot}</p>
                               {item.notes && <p className="text-sm text-muted-foreground">{item.notes}</p>}
                             </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="flex items-center gap-1 flex-shrink-0">
                               <span className="text-sm">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
                               {getStatusBadge(item.status)}
+                              {activeOrder?.status !== "PAID" && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="text-destructive"
+                                  onClick={() => { setVoidDialogItem(item); setVoidReason(""); }}
+                                  data-testid={`button-void-item-${item.id}`}
+                                >
+                                  <Ban className="w-4 h-4" />
+                                </Button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -427,7 +477,64 @@ export default function TableDetailPage() {
               </Card>
             )}
 
-            {Object.keys(groupedItems).length === 0 && pendingSubmissions.length === 0 && (
+            {voidedItemsList.length > 0 && (
+              <Card className="border-dashed">
+                <CardHeader className="pb-2">
+                  <button
+                    className="flex items-center gap-2 w-full text-left"
+                    onClick={() => setShowVoidedSection(!showVoidedSection)}
+                    data-testid="button-toggle-voided"
+                  >
+                    {showVoidedSection ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    <h2 className="font-bold text-base text-muted-foreground">
+                      Anulaciones ({voidedItemsList.length})
+                    </h2>
+                  </button>
+                </CardHeader>
+                {showVoidedSection && (
+                  <CardContent>
+                    {voidedItemsList.map((vi: any) => (
+                      <div key={vi.id} className="py-2 border-b last:border-0" data-testid={`voided-item-${vi.id}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-base line-through text-muted-foreground">{vi.qtyVoided}x {vi.productNameSnapshot}</p>
+                            {vi.voidReason && <p className="text-xs text-muted-foreground">Motivo: {vi.voidReason}</p>}
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className="text-sm text-muted-foreground line-through">
+                              ₡{Number(Number(vi.unitPriceSnapshot) * vi.qtyVoided).toLocaleString()}
+                            </span>
+                            <Badge variant="secondary">Anulado</Badge>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                          <Clock className="w-3 h-3" />
+                          <span>{vi.voidedByName}</span>
+                          <span>{vi.voidedAt ? new Date(vi.voidedAt).toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                        </div>
+                        {isManager && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive mt-1"
+                            onClick={() => {
+                              if (confirm("Eliminar definitivamente este ítem? Esta acción no se puede deshacer.")) {
+                                hardDeleteMutation.mutate({ orderId: vi.orderId, itemId: vi.orderItemId });
+                              }
+                            }}
+                            data-testid={`button-hard-delete-${vi.id}`}
+                          >
+                            <Trash2 className="w-3 h-3 mr-1" /> Eliminar definitivo
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </CardContent>
+                )}
+              </Card>
+            )}
+
+            {Object.keys(groupedItems).length === 0 && pendingSubmissions.length === 0 && voidedItemsList.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
                 <ShoppingBag className="w-12 h-12 mx-auto mb-3 opacity-30" />
                 <p className="text-base">No hay items en la orden</p>
@@ -566,6 +673,55 @@ export default function TableDetailPage() {
         </div>
       )}
 
+      {voidDialogItem && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50" data-testid="void-dialog-overlay">
+          <Card className="w-[90%] max-w-sm mx-4">
+            <CardHeader className="pb-2">
+              <h3 className="font-bold text-base">Anular Ítem</h3>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm">
+                {voidDialogItem.qty}x <strong>{voidDialogItem.productNameSnapshot}</strong>
+              </p>
+              <p className="text-sm text-muted-foreground">
+                ₡{Number(Number(voidDialogItem.productPriceSnapshot) * voidDialogItem.qty).toLocaleString()}
+              </p>
+              <Textarea
+                placeholder="Motivo de anulación (opcional)"
+                value={voidReason}
+                onChange={(e) => setVoidReason(e.target.value)}
+                className="text-base"
+                rows={2}
+                data-testid="input-void-reason"
+              />
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => { setVoidDialogItem(null); setVoidReason(""); }}
+                  data-testid="button-cancel-void"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  disabled={voidItemMutation.isPending}
+                  onClick={() => {
+                    if (activeOrder) {
+                      voidItemMutation.mutate({ orderId: activeOrder.id, itemId: voidDialogItem.id, reason: voidReason });
+                    }
+                  }}
+                  data-testid="button-confirm-void"
+                >
+                  {voidItemMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Ban className="w-4 h-4 mr-1" />}
+                  Anular
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

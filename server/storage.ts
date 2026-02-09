@@ -4,7 +4,7 @@ import {
   users, tables, categories, products, paymentMethods,
   orders, orderItems, qrSubmissions, kitchenTickets, kitchenTicketItems,
   payments, cashSessions, splitAccounts, splitItems,
-  salesLedgerItems, auditEvents, qboExportJobs,
+  salesLedgerItems, auditEvents, qboExportJobs, voidedItems,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -20,6 +20,7 @@ import {
   type InsertSplitAccount,
   type InsertSplitItem,
   type InsertQboExportJob,
+  type InsertVoidedItem,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -373,6 +374,35 @@ export async function getPaymentsByDateGrouped(date: string) {
     grouped[methodName] = (grouped[methodName] || 0) + Number(p.amount);
   }
   return grouped;
+}
+
+// Voided Items
+export async function createVoidedItem(data: InsertVoidedItem) {
+  const [item] = await db.insert(voidedItems).values(data).returning();
+  return item;
+}
+
+export async function getVoidedItemsForOrder(orderId: number) {
+  return db.select().from(voidedItems)
+    .where(eq(voidedItems.orderId, orderId))
+    .orderBy(desc(voidedItems.voidedAt));
+}
+
+export async function deleteOrderItem(id: number) {
+  await db.delete(voidedItems).where(eq(voidedItems.orderItemId, id));
+  await db.delete(orderItems).where(eq(orderItems.id, id));
+}
+
+export async function getOrderItem(id: number) {
+  const [item] = await db.select().from(orderItems).where(eq(orderItems.id, id));
+  return item;
+}
+
+export async function incrementPortions(productId: number, qty: number) {
+  const product = await getProduct(productId);
+  if (!product || product.availablePortions === null) return;
+  const newPortions = product.availablePortions + qty;
+  await db.update(products).set({ availablePortions: newPortions, active: true }).where(eq(products.id, productId));
 }
 
 // QBO Export Jobs

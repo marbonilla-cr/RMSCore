@@ -323,7 +323,20 @@ export async function registerRoutes(
         subsWithItems.push({ ...sub, items: subItems });
       }
 
-      res.json({ table, activeOrder: order, orderItems: items, pendingQrSubmissions: subsWithItems });
+      const voidedItemsList = await storage.getVoidedItemsForOrder(order.id);
+      const voidedUserIds = [...new Set(voidedItemsList.map(i => i.voidedByUserId))];
+      const voidedUsersMap = new Map<number, string>();
+      for (const uid of voidedUserIds) {
+        const u = await storage.getUser(uid);
+        if (u) voidedUsersMap.set(uid, u.displayName);
+      }
+      const voidedItemsWithNames = voidedItemsList.map(i => ({
+        ...i,
+        voidedAt: i.voidedAt?.toISOString() || null,
+        voidedByName: voidedUsersMap.get(i.voidedByUserId) || "Desconocido",
+      }));
+
+      res.json({ table, activeOrder: order, orderItems: items, pendingQrSubmissions: subsWithItems, voidedItems: voidedItemsWithNames });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -588,6 +601,162 @@ export async function registerRoutes(
         orderItems: updatedItems,
         pendingQrSubmissions: updatedSubsWithItems,
       });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== WAITER: VOID ORDER ITEM ====================
+  app.post("/api/waiter/orders/:orderId/items/:itemId/void", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const itemId = parseInt(req.params.itemId);
+      const userId = req.session.userId!;
+      const user = (req as any).user;
+      const { reason } = req.body;
+
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      if (order.status === "PAID") {
+        return res.status(403).json({ message: "No se puede anular ítems de una orden ya pagada" });
+      }
+
+      const item = await storage.getOrderItem(itemId);
+      if (!item || item.orderId !== orderId) {
+        return res.status(404).json({ message: "Ítem no encontrado en esta orden" });
+      }
+
+      if (item.status === "VOIDED") {
+        return res.status(400).json({ message: "El ítem ya está anulado" });
+      }
+
+      const table = await storage.getTable(order.tableId);
+      const product = await storage.getProduct(item.productId);
+      const allCategories = await storage.getAllCategories();
+      const category = allCategories.find(c => c.id === product?.categoryId);
+
+      await storage.updateOrderItem(itemId, {
+        status: "VOIDED",
+        voidedAt: new Date(),
+        voidedByUserId: userId,
+      });
+
+      await storage.createVoidedItem({
+        businessDate: order.businessDate || getBusinessDate(),
+        tableId: order.tableId,
+        tableNameSnapshot: table?.tableName || null,
+        orderId,
+        orderItemId: itemId,
+        productId: item.productId,
+        productNameSnapshot: item.productNameSnapshot,
+        categorySnapshot: category?.name || null,
+        qtyVoided: item.qty,
+        unitPriceSnapshot: item.productPriceSnapshot,
+        voidReason: reason || null,
+        voidedByUserId: userId,
+        voidedByRole: user.role,
+        status: "VOIDED",
+        notes: null,
+      });
+
+      if (item.sentToKitchenAt) {
+        await storage.incrementPortions(item.productId, item.qty);
+      }
+
+      await storage.updateSalesLedgerItems(itemId, { status: "VOIDED" });
+
+      await storage.recalcOrderTotal(orderId);
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "ORDER_ITEM_VOIDED",
+        entityType: "order_item",
+        entityId: itemId,
+        tableId: order.tableId,
+        metadata: {
+          orderId,
+          productName: item.productNameSnapshot,
+          qty: item.qty,
+          reason: reason || null,
+          role: user.role,
+        },
+      });
+
+      broadcast("order_updated", { tableId: order.tableId, orderId });
+      broadcast("table_status_changed", { tableId: order.tableId });
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== MANAGER: HARD DELETE ORDER ITEM ====================
+  app.delete("/api/waiter/orders/:orderId/items/:itemId", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const itemId = parseInt(req.params.itemId);
+      const userId = req.session.userId!;
+
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const item = await storage.getOrderItem(itemId);
+      if (!item || item.orderId !== orderId) {
+        return res.status(404).json({ message: "Ítem no encontrado en esta orden" });
+      }
+
+      if (item.sentToKitchenAt && item.status !== "VOIDED") {
+        await storage.incrementPortions(item.productId, item.qty);
+      }
+
+      await storage.deleteOrderItem(itemId);
+
+      await storage.recalcOrderTotal(orderId);
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "ORDER_ITEM_DELETED_HARD",
+        entityType: "order_item",
+        entityId: itemId,
+        tableId: order.tableId,
+        metadata: {
+          orderId,
+          productName: item.productNameSnapshot,
+          qty: item.qty,
+          status: item.status,
+        },
+      });
+
+      broadcast("order_updated", { tableId: order.tableId, orderId });
+      broadcast("table_status_changed", { tableId: order.tableId });
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== WAITER: GET VOIDED ITEMS ====================
+  app.get("/api/waiter/orders/:orderId/voided-items", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const items = await storage.getVoidedItemsForOrder(orderId);
+      const userIds = [...new Set(items.map(i => i.voidedByUserId))];
+      const usersMap = new Map<number, string>();
+      for (const uid of userIds) {
+        const u = await storage.getUser(uid);
+        if (u) usersMap.set(uid, u.displayName);
+      }
+      const result = items.map(i => ({
+        ...i,
+        voidedAt: i.voidedAt?.toISOString() || null,
+        voidedByName: usersMap.get(i.voidedByUserId) || "Desconocido",
+      }));
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

@@ -45,6 +45,9 @@ Restaurant management system (PWA) for a small restaurant (20-30 concurrent orde
 - `GET /api/waiter/tables` - Tables with order status (includes lastSentToKitchenAt)
 - `POST /api/waiter/tables/:id/send-round` - Send items to kitchen
 - `POST /api/waiter/qr-submissions/:id/accept` - Accept QR order
+- `POST /api/waiter/orders/:orderId/items/:itemId/void` - Void order item (WAITER+MANAGER, blocked if PAID)
+- `DELETE /api/waiter/orders/:orderId/items/:itemId` - Hard delete order item (MANAGER only)
+- `GET /api/waiter/orders/:orderId/voided-items` - List voided items for order
 - `GET /api/qr/:tableCode/menu` - QR menu
 - `POST /api/qr/:tableCode/submit` - QR order submission (30s rate limit per table)
 - `GET /api/kds/tickets/:type` - KDS tickets (active/history)
@@ -86,7 +89,18 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
   - CASHIER: /api/pos/*
   - MANAGER: all routes + /api/admin/* + /api/dashboard
 
+## Database Schema
+All tables defined in `shared/schema.ts` using Drizzle ORM:
+users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, voided_items, qbo_export_jobs
+
 ## Recent Changes
+- Added item voiding system: WAITER can void items (soft delete to voided_items table), MANAGER can hard delete
+- Added voided_items table with full traceability (who, when, why, qty, price snapshot)
+- Added order_items.voidedAt and voidedByUserId fields
+- Added void confirmation dialog with optional reason field
+- Added collapsible "Anulaciones" section in table detail showing void history
+- Added portion revert on void (if item was already sent to kitchen)
+- VOIDED items excluded from order totals, POS, and KDS
 - Added QR swipe-to-confirm gesture (drag 85% threshold)
 - Added split accounts (division de cuenta) with full POS UI
 - Added void payment and reopen order (manager only)
