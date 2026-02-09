@@ -15,25 +15,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchUser = useCallback(async () => {
-    try {
-      const res = await fetch("/api/auth/me", { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data);
-      } else {
-        setUser(null);
-      }
-    } catch {
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
+    let mounted = true;
+
+    const fetchUser = async () => {
+      try {
+        const res = await fetch("/api/auth/me", { credentials: "include" });
+        if (!mounted) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (mounted) setUser(data);
+        } else {
+          if (mounted) setUser(null);
+        }
+      } catch {
+        if (mounted) setUser(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
     fetchUser();
-  }, [fetchUser]);
+
+    const timeout = setTimeout(() => {
+      if (mounted && loading) {
+        setLoading(false);
+      }
+    }, 5000);
+
+    return () => {
+      mounted = false;
+      clearTimeout(timeout);
+    };
+  }, []);
 
   const [, setLocation] = useLocation();
 
