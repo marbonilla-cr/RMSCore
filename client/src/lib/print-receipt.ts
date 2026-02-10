@@ -79,6 +79,24 @@ export function printReceipt(data: ReceiptData) {
     .footer { margin-top: 6px; }
     .footer p { font-size: 9px; line-height: 1.3; }
     .legal-note { font-size: 8px; margin-top: 6px; line-height: 1.2; text-align: center; font-style: italic; }
+    .print-btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      margin: 12px 0 4px;
+      background: #000;
+      color: #fff;
+      border: none;
+      font-size: 16px;
+      font-weight: bold;
+      font-family: 'Courier New', monospace;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .print-btn:active { background: #333; }
+    @media print {
+      .no-print { display: none !important; }
+    }
   </style>
 </head>
 <body>
@@ -139,6 +157,11 @@ export function printReceipt(data: ReceiptData) {
   </div>
 
   ${data.legalNote ? `<div class="legal-note">${escapeHtml(data.legalNote)}</div>` : ""}
+
+  <div class="no-print">
+    <button class="print-btn" onclick="window.print()">IMPRIMIR TIQUETE</button>
+    <button class="print-btn" style="background:#666;margin-top:4px;" onclick="window.close()">CERRAR</button>
+  </div>
 </body>
 </html>`;
 
