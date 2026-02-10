@@ -144,18 +144,28 @@ export function printReceipt(data: ReceiptData) {
 
   const printWindow = window.open("", "_blank", "width=320,height=600");
   if (!printWindow) {
-    console.error("Could not open print window");
+    alert("No se pudo abrir la ventana de impresión. Permite los popups en tu navegador.");
     return;
   }
 
   printWindow.document.write(html);
   printWindow.document.close();
 
-  printWindow.onload = () => {
+  const triggerPrint = () => {
     printWindow.focus();
-    printWindow.print();
-    setTimeout(() => {
-      printWindow.close();
-    }, 1000);
+    try {
+      printWindow.print();
+    } catch (e) {
+      console.error("Print error:", e);
+    }
   };
+
+  if (printWindow.document.readyState === "complete") {
+    setTimeout(triggerPrint, 300);
+  } else {
+    printWindow.onload = () => {
+      setTimeout(triggerPrint, 300);
+    };
+    setTimeout(triggerPrint, 1500);
+  }
 }
