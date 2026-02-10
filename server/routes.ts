@@ -1373,6 +1373,75 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== POS: PRINT RECEIPT (direct to printer) ====================
+  app.post("/api/pos/print-receipt", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+    try {
+      const { orderId } = req.body;
+      if (!orderId || typeof orderId !== "number") return res.status(400).json({ message: "orderId requerido (número)" });
+
+      const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
+
+      const printersList = await storage.getPrinters();
+      const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
+      if (!cajaPrinter) {
+        return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });
+      }
+
+      const config = await storage.getBusinessConfig();
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const table = await storage.getTable(order.tableId);
+      const items = await storage.getOrderItems(orderId);
+      const activeItems = items.filter(i => i.status !== "VOIDED");
+
+      const cashier = req.session.userId ? await storage.getUser(req.session.userId) : null;
+
+      const receiptItems = activeItems.map(i => ({
+        name: i.productNameSnapshot,
+        qty: i.qty,
+        price: Number(i.productPriceSnapshot),
+        total: Number(i.productPriceSnapshot) * i.qty,
+      }));
+
+      const totalAmount = receiptItems.reduce((s, i) => s + i.total, 0);
+      const oNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `#${order.id}`);
+
+      const payments = await storage.getPaymentsForOrder(orderId);
+      const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+      let paymentMethodName = "";
+      if (lastPayment) {
+        const pm = await storage.getPaymentMethod(lastPayment.paymentMethodId);
+        paymentMethodName = pm?.paymentName || "";
+      }
+
+      const receiptData = {
+        businessName: config?.businessName || "",
+        legalName: config?.legalName || "",
+        taxId: config?.taxId || "",
+        address: config?.address || "",
+        phone: config?.phone || "",
+        email: config?.email || "",
+        legalNote: config?.legalNote || "",
+        orderNumber: oNum,
+        tableName: table?.tableName || "",
+        items: receiptItems,
+        totalAmount,
+        paymentMethod: paymentMethodName,
+        clientName: lastPayment?.clientNameSnapshot || undefined,
+        cashierName: cashier?.displayName || undefined,
+        date: new Date().toLocaleString("es-CR"),
+      };
+
+      const buffer = buildReceiptBuffer(receiptData, cajaPrinter.paperWidth);
+      await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, buffer);
+
+      res.json({ ok: true, printer: cajaPrinter.name });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== POS: SEND TICKET (email) ====================
   app.post("/api/pos/send-ticket", requireRole("CASHIER", "MANAGER"), async (req, res) => {
     try {

@@ -62,6 +62,8 @@ export default function POSPage() {
 
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [splitLabel, setSplitLabel] = useState("");
+  const [lastPaidOrder, setLastPaidOrder] = useState<{orderId: number; tableName: string; orderNumber: string; paymentMethod: string; clientName?: string; _items: {name:string;qty:number;price:number;total:number}[]; _totalAmount: number} | null>(null);
+  const [printingDirect, setPrintingDirect] = useState(false);
 
   useEffect(() => {
     wsManager.connect();
@@ -166,14 +168,23 @@ export default function POSPage() {
     onSuccess: () => {
       const tbl = selectedTable!;
       const pm = paymentMethods.find((m) => m.id === parseInt(paymentMethodId));
+      const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
       const receiptItems = tbl.items.filter(i => i.status !== "VOIDED").map((i) => ({
         name: i.productNameSnapshot,
         qty: i.qty,
         price: Number(i.productPriceSnapshot),
         total: Number(i.productPriceSnapshot) * i.qty,
       }));
-      const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
-      triggerReceiptPrint(receiptItems, Number(tbl.totalAmount), pm?.paymentName || "", tbl.tableName, orderNum, clientName || undefined);
+
+      setLastPaidOrder({
+        orderId: tbl.orderId,
+        tableName: tbl.tableName,
+        orderNumber: orderNum,
+        paymentMethod: pm?.paymentName || "",
+        clientName: clientName || undefined,
+        _items: receiptItems,
+        _totalAmount: Number(tbl.totalAmount),
+      });
 
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
@@ -817,6 +828,66 @@ export default function POSPage() {
               {openCashMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
               Abrir Caja
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!lastPaidOrder} onOpenChange={(open) => { if (!open) setLastPaidOrder(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Pago Exitoso</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Orden {lastPaidOrder?.orderNumber} - {lastPaidOrder?.tableName}
+            </p>
+            <div className="flex flex-col gap-2">
+              <Button
+                data-testid="button-direct-print"
+                disabled={printingDirect}
+                onClick={async () => {
+                  if (!lastPaidOrder) return;
+                  setPrintingDirect(true);
+                  try {
+                    const res = await apiRequest("POST", "/api/pos/print-receipt", {
+                      orderId: lastPaidOrder.orderId,
+                    });
+                    const data = await res.json();
+                    toast({ title: "Impreso", description: `Enviado a ${data.printer}` });
+                  } catch (err: any) {
+                    toast({ title: "Error de impresora", description: err.message, variant: "destructive" });
+                  } finally {
+                    setPrintingDirect(false);
+                  }
+                }}
+              >
+                {printingDirect ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Printer className="w-4 h-4 mr-1" />}
+                Imprimir en Impresora WiFi
+              </Button>
+              <Button
+                data-testid="button-browser-print"
+                variant="outline"
+                onClick={() => {
+                  if (!lastPaidOrder) return;
+                  triggerReceiptPrint(
+                    lastPaidOrder._items,
+                    lastPaidOrder._totalAmount,
+                    lastPaidOrder.paymentMethod,
+                    lastPaidOrder.tableName,
+                    lastPaidOrder.orderNumber,
+                    lastPaidOrder.clientName
+                  );
+                }}
+              >
+                <Receipt className="w-4 h-4 mr-1" />
+                Ver Tiquete en Pantalla
+              </Button>
+              <Button
+                data-testid="button-close-print-dialog"
+                variant="ghost"
+                onClick={() => setLastPaidOrder(null)}
+              >
+                Cerrar
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

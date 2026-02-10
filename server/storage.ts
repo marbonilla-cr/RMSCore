@@ -160,6 +160,11 @@ export async function createPaymentMethod(data: InsertPaymentMethod) {
   return pm;
 }
 
+export async function getPaymentMethod(id: number) {
+  const [pm] = await db.select().from(paymentMethods).where(eq(paymentMethods.id, id));
+  return pm;
+}
+
 export async function updatePaymentMethod(id: number, data: Partial<InsertPaymentMethod>) {
   const [pm] = await db.update(paymentMethods).set(data).where(eq(paymentMethods.id, id)).returning();
   return pm;
