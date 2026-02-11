@@ -96,9 +96,19 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 
 ## Database Schema
 All tables defined in `shared/schema.ts` using Drizzle ORM:
-users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, voided_items, qbo_export_jobs, modifier_groups, modifier_options, item_modifier_groups, order_item_modifiers, discounts, order_discounts
+users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, voided_items, qbo_export_jobs, modifier_groups, modifier_options, item_modifier_groups, order_item_modifiers, discounts, order_discounts, tax_categories, product_tax_categories, order_item_taxes, order_item_discounts
 
 ## Recent Changes
+- Added per-item discounts in POS: cashier can apply percentage or fixed amount discount per order item
+- Added configurable tax categories: admin creates tax types (e.g., IVA 13%, Servicio 10%), assigns to products
+- Taxes auto-calculated on order items during recalcOrderTotal based on product-tax mapping
+- POS detail view shows subtotal/discounts/taxes/total breakdown when applicable
+- POS payment dialog shows full breakdown (subtotal, discounts, tax lines, total)
+- All receipts (browser print, thermal ESC/POS, email ticket) show subtotal/discounts/taxes/total breakdown
+- Admin Products page: tax assignment checkboxes in product edit dialog
+- Admin Tax Categories page: CRUD for tax categories with name, rate, active toggle
+- New tables: tax_categories, product_tax_categories, order_item_taxes, order_item_discounts
+- New endpoints: GET/POST/PATCH /api/admin/tax-categories, PUT /api/admin/products/:id/taxes, GET /api/admin/products/:id/taxes, POST/DELETE /api/pos/order-items/:id/discount
 - Added dashboard historical mode: "Histórico" button with period filters (day, month, year, custom range)
 - Dashboard API accepts ?from=YYYY-MM-DD&to=YYYY-MM-DD query params for date range filtering
 - Added getLedgerItemsForDateRange and getPaymentsByDateRangeGrouped storage functions

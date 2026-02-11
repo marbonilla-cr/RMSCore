@@ -90,6 +90,12 @@ interface ReceiptItem {
   total: number;
 }
 
+interface TaxBreakdownEntry {
+  taxName: string;
+  taxRate: string;
+  totalAmount: number;
+}
+
 interface ReceiptData {
   businessName: string;
   legalName: string;
@@ -102,6 +108,9 @@ interface ReceiptData {
   tableName: string;
   items: ReceiptItem[];
   totalAmount: number;
+  totalDiscounts?: number;
+  totalTaxes?: number;
+  taxBreakdown?: TaxBreakdownEntry[];
   paymentMethod: string;
   clientName?: string;
   cashierName?: string;
@@ -170,6 +179,29 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
   }
 
   parts.push(divider(cols));
+
+  const hasBreakdown = (data.totalDiscounts && data.totalDiscounts > 0) || (data.totalTaxes && data.totalTaxes > 0);
+
+  if (hasBreakdown) {
+    const subtotal = data.items.reduce((s, i) => s + i.total, 0);
+    const subLabel = "Subtotal";
+    const subValue = formatCurrency(subtotal);
+    parts.push(line(padRight(subLabel, cols - subValue.length - 1) + " " + subValue));
+
+    if (data.totalDiscounts && data.totalDiscounts > 0) {
+      const dLabel = "Descuentos";
+      const dValue = "-" + formatCurrency(data.totalDiscounts);
+      parts.push(line(padRight(dLabel, cols - dValue.length - 1) + " " + dValue));
+    }
+
+    if (data.taxBreakdown) {
+      for (const tb of data.taxBreakdown) {
+        const tLabel = `${tb.taxName} (${tb.taxRate}%)`;
+        const tValue = "+" + formatCurrency(tb.totalAmount);
+        parts.push(line(padRight(tLabel, cols - tValue.length - 1) + " " + tValue));
+      }
+    }
+  }
 
   parts.push(CMD.DOUBLE_ON);
   parts.push(CMD.BOLD_ON);

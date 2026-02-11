@@ -11,7 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, ShoppingBag, Loader2, Search, X, ChevronDown, ChevronRight } from "lucide-react";
-import type { Product, Category } from "@shared/schema";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { Product, Category, TaxCategory } from "@shared/schema";
 
 export default function AdminProductsPage() {
   const { toast } = useToast();
@@ -26,8 +27,11 @@ export default function AdminProductsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
 
+  const [selectedTaxIds, setSelectedTaxIds] = useState<number[]>([]);
+
   const { data: products = [], isLoading } = useQuery<Product[]>({ queryKey: ["/api/admin/products"] });
   const { data: categories = [] } = useQuery<Category[]>({ queryKey: ["/api/admin/categories"] });
+  const { data: taxCategories = [] } = useQuery<TaxCategory[]>({ queryKey: ["/api/admin/tax-categories"] });
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 250);
@@ -42,8 +46,16 @@ export default function AdminProductsPage() {
 
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
-      if (editing) return apiRequest("PATCH", `/api/admin/products/${editing.id}`, data);
-      return apiRequest("POST", "/api/admin/products", data);
+      if (editing) {
+        await apiRequest("PATCH", `/api/admin/products/${editing.id}`, data);
+        await apiRequest("PUT", `/api/admin/products/${editing.id}/taxes`, { taxCategoryIds: selectedTaxIds });
+        return;
+      }
+      const res = await apiRequest("POST", "/api/admin/products", data);
+      const newProduct = await res.json();
+      if (newProduct?.id && selectedTaxIds.length > 0) {
+        await apiRequest("PUT", `/api/admin/products/${newProduct.id}/taxes`, { taxCategoryIds: selectedTaxIds });
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/products"] });
@@ -68,13 +80,20 @@ export default function AdminProductsPage() {
     },
   });
 
+  const saveTaxesMutation = useMutation({
+    mutationFn: async ({ productId, taxCategoryIds }: { productId: number; taxCategoryIds: number[] }) => {
+      return apiRequest("PUT", `/api/admin/products/${productId}/taxes`, { taxCategoryIds });
+    },
+  });
+
   const openCreate = () => {
     setEditing(null);
     setForm({ productCode: "", name: "", description: "", categoryId: "", price: "", active: true, visibleQr: true, availablePortions: "" });
+    setSelectedTaxIds([]);
     setOpen(true);
   };
 
-  const openEdit = (p: Product) => {
+  const openEdit = async (p: Product) => {
     setEditing(p);
     setForm({
       productCode: p.productCode,
@@ -86,6 +105,13 @@ export default function AdminProductsPage() {
       visibleQr: p.visibleQr,
       availablePortions: p.availablePortions?.toString() || "",
     });
+    try {
+      const res = await fetch(`/api/admin/products/${p.id}/taxes`, { credentials: "include" });
+      const ids = await res.json();
+      setSelectedTaxIds(ids);
+    } catch {
+      setSelectedTaxIds([]);
+    }
     setOpen(true);
   };
 
@@ -197,6 +223,27 @@ export default function AdminProductsPage() {
                 <Label>Porciones Disponibles (vacío = ilimitado)</Label>
                 <Input type="number" value={form.availablePortions} onChange={(e) => setForm({ ...form, availablePortions: e.target.value })} placeholder="Ilimitado" />
               </div>
+              {taxCategories.filter(tc => tc.active).length > 0 && (
+                <div className="space-y-2">
+                  <Label>Impuestos Aplicables</Label>
+                  <div className="space-y-2">
+                    {taxCategories.filter(tc => tc.active).map(tc => (
+                      <div key={tc.id} className="flex items-center gap-2 min-h-[36px]">
+                        <Checkbox
+                          checked={selectedTaxIds.includes(tc.id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedTaxIds(prev =>
+                              checked ? [...prev, tc.id] : prev.filter(id => id !== tc.id)
+                            );
+                          }}
+                          data-testid={`checkbox-tax-${tc.id}`}
+                        />
+                        <span className="text-sm">{tc.name} ({tc.rate}%)</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <Switch checked={form.visibleQr} onCheckedChange={(c) => setForm({ ...form, visibleQr: c })} />
                 <Label>Visible QR</Label>

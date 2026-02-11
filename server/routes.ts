@@ -4,12 +4,26 @@ import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
 import * as storage from "./storage";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
     userId?: number;
   }
+}
+
+function aggregateTaxBreakdown(taxes: { taxNameSnapshot: string; taxRateSnapshot: string; taxAmount: string }[]) {
+  const map = new Map<string, { taxName: string; taxRate: string; totalAmount: number }>();
+  for (const t of taxes) {
+    const key = `${t.taxNameSnapshot}|${t.taxRateSnapshot}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.totalAmount += Number(t.taxAmount);
+    } else {
+      map.set(key, { taxName: t.taxNameSnapshot, taxRate: t.taxRateSnapshot, totalAmount: Number(t.taxAmount) });
+    }
+  }
+  return Array.from(map.values()).map(v => ({ taxName: v.taxName, taxRate: v.taxRate, totalAmount: Number(v.totalAmount.toFixed(2)) }));
 }
 
 // WebSocket broadcast
@@ -606,6 +620,105 @@ export async function registerRoutes(
       res.json(discount);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== ADMIN: TAX CATEGORIES ====================
+  app.get("/api/admin/tax-categories", requireRole("MANAGER"), async (_req, res) => {
+    res.json(await storage.getAllTaxCategories());
+  });
+
+  app.post("/api/admin/tax-categories", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const parsed = insertTaxCategorySchema.parse(req.body);
+      const tc = await storage.createTaxCategory(parsed);
+      res.json(tc);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/tax-categories/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const tc = await storage.updateTaxCategory(parseInt(req.params.id), req.body);
+      res.json(tc);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // Product tax assignment
+  app.get("/api/admin/products/:id/taxes", requireRole("MANAGER"), async (req, res) => {
+    const ptcs = await storage.getProductTaxCategories(parseInt(req.params.id));
+    res.json(ptcs.map(p => p.taxCategoryId));
+  });
+
+  app.put("/api/admin/products/:id/taxes", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const { taxCategoryIds } = req.body;
+      if (!Array.isArray(taxCategoryIds)) return res.status(400).json({ message: "taxCategoryIds debe ser un array" });
+      await storage.setProductTaxCategories(parseInt(req.params.id), taxCategoryIds);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== POS: ITEM DISCOUNTS ====================
+  app.post("/api/pos/order-items/:id/discount", requirePermission("POS_PAY"), async (req, res) => {
+    try {
+      const orderItemId = parseInt(req.params.id);
+      const { discountName, discountType, discountValue } = req.body;
+      const userId = req.session.userId!;
+
+      const orderItem = await storage.getOrderItem(orderItemId);
+      if (!orderItem) return res.status(404).json({ message: "Item no encontrado" });
+
+      const mods = await storage.getOrderItemModifiers(orderItemId);
+      const unitPrice = Number(orderItem.productPriceSnapshot) + mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+      const lineSubtotal = unitPrice * orderItem.qty;
+
+      let amountApplied = 0;
+      if (discountType === "percentage") {
+        amountApplied = Math.round(lineSubtotal * Number(discountValue) / 100 * 100) / 100;
+      } else {
+        amountApplied = Math.min(Number(discountValue), lineSubtotal);
+      }
+
+      await storage.deleteOrderItemDiscountsByItem(orderItemId);
+
+      const discount = await storage.createOrderItemDiscount({
+        orderItemId,
+        orderId: orderItem.orderId,
+        discountName,
+        discountType,
+        discountValue: discountValue.toString(),
+        amountApplied: amountApplied.toFixed(2),
+        appliedByUserId: userId,
+      });
+
+      await storage.recalcOrderTotal(orderItem.orderId);
+      broadcast("order_updated", { orderId: orderItem.orderId });
+
+      res.json(discount);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/pos/order-items/:id/discount", requirePermission("POS_PAY"), async (req, res) => {
+    try {
+      const orderItemId = parseInt(req.params.id);
+      const orderItem = await storage.getOrderItem(orderItemId);
+      if (!orderItem) return res.status(404).json({ message: "Item no encontrado" });
+
+      await storage.deleteOrderItemDiscountsByItem(orderItemId);
+      await storage.recalcOrderTotal(orderItem.orderId);
+      broadcast("order_updated", { orderId: orderItem.orderId });
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 
@@ -1394,8 +1507,12 @@ export async function registerRoutes(
       const itemsWithModifiers = [];
       for (const item of activeItems) {
         const mods = await storage.getOrderItemModifiers(item.id);
-        itemsWithModifiers.push({ ...item, modifiers: mods });
+        const itemDiscounts = await storage.getOrderItemDiscounts(item.id);
+        const itemTaxes = await storage.getOrderItemTaxes(item.id);
+        itemsWithModifiers.push({ ...item, modifiers: mods, discounts: itemDiscounts, taxes: itemTaxes });
       }
+      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(order.id);
+      const orderTaxesList = await storage.getOrderItemTaxesByOrder(order.id);
       result.push({
         id: t.id,
         tableName: t.tableName,
@@ -1405,6 +1522,9 @@ export async function registerRoutes(
         totalAmount: order.totalAmount,
         itemCount: activeItems.length,
         items: itemsWithModifiers,
+        totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
+        totalTaxes: orderTaxesList.reduce((s, t) => s + Number(t.taxAmount), 0).toFixed(2),
+        taxBreakdown: aggregateTaxBreakdown(orderTaxesList),
       });
     }
     res.json(result);
@@ -1718,7 +1838,6 @@ export async function registerRoutes(
         total: Number(i.productPriceSnapshot) * i.qty,
       }));
 
-      const totalAmount = receiptItems.reduce((s, i) => s + i.total, 0);
       const oNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `#${order.id}`);
 
       const payments = await storage.getPaymentsForOrder(orderId);
@@ -1728,6 +1847,11 @@ export async function registerRoutes(
         const pm = await storage.getPaymentMethod(lastPayment.paymentMethodId);
         paymentMethodName = pm?.paymentName || "";
       }
+
+      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
+      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
+      const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
+      const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
 
       const receiptData = {
         businessName: config?.businessName || "",
@@ -1740,7 +1864,10 @@ export async function registerRoutes(
         orderNumber: oNum,
         tableName: table?.tableName || "",
         items: receiptItems,
-        totalAmount,
+        totalAmount: Number(order.totalAmount),
+        totalDiscounts: totalDiscounts > 0 ? totalDiscounts : undefined,
+        totalTaxes: totalTaxes > 0 ? totalTaxes : undefined,
+        taxBreakdown: totalTaxes > 0 ? aggregateTaxBreakdown(orderTaxesList) : undefined,
         paymentMethod: paymentMethodName,
         clientName: lastPayment?.clientNameSnapshot || undefined,
         cashierName: cashier?.displayName || undefined,
@@ -1779,7 +1906,13 @@ export async function registerRoutes(
       const items = await storage.getOrderItems(orderId);
       const activeItems = items.filter(i => i.status !== "VOIDED");
       const table = await storage.getTable(order.tableId);
-      const total = activeItems.reduce((s, i) => s + Number(i.productPriceSnapshot) * i.qty, 0);
+      const subtotal = activeItems.reduce((s, i) => s + Number(i.productPriceSnapshot) * i.qty, 0);
+      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
+      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
+      const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
+      const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
+      const taxBk = totalTaxes > 0 ? aggregateTaxBreakdown(orderTaxesList) : [];
+      const total = Number(order.totalAmount);
 
       let emailSent = false;
       let emailError = "";
@@ -1804,6 +1937,13 @@ export async function registerRoutes(
             `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${i.productNameSnapshot}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:center">${i.qty}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right">₡${(Number(i.productPriceSnapshot) * i.qty).toLocaleString()}</td></tr>`
           ).join("");
 
+          const breakdownHtml = (totalDiscounts > 0 || totalTaxes > 0) ? `
+              <table style="width:100%;margin:8px 0">
+                <tr><td style="padding:2px 8px">Subtotal</td><td style="padding:2px 8px;text-align:right">₡${subtotal.toLocaleString()}</td></tr>
+                ${totalDiscounts > 0 ? `<tr><td style="padding:2px 8px;color:#16a34a">Descuentos</td><td style="padding:2px 8px;text-align:right;color:#16a34a">-₡${totalDiscounts.toLocaleString()}</td></tr>` : ""}
+                ${taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName} (${tb.taxRate}%)</td><td style="padding:2px 8px;text-align:right;color:#666">+₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("")}
+              </table>` : "";
+
           const html = `
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
               <h2 style="color:#333">Ticket de Consumo</h2>
@@ -1814,11 +1954,17 @@ export async function registerRoutes(
                 <thead><tr style="background:#f5f5f5"><th style="padding:6px 8px;text-align:left">Producto</th><th style="padding:6px 8px;text-align:center">Cant</th><th style="padding:6px 8px;text-align:right">Subtotal</th></tr></thead>
                 <tbody>${itemRows}</tbody>
               </table>
+              ${breakdownHtml}
               <p style="font-size:18px;font-weight:bold;text-align:right">Total: ₡${total.toLocaleString()}</p>
               <p style="color:#999;font-size:12px;margin-top:24px;text-align:center">Gracias por su visita</p>
             </div>`;
 
           const textLines = activeItems.map(i => `${i.qty}x ${i.productNameSnapshot} - ₡${(Number(i.productPriceSnapshot) * i.qty).toLocaleString()}`);
+          const breakdownText = (totalDiscounts > 0 || totalTaxes > 0) ? [
+            `Subtotal: ₡${subtotal.toLocaleString()}`,
+            ...(totalDiscounts > 0 ? [`Descuentos: -₡${totalDiscounts.toLocaleString()}`] : []),
+            ...taxBk.map(tb => `${tb.taxName} (${tb.taxRate}%): +₡${Number(tb.totalAmount).toLocaleString()}`),
+          ] : [];
           const text = [
             `Ticket de Consumo`,
             `Mesa: ${table?.tableName || "N/A"}`,
@@ -1827,6 +1973,7 @@ export async function registerRoutes(
             `---`,
             ...textLines,
             `---`,
+            ...breakdownText,
             `Total: ₡${total.toLocaleString()}`,
             ``,
             `Gracias por su visita`,

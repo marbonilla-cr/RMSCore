@@ -5,6 +5,12 @@ interface ReceiptItem {
   total: number;
 }
 
+interface TaxBreakdownEntry {
+  taxName: string;
+  taxRate: string;
+  totalAmount: number;
+}
+
 interface ReceiptData {
   businessName: string;
   legalName: string;
@@ -17,6 +23,9 @@ interface ReceiptData {
   tableName: string;
   items: ReceiptItem[];
   totalAmount: number;
+  totalDiscounts?: number;
+  totalTaxes?: number;
+  taxBreakdown?: TaxBreakdownEntry[];
   paymentMethod: string;
   clientName?: string;
   cashierName?: string;
@@ -139,12 +148,35 @@ export function printReceipt(data: ReceiptData) {
 
   <div class="divider"></div>
 
+  ${(data.totalDiscounts && data.totalDiscounts > 0) || (data.totalTaxes && data.totalTaxes > 0) ? `
+  <table>
+    <tr>
+      <td style="font-size:11px;">Subtotal</td>
+      <td style="text-align:right;font-size:11px;" colspan="3">${formatCurrency(data.items.reduce((s, i) => s + i.total, 0))}</td>
+    </tr>
+    ${data.totalDiscounts && data.totalDiscounts > 0 ? `
+    <tr>
+      <td style="font-size:11px;">Descuentos</td>
+      <td style="text-align:right;font-size:11px;" colspan="3">-${formatCurrency(data.totalDiscounts)}</td>
+    </tr>` : ""}
+    ${(data.taxBreakdown || []).map(tb => `
+    <tr>
+      <td style="font-size:11px;">${escapeHtml(tb.taxName)} (${tb.taxRate}%)</td>
+      <td style="text-align:right;font-size:11px;" colspan="3">+${formatCurrency(tb.totalAmount)}</td>
+    </tr>`).join("")}
+    <tr class="total-row">
+      <td>TOTAL</td>
+      <td style="text-align:right;" colspan="3">${formatCurrency(data.totalAmount)}</td>
+    </tr>
+  </table>
+  ` : `
   <table>
     <tr class="total-row">
       <td>TOTAL</td>
       <td style="text-align:right;" colspan="3">${formatCurrency(data.totalAmount)}</td>
     </tr>
   </table>
+  `}
 
   <div style="font-size:11px;margin-top:4px;">
     <span class="bold">Pago:</span> ${escapeHtml(data.paymentMethod)}

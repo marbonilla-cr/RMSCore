@@ -8,6 +8,7 @@ import {
   businessConfig, printers, permissions, rolePermissions,
   modifierGroups, modifierOptions, itemModifierGroups, orderItemModifiers,
   discounts, orderDiscounts,
+  taxCategories, productTaxCategories, orderItemTaxes, orderItemDiscounts,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -32,6 +33,10 @@ import {
   type InsertOrderItemModifier, type OrderItemModifier,
   type Discount, type InsertDiscount,
   type OrderDiscount, type InsertOrderDiscount,
+  type TaxCategory, type InsertTaxCategory,
+  type InsertProductTaxCategory,
+  type InsertOrderItemTax,
+  type InsertOrderItemDiscount,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -306,7 +311,45 @@ export async function updateOrder(id: number, data: Partial<any>) {
 export async function recalcOrderTotal(orderId: number) {
   const items = await db.select().from(orderItems)
     .where(and(eq(orderItems.orderId, orderId), ne(orderItems.status, "VOIDED")));
-  const total = items.reduce((s, i) => s + Number(i.productPriceSnapshot) * i.qty, 0);
+
+  let subtotal = 0;
+  let totalDiscounts = 0;
+  let totalTaxes = 0;
+
+  for (const item of items) {
+    const mods = await db.select().from(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, item.id));
+    const modTotal = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+    const lineSubtotal = (Number(item.productPriceSnapshot) + modTotal) * item.qty;
+    subtotal += lineSubtotal;
+
+    const discountsForItem = await db.select().from(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, item.id));
+    const discountAmount = discountsForItem.reduce((s, d) => s + Number(d.amountApplied), 0);
+    totalDiscounts += discountAmount;
+
+    const discountedSubtotal = lineSubtotal - discountAmount;
+
+    const taxesForItem = await getProductTaxCategories(item.productId);
+    const allTaxCats = await getAllTaxCategories();
+
+    await deleteOrderItemTaxesByItem(item.id);
+
+    for (const ptc of taxesForItem) {
+      const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
+      if (tc) {
+        const taxAmount = Math.round(discountedSubtotal * Number(tc.rate) / 100 * 100) / 100;
+        totalTaxes += taxAmount;
+        await createOrderItemTax({
+          orderItemId: item.id,
+          taxCategoryId: tc.id,
+          taxNameSnapshot: tc.name,
+          taxRateSnapshot: tc.rate,
+          taxAmount: taxAmount.toFixed(2),
+        });
+      }
+    }
+  }
+
+  const total = subtotal - totalDiscounts + totalTaxes;
   await db.update(orders).set({ totalAmount: total.toFixed(2) }).where(eq(orders.id, orderId));
   return total;
 }
@@ -1176,12 +1219,91 @@ export async function normalizeOrderItemsForSplit(orderId: number) {
   return { normalized: true, itemCount: items.length + newCount };
 }
 
+// ==================== TAX CATEGORIES ====================
+export async function getAllTaxCategories(): Promise<TaxCategory[]> {
+  return db.select().from(taxCategories).orderBy(asc(taxCategories.sortOrder), asc(taxCategories.name));
+}
+
+export async function getTaxCategory(id: number): Promise<TaxCategory | undefined> {
+  const [tc] = await db.select().from(taxCategories).where(eq(taxCategories.id, id));
+  return tc;
+}
+
+export async function createTaxCategory(data: InsertTaxCategory): Promise<TaxCategory> {
+  const [tc] = await db.insert(taxCategories).values(data).returning();
+  return tc;
+}
+
+export async function updateTaxCategory(id: number, data: Partial<InsertTaxCategory>): Promise<TaxCategory> {
+  const [tc] = await db.update(taxCategories).set(data).where(eq(taxCategories.id, id)).returning();
+  return tc;
+}
+
+// ==================== PRODUCT TAX CATEGORIES ====================
+export async function getProductTaxCategories(productId: number) {
+  return db.select().from(productTaxCategories).where(eq(productTaxCategories.productId, productId));
+}
+
+export async function setProductTaxCategories(productId: number, taxCategoryIds: number[]) {
+  await db.delete(productTaxCategories).where(eq(productTaxCategories.productId, productId));
+  if (taxCategoryIds.length > 0) {
+    await db.insert(productTaxCategories).values(
+      taxCategoryIds.map(tcId => ({ productId, taxCategoryId: tcId }))
+    );
+  }
+}
+
+// ==================== ORDER ITEM TAXES ====================
+export async function getOrderItemTaxes(orderItemId: number) {
+  return db.select().from(orderItemTaxes).where(eq(orderItemTaxes.orderItemId, orderItemId));
+}
+
+export async function getOrderItemTaxesByOrder(orderId: number) {
+  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  const itemIds = items.map(i => i.id);
+  if (itemIds.length === 0) return [];
+  return db.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, itemIds));
+}
+
+export async function createOrderItemTax(data: InsertOrderItemTax) {
+  const [row] = await db.insert(orderItemTaxes).values(data).returning();
+  return row;
+}
+
+export async function deleteOrderItemTaxesByItem(orderItemId: number) {
+  await db.delete(orderItemTaxes).where(eq(orderItemTaxes.orderItemId, orderItemId));
+}
+
+// ==================== ORDER ITEM DISCOUNTS ====================
+export async function getOrderItemDiscounts(orderItemId: number) {
+  return db.select().from(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, orderItemId));
+}
+
+export async function getOrderItemDiscountsByOrder(orderId: number) {
+  return db.select().from(orderItemDiscounts).where(eq(orderItemDiscounts.orderId, orderId));
+}
+
+export async function createOrderItemDiscount(data: InsertOrderItemDiscount) {
+  const [row] = await db.insert(orderItemDiscounts).values(data).returning();
+  return row;
+}
+
+export async function deleteOrderItemDiscount(id: number) {
+  await db.delete(orderItemDiscounts).where(eq(orderItemDiscounts.id, id));
+}
+
+export async function deleteOrderItemDiscountsByItem(orderItemId: number) {
+  await db.delete(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, orderItemId));
+}
+
 export async function truncateTransactionalData() {
   await db.delete(splitItems);
   await db.delete(splitAccounts);
   await db.delete(salesLedgerItems);
   await db.delete(voidedItems);
   await db.delete(orderItemModifiers);
+  await db.delete(orderItemTaxes);
+  await db.delete(orderItemDiscounts);
   await db.delete(orderDiscounts);
   await db.delete(kitchenTicketItems);
   await db.delete(kitchenTickets);

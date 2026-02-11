@@ -30,6 +30,7 @@ import {
   Shield,
   Settings2,
   Percent,
+  Receipt,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
@@ -57,6 +58,7 @@ const adminItems = [
   { title: "Productos", url: "/admin/products", icon: ShoppingBag },
   { title: "Modificadores", url: "/admin/modifiers", icon: Settings2 },
   { title: "Descuentos", url: "/admin/discounts", icon: Percent },
+  { title: "Impuestos", url: "/admin/tax-categories", icon: Receipt },
   { title: "Métodos de Pago", url: "/admin/payment-methods", icon: Wallet },
   { title: "Config. Negocio", url: "/admin/business-config", icon: Building2 },
   { title: "Impresoras", url: "/admin/printers", icon: Printer },

@@ -28,6 +28,7 @@ import AdminBusinessConfigPage from "@/pages/admin/business-config";
 import AdminPrintersPage from "@/pages/admin/printers";
 import AdminModifiersPage from "@/pages/admin/modifiers";
 import AdminDiscountsPage from "@/pages/admin/discounts";
+import AdminTaxCategoriesPage from "@/pages/admin/tax-categories";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRouteByPermissions(perms: string[]): string {
@@ -107,6 +108,7 @@ function AuthenticatedRouter() {
       <Route path="/admin/printers" component={AdminPrintersPage} />
       <Route path="/admin/modifiers" component={AdminModifiersPage} />
       <Route path="/admin/discounts" component={AdminDiscountsPage} />
+      <Route path="/admin/tax-categories" component={AdminTaxCategoriesPage} />
       <Route component={NotFound} />
     </Switch>
   );

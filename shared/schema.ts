@@ -299,6 +299,42 @@ export const orderDiscounts = pgTable("order_discounts", {
   appliedAt: timestamp("applied_at").defaultNow(),
 });
 
+// Tax Categories
+export const taxCategories = pgTable("tax_categories", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  rate: numeric("rate", { precision: 5, scale: 2 }).notNull(),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const productTaxCategories = pgTable("product_tax_categories", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").notNull(),
+  taxCategoryId: integer("tax_category_id").notNull(),
+});
+
+export const orderItemTaxes = pgTable("order_item_taxes", {
+  id: serial("id").primaryKey(),
+  orderItemId: integer("order_item_id").notNull(),
+  taxCategoryId: integer("tax_category_id").notNull(),
+  taxNameSnapshot: text("tax_name_snapshot").notNull(),
+  taxRateSnapshot: numeric("tax_rate_snapshot", { precision: 5, scale: 2 }).notNull(),
+  taxAmount: numeric("tax_amount", { precision: 10, scale: 2 }).notNull(),
+});
+
+export const orderItemDiscounts = pgTable("order_item_discounts", {
+  id: serial("id").primaryKey(),
+  orderItemId: integer("order_item_id").notNull(),
+  orderId: integer("order_id").notNull(),
+  discountName: text("discount_name").notNull(),
+  discountType: text("discount_type").notNull().default("percentage"),
+  discountValue: numeric("discount_value", { precision: 10, scale: 2 }).notNull(),
+  amountApplied: numeric("amount_applied", { precision: 10, scale: 2 }).notNull(),
+  appliedByUserId: integer("applied_by_user_id").notNull(),
+  appliedAt: timestamp("applied_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
@@ -323,6 +359,10 @@ export const insertItemModifierGroupSchema = createInsertSchema(itemModifierGrou
 export const insertOrderItemModifierSchema = createInsertSchema(orderItemModifiers).omit({ id: true });
 export const insertDiscountSchema = createInsertSchema(discounts).omit({ id: true, createdAt: true });
 export const insertOrderDiscountSchema = createInsertSchema(orderDiscounts).omit({ id: true, appliedAt: true });
+export const insertTaxCategorySchema = createInsertSchema(taxCategories).omit({ id: true });
+export const insertProductTaxCategorySchema = createInsertSchema(productTaxCategories).omit({ id: true });
+export const insertOrderItemTaxSchema = createInsertSchema(orderItemTaxes).omit({ id: true });
+export const insertOrderItemDiscountSchema = createInsertSchema(orderItemDiscounts).omit({ id: true, appliedAt: true });
 
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -373,6 +413,14 @@ export type Discount = typeof discounts.$inferSelect;
 export type InsertDiscount = z.infer<typeof insertDiscountSchema>;
 export type OrderDiscount = typeof orderDiscounts.$inferSelect;
 export type InsertOrderDiscount = z.infer<typeof insertOrderDiscountSchema>;
+export type TaxCategory = typeof taxCategories.$inferSelect;
+export type InsertTaxCategory = z.infer<typeof insertTaxCategorySchema>;
+export type ProductTaxCategory = typeof productTaxCategories.$inferSelect;
+export type InsertProductTaxCategory = z.infer<typeof insertProductTaxCategorySchema>;
+export type OrderItemTax = typeof orderItemTaxes.$inferSelect;
+export type InsertOrderItemTax = z.infer<typeof insertOrderItemTaxSchema>;
+export type OrderItemDiscount = typeof orderItemDiscounts.$inferSelect;
+export type InsertOrderItemDiscount = z.infer<typeof insertOrderItemDiscountSchema>;
 
 // Business config (singleton row)
 export const businessConfig = pgTable("business_config", {
