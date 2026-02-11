@@ -22,7 +22,6 @@ import AdminTablesPage from "@/pages/admin/tables";
 import AdminCategoriesPage from "@/pages/admin/categories";
 import AdminProductsPage from "@/pages/admin/products";
 import AdminPaymentMethodsPage from "@/pages/admin/payment-methods";
-import AdminUsersPage from "@/pages/admin/users";
 import AdminEmployeesPage from "@/pages/admin/employees";
 import AdminRolesPage from "@/pages/admin/roles";
 import AdminBusinessConfigPage from "@/pages/admin/business-config";
@@ -99,7 +98,6 @@ function AuthenticatedRouter() {
       <Route path="/admin/categories" component={AdminCategoriesPage} />
       <Route path="/admin/products" component={AdminProductsPage} />
       <Route path="/admin/payment-methods" component={AdminPaymentMethodsPage} />
-      <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin/employees" component={AdminEmployeesPage} />
       <Route path="/admin/roles" component={AdminRolesPage} />
       <Route path="/admin/business-config" component={AdminBusinessConfigPage} />

@@ -18,7 +18,6 @@ import {
   ChefHat,
   CreditCard,
   Settings,
-  Users,
   Grid3x3,
   Tag,
   ShoppingBag,
@@ -54,7 +53,6 @@ const adminItems = [
   { title: "Categorías", url: "/admin/categories", icon: Tag },
   { title: "Productos", url: "/admin/products", icon: ShoppingBag },
   { title: "Métodos de Pago", url: "/admin/payment-methods", icon: Wallet },
-  { title: "Usuarios", url: "/admin/users", icon: Users },
   { title: "Config. Negocio", url: "/admin/business-config", icon: Building2 },
   { title: "Impresoras", url: "/admin/printers", icon: Printer },
 ];

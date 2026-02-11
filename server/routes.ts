@@ -433,32 +433,6 @@ export async function registerRoutes(
     }
   });
 
-  // ==================== ADMIN: USERS ====================
-  app.get("/api/admin/users", requireRole("MANAGER"), async (_req, res) => {
-    const all = await storage.getAllUsers();
-    res.json(all.map(({ password, ...u }) => u));
-  });
-
-  app.post("/api/admin/users", requireRole("MANAGER"), async (req, res) => {
-    try {
-      const user = await storage.createUser(req.body);
-      const { password: _, ...safeUser } = user;
-      res.json(safeUser);
-    } catch (err: any) {
-      res.status(400).json({ message: err.message });
-    }
-  });
-
-  app.patch("/api/admin/users/:id", requireRole("MANAGER"), async (req, res) => {
-    try {
-      const user = await storage.updateUser(parseInt(req.params.id), req.body);
-      if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
-      const { password: _, ...safeUser } = user;
-      res.json(safeUser);
-    } catch (err: any) {
-      res.status(400).json({ message: err.message });
-    }
-  });
 
   // ==================== ADMIN: BUSINESS CONFIG ====================
   app.get("/api/admin/business-config", requireRole("MANAGER"), async (_req, res) => {
