@@ -1,0 +1,122 @@
+ÉPICA: Mobile-first “Selector de ítems” con búsqueda sticky + categorías colapsables
+
+Objetivo
+
+En la pantalla donde el salonero (y/o cliente QR si aplica) selecciona ítems, mejorar UX mobile-first para listas largas:
+	1.	la barra de búsqueda siempre visible aunque el usuario haga scroll
+	2.	los ítems agrupados por categoría y cada categoría se abre/cierra (accordion) para ver el desglose de ítems.
+
+Restricciones (NO tocar)
+	•	No cambiar lógica de orden, totales, KDS, POS.
+	•	No cambiar endpoints ni modelos.
+	•	Solo UI/UX del selector de ítems (render y comportamiento).
+
+⸻
+
+Historia 1 — Barra de búsqueda “sticky” (siempre visible)
+
+Como salonero/usuario
+Quiero que el campo de búsqueda se mantenga visible cuando hago scroll
+Para filtrar sin volver arriba.
+
+CDA (Criterios de Aceptación)
+	•	La barra de búsqueda se queda fija arriba del listado durante el scroll.
+	•	Implementación preferida: position: sticky; top: 0; (o un header fijo del contenedor).
+	•	Debe funcionar en navegadores móviles comunes (Safari iOS, Chrome Android).
+	•	Debe respetar safe-area / notch (padding-top).
+	•	Debe incluir:
+	•	input de texto
+	•	botón “limpiar” (X)
+	•	placeholder: “Buscar ítems…”
+	•	Performance: sin re-render completo por cada scroll.
+
+DoD
+	•	Se prueba en móvil: al hacer scroll 200+ ítems, la barra sigue visible y usable.
+
+⸻
+
+Historia 2 — Lista agrupada por categoría con “accordion” (colapsable)
+
+Como salonero/usuario
+Quiero ver los ítems agrupados por categoría y poder expandir/colapsar categorías
+Para navegar rápido una lista larga.
+
+CDA
+	•	Renderizar lista como:
+	•	Categoría (header) + contador de ítems visibles
+	•	Al tocar header → expand/collapse
+	•	Por defecto:
+	•	Solo 1 categoría abierta a la vez (modo accordion) para evitar scroll infinito y confusión.
+	•	Opción: mantener la última categoría abierta (persistir en estado local).
+	•	El header de categoría debe mostrar:
+	•	nombre de categoría
+	•	chevron (▼/▶) indicando estado
+	•	La lista dentro de una categoría muestra cards/rows simples:
+	•	nombre del ítem
+	•	precio
+	•	(opcional) descripción corta
+	•	botón “+” o tap sobre la fila para agregar.
+	•	Debe ser mobile-first: targets táctiles ≥ 44px alto, texto legible, sin tablas.
+
+DoD
+	•	Con categorías del menú: se puede abrir/cerrar y agregar ítems sin romper flujo.
+
+⸻
+
+Historia 3 — Búsqueda que filtra dentro de categorías (comportamiento exacto)
+
+Como usuario
+Quiero que la búsqueda filtre por nombre (y opcional descripción)
+Para encontrar rápido.
+
+CDA
+	•	Filtrar por item.name (y opcional description si existe).
+	•	Al escribir:
+	•	solo se muestran categorías con al menos 1 match
+	•	dentro de cada categoría, solo los ítems que matchean
+	•	categorías con match se auto-expanden (para mostrar resultados)
+	•	si no hay match → mostrar mensaje “Sin resultados”
+	•	Debounce 200–300ms para no recalcular en cada tecla.
+	•	El filtro no debe hacer llamadas al servidor (todo local con la lista ya cargada).
+
+DoD
+	•	Buscar “rib” muestra solo Carnes y Rib Eye, etc.
+
+⸻
+
+Historia 4 — Scroll container correcto (sin “salto”)
+
+Como usuario
+Quiero que el scroll sea del listado y no de toda la página
+Para que el sticky funcione bien y la pantalla no “brinque”.
+
+CDA
+	•	El contenedor del listado (items list) debe ser el que scrollea (overflow-y: auto; height: calc(100vh - headerHeight)).
+	•	Sticky aplicado dentro del contenedor.
+	•	Evitar doble scroll (body + container).
+
+DoD
+	•	No hay scroll duplicado y el sticky funciona estable.
+
+⸻
+
+Historia 5 — Estados y accesibilidad mínima
+
+CDA
+	•	Mantener estado:
+	•	expandedCategoryId
+	•	searchTerm
+	•	Accesibilidad:
+	•	botones con aria-label (buscar, limpiar, expandir/collapse)
+	•	Animación opcional, ligera (no pesada): max-height o height auto con transición corta.
+
+DoD
+	•	No hay flicker ni lag al expandir/collapse.
+
+⸻
+
+Nota final (para que Replit no “interprete”)
+	•	Esto NO es rediseño total, es solo:
+	1.	search sticky
+	2.	categorías colapsables tipo accordion
+	3.	filtro local
