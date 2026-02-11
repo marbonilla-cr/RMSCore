@@ -56,6 +56,18 @@ export default function AdminProductsPage() {
     },
   });
 
+  const toggleActiveMutation = useMutation({
+    mutationFn: async ({ id, active }: { id: number; active: boolean }) => {
+      return apiRequest("PATCH", `/api/admin/products/${id}`, { active });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/products"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const openCreate = () => {
     setEditing(null);
     setForm({ productCode: "", name: "", description: "", categoryId: "", price: "", active: true, visibleQr: true, availablePortions: "" });
@@ -271,25 +283,24 @@ export default function AdminProductsPage() {
                       <div
                         key={p.id}
                         data-testid={`card-product-${p.id}`}
-                        className="flex items-center justify-between gap-3 px-3 min-h-[48px] border-b last:border-b-0"
+                        className={`flex items-center justify-between gap-2 px-3 min-h-[48px] border-b last:border-b-0 ${!p.active ? "opacity-50" : ""}`}
                       >
                         <div className="min-w-0 flex-1 py-2">
-                          <p className="font-medium text-base truncate">{p.name}</p>
-                          {p.description && (
-                            <p className="text-xs text-muted-foreground truncate">{p.description}</p>
-                          )}
+                          <p className="font-medium text-sm truncate">{p.name}</p>
+                          <p className="text-xs text-muted-foreground">₡{Number(p.price).toLocaleString()}</p>
                         </div>
-                        <div className="flex items-center gap-1 flex-shrink-0 flex-wrap">
-                          <span className="font-semibold text-sm">₡{Number(p.price).toLocaleString()}</span>
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           {p.availablePortions !== null && (
-                            <Badge variant="outline">{p.availablePortions}p</Badge>
+                            <Badge variant="outline" className="text-xs">{p.availablePortions}p</Badge>
                           )}
                           {!p.visibleQr && p.active && (
-                            <Badge variant="outline">No QR</Badge>
+                            <Badge variant="outline" className="text-xs">No QR</Badge>
                           )}
-                          <Badge variant={p.active ? "default" : "secondary"}>
-                            {p.active ? "Activo" : "Inactivo"}
-                          </Badge>
+                          <Switch
+                            data-testid={`switch-product-active-${p.id}`}
+                            checked={p.active}
+                            onCheckedChange={(checked) => toggleActiveMutation.mutate({ id: p.id, active: checked })}
+                          />
                           <Button size="icon" variant="ghost" onClick={() => openEdit(p)} data-testid={`button-edit-product-${p.id}`}>
                             <Pencil className="w-4 h-4" />
                           </Button>

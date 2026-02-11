@@ -1192,10 +1192,9 @@ export async function truncateTransactionalData() {
   await db.delete(cashSessions);
   await db.delete(auditEvents);
   await db.delete(qboExportJobs);
-  await db.execute(sql`ALTER SEQUENCE orders_id_seq RESTART WITH 1`);
-  await db.execute(sql`ALTER SEQUENCE order_items_id_seq RESTART WITH 1`);
-  await db.execute(sql`ALTER SEQUENCE payments_id_seq RESTART WITH 1`);
-  await db.execute(sql`ALTER SEQUENCE kitchen_tickets_id_seq RESTART WITH 1`);
-  await db.execute(sql`ALTER SEQUENCE kitchen_ticket_items_id_seq RESTART WITH 1`);
-  await db.execute(sql`UPDATE tables SET status = 'LIBRE' WHERE status != 'LIBRE'`);
+  await db.execute(sql`ALTER SEQUENCE IF EXISTS orders_id_seq RESTART WITH 1`);
+  await db.execute(sql`ALTER SEQUENCE IF EXISTS order_items_id_seq RESTART WITH 1`);
+  await db.execute(sql`ALTER SEQUENCE IF EXISTS payments_id_seq RESTART WITH 1`);
+  await db.execute(sql`ALTER SEQUENCE IF EXISTS kitchen_tickets_id_seq RESTART WITH 1`);
+  await db.execute(sql`ALTER SEQUENCE IF EXISTS kitchen_ticket_items_id_seq RESTART WITH 1`);
 }
