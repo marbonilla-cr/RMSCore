@@ -204,7 +204,7 @@ export default function AdminProductsPage() {
         </Dialog>
       </div>
 
-      <div className="sticky top-0 z-[200] bg-background pb-3">
+      <div className="sticky top-0 z-[9] bg-background pb-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <Input

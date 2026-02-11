@@ -189,7 +189,7 @@ export default function QRClientPage() {
 
   return (
     <div className="min-h-screen bg-background pb-32">
-      <div className="bg-primary text-primary-foreground p-4 sticky top-0 z-50">
+      <div className="bg-primary text-primary-foreground p-4 sticky top-0 z-[9]">
         <div className="flex items-center justify-between max-w-lg mx-auto">
           <div className="flex items-center gap-2">
             <UtensilsCrossed className="w-5 h-5" />
@@ -232,7 +232,7 @@ export default function QRClientPage() {
         )}
       </div>
 
-      <div className="sticky top-[56px] z-40 bg-background border-b px-4 py-2 max-w-lg mx-auto">
+      <div className="sticky top-[56px] z-[8] bg-background border-b px-4 py-2 max-w-lg mx-auto">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <Input

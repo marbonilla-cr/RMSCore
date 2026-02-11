@@ -288,7 +288,7 @@ export default function TableDetailPage() {
 
   return (
     <div className="flex flex-col" style={{ minHeight: "100dvh" }}>
-      <div className="sticky top-0 z-[100] bg-background border-b px-3 py-2 flex items-center gap-2">
+      <div className="sticky top-0 z-[9] bg-background border-b px-3 py-2 flex items-center gap-2">
         <Button size="icon" variant="ghost" onClick={() => navigate("/tables")} data-testid="button-back">
           <ArrowLeft className="w-5 h-5" />
         </Button>
@@ -561,7 +561,7 @@ export default function TableDetailPage() {
           </div>
         ) : (
           <div className="flex flex-col max-w-lg mx-auto h-full">
-            <div className="sticky top-0 z-[50] bg-background px-3 pt-2 pb-2 border-b" style={{ paddingTop: "max(8px, env(safe-area-inset-top, 8px))" }}>
+            <div className="sticky top-0 z-[9] bg-background px-3 pt-2 pb-2 border-b" style={{ paddingTop: "max(8px, env(safe-area-inset-top, 8px))" }}>
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
