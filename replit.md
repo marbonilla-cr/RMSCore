@@ -144,6 +144,14 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 - POS tables response now includes dailyNumber/globalNumber for proper order numbering on receipts
 - Receipt uses global/daily order number format (G-XXX or D-XXX)
 
+## Mobile-First UI & UX Polish
+- Seed script wipes all products/categories/modifiers/discounts before CSV reimport (clean slate, no duplicates)
+- Admin products: accordion categories with sticky search (250ms debounce), single-open mode, conditional rendering
+- QR client menu: same accordion pattern with sticky search, auto-expand on match, "Sin resultados" empty state
+- All admin pages (categories, tables, payment-methods, employees, discounts, modifiers): p-3 md:p-4 max-w-lg containers, text-xl md:text-2xl titles, min-h-[48px] touch targets
+- Admin employees: card-based list (no HTML table) for mobile UX
+- Operational pages (KDS, POS, tables, dashboard): same mobile-first spacing/typography patterns
+
 ## PIN Authentication & RBAC
 - PIN login is the primary entry screen (4-digit numpad interface)
 - Password login is fallback accessible via link from PIN screen
