@@ -197,15 +197,9 @@ export default function AdminProductsPage() {
                 <Label>Porciones Disponibles (vacío = ilimitado)</Label>
                 <Input type="number" value={form.availablePortions} onChange={(e) => setForm({ ...form, availablePortions: e.target.value })} placeholder="Ilimitado" />
               </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Switch checked={form.active} onCheckedChange={(c) => setForm({ ...form, active: c })} />
-                  <Label>Activo</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Switch checked={form.visibleQr} onCheckedChange={(c) => setForm({ ...form, visibleQr: c })} />
-                  <Label>Visible QR</Label>
-                </div>
+              <div className="flex items-center gap-2">
+                <Switch checked={form.visibleQr} onCheckedChange={(c) => setForm({ ...form, visibleQr: c })} />
+                <Label>Visible QR</Label>
               </div>
               <Button type="submit" className="w-full" disabled={saveMutation.isPending} data-testid="button-save-product">
                 {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
