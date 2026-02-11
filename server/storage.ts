@@ -5,7 +5,7 @@ import {
   orders, orderItems, qrSubmissions, kitchenTickets, kitchenTicketItems,
   payments, cashSessions, splitAccounts, splitItems,
   salesLedgerItems, auditEvents, qboExportJobs, voidedItems,
-  businessConfig, printers,
+  businessConfig, printers, permissions, rolePermissions,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -63,6 +63,87 @@ export async function updateUser(id: number, data: Partial<InsertUser>) {
 
 export async function verifyPassword(password: string, hash: string) {
   return bcrypt.compare(password, hash);
+}
+
+// PIN Auth
+export async function enrollPin(userId: number, pin: string) {
+  const hash = await bcrypt.hash(pin, 10);
+  const [user] = await db.update(users).set({ pin: hash, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
+  return user;
+}
+
+export async function resetPin(userId: number) {
+  const [user] = await db.update(users).set({ pin: null, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
+  return user;
+}
+
+export async function getAllUsersWithPin() {
+  return db.select({
+    id: users.id,
+    username: users.username,
+    displayName: users.displayName,
+    role: users.role,
+    active: users.active,
+    pin: users.pin,
+    pinFailedAttempts: users.pinFailedAttempts,
+    pinLockedUntil: users.pinLockedUntil,
+  }).from(users).where(eq(users.active, true));
+}
+
+export async function verifyPin(pin: string, hash: string) {
+  return bcrypt.compare(pin, hash);
+}
+
+export async function incrementPinFailed(userId: number) {
+  const [user] = await db.update(users).set({
+    pinFailedAttempts: sql`${users.pinFailedAttempts} + 1`,
+  }).where(eq(users.id, userId)).returning();
+  return user;
+}
+
+export async function lockPinUser(userId: number, minutes: number = 5) {
+  const until = new Date(Date.now() + minutes * 60 * 1000);
+  const [user] = await db.update(users).set({
+    pinLockedUntil: until,
+    pinFailedAttempts: 0,
+  }).where(eq(users.id, userId)).returning();
+  return user;
+}
+
+export async function clearPinLock(userId: number) {
+  const [user] = await db.update(users).set({
+    pinFailedAttempts: 0,
+    pinLockedUntil: null,
+  }).where(eq(users.id, userId)).returning();
+  return user;
+}
+
+// Permissions
+export async function getAllPermissions() {
+  return db.select().from(permissions).orderBy(asc(permissions.key));
+}
+
+export async function getRolePermissions(role: string) {
+  return db.select().from(rolePermissions).where(eq(rolePermissions.role, role));
+}
+
+export async function getPermissionKeysForRole(role: string): Promise<string[]> {
+  const rows = await db.select({ key: rolePermissions.permissionKey }).from(rolePermissions).where(eq(rolePermissions.role, role));
+  return rows.map(r => r.key);
+}
+
+export async function setRolePermissions(role: string, permissionKeys: string[]) {
+  await db.delete(rolePermissions).where(eq(rolePermissions.role, role));
+  if (permissionKeys.length > 0) {
+    await db.insert(rolePermissions).values(permissionKeys.map(key => ({ role, permissionKey: key })));
+  }
+}
+
+export async function userHasPermission(userId: number, permissionKey: string): Promise<boolean> {
+  const user = await getUser(userId);
+  if (!user) return false;
+  const keys = await getPermissionKeysForRole(user.role);
+  return keys.includes(permissionKey);
 }
 
 // Tables
@@ -714,6 +795,61 @@ export async function seedData() {
   ]);
 
   console.log("Seed data created successfully");
+}
+
+// Seed permissions & role mappings (idempotent, runs always)
+export async function seedPermissions() {
+  const POS_PERMS = [
+    { key: "POS_VIEW", description: "Ver módulo POS" },
+    { key: "POS_PAY", description: "Procesar pagos" },
+    { key: "POS_SPLIT", description: "Dividir cuentas" },
+    { key: "POS_PRINT", description: "Imprimir tiquetes" },
+    { key: "POS_EMAIL_TICKET", description: "Enviar tiquete por email" },
+    { key: "POS_EDIT_CUSTOMER_PREPAY", description: "Editar cliente antes del pago" },
+    { key: "POS_EDIT_CUSTOMER_POSTPAY", description: "Editar cliente después del pago" },
+    { key: "POS_VOID", description: "Anular pagos" },
+    { key: "POS_REOPEN", description: "Reabrir órdenes pagadas" },
+    { key: "CASH_CLOSE", description: "Cierre de caja" },
+  ];
+
+  for (const p of POS_PERMS) {
+    const existing = await db.select().from(permissions).where(eq(permissions.key, p.key)).limit(1);
+    if (existing.length === 0) {
+      await db.insert(permissions).values(p);
+    }
+  }
+
+  const ROLE_PERMS: Record<string, string[]> = {
+    MANAGER: POS_PERMS.map(p => p.key),
+    CASHIER: ["POS_VIEW", "POS_PAY", "POS_SPLIT", "POS_PRINT", "POS_EMAIL_TICKET", "POS_EDIT_CUSTOMER_PREPAY", "POS_EDIT_CUSTOMER_POSTPAY", "POS_VOID", "POS_REOPEN", "CASH_CLOSE"],
+    WAITER: ["POS_VIEW", "POS_PAY", "POS_SPLIT", "POS_PRINT", "POS_EMAIL_TICKET", "POS_EDIT_CUSTOMER_PREPAY"],
+    KITCHEN: [],
+    STAFF: [],
+  };
+
+  for (const [role, keys] of Object.entries(ROLE_PERMS)) {
+    const existing = await db.select().from(rolePermissions).where(eq(rolePermissions.role, role)).limit(1);
+    if (existing.length === 0 && keys.length > 0) {
+      await db.insert(rolePermissions).values(keys.map(k => ({ role, permissionKey: k })));
+    }
+  }
+
+  // Seed the 4 operation users if they don't exist
+  const opUsers = [
+    { username: "marcelo", displayName: "Marcelo", role: "MANAGER" },
+    { username: "lorenza", displayName: "Maria Lorenza Solis", role: "WAITER" },
+    { username: "alexa", displayName: "Alexa Mendez", role: "KITCHEN" },
+    { username: "mrivera", displayName: "Maria Rivera", role: "STAFF" },
+  ];
+  const hash = await bcrypt.hash("1234", 10);
+  for (const u of opUsers) {
+    const existing = await db.select().from(users).where(eq(users.username, u.username)).limit(1);
+    if (existing.length === 0) {
+      await db.insert(users).values({ ...u, password: hash, active: true });
+    }
+  }
+
+  console.log("Permissions and operation users seeded");
 }
 
 // Business Config

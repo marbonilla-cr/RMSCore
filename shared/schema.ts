@@ -20,6 +20,10 @@ export const users = pgTable("users", {
   displayName: text("display_name").notNull(),
   role: text("role").notNull().default("WAITER"),
   active: boolean("active").notNull().default(true),
+  email: text("email"),
+  pin: text("pin"),
+  pinFailedAttempts: integer("pin_failed_attempts").notNull().default(0),
+  pinLockedUntil: timestamp("pin_locked_until"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -323,9 +327,43 @@ export type BusinessConfig = typeof businessConfig.$inferSelect;
 export type InsertPrinter = z.infer<typeof insertPrinterSchema>;
 export type Printer = typeof printers.$inferSelect;
 
+// Permissions & RBAC
+export const permissions = pgTable("permissions", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  description: text("description").notNull().default(""),
+});
+
+export const rolePermissions = pgTable("role_permissions", {
+  id: serial("id").primaryKey(),
+  role: text("role").notNull(),
+  permissionKey: text("permission_key").notNull(),
+});
+
+export const insertPermissionSchema = createInsertSchema(permissions).omit({ id: true });
+export const insertRolePermissionSchema = createInsertSchema(rolePermissions).omit({ id: true });
+
+export type Permission = typeof permissions.$inferSelect;
+export type InsertPermission = z.infer<typeof insertPermissionSchema>;
+export type RolePermission = typeof rolePermissions.$inferSelect;
+export type InsertRolePermission = z.infer<typeof insertRolePermissionSchema>;
+
 // Login schema
 export const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
+
+// PIN login schema
+export const pinLoginSchema = z.object({
+  pin: z.string().length(4).regex(/^\d{4}$/),
+});
+export type PinLoginInput = z.infer<typeof pinLoginSchema>;
+
+// PIN enrollment schema
+const TRIVIAL_PINS = ["0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8888", "9999", "1234"];
+export const enrollPinSchema = z.object({
+  pin: z.string().length(4).regex(/^\d{4}$/).refine(val => !TRIVIAL_PINS.includes(val), { message: "PIN demasiado simple" }),
+});
+export type EnrollPinInput = z.infer<typeof enrollPinSchema>;

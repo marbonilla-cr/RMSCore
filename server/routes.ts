@@ -4,7 +4,7 @@ import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
 import * as storage from "./storage";
-import { loginSchema, insertBusinessConfigSchema, insertPrinterSchema } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -42,6 +42,22 @@ function requireRole(...roles: string[]) {
   };
 }
 
+function requirePermission(...permissionKeys: string[]) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user) return res.status(401).json({ message: "No autenticado" });
+    (req as any).user = user;
+    const userPerms = await storage.getPermissionKeysForRole(user.role);
+    for (const key of permissionKeys) {
+      if (!userPerms.includes(key)) {
+        return res.status(403).json({ message: "Sin permiso" });
+      }
+    }
+    next();
+  };
+}
+
 function getBusinessDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -68,14 +84,15 @@ export async function registerRoutes(
       cookie: {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
-        secure: true,
-        sameSite: "none",
+        secure: process.env.NODE_ENV === "production",
+        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       },
     })
   );
 
   // Seed data
   await storage.seedData();
+  await storage.seedPermissions();
 
   // ==================== AUTH ====================
   app.post("/api/auth/login", async (req, res) => {
@@ -90,17 +107,21 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Usuario o contraseña incorrectos" });
       }
       req.session.userId = user.id;
-      const { password: _, ...safeUser } = user;
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: user.id, action: "LOGIN_PASSWORD", entityType: "USER", entityId: user.id, metadata: {} });
+      const { password: _, pin: _p, ...safeUser } = user;
       req.session.save((err) => {
         if (err) return res.status(500).json({ message: "Error de sesión" });
-        res.json({ user: safeUser });
+        res.json({ user: { ...safeUser, hasPin: !!user.pin } });
       });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
   });
 
-  app.post("/api/auth/logout", (req, res) => {
+  app.post("/api/auth/logout", async (req, res) => {
+    if (req.session.userId) {
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: req.session.userId, action: "LOGOUT", entityType: "USER", entityId: req.session.userId, metadata: {} });
+    }
     req.session.destroy(() => {});
     res.json({ ok: true });
   });
@@ -109,8 +130,169 @@ export async function registerRoutes(
     if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
     const user = await storage.getUser(req.session.userId);
     if (!user) return res.status(401).json({ message: "No autenticado" });
-    const { password: _, ...safeUser } = user;
-    res.json(safeUser);
+    const { password: _, pin: _p, ...safeUser } = user;
+    res.json({ ...safeUser, hasPin: !!user.pin });
+  });
+
+  // PIN Login
+  app.post("/api/auth/pin-login", async (req, res) => {
+    try {
+      const { pin } = pinLoginSchema.parse(req.body);
+      const allUsers = await storage.getAllUsersWithPin();
+      const usersWithPin = allUsers.filter(u => u.pin && u.active);
+
+      for (const u of usersWithPin) {
+        if (u.pinLockedUntil && new Date(u.pinLockedUntil) > new Date()) {
+          continue;
+        }
+        const match = await storage.verifyPin(pin, u.pin!);
+        if (match) {
+          await storage.clearPinLock(u.id);
+          req.session.userId = u.id;
+          await storage.createAuditEvent({ actorType: "USER", actorUserId: u.id, action: "LOGIN_PIN", entityType: "USER", entityId: u.id, metadata: {} });
+          const fullUser = await storage.getUser(u.id);
+          if (!fullUser) return res.status(500).json({ message: "Error interno" });
+          const { password: _, pin: _p, ...safeUser } = fullUser;
+          return req.session.save((err) => {
+            if (err) return res.status(500).json({ message: "Error de sesión" });
+            res.json({ user: { ...safeUser, hasPin: true } });
+          });
+        }
+      }
+
+      // PIN not matched - we can't identify the user, so we can't increment a specific user's failed attempts
+      // Just return generic error
+      res.status(401).json({ message: "PIN incorrecto" });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // PIN Enrollment
+  app.post("/api/auth/enroll-pin", requireAuth, async (req, res) => {
+    try {
+      const { pin } = enrollPinSchema.parse(req.body);
+      await storage.enrollPin(req.session.userId!, pin);
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: req.session.userId!, action: "PIN_SET", entityType: "USER", entityId: req.session.userId!, metadata: {} });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // My permissions
+  app.get("/api/auth/my-permissions", requireAuth, async (req, res) => {
+    const user = await storage.getUser(req.session.userId!);
+    if (!user) return res.status(401).json({ message: "No autenticado" });
+    const perms = await storage.getPermissionKeysForRole(user.role);
+    res.json({ permissions: perms, role: user.role });
+  });
+
+  // ==================== ADMIN: EMPLOYEES ====================
+  app.get("/api/admin/employees", requireRole("MANAGER"), async (_req, res) => {
+    const allUsers = await storage.getAllUsers();
+    const safe = allUsers.map(u => {
+      const { password: _, pin: _p, ...rest } = u;
+      return { ...rest, hasPin: !!u.pin };
+    });
+    res.json(safe);
+  });
+
+  app.post("/api/admin/employees", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const { username, password, displayName, role, active, email } = req.body;
+      if (!username || !password || !displayName || !role) {
+        return res.status(400).json({ message: "Campos requeridos: username, password, displayName, role" });
+      }
+      const existing = await storage.getUserByUsername(username);
+      if (existing) return res.status(400).json({ message: "Username ya existe" });
+      const user = await storage.createUser({ username, password, displayName, role, active: active !== false, email: email || null });
+      const { password: _, pin: _p, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/employees/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { displayName, role, active, email, username } = req.body;
+      const updates: any = {};
+      if (displayName !== undefined) updates.displayName = displayName;
+      if (role !== undefined) updates.role = role;
+      if (active !== undefined) updates.active = active;
+      if (email !== undefined) updates.email = email;
+      if (username !== undefined) {
+        const existing = await storage.getUserByUsername(username);
+        if (existing && existing.id !== id) return res.status(400).json({ message: "Username ya existe" });
+        updates.username = username;
+      }
+      if (active === false) {
+        const actor = (req as any).user;
+        await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "USER_DISABLED", entityType: "USER", entityId: id, metadata: {} });
+      }
+      const user = await storage.updateUser(id, updates);
+      const { password: _, pin: _p, ...safeUser } = user;
+      res.json({ ...safeUser, hasPin: !!user.pin });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/employees/:id/reset-password", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { password } = req.body;
+      if (!password) return res.status(400).json({ message: "Password requerido" });
+      await storage.updateUser(id, { password });
+      const actor = (req as any).user;
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PASSWORD_RESET", entityType: "USER", entityId: id, metadata: {} });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/employees/:id/reset-pin", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.resetPin(id);
+      const actor = (req as any).user;
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PIN_RESET", entityType: "USER", entityId: id, metadata: {} });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== ADMIN: PERMISSIONS ====================
+  app.get("/api/admin/permissions", requireRole("MANAGER"), async (_req, res) => {
+    const perms = await storage.getAllPermissions();
+    res.json(perms);
+  });
+
+  app.get("/api/admin/role-permissions", requireRole("MANAGER"), async (_req, res) => {
+    const roles = ["MANAGER", "CASHIER", "WAITER", "KITCHEN", "STAFF"];
+    const result: Record<string, string[]> = {};
+    for (const role of roles) {
+      result[role] = await storage.getPermissionKeysForRole(role);
+    }
+    res.json(result);
+  });
+
+  app.put("/api/admin/role-permissions/:role", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const role = req.params.role;
+      const { permissions } = req.body;
+      if (!Array.isArray(permissions)) return res.status(400).json({ message: "permissions debe ser un array" });
+      await storage.setRolePermissions(role, permissions);
+      const actor = (req as any).user;
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "ROLE_PERMISSIONS_CHANGED", entityType: "ROLE", metadata: { role, permissions } });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
   });
 
   // ==================== ADMIN: TABLES ====================
@@ -1109,12 +1291,12 @@ export async function registerRoutes(
   });
 
   // ==================== POS: PAYMENT METHODS (for cashier access) ====================
-  app.get("/api/pos/payment-methods", requireRole("CASHIER", "MANAGER"), async (_req, res) => {
+  app.get("/api/pos/payment-methods", requirePermission("POS_VIEW"), async (_req, res) => {
     res.json(await storage.getAllPaymentMethods());
   });
 
   // ==================== POS ====================
-  app.get("/api/pos/tables", requireRole("CASHIER", "MANAGER"), async (_req, res) => {
+  app.get("/api/pos/tables", requirePermission("POS_VIEW"), async (_req, res) => {
     const allTables = await storage.getAllTables();
     const result = [];
     for (const t of allTables) {
@@ -1137,7 +1319,7 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.post("/api/pos/pay", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.post("/api/pos/pay", requirePermission("POS_PAY"), async (req, res) => {
     try {
       const { orderId, paymentMethodId, amount, clientName, clientEmail } = req.body;
       const userId = req.session.userId!;
@@ -1197,12 +1379,12 @@ export async function registerRoutes(
   });
 
   // ==================== CASH SESSION ====================
-  app.get("/api/pos/cash-session", requireRole("CASHIER", "MANAGER"), async (_req, res) => {
+  app.get("/api/pos/cash-session", requirePermission("POS_VIEW"), async (_req, res) => {
     const session = await storage.getLatestCashSession();
     res.json(session || {});
   });
 
-  app.post("/api/pos/cash-session/open", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.post("/api/pos/cash-session/open", requirePermission("POS_VIEW"), async (req, res) => {
     try {
       const existing = await storage.getActiveCashSession();
       if (existing) return res.status(400).json({ message: "Ya hay una caja abierta" });
@@ -1220,7 +1402,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/pos/cash-session/close", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.post("/api/pos/cash-session/close", requirePermission("CASH_CLOSE"), async (req, res) => {
     try {
       const session = await storage.getActiveCashSession();
       if (!session) return res.status(400).json({ message: "No hay caja abierta" });
@@ -1247,7 +1429,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: ORDER PAYMENTS ====================
-  app.get("/api/pos/orders/:orderId/payments", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.get("/api/pos/orders/:orderId/payments", requirePermission("POS_VIEW"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId as string);
       const orderPayments = await storage.getPaymentsForOrder(orderId);
@@ -1264,7 +1446,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: SPLIT ACCOUNTS ====================
-  app.get("/api/pos/orders/:orderId/splits", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.get("/api/pos/orders/:orderId/splits", requirePermission("POS_VIEW"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId);
       const splits = await storage.getSplitAccountsForOrder(orderId);
@@ -1279,7 +1461,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/pos/orders/:orderId/splits", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.post("/api/pos/orders/:orderId/splits", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId);
       const { label, orderItemIds } = req.body;
@@ -1301,7 +1483,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/pos/splits/:id", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.delete("/api/pos/splits/:id", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteSplitAccount(id);
@@ -1312,7 +1494,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/pos/pay-split", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.post("/api/pos/pay-split", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
       const { splitId, paymentMethodId, clientName, clientEmail } = req.body;
       const userId = req.session.userId!;
@@ -1374,7 +1556,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: PRINT RECEIPT (direct to printer) ====================
-  app.post("/api/pos/print-receipt", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.post("/api/pos/print-receipt", requirePermission("POS_PRINT"), async (req, res) => {
     try {
       const { orderId } = req.body;
       if (!orderId || typeof orderId !== "number") return res.status(400).json({ message: "orderId requerido (número)" });
@@ -1443,7 +1625,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: SEND TICKET (email) ====================
-  app.post("/api/pos/send-ticket", requireRole("CASHIER", "MANAGER"), async (req, res) => {
+  app.post("/api/pos/send-ticket", requirePermission("POS_EMAIL_TICKET"), async (req, res) => {
     try {
       const { orderId, clientName, clientEmail } = req.body;
       const userId = req.session.userId!;
@@ -1554,7 +1736,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: VOID PAYMENT ====================
-  app.post("/api/pos/void-payment/:id", requireRole("MANAGER"), async (req, res) => {
+  app.post("/api/pos/void-payment/:id", requirePermission("POS_VOID"), async (req, res) => {
     try {
       const paymentId = parseInt(req.params.id);
       const userId = req.session.userId!;
@@ -1595,7 +1777,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: REOPEN TABLE ====================
-  app.post("/api/pos/reopen/:orderId", requireRole("MANAGER"), async (req, res) => {
+  app.post("/api/pos/reopen/:orderId", requirePermission("POS_REOPEN"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId);
       const userId = req.session.userId!;

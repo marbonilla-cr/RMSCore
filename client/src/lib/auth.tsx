@@ -1,18 +1,30 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import type { User } from "@shared/schema";
+
+interface AuthUser {
+  id: number;
+  username: string;
+  displayName: string;
+  role: string;
+  active: boolean;
+  email: string | null;
+  hasPin: boolean;
+  createdAt: string;
+}
 
 interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<AuthUser>;
+  pinLogin: (pin: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
+  setUser: (u: AuthUser | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -51,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [, setLocation] = useLocation();
 
-  const login = async (username: string, password: string) => {
+  const login = async (username: string, password: string): Promise<AuthUser> => {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -64,16 +76,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const data = await res.json();
     setUser(data.user);
-    setLocation("/");
+    return data.user;
+  };
+
+  const pinLogin = async (pin: string): Promise<AuthUser> => {
+    const res = await fetch("/api/auth/pin-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.message || "PIN incorrecto");
+    }
+    const data = await res.json();
+    setUser(data.user);
+    return data.user;
   };
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setUser(null);
+    setLocation("/");
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, pinLogin, logout, setUser }}>
       {children}
     </AuthContext.Provider>
   );

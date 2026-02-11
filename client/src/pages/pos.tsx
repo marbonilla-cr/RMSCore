@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { wsManager } from "@/lib/ws";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/use-permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,7 +43,17 @@ interface SplitAccountData {
 export default function POSPage() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const { hasPermission } = usePermissions();
   const isManager = user?.role === "MANAGER";
+
+  const canPay = hasPermission("POS_PAY");
+  const canSplit = hasPermission("POS_SPLIT");
+  const canPrint = hasPermission("POS_PRINT");
+  const canEmailTicket = hasPermission("POS_EMAIL_TICKET");
+  const canEditCustomerPrepay = hasPermission("POS_EDIT_CUSTOMER_PREPAY");
+  const canVoid = hasPermission("POS_VOID");
+  const canReopen = hasPermission("POS_REOPEN");
+  const canCashClose = hasPermission("CASH_CLOSE");
 
   const [tab, setTab] = useState("tables");
   const [selectedTable, setSelectedTable] = useState<POSTable | null>(null);
@@ -108,7 +119,7 @@ export default function POSPage() {
 
   const { data: orderPayments = [] } = useQuery<any[]>({
     queryKey: ["/api/pos/orders", selectedTable?.orderId, "payments"],
-    enabled: !!selectedTable?.orderId && detailView && isManager,
+    enabled: !!selectedTable?.orderId && detailView && (canVoid || canReopen),
   });
 
   const assignedItemIds = splits.flatMap((s) => s.items.map((si) => si.orderItemId));
@@ -430,13 +441,15 @@ export default function POSPage() {
             <Card>
               <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
                 <h3 className="font-bold">Items de la Orden</h3>
-                <Button
-                  onClick={openPaymentForFull}
-                  disabled={!cashSession?.id || !!cashSession.closedAt}
-                  data-testid="button-pay-full"
-                >
-                  <DollarSign className="w-4 h-4 mr-1" /> Pagar Todo
-                </Button>
+                {canPay && (
+                  <Button
+                    onClick={openPaymentForFull}
+                    disabled={!cashSession?.id || !!cashSession.closedAt}
+                    data-testid="button-pay-full"
+                  >
+                    <DollarSign className="w-4 h-4 mr-1" /> Pagar Todo
+                  </Button>
+                )}
               </CardHeader>
               <CardContent>
                 <div className="space-y-1">
@@ -449,7 +462,7 @@ export default function POSPage() {
                         className={`flex items-center gap-2 py-2 px-2 rounded-md ${isPaid ? "opacity-50" : ""} ${isAssigned && !isPaid ? "opacity-60" : ""}`}
                         data-testid={`item-row-${item.id}`}
                       >
-                        {!isPaid && !isAssigned && (
+                        {!isPaid && !isAssigned && canSplit && (
                           <Checkbox
                             checked={selectedItemIds.includes(item.id)}
                             onCheckedChange={() => toggleItemSelection(item.id)}
@@ -473,7 +486,7 @@ export default function POSPage() {
                   })}
                 </div>
 
-                {selectedItemIds.length > 0 && (
+                {canSplit && selectedItemIds.length > 0 && (
                   <div className="mt-4 border-t pt-3 space-y-3">
                     <div className="flex items-center gap-2 flex-wrap">
                       <Input
@@ -508,9 +521,11 @@ export default function POSPage() {
             </Card>
 
             <div className="space-y-4">
-              <h3 className="font-bold flex items-center gap-2">
-                <Split className="w-4 h-4" /> Dividir Cuenta
-              </h3>
+              {canSplit && (
+                <h3 className="font-bold flex items-center gap-2">
+                  <Split className="w-4 h-4" /> Dividir Cuenta
+                </h3>
+              )}
 
               {splitsLoading ? (
                 <div className="flex justify-center py-8">
@@ -570,7 +585,7 @@ export default function POSPage() {
                           <span className="font-bold text-lg" data-testid={`text-split-total-${split.id}`}>
                             ₡{splitTotal.toLocaleString()}
                           </span>
-                          {!allSplitItemsPaid ? (
+                          {!allSplitItemsPaid && canPay ? (
                             <Button
                               onClick={() => openPaymentForSplit(split.id)}
                               disabled={!cashSession?.id || !!cashSession.closedAt}
@@ -586,11 +601,11 @@ export default function POSPage() {
                 })
               )}
 
-              {isManager && orderPayments.filter(p => p.status === "PAID").length > 0 && (
+              {canVoid && orderPayments.filter(p => p.status === "PAID").length > 0 && (
                 <Card>
                   <CardHeader className="pb-2 flex flex-row items-center gap-2">
                     <XCircle className="w-4 h-4" />
-                    <h4 className="font-bold text-sm">Acciones Gerente</h4>
+                    <h4 className="font-bold text-sm">Anulaciones</h4>
                   </CardHeader>
                   <CardContent>
                     <p className="text-xs text-muted-foreground mb-3">Pagos activos de esta orden:</p>
@@ -651,11 +666,11 @@ export default function POSPage() {
                           </div>
                         ))}
                       </div>
-                      <div className="border-t pt-3 flex items-center justify-between">
+                      <div className="border-t pt-3 flex items-center justify-between gap-2">
                         <span className="font-bold text-lg">₡{Number(t.totalAmount).toLocaleString()}</span>
                         <Button
                           onClick={() => handleCobrarClick(t)}
-                          disabled={!cashSession?.id || !!cashSession.closedAt}
+                          disabled={!cashSession?.id || !!cashSession.closedAt || !canPay}
                           data-testid={`button-pay-table-${t.id}`}
                         >
                           <Banknote className="w-4 h-4 mr-1" /> Cobrar
@@ -685,9 +700,11 @@ export default function POSPage() {
                         <span className="text-sm text-muted-foreground">Efectivo Esperado</span>
                         <span className="font-medium">₡{Number(cashSession.expectedCash || 0).toLocaleString()}</span>
                       </div>
-                      <Button variant="destructive" className="w-full mt-4" onClick={() => setCloseOpen(true)} data-testid="button-close-cash">
-                        <Lock className="w-4 h-4 mr-1" /> Cerrar Caja
-                      </Button>
+                      {canCashClose && (
+                        <Button variant="destructive" className="w-full mt-4" onClick={() => setCloseOpen(true)} data-testid="button-close-cash">
+                          <Lock className="w-4 h-4 mr-1" /> Cerrar Caja
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -775,15 +792,19 @@ export default function POSPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Nombre del Cliente (opcional)</Label>
-              <Input data-testid="input-client-name" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nombre" />
-            </div>
-            <div className="space-y-2">
-              <Label>Email (opcional)</Label>
-              <Input data-testid="input-client-email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="email@example.com" type="email" />
-            </div>
-            {clientEmail && (
+            {canEditCustomerPrepay && (
+              <>
+                <div className="space-y-2">
+                  <Label>Nombre del Cliente (opcional)</Label>
+                  <Input data-testid="input-client-name" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nombre" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Email (opcional)</Label>
+                  <Input data-testid="input-client-email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="email@example.com" type="email" />
+                </div>
+              </>
+            )}
+            {canEmailTicket && clientEmail && (
               <Button
                 variant="outline"
                 className="w-full"
@@ -840,46 +861,50 @@ export default function POSPage() {
               Orden {lastPaidOrder?.orderNumber} - {lastPaidOrder?.tableName}
             </p>
             <div className="flex flex-col gap-2">
-              <Button
-                data-testid="button-direct-print"
-                disabled={printingDirect}
-                onClick={async () => {
-                  if (!lastPaidOrder) return;
-                  setPrintingDirect(true);
-                  try {
-                    const res = await apiRequest("POST", "/api/pos/print-receipt", {
-                      orderId: lastPaidOrder.orderId,
-                    });
-                    const data = await res.json();
-                    toast({ title: "Impreso", description: `Enviado a ${data.printer}` });
-                  } catch (err: any) {
-                    toast({ title: "Error de impresora", description: err.message, variant: "destructive" });
-                  } finally {
-                    setPrintingDirect(false);
-                  }
-                }}
-              >
-                {printingDirect ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Printer className="w-4 h-4 mr-1" />}
-                Imprimir en Impresora WiFi
-              </Button>
-              <Button
-                data-testid="button-browser-print"
-                variant="outline"
-                onClick={() => {
-                  if (!lastPaidOrder) return;
-                  triggerReceiptPrint(
-                    lastPaidOrder._items,
-                    lastPaidOrder._totalAmount,
-                    lastPaidOrder.paymentMethod,
-                    lastPaidOrder.tableName,
-                    lastPaidOrder.orderNumber,
-                    lastPaidOrder.clientName
-                  );
-                }}
-              >
-                <Receipt className="w-4 h-4 mr-1" />
-                Ver Tiquete en Pantalla
-              </Button>
+              {canPrint && (
+                <>
+                  <Button
+                    data-testid="button-direct-print"
+                    disabled={printingDirect}
+                    onClick={async () => {
+                      if (!lastPaidOrder) return;
+                      setPrintingDirect(true);
+                      try {
+                        const res = await apiRequest("POST", "/api/pos/print-receipt", {
+                          orderId: lastPaidOrder.orderId,
+                        });
+                        const data = await res.json();
+                        toast({ title: "Impreso", description: `Enviado a ${data.printer}` });
+                      } catch (err: any) {
+                        toast({ title: "Error de impresora", description: err.message, variant: "destructive" });
+                      } finally {
+                        setPrintingDirect(false);
+                      }
+                    }}
+                  >
+                    {printingDirect ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Printer className="w-4 h-4 mr-1" />}
+                    Imprimir en Impresora WiFi
+                  </Button>
+                  <Button
+                    data-testid="button-browser-print"
+                    variant="outline"
+                    onClick={() => {
+                      if (!lastPaidOrder) return;
+                      triggerReceiptPrint(
+                        lastPaidOrder._items,
+                        lastPaidOrder._totalAmount,
+                        lastPaidOrder.paymentMethod,
+                        lastPaidOrder.tableName,
+                        lastPaidOrder.orderNumber,
+                        lastPaidOrder.clientName
+                      );
+                    }}
+                  >
+                    <Receipt className="w-4 h-4 mr-1" />
+                    Ver Tiquete en Pantalla
+                  </Button>
+                </>
+              )}
               <Button
                 data-testid="button-close-print-dialog"
                 variant="ghost"

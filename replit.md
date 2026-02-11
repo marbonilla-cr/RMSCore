@@ -144,6 +144,22 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 - POS tables response now includes dailyNumber/globalNumber for proper order numbering on receipts
 - Receipt uses global/daily order number format (G-XXX or D-XXX)
 
+## PIN Authentication & RBAC
+- PIN login is the primary entry screen (4-digit numpad interface)
+- Password login is fallback accessible via link from PIN screen
+- After password login, if user has no PIN set, forced enrollment page is shown
+- 5-attempt lockout with 5-minute cooldown; trivial PINs (0000, 1111, ..., 1234) blocked
+- PIN auth endpoint: POST /api/auth/pin-login { pin }
+- PIN enrollment: POST /api/auth/enroll-pin { pin } (requires active session)
+- My permissions: GET /api/auth/my-permissions (returns {permissions: string[], role: string})
+- RBAC tables: permissions (id, key, description), role_permissions (id, role, permissionId)
+- 10 POS permissions: POS_VIEW, POS_PAY, POS_SPLIT, POS_PRINT, POS_EMAIL_TICKET, POS_EDIT_CUSTOMER_PREPAY, POS_EDIT_CUSTOMER_POSTPAY, POS_VOID, POS_REOPEN, CASH_CLOSE
+- requirePermission() middleware wraps all POS endpoints for server-side enforcement
+- Frontend usePermissions() hook for POS button visibility
+- Admin pages: /admin/employees (CRUD, reset PIN/password, deactivate), /admin/roles (permission grid per role)
+- Employee management: GET/POST/PATCH /api/admin/employees, POST reset-password, POST reset-pin
+- Role permissions: GET /api/admin/permissions, GET /api/admin/role-permissions, PUT /api/admin/role-permissions/:role
+
 ## Email Configuration (Optional)
 To enable email ticket sending, set these environment variables:
 - SMTP_HOST: SMTP server hostname

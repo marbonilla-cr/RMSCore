@@ -26,6 +26,8 @@ import {
   LogOut,
   Building2,
   Printer,
+  UserCog,
+  Shield,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
@@ -46,6 +48,8 @@ const managerItems = [
 ];
 
 const adminItems = [
+  { title: "Empleados", url: "/admin/employees", icon: UserCog },
+  { title: "Roles y Permisos", url: "/admin/roles", icon: Shield },
   { title: "Mesas", url: "/admin/tables", icon: Grid3x3 },
   { title: "Categorías", url: "/admin/categories", icon: Tag },
   { title: "Productos", url: "/admin/products", icon: ShoppingBag },
