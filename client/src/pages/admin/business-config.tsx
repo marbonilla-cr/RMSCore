@@ -7,8 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Save, Building2, Loader2 } from "lucide-react";
+import { Save, Building2, Loader2, Trash2, AlertTriangle } from "lucide-react";
 
 interface BusinessConfigData {
   id?: number;
@@ -23,6 +24,19 @@ interface BusinessConfigData {
 
 export default function AdminBusinessConfigPage() {
   const { toast } = useToast();
+  const [confirmTruncate, setConfirmTruncate] = useState(false);
+
+  const truncateMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/admin/truncate-transactions"),
+    onSuccess: () => {
+      setConfirmTruncate(false);
+      toast({ title: "Datos transaccionales eliminados correctamente" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const [form, setForm] = useState<BusinessConfigData>({
     businessName: "",
     legalName: "",
@@ -185,6 +199,56 @@ export default function AdminBusinessConfigPage() {
           </Button>
         </div>
       </form>
+
+      <Card className="mt-6 border-destructive/30">
+        <CardHeader>
+          <h3 className="text-base font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-destructive" />
+            Zona de Mantenimiento
+          </h3>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground mb-3">
+            Elimina todas las órdenes, pagos, tickets de cocina y cierres de caja. Los productos, mesas, empleados y configuración permanecen intactos.
+          </p>
+          <Button
+            variant="destructive"
+            onClick={() => setConfirmTruncate(true)}
+            data-testid="button-truncate-transactions"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Limpiar datos transaccionales
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Dialog open={confirmTruncate} onOpenChange={setConfirmTruncate}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-destructive" />
+              Confirmar limpieza
+            </DialogTitle>
+            <DialogDescription>
+              Se eliminarán TODAS las órdenes, pagos, tickets de cocina, cierres de caja y eventos de auditoría. Esta acción no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 justify-end mt-4">
+            <Button variant="outline" onClick={() => setConfirmTruncate(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => truncateMutation.mutate()}
+              disabled={truncateMutation.isPending}
+              data-testid="button-confirm-truncate"
+            >
+              {truncateMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+              Sí, eliminar todo
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
