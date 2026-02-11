@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Users, Loader2, KeyRound, Lock, ShieldCheck, ShieldOff } from "lucide-react";
 
@@ -154,10 +153,10 @@ export default function AdminEmployeesPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto">
+    <div className="p-3 md:p-4 max-w-lg mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
             <Users className="w-6 h-6" />
             Empleados
           </h1>
@@ -286,100 +285,91 @@ export default function AdminEmployeesPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>Usuario</TableHead>
-                  <TableHead>Rol</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>PIN</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {employees.map((emp) => (
-                  <TableRow key={emp.id} data-testid={`row-employee-${emp.id}`}>
-                    <TableCell className="font-medium" data-testid={`text-employee-name-${emp.id}`}>
-                      {emp.displayName}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground" data-testid={`text-employee-username-${emp.id}`}>
-                      @{emp.username}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" data-testid={`badge-employee-role-${emp.id}`}>
-                        {ROLE_LABELS[emp.role] || emp.role}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={emp.active ? "default" : "secondary"}
-                        data-testid={`badge-employee-status-${emp.id}`}
-                      >
-                        {emp.active ? "Activo" : "Inactivo"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell data-testid={`text-employee-pin-${emp.id}`}>
+        <div className="grid gap-3">
+          {employees.map((emp) => (
+            <Card key={emp.id} data-testid={`row-employee-${emp.id}`}>
+              <CardContent className="py-3">
+                <div className="flex items-center justify-between gap-3 min-h-[48px]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-md bg-accent flex items-center justify-center flex-shrink-0">
+                      <Users className="w-4 h-4 text-accent-foreground" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate" data-testid={`text-employee-name-${emp.id}`}>
+                        {emp.displayName}
+                      </p>
+                      <p className="text-xs text-muted-foreground" data-testid={`text-employee-username-${emp.id}`}>
+                        @{emp.username}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap">
+                    <Badge variant="secondary" data-testid={`badge-employee-role-${emp.id}`}>
+                      {ROLE_LABELS[emp.role] || emp.role}
+                    </Badge>
+                    <Badge
+                      variant={emp.active ? "default" : "secondary"}
+                      data-testid={`badge-employee-status-${emp.id}`}
+                    >
+                      {emp.active ? "Activo" : "Inactivo"}
+                    </Badge>
+                    <span data-testid={`text-employee-pin-${emp.id}`}>
                       {emp.hasPin ? (
                         <ShieldCheck className="w-4 h-4 text-green-600" />
                       ) : (
                         <ShieldOff className="w-4 h-4 text-muted-foreground" />
                       )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => openEdit(emp)}
-                          data-testid={`button-edit-employee-${emp.id}`}
-                          title="Editar"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => openResetPassword(emp)}
-                          data-testid={`button-reset-password-${emp.id}`}
-                          title="Restablecer Contraseña"
-                        >
-                          <Lock className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => resetPinMutation.mutate(emp.id)}
-                          data-testid={`button-reset-pin-${emp.id}`}
-                          title="Restablecer PIN"
-                          disabled={resetPinMutation.isPending}
-                        >
-                          <KeyRound className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => toggleActiveMutation.mutate({ id: emp.id, active: !emp.active })}
-                          data-testid={`button-toggle-active-${emp.id}`}
-                          title={emp.active ? "Desactivar" : "Activar"}
-                          disabled={toggleActiveMutation.isPending}
-                        >
-                          {emp.active ? (
-                            <ShieldOff className="w-4 h-4" />
-                          ) : (
-                            <ShieldCheck className="w-4 h-4" />
-                          )}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 mt-2 justify-end">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => openEdit(emp)}
+                    data-testid={`button-edit-employee-${emp.id}`}
+                    title="Editar"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => openResetPassword(emp)}
+                    data-testid={`button-reset-password-${emp.id}`}
+                    title="Restablecer Contraseña"
+                  >
+                    <Lock className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => resetPinMutation.mutate(emp.id)}
+                    data-testid={`button-reset-pin-${emp.id}`}
+                    title="Restablecer PIN"
+                    disabled={resetPinMutation.isPending}
+                  >
+                    <KeyRound className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => toggleActiveMutation.mutate({ id: emp.id, active: !emp.active })}
+                    data-testid={`button-toggle-active-${emp.id}`}
+                    title={emp.active ? "Desactivar" : "Activar"}
+                    disabled={toggleActiveMutation.isPending}
+                  >
+                    {emp.active ? (
+                      <ShieldOff className="w-4 h-4" />
+                    ) : (
+                      <ShieldCheck className="w-4 h-4" />
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       )}
     </div>
   );

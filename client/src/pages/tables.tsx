@@ -108,7 +108,7 @@ export default function TablesPage() {
 
   if (isLoading) {
     return (
-      <div className="p-3 md:p-6">
+      <div className="p-3 md:p-4">
         <h1 className="text-lg md:text-2xl font-bold mb-4 flex items-center gap-2">
           <Grid3x3 className="w-5 h-5" /> Mesas
         </h1>
@@ -122,7 +122,7 @@ export default function TablesPage() {
   }
 
   return (
-    <div className="p-3 md:p-6">
+    <div className="p-3 md:p-4">
       <div className="mb-4">
         <h1 className="text-lg md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
           <Grid3x3 className="w-5 h-5 md:w-6 md:h-6" /> Mesas
@@ -160,7 +160,7 @@ export default function TablesPage() {
           {tables.filter(t => t.active).map((table) => (
             <Link key={table.id} href={`/tables/${table.id}`}>
               <Card
-                className={`hover-elevate cursor-pointer transition-colors ${getStatusColor(table)}`}
+                className={`hover-elevate cursor-pointer transition-colors min-h-[48px] ${getStatusColor(table)}`}
                 data-testid={`card-table-${table.id}`}
               >
                 <CardContent className="p-2.5 md:p-4">

@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   UtensilsCrossed, ShoppingCart, Plus, Minus, Trash2,
-  Send, Loader2, Check, ChevronRight, ArrowRight, ClipboardList,
+  Send, Loader2, Check, ChevronRight, ChevronDown, ArrowRight, ClipboardList,
+  Search, X,
 } from "lucide-react";
 
 interface QRProduct {
@@ -31,6 +32,8 @@ export default function QRClientPage() {
   const [slideProgress, setSlideProgress] = useState(0);
   const [submitted, setSubmitted] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
 
   const { data: tableInfo, isLoading: tableLoading, error: tableError } = useQuery<any>({
     queryKey: ["/api/qr", tableCode, "info"],
@@ -83,9 +86,17 @@ export default function QRClientPage() {
 
   const cartTotal = cart.reduce((sum, c) => sum + Number(c.price) * c.qty, 0);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  const searchLower = debouncedSearch.toLowerCase();
+  const isSearching = searchLower.length > 0;
+
   const filteredMenu = menu.filter((p) =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.description.toLowerCase().includes(searchTerm.toLowerCase())
+    p.name.toLowerCase().includes(searchLower) ||
+    p.description.toLowerCase().includes(searchLower)
   );
 
   const groupedMenu = filteredMenu.reduce((acc: Record<string, QRProduct[]>, p) => {
@@ -94,6 +105,12 @@ export default function QRClientPage() {
     acc[cat].push(p);
     return acc;
   }, {});
+
+  const slugify = (s: string) => s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+
+  const toggleCategory = (cat: string) => {
+    setExpandedCategory((prev) => (prev === cat ? null : cat));
+  };
 
   const swipeTrackRef = useRef<HTMLDivElement>(null);
   const swipeThumbRef = useRef<HTMLDivElement>(null);
@@ -184,7 +201,7 @@ export default function QRClientPage() {
         </div>
       </div>
 
-      <div className="max-w-lg mx-auto p-4">
+      <div className="max-w-lg mx-auto px-4 pt-4">
         {previousItems.length > 0 && (
           <Card className="mb-4" data-testid="card-previous-items">
             <CardHeader className="pb-2 flex flex-row items-center gap-2">
@@ -213,55 +230,90 @@ export default function QRClientPage() {
             </CardContent>
           </Card>
         )}
+      </div>
 
-        <Input
-          placeholder="Buscar en el menú..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="mb-4"
-          data-testid="input-search-qr-menu"
-        />
+      <div className="sticky top-[56px] z-40 bg-background border-b px-4 py-2 max-w-lg mx-auto">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Buscar en el menú..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-9 pr-9"
+            data-testid="input-search-qr-menu"
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              className="absolute right-3 top-1/2 -translate-y-1/2"
+              onClick={() => { setSearchTerm(""); setDebouncedSearch(""); setExpandedCategory(null); }}
+              data-testid="button-clear-qr-search"
+            >
+              <X className="w-4 h-4 text-muted-foreground" />
+            </button>
+          )}
+        </div>
+      </div>
 
-        {Object.entries(groupedMenu).map(([category, items]) => (
-          <div key={category} className="mb-6">
-            <h2 className="font-bold text-lg mb-3">{category}</h2>
-            <div className="space-y-2">
-              {items.map((product) => {
-                const inCart = cart.find((c) => c.productId === product.id);
-                return (
-                  <Card key={product.id} data-testid={`qr-product-${product.id}`}>
-                    <CardContent className="p-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-sm">{product.name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
-                          <p className="font-bold text-sm mt-1">₡{Number(product.price).toLocaleString()}</p>
-                        </div>
-                        <div className="flex-shrink-0">
-                          {inCart ? (
-                            <div className="flex items-center gap-1">
-                              <Button size="icon" variant="outline" onClick={() => updateQty(product.id, inCart.qty - 1)} className="h-8 w-8">
-                                <Minus className="w-3 h-3" />
-                              </Button>
-                              <span className="w-6 text-center text-sm font-bold">{inCart.qty}</span>
-                              <Button size="icon" variant="outline" onClick={() => updateQty(product.id, inCart.qty + 1)} className="h-8 w-8">
-                                <Plus className="w-3 h-3" />
-                              </Button>
+      <div className="max-w-lg mx-auto px-4 pt-2">
+        {filteredMenu.length === 0 && debouncedSearch.length > 0 && (
+          <p className="text-center text-muted-foreground py-8" data-testid="text-no-results">Sin resultados</p>
+        )}
+
+        {Object.entries(groupedMenu).map(([category, items]) => {
+          const isOpen = isSearching || expandedCategory === category;
+          return (
+            <div key={category} className="mb-2">
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 min-h-[48px] px-2 py-2 rounded-md hover-elevate"
+                onClick={() => toggleCategory(category)}
+                data-testid={`button-toggle-qr-category-${slugify(category)}`}
+              >
+                {isOpen ? <ChevronDown className="w-5 h-5 flex-shrink-0" /> : <ChevronRight className="w-5 h-5 flex-shrink-0" />}
+                <span className="font-bold text-base flex-1 text-left">{category}</span>
+                <Badge variant="secondary">{items.length}</Badge>
+              </button>
+              {isOpen && (
+                <div className="space-y-2 pb-2">
+                  {items.map((product) => {
+                    const inCart = cart.find((c) => c.productId === product.id);
+                    return (
+                      <Card key={product.id} data-testid={`qr-product-${product.id}`}>
+                        <CardContent className="p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-base">{product.name}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
+                              <p className="font-bold text-sm mt-1">₡{Number(product.price).toLocaleString()}</p>
                             </div>
-                          ) : (
-                            <Button size="sm" variant="outline" onClick={() => addToCart(product)} data-testid={`button-add-qr-${product.id}`}>
-                              <Plus className="w-3 h-3 mr-1" /> Agregar
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
+                            <div className="flex-shrink-0">
+                              {inCart ? (
+                                <div className="flex items-center gap-1">
+                                  <Button size="icon" variant="outline" onClick={() => updateQty(product.id, inCart.qty - 1)}>
+                                    <Minus className="w-3 h-3" />
+                                  </Button>
+                                  <span className="w-6 text-center text-sm font-bold">{inCart.qty}</span>
+                                  <Button size="icon" variant="outline" onClick={() => updateQty(product.id, inCart.qty + 1)}>
+                                    <Plus className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Button size="sm" variant="outline" onClick={() => addToCart(product)} data-testid={`button-add-qr-${product.id}`} className="min-h-[48px]">
+                                  <Plus className="w-3 h-3 mr-1" /> Agregar
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {cart.length > 0 && (

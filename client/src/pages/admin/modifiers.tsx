@@ -117,10 +117,10 @@ export default function AdminModifiersPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
+    <div className="p-3 md:p-4 max-w-lg mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
             <Settings2 className="w-6 h-6" />
             Modificadores
           </h1>
@@ -148,7 +148,7 @@ export default function AdminModifiersPage() {
               <CardContent className="py-3">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <button
-                    className="flex items-center gap-2 min-w-0 text-left"
+                    className="flex items-center gap-2 min-w-0 text-left min-h-[48px]"
                     onClick={() => toggleExpand(g.id)}
                     data-testid={`button-toggle-group-${g.id}`}
                   >
@@ -170,7 +170,7 @@ export default function AdminModifiersPage() {
                       <p className="text-sm text-muted-foreground italic">Sin opciones</p>
                     )}
                     {g.options.map((opt) => (
-                      <div key={opt.id} className="flex items-center justify-between gap-2 py-1" data-testid={`row-option-${opt.id}`}>
+                      <div key={opt.id} className="flex items-center justify-between gap-2 py-1 min-h-[48px]" data-testid={`row-option-${opt.id}`}>
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-sm truncate">{opt.name}</span>
                           {parseFloat(opt.priceDelta) !== 0 && (

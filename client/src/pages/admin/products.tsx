@@ -1,17 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, ShoppingBag, Loader2 } from "lucide-react";
+import { Plus, Pencil, ShoppingBag, Loader2, Search, X, ChevronDown, ChevronRight } from "lucide-react";
 import type { Product, Category } from "@shared/schema";
 
 export default function AdminProductsPage() {
@@ -23,8 +22,23 @@ export default function AdminProductsPage() {
     price: "", active: true, visibleQr: true, availablePortions: "" as string,
   });
 
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
+
   const { data: products = [], isLoading } = useQuery<Product[]>({ queryKey: ["/api/admin/products"] });
   const { data: categories = [] } = useQuery<Category[]>({ queryKey: ["/api/admin/categories"] });
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (debouncedSearch.length === 0) {
+      setExpandedCategoryId(null);
+    }
+  }, [debouncedSearch]);
 
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -72,14 +86,51 @@ export default function AdminProductsPage() {
     });
   };
 
-  const getCategoryName = (id: number | null) => {
-    if (!id) return null;
-    return categories.find((c) => c.id === id)?.name;
+  const searchLower = debouncedSearch.toLowerCase();
+  const isSearching = searchLower.length > 0;
+
+  const filteredProducts = products.filter(
+    (p) =>
+      !isSearching ||
+      p.name.toLowerCase().includes(searchLower) ||
+      p.productCode.toLowerCase().includes(searchLower) ||
+      (p.description && p.description.toLowerCase().includes(searchLower))
+  );
+
+  const productsByCategory = filteredProducts.reduce((acc: Record<number | string, Product[]>, p) => {
+    const catId = p.categoryId ?? "sin-categoria";
+    if (!acc[catId]) acc[catId] = [];
+    acc[catId].push(p);
+    return acc;
+  }, {});
+
+  const sortedCategoryIds = Object.keys(productsByCategory).sort((a, b) => {
+    if (a === "sin-categoria") return 1;
+    if (b === "sin-categoria") return -1;
+    const catA = categories.find((c) => c.id === Number(a));
+    const catB = categories.find((c) => c.id === Number(b));
+    return (catA?.sortOrder ?? 999) - (catB?.sortOrder ?? 999);
+  });
+
+  const getCategoryName = (catId: string) => {
+    if (catId === "sin-categoria") return "Sin Categoría";
+    const cat = categories.find((c) => c.id === Number(catId));
+    return cat?.name || "Sin Categoría";
+  };
+
+  const toggleCategory = (catId: string) => {
+    if (isSearching) return;
+    setExpandedCategoryId((prev) => (prev === catId ? null : catId));
+  };
+
+  const isCategoryExpanded = (catId: string) => {
+    if (isSearching) return true;
+    return expandedCategoryId === catId;
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
+    <div className="p-3 md:p-4 max-w-lg mx-auto">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
             <ShoppingBag className="w-6 h-6" />
@@ -153,55 +204,103 @@ export default function AdminProductsPage() {
         </Dialog>
       </div>
 
+      <div className="sticky top-0 z-[200] bg-background pb-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <Input
+            data-testid="input-search-products"
+            placeholder="Buscar productos..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-9 pr-9 text-base"
+          />
+          {searchTerm.length > 0 && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="absolute right-1 top-1/2 -translate-y-1/2"
+              onClick={() => setSearchTerm("")}
+              data-testid="button-clear-search"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+
       {isLoading ? (
         <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
       ) : products.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <ShoppingBag className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <p className="text-muted-foreground">No hay productos</p>
-            <Button variant="outline" className="mt-4" onClick={openCreate}>
-              <Plus className="w-4 h-4 mr-1" /> Crear primer producto
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="py-12 text-center">
+          <ShoppingBag className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <p className="text-muted-foreground">No hay productos</p>
+          <Button variant="outline" className="mt-4" onClick={openCreate}>
+            <Plus className="w-4 h-4 mr-1" /> Crear primer producto
+          </Button>
+        </div>
+      ) : sortedCategoryIds.length === 0 ? (
+        <div className="py-12 text-center">
+          <Search className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <p className="text-muted-foreground text-base" data-testid="text-no-results">Sin resultados</p>
+        </div>
       ) : (
-        <div className="grid gap-3">
-          {products.map((p) => (
-            <Card key={p.id} data-testid={`card-product-${p.id}`}>
-              <CardContent className="flex items-center justify-between gap-4 py-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-md bg-accent flex items-center justify-center flex-shrink-0">
-                    <ShoppingBag className="w-5 h-5 text-accent-foreground" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{p.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{p.description}</p>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      {getCategoryName(p.categoryId) && (
-                        <Badge variant="secondary" className="text-xs">{getCategoryName(p.categoryId)}</Badge>
-                      )}
-                      {p.availablePortions !== null && (
-                        <span className="text-xs text-muted-foreground">{p.availablePortions} porciones</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="font-semibold text-sm">₡{Number(p.price).toLocaleString()}</span>
-                  {!p.visibleQr && p.active && (
-                    <Badge variant="outline" className="text-xs">No QR</Badge>
+        <div className="space-y-2">
+          {sortedCategoryIds.map((catId) => {
+            const catProducts = productsByCategory[catId];
+            const expanded = isCategoryExpanded(catId);
+
+            return (
+              <div key={catId} className="rounded-md border overflow-visible">
+                <button
+                  data-testid={`button-toggle-category-${catId}`}
+                  className="flex items-center gap-2 w-full text-left px-3 min-h-[48px] hover-elevate active-elevate-2"
+                  onClick={() => toggleCategory(catId)}
+                >
+                  {expanded ? (
+                    <ChevronDown className="w-4 h-4 flex-shrink-0" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 flex-shrink-0" />
                   )}
-                  <Badge variant={p.active ? "default" : "secondary"}>
-                    {p.active ? "Activo" : "Inactivo"}
-                  </Badge>
-                  <Button size="icon" variant="ghost" onClick={() => openEdit(p)} data-testid={`button-edit-product-${p.id}`}>
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  <span className="font-medium text-base flex-1">{getCategoryName(catId)}</span>
+                  <Badge variant="secondary">{catProducts.length}</Badge>
+                </button>
+
+                {expanded && (
+                  <div className="border-t">
+                    {catProducts.map((p) => (
+                      <div
+                        key={p.id}
+                        data-testid={`card-product-${p.id}`}
+                        className="flex items-center justify-between gap-3 px-3 min-h-[48px] border-b last:border-b-0"
+                      >
+                        <div className="min-w-0 flex-1 py-2">
+                          <p className="font-medium text-base truncate">{p.name}</p>
+                          {p.description && (
+                            <p className="text-xs text-muted-foreground truncate">{p.description}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0 flex-wrap">
+                          <span className="font-semibold text-sm">₡{Number(p.price).toLocaleString()}</span>
+                          {p.availablePortions !== null && (
+                            <Badge variant="outline">{p.availablePortions}p</Badge>
+                          )}
+                          {!p.visibleQr && p.active && (
+                            <Badge variant="outline">No QR</Badge>
+                          )}
+                          <Badge variant={p.active ? "default" : "secondary"}>
+                            {p.active ? "Activo" : "Inactivo"}
+                          </Badge>
+                          <Button size="icon" variant="ghost" onClick={() => openEdit(p)} data-testid={`button-edit-product-${p.id}`}>
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

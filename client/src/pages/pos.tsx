@@ -404,9 +404,9 @@ export default function POSPage() {
     : selectedTable?.tableName || "";
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
-        <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+    <div className="p-3 md:p-4 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
           <CreditCard className="w-6 h-6" /> POS / Caja
         </h1>
         <div className="flex items-center gap-2">
@@ -459,7 +459,7 @@ export default function POSPage() {
                     return (
                       <div
                         key={item.id}
-                        className={`flex items-center gap-2 py-2 px-2 rounded-md ${isPaid ? "opacity-50" : ""} ${isAssigned && !isPaid ? "opacity-60" : ""}`}
+                        className={`flex items-center gap-2 py-2 px-2 rounded-md min-h-[48px] ${isPaid ? "opacity-50" : ""} ${isAssigned && !isPaid ? "opacity-60" : ""}`}
                         data-testid={`item-row-${item.id}`}
                       >
                         {!isPaid && !isAssigned && canSplit && (
@@ -637,8 +637,8 @@ export default function POSPage() {
       ) : (
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="mb-4">
-            <TabsTrigger value="tables" data-testid="tab-pos-tables">Mesas por Cobrar</TabsTrigger>
-            <TabsTrigger value="cash" data-testid="tab-cash">Caja</TabsTrigger>
+            <TabsTrigger value="tables" className="min-h-[44px]" data-testid="tab-pos-tables">Mesas por Cobrar</TabsTrigger>
+            <TabsTrigger value="cash" className="min-h-[44px]" data-testid="tab-cash">Caja</TabsTrigger>
           </TabsList>
 
           <TabsContent value="tables">

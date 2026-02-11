@@ -143,34 +143,35 @@ export async function seedMenuFromCsv() {
     modColIndices.push(idx);
   }
 
+  console.log("Cleaning existing menu data before reimport...");
+  await db.delete(itemModifierGroups);
+  await db.delete(modifierOptions);
+  await db.delete(modifierGroups);
+  await db.delete(products);
+  await db.delete(categories);
+  await db.delete(discounts);
+  console.log("  Cleaned products, categories, modifiers, and discounts.");
+
   console.log("Seeding modifier groups and options...");
   const groupIdMap: Record<string, number> = {};
   let sortOrder = 0;
   for (const [groupName, groupData] of Object.entries(MODIFIER_GROUPS_DATA)) {
-    let [existing] = await db.select().from(modifierGroups).where(eq(modifierGroups.name, groupName));
-    if (!existing) {
-      [existing] = await db.insert(modifierGroups).values({
-        name: groupName,
-        multiSelect: true,
-        sortOrder: sortOrder++,
-      }).returning();
-      console.log(`  Created modifier group: ${groupName}`);
-    }
-    groupIdMap[groupName] = existing.id;
+    const [created] = await db.insert(modifierGroups).values({
+      name: groupName,
+      multiSelect: true,
+      sortOrder: sortOrder++,
+    }).returning();
+    groupIdMap[groupName] = created.id;
+    console.log(`  Created modifier group: ${groupName}`);
 
     let optSort = 0;
     for (const opt of groupData.options) {
-      const [existingOpt] = await db.select().from(modifierOptions)
-        .where(and(eq(modifierOptions.groupId, existing.id), eq(modifierOptions.name, opt.name)));
-      if (!existingOpt) {
-        await db.insert(modifierOptions).values({
-          groupId: existing.id,
-          name: opt.name,
-          priceDelta: opt.priceDelta,
-          sortOrder: optSort++,
-        });
-        console.log(`    Option: ${opt.name} (₡${opt.priceDelta})`);
-      }
+      await db.insert(modifierOptions).values({
+        groupId: created.id,
+        name: opt.name,
+        priceDelta: opt.priceDelta,
+        sortOrder: optSort++,
+      });
     }
   }
 
@@ -188,18 +189,13 @@ export async function seedMenuFromCsv() {
 
     if (!catIdMap[catName]) {
       const catCode = slugify(catName);
-      const [existing] = await db.select().from(categories).where(eq(categories.categoryCode, catCode));
-      if (existing) {
-        catIdMap[catName] = existing.id;
-      } else {
-        const [created] = await db.insert(categories).values({
-          categoryCode: catCode,
-          name: catName,
-          sortOrder: Object.keys(catIdMap).length,
-        }).returning();
-        catIdMap[catName] = created.id;
-        console.log(`  Category: ${catName}`);
-      }
+      const [created] = await db.insert(categories).values({
+        categoryCode: catCode,
+        name: catName,
+        sortOrder: Object.keys(catIdMap).length,
+      }).returning();
+      catIdMap[catName] = created.id;
+      console.log(`  Category: ${catName}`);
     }
 
     const productCode = handle || slugify(name);
@@ -207,27 +203,14 @@ export async function seedMenuFromCsv() {
     if (!cleaned && cleaned !== "0") continue;
     const price = cleaned || "0";
 
-    const [existingProd] = await db.select().from(products).where(eq(products.productCode, productCode));
-    let productId: number;
-    if (existingProd) {
-      await db.update(products).set({
-        name,
-        price,
-        categoryId: catIdMap[catName],
-        description: name,
-      }).where(eq(products.id, existingProd.id));
-      productId = existingProd.id;
-    } else {
-      const [created] = await db.insert(products).values({
-        productCode,
-        name,
-        description: name,
-        categoryId: catIdMap[catName],
-        price,
-      }).returning();
-      productId = created.id;
-      console.log(`  Product: ${name} (₡${price})`);
-    }
+    const [created] = await db.insert(products).values({
+      productCode,
+      name,
+      description: name,
+      categoryId: catIdMap[catName],
+      price,
+    }).returning();
+    console.log(`  Product: ${name} (₡${price})`);
 
     for (let m = 0; m < MODIFIER_COL_NAMES.length; m++) {
       const colIdx = modColIndices[m];
@@ -236,11 +219,7 @@ export async function seedMenuFromCsv() {
       if (val === "Y") {
         const gId = groupIdMap[MODIFIER_COL_NAMES[m]];
         if (gId) {
-          const [existingLink] = await db.select().from(itemModifierGroups)
-            .where(and(eq(itemModifierGroups.productId, productId), eq(itemModifierGroups.modifierGroupId, gId)));
-          if (!existingLink) {
-            await db.insert(itemModifierGroups).values({ productId, modifierGroupId: gId });
-          }
+          await db.insert(itemModifierGroups).values({ productId: created.id, modifierGroupId: gId });
         }
       }
     }
@@ -248,16 +227,13 @@ export async function seedMenuFromCsv() {
 
   console.log("Seeding discounts...");
   for (const disc of DISCOUNTS_DATA) {
-    const [existing] = await db.select().from(discounts).where(eq(discounts.name, disc.name));
-    if (!existing) {
-      await db.insert(discounts).values({
-        name: disc.name,
-        type: disc.type,
-        value: disc.value,
-        restricted: disc.restricted,
-      });
-      console.log(`  Discount: ${disc.name}`);
-    }
+    await db.insert(discounts).values({
+      name: disc.name,
+      type: disc.type,
+      value: disc.value,
+      restricted: disc.restricted,
+    });
+    console.log(`  Discount: ${disc.name}`);
   }
 
   console.log("Menu seed complete!");

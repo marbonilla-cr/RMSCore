@@ -580,11 +580,11 @@ export default function DashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="p-4 md:p-6 max-w-5xl mx-auto">
-        <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
+      <div className="p-3 md:p-4 max-w-5xl mx-auto">
+        <h1 className="text-xl md:text-2xl font-bold mb-4 flex items-center gap-2">
           <LayoutDashboard className="w-6 h-6" /> Dashboard
         </h1>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-28 rounded-md" />
           ))}
@@ -594,11 +594,11 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
+    <div className="p-3 md:p-4 max-w-5xl mx-auto">
+      <div className="mb-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1
-            className="text-2xl font-bold flex items-center gap-2"
+            className="text-xl md:text-2xl font-bold flex items-center gap-2"
             data-testid="text-page-title"
           >
             <LayoutDashboard className="w-6 h-6" /> Dashboard
@@ -741,7 +741,7 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
         <Card
           data-testid="card-open-orders"
           className="cursor-pointer hover-elevate"
@@ -851,7 +851,7 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
         <Card data-testid="card-top-products">
           <CardHeader className="pb-2 flex flex-row items-center gap-2">
             <ShoppingBag className="w-5 h-5" />
@@ -919,7 +919,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
         <Card data-testid="card-payment-totals">
           <CardHeader className="pb-2 flex flex-row items-center gap-2">
             <CreditCard className="w-5 h-5" />

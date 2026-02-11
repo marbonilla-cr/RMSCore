@@ -65,10 +65,10 @@ export default function AdminCategoriesPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
+    <div className="p-3 md:p-4 max-w-lg mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
             <Tag className="w-6 h-6" />
             Categorías
           </h1>
@@ -151,13 +151,13 @@ export default function AdminCategoriesPage() {
         <div className="grid gap-3">
           {categories.map((cat) => (
             <Card key={cat.id} data-testid={`card-category-${cat.id}`}>
-              <CardContent className="flex items-center justify-between gap-4 py-4">
+              <CardContent className="flex items-center justify-between gap-4 py-3 min-h-[48px]">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-md bg-accent flex items-center justify-center flex-shrink-0">
-                    <Tag className="w-5 h-5 text-accent-foreground" />
+                  <div className="w-8 h-8 rounded-md bg-accent flex items-center justify-center flex-shrink-0">
+                    <Tag className="w-4 h-4 text-accent-foreground" />
                   </div>
                   <div className="min-w-0">
-                    <p className="font-medium truncate">{cat.name}</p>
+                    <p className="text-sm font-medium truncate">{cat.name}</p>
                     <p className="text-xs text-muted-foreground">Código: {cat.categoryCode}</p>
                   </div>
                 </div>

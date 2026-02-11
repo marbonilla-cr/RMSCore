@@ -126,19 +126,19 @@ export default function KDSPage() {
   };
 
   return (
-    <div className="p-4 md:p-6">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
-        <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+    <div className="p-3 md:p-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
           <ChefHat className="w-6 h-6" /> Cocina (KDS)
         </h1>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
-          <TabsTrigger value="active" data-testid="tab-active">
+          <TabsTrigger value="active" className="min-h-[44px]" data-testid="tab-active">
             Activos ({activeTickets.length})
           </TabsTrigger>
-          <TabsTrigger value="history" data-testid="tab-history">
+          <TabsTrigger value="history" className="min-h-[44px]" data-testid="tab-history">
             Historial
           </TabsTrigger>
         </TabsList>
@@ -154,7 +154,7 @@ export default function KDSPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {activeTickets.map((ticket) => (
                 <Card key={ticket.id} className={ticket.status === "NEW" ? "border-yellow-500 border-2" : ""} data-testid={`card-ticket-${ticket.id}`}>
                   <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
@@ -173,7 +173,7 @@ export default function KDSPage() {
                       {ticket.items.map((item) => (
                         <div
                           key={item.id}
-                          className={`flex items-center justify-between p-2 rounded-md ${getItemStatusColor(item.status)} cursor-pointer`}
+                          className={`flex items-center justify-between p-2 rounded-md min-h-[48px] ${getItemStatusColor(item.status)} cursor-pointer`}
                           onClick={() => {
                             const next = getNextStatus(item.status);
                             if (next) updateItemMutation.mutate({ itemId: item.id, status: next });
@@ -194,7 +194,7 @@ export default function KDSPage() {
                       ))}
                     </div>
                     {ticket.items.every((i) => i.status === "READY") ? (
-                      <Button className="w-full bg-green-600 dark:bg-green-700 text-white" disabled={markTicketReadyMutation.isPending} onClick={() => markTicketReadyMutation.mutate(ticket.id)} data-testid={`button-complete-ticket-${ticket.id}`}>
+                      <Button className="w-full min-h-[48px] bg-green-600 dark:bg-green-700 text-white" disabled={markTicketReadyMutation.isPending} onClick={() => markTicketReadyMutation.mutate(ticket.id)} data-testid={`button-complete-ticket-${ticket.id}`}>
                         <CheckCircle className="w-4 h-4 mr-1" /> Ticket Completo
                       </Button>
                     ) : (
@@ -218,7 +218,7 @@ export default function KDSPage() {
               <p className="text-muted-foreground">No hay tickets en historial</p>
             </CardContent></Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {historyTickets.map((ticket) => (
                 <Card key={ticket.id} className="opacity-75" data-testid={`card-history-ticket-${ticket.id}`}>
                   <CardHeader className="pb-2">
