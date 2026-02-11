@@ -38,6 +38,8 @@ export default function TableDetailPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("order");
   const [cart, setCart] = useState<{ productId: number; name: string; price: string; qty: number; notes: string }[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
   const [badgePop, setBadgePop] = useState(false);
   const [voidDialogItem, setVoidDialogItem] = useState<any>(null);
   const [voidReason, setVoidReason] = useState("");
@@ -78,6 +80,11 @@ export default function TableDetailPage() {
     ];
     return () => unsubs.forEach((u) => u());
   }, [tableId, toast]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   const sendRoundMutation = useMutation({
     mutationFn: async () => {
@@ -203,12 +210,17 @@ export default function TableDetailPage() {
     setCart(cart.map((c) => (c.productId === productId ? { ...c, qty } : c)));
   };
 
+  const searchLower = debouncedSearch.toLowerCase();
+  const isSearching = searchLower.length > 0;
+
   const filteredProducts = products.filter(
     (p) =>
       p.active &&
       (p.availablePortions === null || p.availablePortions > 0) &&
-      (p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.productCode.toLowerCase().includes(searchTerm.toLowerCase()))
+      (!isSearching ||
+        p.name.toLowerCase().includes(searchLower) ||
+        p.productCode.toLowerCase().includes(searchLower) ||
+        (p.description && p.description.toLowerCase().includes(searchLower)))
   );
 
   const productsByCategory = filteredProducts.reduce((acc: Record<number | string, Product[]>, p) => {
@@ -548,22 +560,24 @@ export default function TableDetailPage() {
             )}
           </div>
         ) : (
-          <div className="p-3 max-w-lg mx-auto">
-            <div className="sticky top-0 z-10 bg-background pb-2 -mx-3 px-3 pt-1">
+          <div className="flex flex-col max-w-lg mx-auto h-full">
+            <div className="sticky top-0 z-[50] bg-background px-3 pt-2 pb-2 border-b" style={{ paddingTop: "max(8px, env(safe-area-inset-top, 8px))" }}>
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar producto..."
+                  placeholder="Buscar ítems..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-9 pr-9 min-h-[44px] text-base"
                   data-testid="input-search-menu"
+                  aria-label="Buscar ítems en el menú"
                 />
                 {searchTerm && (
                   <button
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                    onClick={() => setSearchTerm("")}
+                    onClick={() => { setSearchTerm(""); setDebouncedSearch(""); }}
                     data-testid="button-clear-search"
+                    aria-label="Limpiar búsqueda"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -571,52 +585,77 @@ export default function TableDetailPage() {
               </div>
             </div>
 
-            <div className="space-y-4 mt-2">
-              {sortedCategoryIds.map((catId) => {
-                const catName = catId === "sin-categoria"
-                  ? "Sin Categoria"
-                  : categories.find((c) => c.id === Number(catId))?.name || "Categoria";
-                const items = productsByCategory[catId];
-                return (
-                  <div key={catId}>
-                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1" data-testid={`text-category-${catId}`}>
-                      {catName}
-                    </h3>
-                    <div className="space-y-1.5">
-                      {items.map((p) => {
-                        const inCart = cart.find(c => c.productId === p.id);
-                        return (
-                          <div
-                            key={p.id}
-                            className="flex items-center justify-between p-3 rounded-md border hover-elevate cursor-pointer active:scale-[0.98] transition-transform duration-100 min-h-[56px]"
-                            onClick={(e) => addToCart(p, e)}
-                            data-testid={`menu-item-${p.id}`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="font-medium text-base leading-tight">{p.name}</p>
-                              {p.description && <p className="text-sm text-muted-foreground truncate">{p.description}</p>}
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                              <span className="font-semibold text-base">₡{Number(p.price).toLocaleString()}</span>
-                              {p.availablePortions !== null && (
-                                <Badge variant="secondary">{p.availablePortions}</Badge>
-                              )}
-                              {inCart && (
-                                <Badge className="bg-primary text-primary-foreground min-w-[24px] text-center">{inCart.qty}</Badge>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
+            <div className="px-3 pb-4">
+              <div className="space-y-1 mt-2">
+                {sortedCategoryIds.map((catId) => {
+                  const catName = catId === "sin-categoria"
+                    ? "Sin Categoría"
+                    : categories.find((c) => c.id === Number(catId))?.name || "Categoría";
+                  const items = productsByCategory[catId];
+                  const isExpanded = isSearching || expandedCategoryId === catId;
+
+                  const toggleCategory = () => {
+                    if (isSearching) return;
+                    setExpandedCategoryId(expandedCategoryId === catId ? null : catId);
+                  };
+
+                  return (
+                    <div key={catId} data-testid={`category-group-${catId}`}>
+                      <button
+                        className="w-full flex items-center justify-between gap-2 px-3 py-3 rounded-md hover-elevate min-h-[48px] text-left"
+                        onClick={toggleCategory}
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? "Colapsar" : "Expandir"} categoría ${catName}`}
+                        data-testid={`button-toggle-category-${catId}`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isExpanded
+                            ? <ChevronDown className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                            : <ChevronRight className="w-4 h-4 flex-shrink-0 text-muted-foreground" />}
+                          <span className="font-semibold text-base truncate" data-testid={`text-category-${catId}`}>{catName}</span>
+                        </div>
+                        <Badge variant="secondary">{items.length}</Badge>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="space-y-1.5 pb-2 pt-1">
+                          {items.map((p) => {
+                            const inCart = cart.find(c => c.productId === p.id);
+                            return (
+                              <div
+                                key={p.id}
+                                className="flex items-center justify-between p-3 rounded-md border hover-elevate cursor-pointer active:scale-[0.98] transition-transform duration-100 min-h-[56px]"
+                                onClick={(e) => addToCart(p, e)}
+                                data-testid={`menu-item-${p.id}`}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-medium text-base leading-tight">{p.name}</p>
+                                  {p.description && <p className="text-sm text-muted-foreground truncate">{p.description}</p>}
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                                  <span className="font-semibold text-base">₡{Number(p.price).toLocaleString()}</span>
+                                  {p.availablePortions !== null && (
+                                    <Badge variant="secondary">{p.availablePortions}</Badge>
+                                  )}
+                                  {inCart && (
+                                    <Badge className="bg-primary text-primary-foreground min-w-[24px] text-center">{inCart.qty}</Badge>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
+                  );
+                })}
+                {sortedCategoryIds.length === 0 && (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Search className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                    <p className="text-base">Sin resultados para "{debouncedSearch}"</p>
                   </div>
-                );
-              })}
-              {sortedCategoryIds.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  <p className="text-base">No se encontraron productos</p>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         )}
