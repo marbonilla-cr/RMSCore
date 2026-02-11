@@ -238,6 +238,66 @@ export const qboExportJobs = pgTable("qbo_export_jobs", {
   retryCount: integer("retry_count").notNull().default(0),
 });
 
+// Modifier Groups
+export const modifierGroups = pgTable("modifier_groups", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  required: boolean("required").notNull().default(false),
+  multiSelect: boolean("multi_select").notNull().default(true),
+  minSelections: integer("min_selections").notNull().default(0),
+  maxSelections: integer("max_selections"),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const modifierOptions = pgTable("modifier_options", {
+  id: serial("id").primaryKey(),
+  groupId: integer("group_id").notNull(),
+  name: text("name").notNull(),
+  priceDelta: numeric("price_delta", { precision: 10, scale: 2 }).notNull().default("0"),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const itemModifierGroups = pgTable("item_modifier_groups", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").notNull(),
+  modifierGroupId: integer("modifier_group_id").notNull(),
+});
+
+export const orderItemModifiers = pgTable("order_item_modifiers", {
+  id: serial("id").primaryKey(),
+  orderItemId: integer("order_item_id").notNull(),
+  modifierOptionId: integer("modifier_option_id").notNull(),
+  nameSnapshot: text("name_snapshot").notNull(),
+  priceDeltaSnapshot: numeric("price_delta_snapshot", { precision: 10, scale: 2 }).notNull().default("0"),
+  qty: integer("qty").notNull().default(1),
+});
+
+// Discounts
+export const discounts = pgTable("discounts", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  type: text("type").notNull().default("percentage"),
+  value: numeric("value", { precision: 10, scale: 2 }).notNull(),
+  restricted: boolean("restricted").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  validUntil: timestamp("valid_until"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const orderDiscounts = pgTable("order_discounts", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull(),
+  discountId: integer("discount_id").notNull(),
+  discountNameSnapshot: text("discount_name_snapshot").notNull(),
+  discountTypeSnapshot: text("discount_type_snapshot").notNull(),
+  discountValueSnapshot: numeric("discount_value_snapshot", { precision: 10, scale: 2 }).notNull(),
+  amountApplied: numeric("amount_applied", { precision: 10, scale: 2 }).notNull(),
+  appliedByUserId: integer("applied_by_user_id").notNull(),
+  appliedAt: timestamp("applied_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
@@ -256,6 +316,12 @@ export const insertSplitItemSchema = createInsertSchema(splitItems).omit({ id: t
 export const insertVoidedItemSchema = createInsertSchema(voidedItems).omit({ id: true, voidedAt: true });
 export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true });
 export const insertQboExportJobSchema = createInsertSchema(qboExportJobs).omit({ id: true });
+export const insertModifierGroupSchema = createInsertSchema(modifierGroups).omit({ id: true });
+export const insertModifierOptionSchema = createInsertSchema(modifierOptions).omit({ id: true });
+export const insertItemModifierGroupSchema = createInsertSchema(itemModifierGroups).omit({ id: true });
+export const insertOrderItemModifierSchema = createInsertSchema(orderItemModifiers).omit({ id: true });
+export const insertDiscountSchema = createInsertSchema(discounts).omit({ id: true, createdAt: true });
+export const insertOrderDiscountSchema = createInsertSchema(orderDiscounts).omit({ id: true, appliedAt: true });
 
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -294,6 +360,18 @@ export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type InsertQboExportJob = z.infer<typeof insertQboExportJobSchema>;
 export type QboExportJob = typeof qboExportJobs.$inferSelect;
+export type ModifierGroup = typeof modifierGroups.$inferSelect;
+export type InsertModifierGroup = z.infer<typeof insertModifierGroupSchema>;
+export type ModifierOption = typeof modifierOptions.$inferSelect;
+export type InsertModifierOption = z.infer<typeof insertModifierOptionSchema>;
+export type ItemModifierGroup = typeof itemModifierGroups.$inferSelect;
+export type InsertItemModifierGroup = z.infer<typeof insertItemModifierGroupSchema>;
+export type OrderItemModifier = typeof orderItemModifiers.$inferSelect;
+export type InsertOrderItemModifier = z.infer<typeof insertOrderItemModifierSchema>;
+export type Discount = typeof discounts.$inferSelect;
+export type InsertDiscount = z.infer<typeof insertDiscountSchema>;
+export type OrderDiscount = typeof orderDiscounts.$inferSelect;
+export type InsertOrderDiscount = z.infer<typeof insertOrderDiscountSchema>;
 
 // Business config (singleton row)
 export const businessConfig = pgTable("business_config", {

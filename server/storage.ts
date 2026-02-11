@@ -6,6 +6,8 @@ import {
   payments, cashSessions, splitAccounts, splitItems,
   salesLedgerItems, auditEvents, qboExportJobs, voidedItems,
   businessConfig, printers, permissions, rolePermissions,
+  modifierGroups, modifierOptions, itemModifierGroups, orderItemModifiers,
+  discounts, orderDiscounts,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -24,6 +26,12 @@ import {
   type InsertVoidedItem,
   type InsertBusinessConfig, type BusinessConfig,
   type InsertPrinter, type Printer,
+  type ModifierGroup, type InsertModifierGroup,
+  type ModifierOption, type InsertModifierOption,
+  type InsertItemModifierGroup,
+  type InsertOrderItemModifier, type OrderItemModifier,
+  type Discount, type InsertDiscount,
+  type OrderDiscount, type InsertOrderDiscount,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -893,4 +901,122 @@ export async function updatePrinter(id: number, data: Partial<InsertPrinter>): P
 
 export async function deletePrinter(id: number): Promise<void> {
   await db.delete(printers).where(eq(printers.id, id));
+}
+
+// Modifier Groups
+export async function getAllModifierGroups(): Promise<ModifierGroup[]> {
+  return db.select().from(modifierGroups).orderBy(asc(modifierGroups.sortOrder), asc(modifierGroups.name));
+}
+
+export async function getModifierGroup(id: number): Promise<ModifierGroup | undefined> {
+  const [g] = await db.select().from(modifierGroups).where(eq(modifierGroups.id, id));
+  return g;
+}
+
+export async function getModifierGroupByName(name: string): Promise<ModifierGroup | undefined> {
+  const [g] = await db.select().from(modifierGroups).where(eq(modifierGroups.name, name));
+  return g;
+}
+
+export async function createModifierGroup(data: InsertModifierGroup): Promise<ModifierGroup> {
+  const [g] = await db.insert(modifierGroups).values(data).returning();
+  return g;
+}
+
+export async function updateModifierGroup(id: number, data: Partial<InsertModifierGroup>): Promise<ModifierGroup> {
+  const [g] = await db.update(modifierGroups).set(data).where(eq(modifierGroups.id, id)).returning();
+  return g;
+}
+
+// Modifier Options
+export async function getModifierOptionsByGroup(groupId: number): Promise<ModifierOption[]> {
+  return db.select().from(modifierOptions).where(eq(modifierOptions.groupId, groupId)).orderBy(asc(modifierOptions.sortOrder), asc(modifierOptions.name));
+}
+
+export async function createModifierOption(data: InsertModifierOption): Promise<ModifierOption> {
+  const [o] = await db.insert(modifierOptions).values(data).returning();
+  return o;
+}
+
+export async function updateModifierOption(id: number, data: Partial<InsertModifierOption>): Promise<ModifierOption> {
+  const [o] = await db.update(modifierOptions).set(data).where(eq(modifierOptions.id, id)).returning();
+  return o;
+}
+
+export async function deleteModifierOption(id: number): Promise<void> {
+  await db.delete(modifierOptions).where(eq(modifierOptions.id, id));
+}
+
+// Item ↔ Modifier Group links
+export async function getItemModifierGroups(productId: number) {
+  return db.select().from(itemModifierGroups).where(eq(itemModifierGroups.productId, productId));
+}
+
+export async function linkItemModifierGroup(productId: number, modifierGroupId: number) {
+  const existing = await db.select().from(itemModifierGroups)
+    .where(and(eq(itemModifierGroups.productId, productId), eq(itemModifierGroups.modifierGroupId, modifierGroupId)));
+  if (existing.length > 0) return existing[0];
+  const [row] = await db.insert(itemModifierGroups).values({ productId, modifierGroupId }).returning();
+  return row;
+}
+
+export async function unlinkItemModifierGroup(productId: number, modifierGroupId: number) {
+  await db.delete(itemModifierGroups)
+    .where(and(eq(itemModifierGroups.productId, productId), eq(itemModifierGroups.modifierGroupId, modifierGroupId)));
+}
+
+// Order Item Modifiers
+export async function getOrderItemModifiers(orderItemId: number): Promise<OrderItemModifier[]> {
+  return db.select().from(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, orderItemId));
+}
+
+export async function createOrderItemModifier(data: InsertOrderItemModifier): Promise<OrderItemModifier> {
+  const [m] = await db.insert(orderItemModifiers).values(data).returning();
+  return m;
+}
+
+// Discounts
+export async function getAllDiscounts(): Promise<Discount[]> {
+  return db.select().from(discounts).orderBy(asc(discounts.name));
+}
+
+export async function getDiscount(id: number): Promise<Discount | undefined> {
+  const [d] = await db.select().from(discounts).where(eq(discounts.id, id));
+  return d;
+}
+
+export async function createDiscount(data: InsertDiscount): Promise<Discount> {
+  const [d] = await db.insert(discounts).values(data).returning();
+  return d;
+}
+
+export async function updateDiscount(id: number, data: Partial<InsertDiscount>): Promise<Discount> {
+  const [d] = await db.update(discounts).set(data).where(eq(discounts.id, id)).returning();
+  return d;
+}
+
+// Order Discounts
+export async function getOrderDiscounts(orderId: number): Promise<OrderDiscount[]> {
+  return db.select().from(orderDiscounts).where(eq(orderDiscounts.orderId, orderId));
+}
+
+export async function createOrderDiscount(data: InsertOrderDiscount): Promise<OrderDiscount> {
+  const [od] = await db.insert(orderDiscounts).values(data).returning();
+  return od;
+}
+
+export async function deleteOrderDiscount(id: number): Promise<void> {
+  await db.delete(orderDiscounts).where(eq(orderDiscounts.id, id));
+}
+
+// Bulk helpers for seed
+export async function getModifierOptionByGroupAndName(groupId: number, name: string): Promise<ModifierOption | undefined> {
+  const [o] = await db.select().from(modifierOptions)
+    .where(and(eq(modifierOptions.groupId, groupId), eq(modifierOptions.name, name)));
+  return o;
+}
+
+export async function getDiscountByName(name: string): Promise<Discount | undefined> {
+  const [d] = await db.select().from(discounts).where(eq(discounts.name, name));
+  return d;
 }

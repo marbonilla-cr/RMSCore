@@ -1,0 +1,99 @@
+ÉPICA: Crear Modificadores + Descuentos + Seed desde CSV (sin tocar nada más)
+
+Restricción estricta:
+	•	NO refactorizar Mesas/QR/KDS/POS existentes.
+	•	SOLO agregar: modelo de datos, admin screens mínimas, lógica de cálculo para que los modificadores sumen al total y descuentos resten, y un seed idempotente.
+
+Historia 1 — Modelo de datos Modificadores
+
+CDA
+	•	Crear: modifier_groups, modifier_options, item_modifier_groups, order_item_modifiers con snapshots (name/price_delta).
+DoD
+	•	Migración aplicada sin romper datos.
+
+Historia 2 — Modelo de datos Descuentos + Auditoría de uso
+
+CDA
+	•	Crear: discounts, order_discounts (con amount_applied) y registrar eventos en audit_events (APPLY_DISCOUNT/REMOVE_DISCOUNT).
+DoD
+	•	Descuentos aplican y se registran con usuario/orden.
+
+Historia 3 — Seed idempotente desde /mnt/data/item list Feb 2026.csv
+
+CDA
+	•	Script seed_menu_from_csv:
+	•	lee CSV separador ;
+	•	upsert de categorías e items
+	•	detecta columnas modificador - "X" y asocia item↔grupo cuando hay Y
+	•	crea grupos y opciones (abajo) con precios exactos
+	•	corre 2 veces sin duplicar
+DoD
+	•	Categorías/items/modificadores y relaciones correctas.
+
+Historia 4 — Crear grupos y opciones EXACTAS (con precios)
+
+CDA
+Crear grupos y opciones:
+	1.	Termino Carnes, Salmon y Atun (price_delta ₡0):
+
+	•	Blue, Medio, Tres cuartos, Bien Cocido
+
+	2.	Hamburguesa:
+
+	•	Sin Vegetales ₡0
+	•	Sin Salsas ₡0
+	•	Sin Tomate ₡0
+	•	Sin Lechuga ₡0
+	•	Sin Queso ₡0
+	•	Sin Cebolla ₡0
+	•	Sin Tocineta ₡0
+	•	Tocineta extra ₡800
+
+	3.	Cervezas:
+
+	•	Michelada ₡400
+
+	4.	Tipo de coctail (todas ₡0):
+
+	•	Ruso Blanco, Ruso Negro, Long Island, Sexo en la Montaña, Bloody Mary,
+Gin Tonic Pepino, Gin Tonic Frutos Rojos, Mojito, Margarita, Caipiriña, Daiquiri, Cosmopolitan
+
+	5.	Extras Carnes:
+
+	•	Vegetale a la Parrilla ₡2,000
+	•	Arroz ₡1,000
+	•	Maduro con Queso ₡1,500
+	•	Frijoles Molidos ₡1,500
+
+	6.	Desayuno:
+
+	•	Huevo Extra ₡500
+	•	Huevo frito bien cocido ₡0
+	•	Huevo frito tierno ₡0
+	•	Huevo Revuelto ₡0
+
+	7.	Refresco Combos:
+
+	•	crear grupo vacío (sin opciones por ahora)
+
+DoD
+	•	Los precios suman correctamente al total al seleccionar opciones.
+
+Historia 5 — Admin screens mínimas (Gerente)
+
+CDA
+	•	Admin “Modificadores”: ver grupos/opciones (editar opcional, mínimo lectura).
+	•	Admin “Descuentos”: CRUD.
+DoD
+	•	Gerente ve y puede ajustar.
+
+Historia 6 — Descuentos seed (según pantallazo)
+
+CDA
+Crear descuentos:
+	•	Desc dueño 100% restricted=true
+	•	Desc empleados 30% restricted=false
+	•	Pago efectivo 7% restricted=false
+	•	Vecinos5000 31/01 ₡5000 fixed restricted=false
+DoD
+	•	Aparecen y aplican.

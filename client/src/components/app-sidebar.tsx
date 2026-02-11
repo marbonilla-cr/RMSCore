@@ -27,6 +27,8 @@ import {
   Printer,
   UserCog,
   Shield,
+  Settings2,
+  Percent,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
@@ -52,6 +54,8 @@ const adminItems = [
   { title: "Mesas", url: "/admin/tables", icon: Grid3x3 },
   { title: "Categorías", url: "/admin/categories", icon: Tag },
   { title: "Productos", url: "/admin/products", icon: ShoppingBag },
+  { title: "Modificadores", url: "/admin/modifiers", icon: Settings2 },
+  { title: "Descuentos", url: "/admin/discounts", icon: Percent },
   { title: "Métodos de Pago", url: "/admin/payment-methods", icon: Wallet },
   { title: "Config. Negocio", url: "/admin/business-config", icon: Building2 },
   { title: "Impresoras", url: "/admin/printers", icon: Printer },

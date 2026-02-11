@@ -91,7 +91,7 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 
 ## Database Schema
 All tables defined in `shared/schema.ts` using Drizzle ORM:
-users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, voided_items, qbo_export_jobs
+users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, voided_items, qbo_export_jobs, modifier_groups, modifier_options, item_modifier_groups, order_item_modifiers, discounts, order_discounts
 
 ## Recent Changes
 - Added dashboard historical mode: "Histórico" button with period filters (day, month, year, custom range)

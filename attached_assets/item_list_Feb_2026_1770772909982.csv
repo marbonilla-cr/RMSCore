@@ -1,0 +1,202 @@
+Handle;REF;Nombre;Categoria;Descripción;Coste;REF del componente;Cantidad del componente;Seguir el Inventario;Usar prodcucción;Proveedor;Costo de compra;Precio [Restaurante La Antigua Lecheria];En inventario [Restaurante La Antigua Lecheria];Existencias bajas [Restaurante La Antigua Lecheria];Stock óptimo [Restaurante La Antigua Lecheria];"modificador - ""Hamburguesa""";"modificador - ""Cervezas""";"modificador - ""Refresco Combos""";"modificador - ""Termino Carnes, Salmon y Atun""";"modificador - ""Extras Carnes""";"modificador - ""Tipo de coctail""";"modificador - ""Desayuno""";"impuesto - ""Impuesto al Servicio"" (10%)"
+agua-dulce-con-leche;10067;Agua Dulce con Leche;Bebidas Sin Alcohol;;;10294;0.030;N;N;;;1500;;;;N;N;N;N;N;N;N;Y
+agua-dulce-negra;10066;Agua Dulce Negra;Bebidas Sin Alcohol;;;10294;0.030;N;N;;;1300;;;;N;N;N;N;N;N;N;Y
+agua-tonica;10285;Agua Tonica;Bebidas Sin Alcohol;;500;;;Y;;Interno;0;1400;0.000;4000;8000;N;N;N;N;N;N;N;Y
+cafe-con-lecha;10065;Cafe con Leche;Bebidas Sin Alcohol;;;10308;0.080;N;N;;;1600;;;;N;N;N;N;N;N;N;Y
+cafe-negro;10064;Cafe Negro;Bebidas Sin Alcohol;;25;;;N;;;;1400;;;;N;N;N;N;N;N;N;Y
+cappuccino;10068;Cappuccino;Bebidas Sin Alcohol;;350;;;N;;;;1800;;;;N;N;N;N;N;N;N;Y
+cas;10044;Cas;Bebidas Sin Alcohol;;0;;;N;;;;1600;;;;N;N;N;N;N;N;N;Y
+chocolate;10089;Chocolate;Bebidas Sin Alcohol;;;10308;0.250;N;N;;;1550;;;;N;N;N;N;N;N;N;Y
+coca-cola-zero;10042;Coca Reg;Bebidas Sin Alcohol;;469;;;Y;;Interno;469;2000;32000;24000;36000;N;N;N;N;N;N;N;Y
+coca-zero;10043;Coca zero;Bebidas Sin Alcohol;;490;;;Y;;Interno;500;2000;4000;24000;36000;N;N;N;N;N;N;N;Y
+crema-1;10053;Crema;Bebidas Sin Alcohol;;;10271;0.067;N;N;;;1800;;;;N;N;N;N;N;N;N;Y
+expresso;10070;Expresso;Bebidas Sin Alcohol;;250;;;N;;;;2000;;;;N;N;N;N;N;N;N;Y
+fanta-kolita;10057;Fanta Kolita;Bebidas Sin Alcohol;;500;;;Y;;Interno;500;2000;12000;12000;12000;N;N;N;N;N;N;N;Y
+fanta-naranja;10058;Fanta Naranja;Bebidas Sin Alcohol;;500;;;Y;;Interno;500;2000;14000;12000;12000;N;N;N;N;N;N;N;Y
+fanta-uva;10059;Fanta Uva;Bebidas Sin Alcohol;;500;;;Y;;Interno;0;2000;11000;6000;12000;N;N;N;N;N;N;N;Y
+frappe-caramel;10061;Frappe Caramel;Bebidas Sin Alcohol;;600;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+frappe-green-tea;10063;Frappe Green Tea;Bebidas Sin Alcohol;;600;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+frappe-matcha;10062;Frappe Matcha;Bebidas Sin Alcohol;;600;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+fresa-en-agua;10114;Fresa en agua;Bebidas Sin Alcohol;;400;;;N;;;;2000;;;;N;N;N;N;N;N;N;Y
+fresa-en-leche;10113;Fresa en leche;Bebidas Sin Alcohol;;;10308;0.250;N;N;;;2500;;;;N;N;N;N;N;N;N;Y
+fresa-piña;10050;Fresa Piña;Bebidas Sin Alcohol;;250;;;N;;;;1800;;;;N;N;N;N;N;N;N;Y
+gin;10056;Gin;Bebidas Sin Alcohol;;499;;;Y;;Interno;500;2000;17000;12000;24000;N;N;N;N;N;N;N;Y
+guanabana;10045;Guanabana;Bebidas Sin Alcohol;;0;;;N;;;;1800;;;;N;N;N;N;N;N;N;Y
+horchata;10054;Horchata;Bebidas Sin Alcohol;;;10272;0.067;N;N;Interno;;1800;;;;N;N;N;N;N;N;N;Y
+jamaica;10055;Jamaica;Bebidas Sin Alcohol;;325;;;N;;;;1800;;;;N;N;N;N;N;N;N;Y
+jugo-naranja;10060;Jugo Naranja;Bebidas Sin Alcohol;;;10258;0.100;N;N;;;2000;;;;N;N;N;N;N;N;N;Y
+latte;10069;Latte;Bebidas Sin Alcohol;;200;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+mango;10163;Mango;Bebidas Sin Alcohol;;300;;;N;;;;1800;;;;N;N;N;N;N;N;N;Y
+maracuya-1;10039;Maracuya;Bebidas Sin Alcohol;;;10046;0.150;N;N;;;1800;;;;N;N;N;N;N;N;N;Y
+mora;10181;Mora;Bebidas Sin Alcohol;;150;;;Y;;;0;1800;-6000;24000;26000;N;N;N;N;N;N;N;Y
+piña;10047;Piña;Bebidas Sin Alcohol;;250;;;Y;;;0;1800;0.000;24000;36000;N;N;N;N;N;N;N;Y
+sandia;10048;Sandia;Bebidas Sin Alcohol;;250;;;Y;;;0;1800;0.000;24000;36000;N;N;N;N;N;N;N;Y
+soda;10117;Soda;Bebidas Sin Alcohol;;572;;;Y;;Interno;500;2000;0.000;6000;6000;N;Y;N;N;N;N;N;Y
+tamarindo;10049;Tamarindo;Bebidas Sin Alcohol;;250;;;N;;;;1800;;;;N;N;N;N;N;N;N;Y
+te-frio;10120;Te Frio;Bebidas Sin Alcohol;;170;;;Y;;Joyca;0;1600;21000;15000;25000;N;N;N;N;N;N;N;Y
+vaso-de-agua;10173;Vaso de Agua;Bebidas Sin Alcohol;;0;;;N;;;;0;;;;N;N;N;N;N;N;N;Y
+vaso-michelado;10171;Vaso Michelado;Bebidas Sin Alcohol;;175;;;N;;;;500;;;;N;N;N;N;N;N;N;Y
+galleta-navideña;10370;Alfajor;Postres y Reposteria;;500;;;Y;;;;1000;0.000;0.000;;N;N;N;N;N;N;N;N
+arroz-con-leche;10086;Arroz con Leche;Postres y Reposteria;;300;;;Y;;Interno;0;1125;1000;3000;5000;N;N;N;N;N;N;N;Y
+brownie-c/-helados;10087;Brownie c/ Helados;Postres y Reposteria;;;10287;0.030;N;N;;;2500;;;;N;N;N;N;N;N;N;Y
+budin-tipico;10318;Budin Tipico;Postres y Reposteria;;300;;;Y;;;0;1200;0.000;0.000;;N;N;N;N;N;N;N;Y
+cajeta-de-lecha;10088;Cajeta de Leche;Postres y Reposteria;<p>Cajeta de leche condensada con Coco</p>;150;;;Y;;Interno;4000;500;10000;6000;25000;N;N;N;N;N;N;N;Y
+cono-do-bolitas;10366;Cono Do Bolitas;Postres y Reposteria;;350;;;N;;;;1000;;;;N;N;N;N;N;N;N;Y
+copa-de-helados;10116;Copa de Helados;Postres y Reposteria;;;10287;0.070;N;N;;;1500;;;;N;N;N;N;N;N;N;Y
+crocante-de-nuez;10085;Crocante de Nuez;Postres y Reposteria;;;10287;0.015;N;N;;;2550;;;;N;N;N;N;N;N;N;Y
+crocante-porción;10379;Crocante porción;Postres y Reposteria;;0;;;Y;;;;1850;0.000;;;N;N;N;N;N;N;N;N
+empanada-de-chiverre-1x4;10334;Empanada de Chiverre 1x4;Postres y Reposteria;;1000;;;Y;;;;1500;0.000;;;N;N;N;N;N;N;N;Y
+empanada-de-piña;10337;Empanada de Piña;Postres y Reposteria;;0;;;Y;;;;1500;0.000;;;N;N;N;N;N;N;N;Y
+queque-de-baileys-c/helado;10275;Flan napolitano;Postres y Reposteria;;1075;;;Y;;;0;2000;0.000;2000;;N;N;N;N;N;N;N;Y
+pan-dulce-bolsa-5und;10338;Pan Dulce Bolsa 5und;Postres y Reposteria;;0;;;Y;;;;1500;0.000;0.000;;N;N;N;N;N;N;N;Y
+pie-de-manzana;10331;Pie de Manzana C/Helado;Postres y Reposteria;;;10287;0.030;N;N;;;2500;;;;N;N;N;N;N;N;N;Y
+terrine;10084;Queque de Chocolate;Postres y Reposteria;;1750;;;Y;;;17500;3500;0.000;5000;;N;N;N;N;N;N;N;Y
+rollo-de-canela;10273;Rollo de Canela;Postres y Reposteria;;350;;;Y;;;;1500;0.000;4000;;N;N;N;N;N;N;N;Y
+amstel-light;10198;Amstel Light;Cerveza Vino y Cocteles;;550;;;Y;;;0;2000;0.000;0.000;;N;Y;N;N;N;N;N;Y
+bavaria-gold;10078;Bavaria Gold;Cerveza Vino y Cocteles;;971;;;Y;;;0;2200;0.000;5000;10000;N;Y;N;N;N;N;N;Y
+bavaria-light;10079;Bavaria Light;Cerveza Vino y Cocteles;;974;;;Y;;;0;2200;0.000;6000;10000;N;Y;N;N;N;N;N;Y
+botella-1.5-vino-frontera;10281;Botella 1.5 Vino Frontera;Cerveza Vino y Cocteles;;4500;;;N;;;;15000;;;;N;N;N;N;N;N;N;Y
+botella-frontera-cs;10339;Botella Frontera CS;Cerveza Vino y Cocteles;;5000;;;N;;;;12000;;;;N;N;N;N;N;N;N;Y
+cocktail;10083;Cocktail;Cerveza Vino y Cocteles;;1100;;;N;;;;3500;;;;N;N;N;N;N;Y;N;Y
+cocktail-2x1;10082;Cocktail 2x1;Cerveza Vino y Cocteles;;2200;;;N;;;;3500;;;;N;N;N;N;N;Y;N;Y
+copa-de-vino;10081;Copa de Vino;Cerveza Vino y Cocteles;;1250;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+copa-vino-blanco;10217;Copa Vino Blanco;Cerveza Vino y Cocteles;;650;;;N;;;;3000;;;;N;N;N;N;N;N;N;Y
+corona;10077;Corona;Cerveza Vino y Cocteles;;403;;;Y;;Super Estanco;1000;2200;6000;6000;12000;N;Y;N;N;N;N;N;Y
+corona-2x1;10329;Corona 2x1;Cerveza Vino y Cocteles;;;10077;2000;N;N;;;2200;;;;N;N;N;N;N;N;N;Y
+heineken;10076;Heineken;Cerveza Vino y Cocteles;;403;;;Y;;Interno;1000;2200;4000;5000;12000;N;Y;N;N;N;N;N;Y
+heineken-2x1;10328;Heineken 2x1;Cerveza Vino y Cocteles;;;10076;2000;N;N;;;2200;;;;N;Y;N;N;N;N;N;Y
+imperial-clasica;10071;Imperial Clasica;Cerveza Vino y Cocteles;;800;;;Y;;Interno;800;1600;0.000;15000;24000;N;Y;N;N;N;N;N;Y
+imperial-light;10073;Imperial Light;Cerveza Vino y Cocteles;;832;;;Y;;Super Estanco;800;1600;0.000;12000;24000;N;Y;N;N;N;N;N;Y
+pilsen;10075;Pilsen;Cerveza Vino y Cocteles;;824;;;Y;;Interno;800;1600;0.000;12000;24000;N;Y;N;N;N;N;N;Y
+sangria;10080;Sangria Copa;Cerveza Vino y Cocteles;;;10284;0.175;N;N;;;3000;;;;N;N;N;N;N;N;N;Y
+silver;10072;Silver;Cerveza Vino y Cocteles;;800;;;Y;;Interno;800;1600;0.000;12000;24000;N;Y;N;N;N;N;N;Y
+sol;10218;Sol;Cerveza Vino y Cocteles;;550;;;Y;;Interno;1000;2200;7000;12000;24000;N;N;N;N;N;N;N;Y
+trago-baileys;10291;Trago Baileys;Cerveza Vino y Cocteles;;800;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+ultra;10074;Ultra;Cerveza Vino y Cocteles;;800;;;Y;;Interno;800;1600;0.000;12000;12000;N;Y;N;N;N;N;N;Y
+chicharrón-de-panzada-1;10151;Chicharrón de Panzada;Antojos;;;10194;0.900;N;N;;;6500;;;;N;N;N;N;N;N;N;Y
+chifrijo;10001;Chifrijo;Antojos;;;10158;1000;N;N;;;4900;;;;N;N;N;N;N;N;N;Y
+chifrijo-c/panzada;10040;Chifrijo C/panzada;Antojos;;;10128;0.500;N;N;;;5500;;;;N;N;N;N;N;N;N;Y
+chifrijo-caribeño;10003;Chifrijo Caribeño;Antojos;;;10158;1000;N;N;;;5500;;;;N;N;N;N;N;N;N;Y
+chorreada;10201;Chorreada;Antojos;;700;;;N;;;;3000;;;;N;N;N;N;N;N;N;Y
+dados-de-queso;10124;Dados de Queso;Antojos;;1000;;;N;;;;3000;;;;N;N;N;N;N;N;N;Y
+galló-chicharrón;10007;Galló Chicharrón;Antojos;;;10128;1000;N;N;;;4900;;;;N;N;N;N;N;N;N;Y
+gallo-chorizo;10008;Gallo Chorizo;Antojos;;;10134;1000;N;N;;;3300;;;;N;N;N;N;N;N;N;Y
+gallo-de-gina;10165;Gallo de Giba;Antojos;;;10132;3000;N;N;;;3300;;;;N;N;N;N;N;N;N;Y
+gallo-papa;10010;Gallo Papa c/Chorizo;Antojos;;;10140;0.100;N;N;;;2900;;;;N;N;N;N;N;N;N;Y
+galló-ternero;10011;Galló Ternero;Antojos;;;10135;0.200;N;N;;;3300;;;;N;N;N;N;N;N;N;Y
+guacamole-y-piquitos;10014;Guacamole y Piquitos;Antojos;;1200;;;N;;;;4100;;;;N;N;N;N;N;N;N;Y
+maduro-c/-queso;10009;Maduro C/ Queso;Antojos;;450;;;N;;;;3000;;;;N;N;N;N;N;N;N;Y
+patacones-y-frijoles;10012;Patacones con Frijoles Molidos;Antojos;;;10248;1000;N;N;;;3500;;;;N;N;N;N;N;N;N;Y
+patacones-con-guacamol;10301;Patacones con Guacamol;Antojos;;1000;;;Y;;;;4500;12000;;;N;N;N;N;N;N;N;Y
+sustancia-de-carne;10015;Sustancia de Carne;Antojos;;;10000;1000;N;N;;;3000;;;;N;N;N;N;N;N;N;Y
+tamal-piña;10121;Tamal Piña;Antojos;;1400;;;N;;;;3000;;;;N;N;N;N;N;N;N;N
+tortilla-y-queso;10013;Tortilla y Queso;Antojos;;950;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+arroz-con-pollo;10004;Arroz con Pollo;Platos Fuertes;;;10276;1000;N;N;;;5500;;;;N;N;N;N;N;N;N;Y
+casado-c/-queso;10030;Casado C/ Queso;Platos Fuertes;;;10137;0.100;N;N;;;5500;;;;N;N;N;N;N;N;N;Y
+casado-carné-salsa;10027;Casado Carné en Salsa;Platos Fuertes;;;10139;1000;N;N;;;5500;;;;N;N;N;N;N;N;N;Y
+casado-la-antigua-con-chicharron;10005;Casado Chicharron;Platos Fuertes;;;10128;0.200;N;N;;;6500;;;;N;N;N;N;N;N;N;Y
+casado-chorizo;10029;Casado Chorizo;Platos Fuertes;;;10134;1000;N;N;;;5500;;;;N;N;N;N;N;N;N;Y
+casado-con-lomo;10119;Casado con Lomo;Platos Fuertes;;;10137;0.100;N;N;;;6500;;;;N;N;N;Y;N;N;N;Y
+casado-la-antigua-con-costilla;10006;Casado Costilla;Platos Fuertes;;;10137;0.100;N;N;;;6500;;;;N;N;N;N;N;N;N;Y
+casado-ternero;10028;Casado Ternero;Platos Fuertes;;;10135;0.125;N;N;;;5500;;;;N;N;N;N;N;N;N;Y
+ensalada-vegetariana;10033;Ensalada Vegetariana;Platos Fuertes;;1250;;;N;;;;4500;;;;N;N;N;N;N;N;N;Y
+fajitas-de-pollo;10026;Fajitas de Pollo;Platos Fuertes;;;10130;1000;N;N;;;5500;;;;N;N;N;N;N;N;N;Y
+hamburguesa-antigua;10031;Hamburguesa Antigua;Platos Fuertes;;;10145;1000;N;N;;;6200;;;;Y;N;N;N;N;N;N;Y
+hamburguesa-toro;10032;Hamburguesa Toro;Platos Fuertes;;;10145;2000;N;N;;;7500;;;;Y;N;N;N;N;N;N;Y
+menu-ejecutivo-del-dia;10297;Menu Ejecutivo Del Dia;Platos Fuertes;<p>Casado con Refresco</p>;0;;;N;;;;5000;;;;N;N;N;N;N;N;N;Y
+olla-de-carne-1;10316;Olla de Carne;Platos Fuertes;;;10000;1000;N;N;;;5700;;;;N;N;N;N;N;N;N;Y
+atun;10368;Atun;Carnes;;2500;;;N;;;;10000;;;;N;N;N;Y;Y;N;N;Y
+chuletón-de-cerdo;10024;Chuletón de Cerdo;Carnes;;;10152;1000;N;N;;;7500;;;;N;N;N;N;Y;N;N;Y
+costilla-de-cerdo-al-horno;10002;Costilla Ahumada;Carnes;;;10154;1000;N;N;;;8500;;;;N;N;N;N;Y;N;N;Y
+entraña-argentina;10025;Entraña Argentina;Carnes;;;10155;1000;N;N;;;15500;;;;N;N;N;Y;Y;N;N;Y
+lomito-parrilla;10022;Lomito Parrilla;Carnes;;;10156;1000;N;N;;;11990;;;;N;N;N;Y;Y;N;N;Y
+lomo-ancho;10023;Lomo Ancho;Carnes;;;10143;1000;N;N;;;10500;;;;N;N;N;Y;Y;N;N;Y
+rib-eye;10313;Rib Eye;Carnes;;4500;;;Y;;;0;14390;3000;0.000;;N;N;N;Y;Y;N;N;Y
+salmon;10336;Salmon;Carnes;;0;;;Y;;;0;9000;4000;4000;;N;N;N;Y;Y;N;N;Y
+canasta-de-chicharron;10312;Canasta de Chicharron;Compartir;;;10128;5000;N;N;;;25000;;;;N;N;N;N;N;N;N;Y
+surtido-chicharrones;10021;Surtido Chicharrones;Compartir;;;10128;2000;N;N;;;15500;;;;N;N;N;N;N;N;N;Y
+surtido-la-antigua;10315;Surtido La Antigua;Compartir;;;10128;4000;N;N;;;42500;;;;N;N;N;N;N;N;N;Y
+surtido-pelonero;10020;Surtido Pelonero;Compartir;;3138;10132;5000;N;Y;;;14500;-3000;;;N;N;N;N;N;N;N;Y
+absolut-trago;10327;Absolut Trago;Licores Tragos y Shots;;140;;;Y;;;0;2500;1000;;;N;N;N;N;N;N;N;Y
+aperol-trago;10349;Aperol Trago;Licores Tragos y Shots;;0;;;Y;;;0;2500;1000;;;N;N;N;N;N;N;N;Y
+bacardi-claro;10160;Bacardi Claro Trago;Licores Tragos y Shots;;1000;;;Y;;;0;1600;1000;;;N;N;N;N;N;N;N;Y
+bacardi-oscuro-trago;10350;Bacardi Oscuro Trago;Licores Tragos y Shots;;0;;;Y;;;0;variable;-2000;;;N;N;N;N;N;N;N;Y
+baileys-trago;10351;Baileys Trago;Licores Tragos y Shots;;0;;;Y;;;0;2500;1000;;;N;N;N;N;N;N;N;Y
+beefeater-gin-trago;10352;Beefeater Gin Trago;Licores Tragos y Shots;;0;;;Y;;;;variable;1000;;;N;N;N;N;N;N;N;Y
+bombay-gin-trago;10353;Bombay Gin Trago;Licores Tragos y Shots;;0;;;Y;;;0;2500;1000;;;N;N;N;N;N;N;N;Y
+buchanans-trago;10340;Buchanans Trago;Licores Tragos y Shots;;500;;;Y;;;0;3000;0.000;;;N;N;N;N;N;N;N;Y
+cacique;10178;Cacique Trago;Licores Tragos y Shots;;212;;;Y;;;0;1600;-2000;;;N;N;N;N;N;N;N;Y
+campari;10126;Campari Trago;Licores Tragos y Shots;;500;;;Y;;;0;1500;1000;;;N;N;N;N;N;N;N;Y
+chivas-doble;10162;Chivas Trago;Licores Tragos y Shots;;606;;;Y;;;0;2700;-5000;;;N;N;N;N;N;N;N;Y
+cointreau-trago;10335;Cointreau Trago;Licores Tragos y Shots;;0;;;Y;;;0;1500;1000;;;N;N;N;N;N;N;N;Y
+flor-de-caña-12-años;10385;Flor de Caña 12 años;Licores Tragos y Shots;;0;;;N;;;;2200;;;;N;N;N;N;N;N;N;Y
+flor-de-caña-claro-trago;10354;Flor de Caña Claro Trago;Licores Tragos y Shots;;0;;;Y;;;0;variable;1000;;;N;N;N;N;N;N;N;Y
+flor-de-caña-coco-trago;10355;Flor de Caña Coco Trago;Licores Tragos y Shots;;0;;;Y;;;0;1800;1000;;;N;N;N;N;N;N;N;Y
+ron-flor-de-cañas-7-años;10319;Flor de Cañas 7 años Trago;Licores Tragos y Shots;;136;;;Y;;;0;1600;1000;10000;;N;N;N;N;N;N;N;Y
+jaguer;10164;Jaguer Trago;Licores Tragos y Shots;;175;;;Y;;;0;2000;1000;;;N;N;N;N;N;N;N;Y
+jim-bean-trago;10356;Jim Bean Trago;Licores Tragos y Shots;;0;;;Y;;;0;1800;1000;;;N;N;N;N;N;N;N;Y
+johnny-rojo;10174;Johnny Rojo Trago;Licores Tragos y Shots;;0;;;Y;;;0;1600;1000;;;N;N;N;N;N;N;N;Y
+johny-negro;10051;Johny Negro Trago;Licores Tragos y Shots;;250;;;Y;;;0;2500;-4000;0.000;;N;N;N;N;N;N;N;Y
+tequila-josé-cuervo;10216;José Cuervo Claro Trago;Licores Tragos y Shots;;200;;;Y;;;0;1300;1000;0.000;;N;N;N;N;N;N;N;Y
+tequila-jose-cuervo-oscuro;10320;Jose Cuervo Oscuro Trago;Licores Tragos y Shots;;200;;;Y;;;0;1300;1000;;;N;N;N;N;N;N;N;Y
+kalua-trago;10357;Kalua Trago;Licores Tragos y Shots;;0;;;Y;;;0;1700;1000;;;N;N;N;N;N;N;N;Y
+licor-43-trago;10358;Licor 43 Trago;Licores Tragos y Shots;;0;;;Y;;;0;2000;1000;;;N;N;N;N;N;N;N;Y
+licor-melocoton-trago;10359;Licor Melocoton Trago;Licores Tragos y Shots;;0;;;Y;;;0;1000;1000;;;N;N;N;N;N;N;N;Y
+limoncello-trago;10360;Limoncello Trago;Licores Tragos y Shots;;0;;;Y;;;0;2000;1000;;;N;N;N;N;N;N;N;Y
+malibu-trago;10361;Malibu Trago;Licores Tragos y Shots;;0;;;Y;;;0;1800;2000;;;N;N;N;N;N;N;N;Y
+sambuca-trago;10362;Sambuca Trago;Licores Tragos y Shots;;0;;;Y;;;0;1700;1000;;;N;N;N;N;N;N;N;Y
+vodka;10215;Smirnoff Trago;Licores Tragos y Shots;;200;;;Y;;;0;1600;1000;;;N;N;N;N;N;N;N;Y
+triple-sec-trago;10363;Triple Sec Trago;Licores Tragos y Shots;;0;;;Y;;;0;1500;1000;;;N;N;N;N;N;N;N;Y
+zavala;10170;Zacapa 23 Trago;Licores Tragos y Shots;;651;;;Y;;;0;2500;1000;0.000;;N;N;N;N;N;N;N;Y
+huevo-extra;10161;Huevo extra;Desayuno;;;10305;1000;N;N;;;500;;;;N;N;N;N;N;N;N;Y
+huevo-ranchero;10037;Huevo Ranchero;Desayuno;;;10305;2000;N;N;;;3500;;;;N;N;N;N;N;N;Y;Y
+huevos-turcos;10384;Huevos Turcos;Desayuno;;0;;;N;;;;4000;;;;N;N;N;N;N;N;Y;Y
+pinto-con-huevo;10034;Pinto con Huevo;Desayuno;;;10305;1000;N;N;;;2500;;;;N;N;N;N;N;N;Y;Y
+pinto-huevo-carne;10035;Pinto Huevo carne;Desayuno;;;10305;1000;N;N;;;4500;;;;N;N;N;N;N;N;Y;Y
+pinto-huevo-salchi;10036;Pinto Huevo Salchicha;Desayuno;;;10183;0.033;N;N;;;4500;;;;N;N;N;N;N;N;Y;Y
+tortilla-con-queso;10038;Tortilla con Queso;Desayuno;;950;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+hamburguesa-junior;10018;Hamburguesa Junior;Menu Ni�os;;;10208;1000;N;N;;;3500;;;;Y;N;N;N;N;N;N;Y
+pollo-niños;10016;Pollo Niños;Menu Ni�os;;;10130;1000;N;N;;;3500;;;;N;N;N;N;N;N;N;Y
+quesadilla-de-pollo;10017;Quesadilla de Pollo;Menu Ni�os;;;10133;1000;N;N;;;3500;;;;N;N;N;N;N;N;N;Y
+aguacate-extra;10091;Aguacate Extra;Adicionales;;800;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+arroz;10092;Arroz;Adicionales;;;10183;0.050;N;N;;;1500;;;;N;N;N;N;N;N;N;Y
+cafe-sikewa-bolsa-500gr;10093;Cafe Sikewa Bolsa 500gr;Adicionales;;5500;;;N;;;;6500;;;;N;N;N;N;N;N;N;N
+carne-salsa-extra;10104;Carne Salsa Extra;Adicionales;;950;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+chucharron-extra;10094;Chicharron Extra;Adicionales;;1100;;;N;;;;3500;;;;N;N;N;N;N;N;N;Y
+chile-ananas;10095;Chile Ananas;Adicionales;;2000;;;N;;;;3500;;;;N;N;N;N;N;N;N;N
+chile-green;10096;Chile Green;Adicionales;;2000;;;N;;;;3500;;;;N;N;N;N;N;N;N;N
+chile-onferno;10097;Chile Inferno;Adicionales;;2000;;;N;;;;3500;;;;N;N;N;N;N;N;N;N
+chile-irie;10098;Chile Irie;Adicionales;;2000;;;N;;;;3500;;;;N;N;N;N;N;N;N;N
+chile-medium;10099;Chile Medium;Adicionales;;2000;;;N;;;;3500;;;;N;N;N;N;N;N;N;N
+chile-original;10100;Chile Original;Adicionales;;2000;;;N;;;;3500;;;;N;N;N;N;N;N;N;N
+chile-scorpion;10101;Chile Scorpion;Adicionales;;2000;;;N;;;;3500;;;;N;N;N;N;N;N;N;Y
+chile-smoked-bacon;10102;Chile Smoked Bacon;Adicionales;;2000;;;N;;;;3500;;;;N;N;N;N;N;N;N;N
+chilero-encurtido;10202;Chilero Encurtido;Adicionales;;400;;;Y;;;;1500;12000;;;N;N;N;N;N;N;N;Y
+chimochurri;10103;Chimichurri;Adicionales;;150;;;N;;;;500;;;;N;N;N;N;N;N;N;Y
+chocobba;10374;Chocobomba;Adicionales;;1000;;;Y;;;;1850;0.000;0.000;;N;N;N;N;N;N;N;N
+descorche;10344;Descorche;Adicionales;;0;;;N;;;;variable;;;;N;N;N;N;N;N;N;N
+empaque;10300;Empaque;Adicionales;;100;;;Y;;Joyca;10;250;57000;20000;1000;N;N;N;N;N;N;N;Y
+extra-carne-olla;10326;Extra Carne Olla;Adicionales;;;10214;0.150;N;N;;;1750;;;;N;N;N;N;N;N;N;Y
+frijoles-molidos-extra;10106;Frijoles Molidos extra;Adicionales;;;10230;0.050;N;N;;;1500;;;;N;N;N;N;N;N;N;Y
+huevo-revuelto;10115;Huevo revuelto;Adicionales;;125;;;N;;;;500;;;;N;N;N;N;N;N;N;Y
+maduro-en-miel-extra;10107;Maduro en Miel Extra;Adicionales;;450;;;N;;;;1600;;;;N;N;N;N;N;N;N;Y
+marshmellows;10206;Marshmellows;Adicionales;;0;;;Y;;;;500;10000;;;N;N;N;N;N;N;N;Y
+miel-mediana;10123;Miel Mediana;Adicionales;<p>Miel Pura de Nicoya</p>;5000;;;N;;;;9000;;;;N;N;N;N;N;N;N;N
+miel-pequeña;10122;Miel Pequeña;Adicionales;<p>Miel de Nicoya Pura</p>;3000;;;N;;;;5500;;;;N;N;N;N;N;N;N;N
+natilla-extra;10105;Natilla Extra;Adicionales;;;10270;0.015;N;N;;;1500;;;;N;N;N;N;N;N;N;Y
+pan-bonete;10314;Pan Bonete;Adicionales;;350;;;N;;;;500;;;;N;N;N;N;N;N;N;Y
+pan-extra;10108;Pan Extra;Adicionales;;125;;;N;;;;500;;;;N;N;N;N;N;N;N;Y
+papas-fritas;10109;Papas fritas;Adicionales;;;10157;2000;N;N;;;2000;;;;N;N;N;N;N;N;N;Y
+extra-patacones;10182;Patacones extra;Adicionales;;;10248;1000;N;N;;;1500;;;;N;N;N;N;N;N;N;Y
+picadillo-de-chayote-extra;10127;Picadillo de Chayote extra;Adicionales;;400;;;N;;;;1200;;;;N;N;N;N;N;N;N;Y
+pico-de-gallo;10110;Pico de Gallo;Adicionales;;500;;;N;;;;1500;;;;N;N;N;N;N;N;N;Y
+pinto-extra;10111;Pinto extra;Adicionales;;200;;;N;;;;1000;;;;N;N;N;N;N;N;N;Y
+queso-extra;10177;Queso extra;Adicionales;;;10168;0.080;N;N;;;500;;;;N;N;N;N;N;N;N;Y
+rompope-1l;10376;Rompope 1L;Adicionales;;0;;;Y;;;;8500;0.000;;;N;N;N;N;N;N;N;N
+rompope-750ml;10377;Rompope 750ml;Adicionales;;0;;;Y;;;;7000;0.000;;;N;N;N;N;N;N;N;N
+salsa-bbq-extra;10052;SALSA BBQ EXTRA;Adicionales;;300;;;N;;;;1000;;;;N;N;N;N;N;N;N;Y
+tocineta-extra;10365;Tocineta extra;Adicionales;;0;;;N;;;;1500;;;;N;N;N;N;N;N;N;Y
+tortillas-extra-(5und);10118;Tortillas extra (5und);Adicionales;;;10132;5000;N;N;;;1200;;;;N;N;N;N;N;N;N;Y
+transporte;10333;Transporte;Adicionales;;0;;;N;;;;variable;;;;N;N;N;N;N;N;N;Y
+vegetales-a-la-parrilla;10112;Vegetales a la Parrilla;Adicionales;;600;;;N;;;;2500;;;;N;N;N;N;N;N;N;Y
+yuca-frita;10090;Yuca Frita;Adicionales;;;10125;1000;N;N;;;2000;;;;N;N;N;N;N;N;N;Y

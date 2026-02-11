@@ -4,7 +4,7 @@ import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
 import * as storage from "./storage";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -93,6 +93,8 @@ export async function registerRoutes(
   // Seed data
   await storage.seedData();
   await storage.seedPermissions();
+  const { seedMenuFromCsv } = await import("./seed-menu");
+  await seedMenuFromCsv();
 
   // ==================== AUTH ====================
   app.post("/api/auth/login", async (req, res) => {
@@ -492,6 +494,91 @@ export async function registerRoutes(
     try {
       await storage.deletePrinter(parseInt(req.params.id));
       res.json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== ADMIN: MODIFIERS ====================
+  app.get("/api/admin/modifier-groups", requireRole("MANAGER"), async (_req, res) => {
+    const groups = await storage.getAllModifierGroups();
+    const result = [];
+    for (const g of groups) {
+      const options = await storage.getModifierOptionsByGroup(g.id);
+      result.push({ ...g, options });
+    }
+    res.json(result);
+  });
+
+  app.post("/api/admin/modifier-groups", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const parsed = insertModifierGroupSchema.parse(req.body);
+      const group = await storage.createModifierGroup(parsed);
+      res.json(group);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/modifier-groups/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const group = await storage.updateModifierGroup(parseInt(req.params.id), req.body);
+      res.json(group);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/modifier-groups/:id/options", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const parsed = insertModifierOptionSchema.parse({
+        ...req.body,
+        groupId: parseInt(req.params.id),
+      });
+      const option = await storage.createModifierOption(parsed);
+      res.json(option);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/modifier-options/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const option = await storage.updateModifierOption(parseInt(req.params.id), req.body);
+      res.json(option);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/admin/modifier-options/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      await storage.deleteModifierOption(parseInt(req.params.id));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== ADMIN: DISCOUNTS ====================
+  app.get("/api/admin/discounts", requireRole("MANAGER"), async (_req, res) => {
+    res.json(await storage.getAllDiscounts());
+  });
+
+  app.post("/api/admin/discounts", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const parsed = insertDiscountSchema.parse(req.body);
+      const discount = await storage.createDiscount(parsed);
+      res.json(discount);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/discounts/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const discount = await storage.updateDiscount(parseInt(req.params.id), req.body);
+      res.json(discount);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
@@ -1537,7 +1624,7 @@ export async function registerRoutes(
 
       const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
 
-      const printersList = await storage.getPrinters();
+      const printersList = await storage.getAllPrinters();
       const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
       if (!cajaPrinter) {
         return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });

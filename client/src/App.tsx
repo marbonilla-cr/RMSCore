@@ -26,6 +26,8 @@ import AdminEmployeesPage from "@/pages/admin/employees";
 import AdminRolesPage from "@/pages/admin/roles";
 import AdminBusinessConfigPage from "@/pages/admin/business-config";
 import AdminPrintersPage from "@/pages/admin/printers";
+import AdminModifiersPage from "@/pages/admin/modifiers";
+import AdminDiscountsPage from "@/pages/admin/discounts";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRoute(role: string): string {
@@ -102,6 +104,8 @@ function AuthenticatedRouter() {
       <Route path="/admin/roles" component={AdminRolesPage} />
       <Route path="/admin/business-config" component={AdminBusinessConfigPage} />
       <Route path="/admin/printers" component={AdminPrintersPage} />
+      <Route path="/admin/modifiers" component={AdminModifiersPage} />
+      <Route path="/admin/discounts" component={AdminDiscountsPage} />
       <Route component={NotFound} />
     </Switch>
   );
