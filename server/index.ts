@@ -1,6 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { serveStatic } from "./static";
 import { createServer } from "http";
 
 const app = express();
@@ -75,8 +74,14 @@ app.use((req, res, next) => {
     return res.status(status).json({ message });
   });
 
-  // Serve pre-built static files (run `npm run build` first)
-  serveStatic(app);
+  const isDev = process.env.NODE_ENV === "development";
+  if (isDev) {
+    const { setupVite } = await import("./vite");
+    await setupVite(httpServer, app);
+  } else {
+    const { serveStatic } = await import("./static");
+    serveStatic(app);
+  }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.

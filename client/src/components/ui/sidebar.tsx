@@ -4,6 +4,7 @@ import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, VariantProps } from "class-variance-authority"
 import { PanelLeftIcon } from "lucide-react"
+import { useLocation } from "wouter"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -109,44 +110,21 @@ function SidebarProvider({
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [toggleSidebar])
 
-  // Close mobile drawer on any route change (browser-level)
+  // Close mobile drawer on route change (wouter)
+  const [location] = useLocation()
+  const isMobileRef = React.useRef(isMobile)
   const openMobileRef = React.useRef(openMobile)
+  React.useEffect(() => { isMobileRef.current = isMobile }, [isMobile])
   React.useEffect(() => { openMobileRef.current = openMobile }, [openMobile])
+  const prevLocationRef = React.useRef(location)
   React.useEffect(() => {
-    if (!isMobile) return
-
-    let lastPath = window.location.pathname
-    const checkAndClose = () => {
-      const currentPath = window.location.pathname
-      if (currentPath !== lastPath) {
-        lastPath = currentPath
-        if (openMobileRef.current) {
-          setOpenMobile(false)
-        }
+    if (prevLocationRef.current !== location) {
+      prevLocationRef.current = location
+      if (isMobileRef.current && openMobileRef.current) {
+        setOpenMobile(false)
       }
     }
-
-    // Listen for browser back/forward
-    window.addEventListener('popstate', checkAndClose)
-
-    // Patch pushState/replaceState to detect programmatic navigation
-    const origPush = history.pushState.bind(history)
-    const origReplace = history.replaceState.bind(history)
-    history.pushState = (...args: Parameters<typeof history.pushState>) => {
-      origPush(...args)
-      checkAndClose()
-    }
-    history.replaceState = (...args: Parameters<typeof history.replaceState>) => {
-      origReplace(...args)
-      checkAndClose()
-    }
-
-    return () => {
-      window.removeEventListener('popstate', checkAndClose)
-      history.pushState = origPush
-      history.replaceState = origReplace
-    }
-  }, [isMobile, setOpenMobile])
+  }, [location, setOpenMobile])
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.

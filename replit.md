@@ -169,9 +169,10 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 - Role permissions: GET /api/admin/permissions, GET /api/admin/role-permissions, PUT /api/admin/role-permissions/:role
 
 ## Build & Development
-- Frontend is a **pre-built static bundle** served from `dist/public/`. After frontend code changes, run `npx vite build` to rebuild.
-- `npm run dev` starts the Express server which serves the static bundle — there is NO Vite HMR.
-- Mobile sidebar auto-close: SidebarProvider patches `history.pushState`/`replaceState` + `popstate` listener to detect route changes and close the Sheet on mobile. This avoids relying on React event handlers inside Radix portals.
+- **Development**: `npm run dev` sets `NODE_ENV=development`, uses Vite middleware with HMR (hot module replacement). Frontend changes reflect without rebuilding.
+- **Production**: `NODE_ENV=production` serves pre-built static bundle from `dist/public/`. Run `npx vite build` before deploying.
+- `server/index.ts` dynamically imports `setupVite()` or `serveStatic()` based on `NODE_ENV`.
+- Mobile sidebar auto-close: SidebarProvider uses wouter's `useLocation` hook to detect route changes and close the Sheet on mobile.
 
 ## Email Configuration (Optional)
 To enable email ticket sending, set these environment variables:
