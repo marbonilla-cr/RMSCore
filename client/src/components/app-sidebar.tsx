@@ -65,11 +65,13 @@ const adminItems = [
 export function AppSidebar() {
   const [location, navigate] = useLocation();
   const { user, logout } = useAuth();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
 
   const handleNav = (url: string) => {
+    console.log('[Sidebar Debug] handleNav called', { url, isMobile, openMobile });
     navigate(url);
     if (isMobile) {
+      console.log('[Sidebar Debug] calling setOpenMobile(false)');
       setOpenMobile(false);
     }
   };
