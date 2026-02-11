@@ -1,0 +1,117 @@
+Visibilidad de módulos por permisos (multi-módulo por rol) sin romper RBAC existente
+
+Objetivo
+
+Ajustar la navegación y guards para que un usuario pueda ver varios módulos según sus permisos, por ejemplo:
+	•	SALONERO/CAJERO: Mesas + Caja
+	•	COCINA: Mesas + KDS
+	•	GERENTE: Todo
+
+Restricciones (NO tocar)
+	•	No cambiar lógica de órdenes, POS, KDS.
+	•	No refactorizar autenticación ni sesiones.
+	•	No cambiar tablas de roles (solo agregar permisos si faltan).
+	•	Solo ajustar: matriz de permisos + reglas de menú + guards UI para mostrar módulos correctos.
+
+⸻
+
+Historia 1 — Definir permisos de acceso por módulo (Module Access)
+
+CDA
+Crear/confirmar estos permisos (si ya existen, solo usarlos):
+	•	MODULE_TABLES_VIEW
+	•	MODULE_POS_VIEW
+	•	MODULE_KDS_VIEW
+	•	MODULE_DASHBOARD_VIEW
+	•	MODULE_ADMIN_VIEW
+
+Cada módulo visible en el menú solo depende de su permiso MODULE_*_VIEW (no de rol).
+
+DoD
+	•	Permisos existen y se asignan a roles.
+
+⸻
+
+Historia 2 — Ajustar menú lateral y rutas para usar permisos (no rol)
+
+CDA
+	•	El sidebar/nav debe renderizar secciones según permisos:
+	•	Si MODULE_TABLES_VIEW → mostrar “Mesas”
+	•	Si MODULE_KDS_VIEW → mostrar “Cocina (KDS)”
+	•	Si MODULE_POS_VIEW → mostrar “POS / Caja”
+	•	Si MODULE_DASHBOARD_VIEW → mostrar “Dashboard”
+	•	Si MODULE_ADMIN_VIEW → mostrar “Admin”
+	•	Si un usuario tiene más de un permiso, ve ambos módulos.
+	•	No debe existir lógica “else/only one module”.
+
+DoD
+	•	Usuario con permisos Tables+POS ve ambos ítems del menú y puede navegar a ambos.
+
+⸻
+
+Historia 3 — Guards de rutas por permiso (server/client)
+
+CDA
+	•	Cada ruta principal debe estar protegida:
+	•	/tables/* requiere MODULE_TABLES_VIEW
+	•	/pos/* requiere MODULE_POS_VIEW
+	•	/kds/* requiere MODULE_KDS_VIEW
+	•	/dashboard/* requiere MODULE_DASHBOARD_VIEW
+	•	/admin/* requiere MODULE_ADMIN_VIEW
+	•	Si no tiene permiso → 403/redirect “Sin acceso”.
+
+DoD
+	•	Cocina sin POS no puede abrir /pos, aunque escriba URL.
+
+⸻
+
+Historia 4 — Seed/matriz cerrada para tus roles actuales
+
+CDA
+Asignar permisos mínimos así:
+
+GERENTE
+	•	MODULE_TABLES_VIEW, MODULE_POS_VIEW, MODULE_KDS_VIEW, MODULE_DASHBOARD_VIEW, MODULE_ADMIN_VIEW
+	•		•	todos los permisos funcionales existentes.
+
+SALONERO (que también atiende caja)
+	•	MODULE_TABLES_VIEW y MODULE_POS_VIEW
+	•	(KDS solo si lo necesitás, por defecto NO)
+	•	Mantener restricciones críticas: sin POS_VOID, sin POS_REOPEN, sin CASH_CLOSE (según tu política).
+
+COCINA
+	•	MODULE_TABLES_VIEW y MODULE_KDS_VIEW
+	•	NO MODULE_POS_VIEW
+	•	(Admin no)
+
+STAFF
+	•	MODULE_TABLES_VIEW si querés que vea mesas (opcional) y/o MODULE_KDS_VIEW si ayuda en cocina (según decisión).
+	•	Si no se ocupa, déjalo solo con KDS o solo con Tables.
+
+DoD
+	•	Un salonero/cajero ve Mesas + POS.
+	•	Cocina ve Mesas + KDS.
+	•	Gerente ve todo.
+
+⸻
+
+Historia 5 — Fix puntual del bug actual (rol “salonero” solo ve caja)
+
+CDA
+	•	Identificar por qué al asignar rol “salonero” el menú oculta Mesas:
+	•	Causa típica: menú basado en rol único, o permisos no asignados a ese rol.
+	•	Solución:
+	•	Asegurar que rol SALONERO tenga MODULE_TABLES_VIEW.
+	•	Y que el menú use permisos, no rol.
+	•	No cambiar nombres de roles en DB.
+
+DoD
+	•	Con el usuario existente que hoy “solo ve caja”, al recargar sesión debe ver “Mesas” también.
+
+⸻
+
+Nota para Replit (para que no invente)
+
+El sistema debe soportar que un rol tenga acceso a varios módulos. Si hoy tu RBAC está implementado como “rol → home route única”, cambialo a:
+	•	“home route” = primer módulo disponible por permiso (preferencia: Tables, luego POS, luego KDS)
+	•	menú = lista de módulos por permisos
