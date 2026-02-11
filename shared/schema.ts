@@ -22,6 +22,7 @@ export const users = pgTable("users", {
   active: boolean("active").notNull().default(true),
   email: text("email"),
   pin: text("pin"),
+  pinPlain: text("pin_plain"),
   pinFailedAttempts: integer("pin_failed_attempts").notNull().default(0),
   pinLockedUntil: timestamp("pin_locked_until"),
   createdAt: timestamp("created_at").defaultNow(),

@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Users, Loader2, KeyRound, Lock, ShieldCheck, ShieldOff } from "lucide-react";
+import { Plus, Pencil, Users, Loader2, KeyRound, Lock, ShieldCheck, ShieldOff, RefreshCw, Copy } from "lucide-react";
 
 interface Employee {
   id: number;
@@ -20,6 +20,7 @@ interface Employee {
   active: boolean;
   email: string | null;
   hasPin: boolean;
+  pinPlain: string | null;
   createdAt: string;
 }
 
@@ -39,6 +40,9 @@ export default function AdminEmployeesPage() {
   const [resetPwOpen, setResetPwOpen] = useState(false);
   const [resetPwTarget, setResetPwTarget] = useState<Employee | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [generatedPinOpen, setGeneratedPinOpen] = useState(false);
+  const [generatedPin, setGeneratedPin] = useState("");
+  const [generatedPinUser, setGeneratedPinUser] = useState("");
   const [form, setForm] = useState({
     username: "",
     password: "",
@@ -97,13 +101,31 @@ export default function AdminEmployeesPage() {
     },
   });
 
+  const generatePinMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/admin/employees/${id}/generate-pin`);
+      return res.json() as Promise<{ pin: string }>;
+    },
+    onSuccess: (data: { pin: string }, empId: number) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/employees"] });
+      const emp = employees.find(e => e.id === empId);
+      setGeneratedPin(data.pin);
+      setGeneratedPinUser(emp?.displayName || "");
+      setGeneratedPinOpen(true);
+      toast({ title: "PIN generado" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const resetPinMutation = useMutation({
     mutationFn: async (id: number) => {
       return apiRequest("POST", `/api/admin/employees/${id}/reset-pin`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/employees"] });
-      toast({ title: "PIN restablecido" });
+      toast({ title: "PIN eliminado" });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -150,6 +172,12 @@ export default function AdminEmployeesPage() {
     if (resetPwTarget) {
       resetPasswordMutation.mutate({ id: resetPwTarget.id, password: newPassword });
     }
+  };
+
+  const copyPin = (pin: string) => {
+    navigator.clipboard.writeText(pin).then(() => {
+      toast({ title: "PIN copiado" });
+    }).catch(() => {});
   };
 
   return (
@@ -269,6 +297,30 @@ export default function AdminEmployeesPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={generatedPinOpen} onOpenChange={setGeneratedPinOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>PIN Generado</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              PIN generado para <span className="font-medium">{generatedPinUser}</span>
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <span className="text-4xl font-mono font-bold tracking-[0.5em]" data-testid="text-generated-pin">
+                {generatedPin}
+              </span>
+              <Button variant="ghost" size="icon" onClick={() => copyPin(generatedPin)} data-testid="button-copy-pin">
+                <Copy className="w-5 h-5" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Comunique este PIN al empleado. El PIN se muestra en la lista de empleados.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {isLoading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
@@ -313,58 +365,80 @@ export default function AdminEmployeesPage() {
                     >
                       {emp.active ? "Activo" : "Inactivo"}
                     </Badge>
-                    <span data-testid={`text-employee-pin-${emp.id}`}>
-                      {emp.hasPin ? (
-                        <ShieldCheck className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <ShieldOff className="w-4 h-4 text-muted-foreground" />
-                      )}
-                    </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 mt-2 justify-end">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => openEdit(emp)}
-                    data-testid={`button-edit-employee-${emp.id}`}
-                    title="Editar"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => openResetPassword(emp)}
-                    data-testid={`button-reset-password-${emp.id}`}
-                    title="Restablecer Contraseña"
-                  >
-                    <Lock className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => resetPinMutation.mutate(emp.id)}
-                    data-testid={`button-reset-pin-${emp.id}`}
-                    title="Restablecer PIN"
-                    disabled={resetPinMutation.isPending}
-                  >
-                    <KeyRound className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => toggleActiveMutation.mutate({ id: emp.id, active: !emp.active })}
-                    data-testid={`button-toggle-active-${emp.id}`}
-                    title={emp.active ? "Desactivar" : "Activar"}
-                    disabled={toggleActiveMutation.isPending}
-                  >
-                    {emp.active ? (
-                      <ShieldOff className="w-4 h-4" />
+
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    {emp.hasPin && emp.pinPlain ? (
+                      <div className="flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-green-600" />
+                        <span className="font-mono text-sm font-bold tracking-widest" data-testid={`text-employee-pin-${emp.id}`}>
+                          {emp.pinPlain}
+                        </span>
+                      </div>
+                    ) : emp.hasPin ? (
+                      <div className="flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-green-600" />
+                        <span className="text-xs text-muted-foreground">PIN asignado</span>
+                      </div>
                     ) : (
-                      <ShieldCheck className="w-4 h-4" />
+                      <div className="flex items-center gap-1.5">
+                        <ShieldOff className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">Sin PIN</span>
+                      </div>
                     )}
-                  </Button>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => generatePinMutation.mutate(emp.id)}
+                      disabled={generatePinMutation.isPending}
+                      data-testid={`button-generate-pin-${emp.id}`}
+                      title={emp.hasPin ? "Regenerar PIN" : "Generar PIN"}
+                    >
+                      {generatePinMutation.isPending ? (
+                        <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                      ) : (
+                        <RefreshCw className="w-3 h-3 mr-1" />
+                      )}
+                      {emp.hasPin ? "Nuevo PIN" : "Generar PIN"}
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => openEdit(emp)}
+                      data-testid={`button-edit-employee-${emp.id}`}
+                      title="Editar"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => openResetPassword(emp)}
+                      data-testid={`button-reset-password-${emp.id}`}
+                      title="Restablecer Contraseña"
+                    >
+                      <Lock className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => toggleActiveMutation.mutate({ id: emp.id, active: !emp.active })}
+                      data-testid={`button-toggle-active-${emp.id}`}
+                      title={emp.active ? "Desactivar" : "Activar"}
+                      disabled={toggleActiveMutation.isPending}
+                    >
+                      {emp.active ? (
+                        <ShieldOff className="w-4 h-4" />
+                      ) : (
+                        <ShieldCheck className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>

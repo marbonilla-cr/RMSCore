@@ -11,7 +11,6 @@ import { Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PinLoginPage from "@/pages/pin-login";
 import LoginPage from "@/pages/login";
-import EnrollPinPage from "@/pages/enroll-pin";
 import TablesPage from "@/pages/tables";
 import TableDetailPage from "@/pages/table-detail";
 import KDSPage from "@/pages/kds";
@@ -181,10 +180,6 @@ function AppContent() {
       );
     }
     return <PinLoginPage onSwitchToPassword={() => setShowPasswordLogin(true)} />;
-  }
-
-  if (!user.hasPin) {
-    return <EnrollPinPage />;
   }
 
   return <AuthenticatedLayout />;

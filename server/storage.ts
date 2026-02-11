@@ -76,13 +76,28 @@ export async function verifyPassword(password: string, hash: string) {
 // PIN Auth
 export async function enrollPin(userId: number, pin: string) {
   const hash = await bcrypt.hash(pin, 10);
-  const [user] = await db.update(users).set({ pin: hash, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
+  const [user] = await db.update(users).set({ pin: hash, pinPlain: pin, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
   return user;
 }
 
 export async function resetPin(userId: number) {
-  const [user] = await db.update(users).set({ pin: null, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
+  const [user] = await db.update(users).set({ pin: null, pinPlain: null, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
   return user;
+}
+
+export function generateRandomPin(): string {
+  const trivial = ["0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8888", "9999", "1234", "4321", "1010", "2020"];
+  let pin: string;
+  do {
+    pin = Math.floor(1000 + Math.random() * 9000).toString();
+  } while (trivial.includes(pin));
+  return pin;
+}
+
+export async function generateAndSetPin(userId: number): Promise<string> {
+  const pin = generateRandomPin();
+  await enrollPin(userId, pin);
+  return pin;
 }
 
 export async function getAllUsersWithPin() {
@@ -749,7 +764,7 @@ export async function seedData() {
 
   // Create default users
   const hash = await bcrypt.hash("1234", 10);
-  await db.insert(users).values([
+  const seedUsers = [
     { username: "gerente", password: hash, displayName: "Carlos Gerente", role: "MANAGER", active: true },
     { username: "salonero", password: hash, displayName: "Salonero", role: "WAITER", active: true },
     { username: "salonero1", password: hash, displayName: "María Salonera", role: "WAITER", active: true },
@@ -757,7 +772,16 @@ export async function seedData() {
     { username: "cocina", password: hash, displayName: "Ana Cocina", role: "KITCHEN", active: true },
     { username: "cajero", password: hash, displayName: "Pedro Cajero", role: "CASHIER", active: true },
     { username: "caja", password: hash, displayName: "Caja", role: "CASHIER", active: true },
-  ]);
+  ];
+  await db.insert(users).values(seedUsers);
+
+  const allSeedUsers = await db.select().from(users);
+  for (const u of allSeedUsers) {
+    const pin = generateRandomPin();
+    const pinHash = await bcrypt.hash(pin, 10);
+    await db.update(users).set({ pin: pinHash, pinPlain: pin }).where(eq(users.id, u.id));
+    console.log(`  ${u.username} PIN: ${pin}`);
+  }
 
   // Default payment methods
   await db.insert(paymentMethods).values([
@@ -857,7 +881,9 @@ export async function seedPermissions() {
   for (const u of opUsers) {
     const existing = await db.select().from(users).where(eq(users.username, u.username)).limit(1);
     if (existing.length === 0) {
-      await db.insert(users).values({ ...u, password: hash, active: true });
+      const pin = generateRandomPin();
+      const pinHash = await bcrypt.hash(pin, 10);
+      await db.insert(users).values({ ...u, password: hash, active: true, pin: pinHash, pinPlain: pin });
     }
   }
 

@@ -155,10 +155,13 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 ## PIN Authentication & RBAC
 - PIN login is the primary entry screen (4-digit numpad interface)
 - Password login is fallback accessible via link from PIN screen
-- After password login, if user has no PIN set, forced enrollment page is shown
+- PINs are generated randomly by the manager from the Employees admin page
+- Manager can see all employee PINs in the employee list (pinPlain column)
+- PIN generation: POST /api/admin/employees/:id/generate-pin (MANAGER only, returns { pin })
+- No self-enrollment flow; PINs assigned exclusively by manager
 - 5-attempt lockout with 5-minute cooldown; trivial PINs (0000, 1111, ..., 1234) blocked
 - PIN auth endpoint: POST /api/auth/pin-login { pin }
-- PIN enrollment: POST /api/auth/enroll-pin { pin } (requires active session)
+- PIN enrollment: POST /api/auth/enroll-pin { pin } (requires active session, legacy)
 - My permissions: GET /api/auth/my-permissions (returns {permissions: string[], role: string})
 - RBAC tables: permissions (id, key, description), role_permissions (id, role, permissionId)
 - 10 POS permissions: POS_VIEW, POS_PAY, POS_SPLIT, POS_PRINT, POS_EMAIL_TICKET, POS_EDIT_CUSTOMER_PREPAY, POS_EDIT_CUSTOMER_POSTPAY, POS_VOID, POS_REOPEN, CASH_CLOSE
