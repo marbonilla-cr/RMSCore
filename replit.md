@@ -81,13 +81,18 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 ## API Endpoints (New)
 - `GET /api/tables/:id/current` - Single source of truth: table + activeOrder + orderItems + pendingQrSubmissions
 
-## Role-Based Access Control
-- Frontend: RoleGuard component redirects unauthorized users to their default route
-- Backend: requireRole middleware on all sensitive endpoints
-  - WAITER: /api/waiter/*, /api/tables/:id/current
-  - KITCHEN: /api/kds/*
-  - CASHIER: /api/pos/*
-  - MANAGER: all routes + /api/admin/* + /api/dashboard
+## Role-Based Access Control (Permission-Based Module Visibility)
+- Module access determined by MODULE_*_VIEW permissions, not by role alone
+- Frontend sidebar and route guards use usePermissions() hook, not role checks
+- Backend requireRole middleware has permission fallback: if user's role doesn't match, checks MODULE_* permissions
+- Default route after login = first available module by permission priority: Tables > POS > KDS > Dashboard > Admin
+- MODULE_TABLES_VIEW: access to /tables/*, /api/waiter/*
+- MODULE_POS_VIEW: access to /pos, /api/pos/*
+- MODULE_KDS_VIEW: access to /kds, /api/kds/*
+- MODULE_DASHBOARD_VIEW: access to /dashboard, /api/dashboard
+- MODULE_ADMIN_VIEW: access to /admin/*, /api/admin/*
+- Default role→module mapping: MANAGER=all, WAITER=Tables+POS, KITCHEN=Tables+KDS, CASHIER=Tables+POS, STAFF=Tables
+- Manager can reassign MODULE_* permissions per role from Admin > Roles page
 
 ## Database Schema
 All tables defined in `shared/schema.ts` using Drizzle ORM:

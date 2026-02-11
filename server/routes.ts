@@ -34,11 +34,24 @@ function requireRole(...roles: string[]) {
   return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
     const user = await storage.getUser(req.session.userId);
-    if (!user || !roles.includes(user.role)) {
-      return res.status(403).json({ message: "Sin permisos" });
+    if (!user) return res.status(403).json({ message: "Sin permisos" });
+    if (roles.includes(user.role)) {
+      (req as any).user = user;
+      return next();
     }
-    (req as any).user = user;
-    next();
+    const userPerms = await storage.getPermissionKeysForRole(user.role);
+    const moduleMap: Record<string, string> = {
+      WAITER: "MODULE_TABLES_VIEW",
+      KITCHEN: "MODULE_KDS_VIEW",
+      CASHIER: "MODULE_POS_VIEW",
+      MANAGER: "MODULE_ADMIN_VIEW",
+    };
+    const neededModulePerms = roles.map(r => moduleMap[r]).filter(Boolean);
+    if (neededModulePerms.some(p => userPerms.includes(p))) {
+      (req as any).user = user;
+      return next();
+    }
+    return res.status(403).json({ message: "Sin permisos" });
   };
 }
 

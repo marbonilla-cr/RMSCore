@@ -835,7 +835,7 @@ export async function seedData() {
 
 // Seed permissions & role mappings (idempotent, runs always)
 export async function seedPermissions() {
-  const POS_PERMS = [
+  const ALL_PERMS = [
     { key: "POS_VIEW", description: "Ver módulo POS" },
     { key: "POS_PAY", description: "Procesar pagos" },
     { key: "POS_SPLIT", description: "Dividir cuentas" },
@@ -846,9 +846,14 @@ export async function seedPermissions() {
     { key: "POS_VOID", description: "Anular pagos" },
     { key: "POS_REOPEN", description: "Reabrir órdenes pagadas" },
     { key: "CASH_CLOSE", description: "Cierre de caja" },
+    { key: "MODULE_TABLES_VIEW", description: "Acceso al módulo Mesas/Salón" },
+    { key: "MODULE_POS_VIEW", description: "Acceso al módulo POS/Caja" },
+    { key: "MODULE_KDS_VIEW", description: "Acceso al módulo Cocina (KDS)" },
+    { key: "MODULE_DASHBOARD_VIEW", description: "Acceso al módulo Dashboard" },
+    { key: "MODULE_ADMIN_VIEW", description: "Acceso al módulo Admin" },
   ];
 
-  for (const p of POS_PERMS) {
+  for (const p of ALL_PERMS) {
     const existing = await db.select().from(permissions).where(eq(permissions.key, p.key)).limit(1);
     if (existing.length === 0) {
       await db.insert(permissions).values(p);
@@ -856,17 +861,26 @@ export async function seedPermissions() {
   }
 
   const ROLE_PERMS: Record<string, string[]> = {
-    MANAGER: POS_PERMS.map(p => p.key),
-    CASHIER: ["POS_VIEW", "POS_PAY", "POS_SPLIT", "POS_PRINT", "POS_EMAIL_TICKET", "POS_EDIT_CUSTOMER_PREPAY", "POS_EDIT_CUSTOMER_POSTPAY", "POS_VOID", "POS_REOPEN", "CASH_CLOSE"],
-    WAITER: ["POS_VIEW", "POS_PAY", "POS_SPLIT", "POS_PRINT", "POS_EMAIL_TICKET", "POS_EDIT_CUSTOMER_PREPAY"],
-    KITCHEN: [],
-    STAFF: [],
+    MANAGER: ALL_PERMS.map(p => p.key),
+    CASHIER: [
+      "MODULE_TABLES_VIEW", "MODULE_POS_VIEW",
+      "POS_VIEW", "POS_PAY", "POS_SPLIT", "POS_PRINT", "POS_EMAIL_TICKET",
+      "POS_EDIT_CUSTOMER_PREPAY", "POS_EDIT_CUSTOMER_POSTPAY", "POS_VOID", "POS_REOPEN", "CASH_CLOSE",
+    ],
+    WAITER: [
+      "MODULE_TABLES_VIEW", "MODULE_POS_VIEW",
+      "POS_VIEW", "POS_PAY", "POS_SPLIT", "POS_PRINT", "POS_EMAIL_TICKET", "POS_EDIT_CUSTOMER_PREPAY",
+    ],
+    KITCHEN: ["MODULE_TABLES_VIEW", "MODULE_KDS_VIEW"],
+    STAFF: ["MODULE_TABLES_VIEW"],
   };
 
   for (const [role, keys] of Object.entries(ROLE_PERMS)) {
-    const existing = await db.select().from(rolePermissions).where(eq(rolePermissions.role, role)).limit(1);
-    if (existing.length === 0 && keys.length > 0) {
-      await db.insert(rolePermissions).values(keys.map(k => ({ role, permissionKey: k })));
+    const existing = await db.select().from(rolePermissions).where(eq(rolePermissions.role, role));
+    const existingKeys = existing.map(r => r.permissionKey);
+    const missing = keys.filter(k => !existingKeys.includes(k));
+    if (missing.length > 0) {
+      await db.insert(rolePermissions).values(missing.map(k => ({ role, permissionKey: k })));
     }
   }
 

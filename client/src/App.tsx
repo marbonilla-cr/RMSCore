@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import { Switch, Route, useLocation, Redirect } from "wouter";
+import { useState } from "react";
+import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/use-permissions";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Loader2, LogOut } from "lucide-react";
@@ -29,60 +30,61 @@ import AdminModifiersPage from "@/pages/admin/modifiers";
 import AdminDiscountsPage from "@/pages/admin/discounts";
 import NotFound from "@/pages/not-found";
 
-function getDefaultRoute(role: string): string {
-  switch (role) {
-    case "KITCHEN": return "/kds";
-    case "CASHIER": return "/pos";
-    case "MANAGER": return "/tables";
-    case "WAITER":
-    default: return "/tables";
-  }
+function getDefaultRouteByPermissions(perms: string[]): string {
+  if (perms.includes("MODULE_TABLES_VIEW")) return "/tables";
+  if (perms.includes("MODULE_POS_VIEW")) return "/pos";
+  if (perms.includes("MODULE_KDS_VIEW")) return "/kds";
+  if (perms.includes("MODULE_DASHBOARD_VIEW")) return "/dashboard";
+  if (perms.includes("MODULE_ADMIN_VIEW")) return "/admin/employees";
+  return "/tables";
 }
 
-function canAccessRoute(role: string, path: string): boolean {
-  if (role === "MANAGER") return true;
-
-  if (role === "WAITER") {
-    return path === "/" || path === "/tables" || path.startsWith("/tables/");
-  }
-  if (role === "KITCHEN") {
-    return path === "/" || path === "/kds";
-  }
-  if (role === "CASHIER") {
-    return path === "/" || path === "/pos";
-  }
+function canAccessRouteByPermissions(perms: string[], path: string): boolean {
+  if (path === "/") return true;
+  if (path === "/tables" || path.startsWith("/tables/")) return perms.includes("MODULE_TABLES_VIEW");
+  if (path === "/kds") return perms.includes("MODULE_KDS_VIEW");
+  if (path === "/pos") return perms.includes("MODULE_POS_VIEW");
+  if (path === "/dashboard") return perms.includes("MODULE_DASHBOARD_VIEW");
+  if (path.startsWith("/admin/")) return perms.includes("MODULE_ADMIN_VIEW");
   return false;
 }
 
-function useRoleGuard(allowedRoles: string[]) {
-  const { user } = useAuth();
-  const allowed = user ? allowedRoles.includes(user.role) : false;
-
-  useEffect(() => {
-    if (user && !allowed) {
-      const target = getDefaultRoute(user.role);
-      window.location.replace(target);
-    }
-  }, [user, allowed]);
-
-  return allowed;
+function NoAccess() {
+  return (
+    <div className="flex items-center justify-center h-full p-8">
+      <div className="text-center">
+        <h2 className="text-lg font-semibold mb-2">Sin acceso</h2>
+        <p className="text-muted-foreground text-sm">No tiene permisos para acceder a este módulo.</p>
+      </div>
+    </div>
+  );
 }
 
 function AuthenticatedRouter() {
   const { user } = useAuth();
+  const { permissions, isLoading: permsLoading } = usePermissions();
 
   if (!user) return null;
-
-  const role = user.role;
-  const path = window.location.pathname;
-
-  if (path === "/" && role !== "WAITER" && role !== "MANAGER") {
-    window.location.replace(getDefaultRoute(role));
-    return null;
+  if (permsLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
-  if (!canAccessRoute(role, path)) {
-    const target = getDefaultRoute(role);
+  const path = window.location.pathname;
+
+  if (path === "/") {
+    const target = getDefaultRouteByPermissions(permissions);
+    if (target !== "/tables") {
+      window.location.replace(target);
+      return null;
+    }
+  }
+
+  if (!canAccessRouteByPermissions(permissions, path)) {
+    const target = getDefaultRouteByPermissions(permissions);
     window.location.replace(target);
     return null;
   }
