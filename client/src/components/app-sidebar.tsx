@@ -10,6 +10,7 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarFooter,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -62,8 +63,16 @@ const adminItems = [
 ];
 
 export function AppSidebar() {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const { user, logout } = useAuth();
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  const handleNav = (url: string) => {
+    navigate(url);
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
 
   const role = user?.role || "";
   const isManager = role === "MANAGER";
@@ -97,11 +106,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {waiterItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
-                        <span>{item.title}</span>
-                      </Link>
+                    <SidebarMenuButton isActive={location === item.url} onClick={() => handleNav(item.url)} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                      <item.icon className="w-4 h-4" />
+                      <span>{item.title}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
@@ -117,11 +124,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {kitchenItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
-                        <span>{item.title}</span>
-                      </Link>
+                    <SidebarMenuButton isActive={location === item.url} onClick={() => handleNav(item.url)} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                      <item.icon className="w-4 h-4" />
+                      <span>{item.title}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
@@ -137,11 +142,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {cashierItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
-                        <span>{item.title}</span>
-                      </Link>
+                    <SidebarMenuButton isActive={location === item.url} onClick={() => handleNav(item.url)} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                      <item.icon className="w-4 h-4" />
+                      <span>{item.title}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
@@ -158,11 +161,9 @@ export function AppSidebar() {
                 <SidebarMenu>
                   {managerItems.map((item) => (
                     <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={location === item.url}>
-                        <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                          <item.icon className="w-4 h-4" />
-                          <span>{item.title}</span>
-                        </Link>
+                      <SidebarMenuButton isActive={location === item.url} onClick={() => handleNav(item.url)} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                        <item.icon className="w-4 h-4" />
+                        <span>{item.title}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
@@ -179,11 +180,9 @@ export function AppSidebar() {
                 <SidebarMenu>
                   {adminItems.map((item) => (
                     <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={location === item.url}>
-                        <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                          <item.icon className="w-4 h-4" />
-                          <span>{item.title}</span>
-                        </Link>
+                      <SidebarMenuButton isActive={location === item.url} onClick={() => handleNav(item.url)} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                        <item.icon className="w-4 h-4" />
+                        <span>{item.title}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}

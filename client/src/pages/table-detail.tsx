@@ -664,7 +664,7 @@ export default function TableDetailPage() {
       {cart.length > 0 && viewMode !== "cart" && (
         <div
           ref={bottomBarRef}
-          className="fixed bottom-0 left-0 right-0 z-[90] bg-card border-t"
+          className="fixed bottom-0 left-0 right-0 z-[9] bg-card border-t"
           style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
           data-testid="bottom-order-bar"
         >

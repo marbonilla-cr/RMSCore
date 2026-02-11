@@ -317,7 +317,7 @@ export default function QRClientPage() {
       </div>
 
       {cart.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4 z-50">
+        <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4 z-[9]">
           <div className="max-w-lg mx-auto">
             {!confirmSlide ? (
               <Button
