@@ -168,6 +168,11 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 - Employee management: GET/POST/PATCH /api/admin/employees, POST reset-password, POST reset-pin
 - Role permissions: GET /api/admin/permissions, GET /api/admin/role-permissions, PUT /api/admin/role-permissions/:role
 
+## Build & Development
+- Frontend is a **pre-built static bundle** served from `dist/public/`. After frontend code changes, run `npx vite build` to rebuild.
+- `npm run dev` starts the Express server which serves the static bundle — there is NO Vite HMR.
+- Mobile sidebar auto-close: SidebarProvider patches `history.pushState`/`replaceState` + `popstate` listener to detect route changes and close the Sheet on mobile. This avoids relying on React event handlers inside Radix portals.
+
 ## Email Configuration (Optional)
 To enable email ticket sending, set these environment variables:
 - SMTP_HOST: SMTP server hostname

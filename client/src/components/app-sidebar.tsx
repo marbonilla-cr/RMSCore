@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import {
@@ -11,7 +10,6 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarFooter,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -64,15 +62,8 @@ const adminItems = [
 ];
 
 export function AppSidebar() {
-  const [location, navigate] = useLocation();
+  const [location] = useLocation();
   const { user, logout } = useAuth();
-  const { isMobile, openMobile, setOpenMobile } = useSidebar();
-
-  useEffect(() => {
-    if (isMobile && openMobile) {
-      setOpenMobile(false);
-    }
-  }, [location]);
 
   const role = user?.role || "";
   const isManager = role === "MANAGER";
