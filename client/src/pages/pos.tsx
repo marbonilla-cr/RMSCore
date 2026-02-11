@@ -17,10 +17,27 @@ import { useToast } from "@/hooks/use-toast";
 import {
   CreditCard, DollarSign, Loader2, Receipt,
   Banknote, ArrowLeft, Lock, Unlock,
-  Split, Trash2, XCircle, Mail, Printer,
+  Split, Trash2, XCircle, Mail, Printer, ArrowRight, ArrowLeftRight,
 } from "lucide-react";
 import type { PaymentMethod } from "@shared/schema";
 import { printReceipt } from "@/lib/print-receipt";
+
+interface POSItemModifier {
+  id: number;
+  nameSnapshot: string;
+  priceDeltaSnapshot: string;
+  qty: number;
+}
+
+interface POSItem {
+  id: number;
+  productNameSnapshot: string;
+  qty: number;
+  productPriceSnapshot: string;
+  status: string;
+  notes?: string | null;
+  modifiers?: POSItemModifier[];
+}
 
 interface POSTable {
   id: number;
@@ -30,7 +47,7 @@ interface POSTable {
   globalNumber?: number | null;
   totalAmount: string;
   itemCount: number;
-  items: { id: number; productNameSnapshot: string; qty: number; productPriceSnapshot: string; status: string }[];
+  items: POSItem[];
 }
 
 interface SplitAccountData {
@@ -73,6 +90,9 @@ export default function POSPage() {
 
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [splitLabel, setSplitLabel] = useState("");
+  const [splitMode, setSplitMode] = useState(false);
+  const [normalizing, setNormalizing] = useState(false);
+  const [movingItemId, setMovingItemId] = useState<number | null>(null);
   const [lastPaidOrder, setLastPaidOrder] = useState<{orderId: number; tableName: string; orderNumber: string; paymentMethod: string; clientName?: string; _items: {name:string;qty:number;price:number;total:number}[]; _totalAmount: number} | null>(null);
   const [printingDirect, setPrintingDirect] = useState(false);
 
@@ -124,8 +144,14 @@ export default function POSPage() {
 
   const assignedItemIds = splits.flatMap((s) => s.items.map((si) => si.orderItemId));
 
-  const getItemTotal = (item: POSTable["items"][0]) =>
-    Number(item.productPriceSnapshot) * item.qty;
+  const getItemUnitPrice = (item: POSItem) => {
+    const base = Number(item.productPriceSnapshot);
+    const modTotal = (item.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+    return base + modTotal;
+  };
+
+  const getItemTotal = (item: POSItem) =>
+    getItemUnitPrice(item) * item.qty;
 
   const getSplitTotal = (split: SplitAccountData) => {
     if (!selectedTable) return 0;
@@ -286,6 +312,20 @@ export default function POSPage() {
     },
   });
 
+  const moveItemMutation = useMutation({
+    mutationFn: async ({ orderItemId, fromSplitId, toSplitId }: { orderItemId: number; fromSplitId?: number | null; toSplitId?: number | null }) => {
+      return apiRequest("POST", "/api/pos/split-items/move", { orderItemId, fromSplitId: fromSplitId || null, toSplitId: toSplitId || null });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      setMovingItemId(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const voidPaymentMutation = useMutation({
     mutationFn: async (paymentId: number) => {
       return apiRequest("POST", `/api/pos/void-payment/${paymentId}`);
@@ -381,11 +421,31 @@ export default function POSPage() {
     setPaymentOpen(true);
   };
 
+  const enterSplitMode = async () => {
+    if (!selectedTable) return;
+    setNormalizing(true);
+    try {
+      await apiRequest("POST", `/api/pos/orders/${selectedTable.orderId}/normalize-split`);
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "splits"] });
+      const freshTables: POSTable[] = queryClient.getQueryData(["/api/pos/tables"]) || [];
+      const freshTable = freshTables.find(t => t.orderId === selectedTable.orderId);
+      if (freshTable) setSelectedTable(freshTable);
+      setSplitMode(true);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setNormalizing(false);
+    }
+  };
+
   const handleCobrarClick = (table: POSTable) => {
     setSelectedTable(table);
     setDetailView(true);
     setSelectedItemIds([]);
     setSplitLabel("");
+    setSplitMode(false);
+    setMovingItemId(null);
   };
 
   const closeDetailView = () => {
@@ -393,6 +453,8 @@ export default function POSPage() {
     setSelectedTable(null);
     setSelectedItemIds([]);
     setSplitLabel("");
+    setSplitMode(false);
+    setMovingItemId(null);
   };
 
   const payingAmount = payingSplitId
@@ -440,106 +502,175 @@ export default function POSPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-                <h3 className="font-bold">Items de la Orden</h3>
-                {canPay && (
-                  <Button
-                    onClick={openPaymentForFull}
-                    disabled={!cashSession?.id || !!cashSession.closedAt}
-                    data-testid="button-pay-full"
-                  >
-                    <DollarSign className="w-4 h-4 mr-1" /> Pagar Todo
-                  </Button>
-                )}
+                <h3 className="font-bold">
+                  {splitMode ? "Cuenta Principal" : "Items de la Orden"}
+                </h3>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {canSplit && !splitMode && (
+                    <Button
+                      variant="outline"
+                      onClick={enterSplitMode}
+                      disabled={normalizing}
+                      data-testid="button-enter-split"
+                    >
+                      {normalizing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Split className="w-4 h-4 mr-1" />}
+                      Dividir Cuenta
+                    </Button>
+                  )}
+                  {splitMode && (
+                    <Button variant="ghost" onClick={() => setSplitMode(false)} data-testid="button-exit-split">
+                      <ArrowLeft className="w-4 h-4 mr-1" /> Salir Split
+                    </Button>
+                  )}
+                  {canPay && !splitMode && (
+                    <Button
+                      onClick={openPaymentForFull}
+                      disabled={!cashSession?.id || !!cashSession.closedAt}
+                      data-testid="button-pay-full"
+                    >
+                      <DollarSign className="w-4 h-4 mr-1" /> Pagar Todo
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="space-y-1">
-                  {selectedTable.items.map((item) => {
-                    const isAssigned = assignedItemIds.includes(item.id);
-                    const isPaid = item.status === "PAID";
-                    return (
-                      <div
-                        key={item.id}
-                        className={`flex items-center gap-2 py-2 px-2 rounded-md min-h-[48px] ${isPaid ? "opacity-50" : ""} ${isAssigned && !isPaid ? "opacity-60" : ""}`}
-                        data-testid={`item-row-${item.id}`}
-                      >
-                        {!isPaid && !isAssigned && canSplit && (
+                {splitMode ? (
+                  <>
+                    <div className="space-y-1">
+                      {selectedTable.items
+                        .filter(item => !assignedItemIds.includes(item.id) && item.status !== "PAID")
+                        .map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-2 py-2 px-2 rounded-md min-h-[48px]"
+                          data-testid={`split-item-row-${item.id}`}
+                        >
                           <Checkbox
                             checked={selectedItemIds.includes(item.id)}
                             onCheckedChange={() => toggleItemSelection(item.id)}
                             data-testid={`checkbox-item-${item.id}`}
                           />
-                        )}
-                        {isPaid && (
-                          <Badge variant="secondary" className="text-xs">Pagado</Badge>
-                        )}
-                        {isAssigned && !isPaid && (
-                          <Badge variant="outline" className="text-xs">Asignado</Badge>
-                        )}
-                        <span className="flex-1 text-sm">
-                          {item.qty}x {item.productNameSnapshot}
-                        </span>
-                        <span className="text-sm text-muted-foreground">
-                          ₡{getItemTotal(item).toLocaleString()}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {canSplit && selectedItemIds.length > 0 && (
-                  <div className="mt-4 border-t pt-3 space-y-3">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Input
-                        placeholder={nextSplitLabel()}
-                        value={splitLabel}
-                        onChange={(e) => setSplitLabel(e.target.value)}
-                        className="flex-1 min-w-[150px]"
-                        data-testid="input-split-label"
-                      />
-                      <Button
-                        onClick={() => createSplitMutation.mutate()}
-                        disabled={createSplitMutation.isPending}
-                        data-testid="button-create-split"
-                      >
-                        {createSplitMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                        ) : (
-                          <Split className="w-4 h-4 mr-1" />
-                        )}
-                        Crear Subcuenta ({selectedItemIds.length})
-                      </Button>
+                          <div className="flex-1">
+                            <span className="text-sm">{item.productNameSnapshot}</span>
+                            {(item.modifiers && item.modifiers.length > 0) && (
+                              <div className="text-xs text-muted-foreground">
+                                {item.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
+                              </div>
+                            )}
+                            {item.notes && <div className="text-xs text-muted-foreground italic">{item.notes}</div>}
+                          </div>
+                          <span className="text-sm text-muted-foreground">₡{getItemUnitPrice(item).toLocaleString()}</span>
+                        </div>
+                      ))}
+                      {selectedTable.items.filter(item => !assignedItemIds.includes(item.id) && item.status !== "PAID").length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-4">Todos los items están asignados a subcuentas</p>
+                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Subtotal seleccionado: ₡{selectedTable.items
-                        .filter((i) => selectedItemIds.includes(i.id))
-                        .reduce((s, i) => s + getItemTotal(i), 0)
-                        .toLocaleString()}
-                    </p>
+
+                    {selectedItemIds.length > 0 && (
+                      <div className="mt-4 border-t pt-3 space-y-3">
+                        {splits.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground">Mover a subcuenta existente:</p>
+                            <div className="flex gap-2 flex-wrap">
+                              {splits.map(s => (
+                                <Button
+                                  key={s.id}
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    selectedItemIds.forEach(itemId => {
+                                      moveItemMutation.mutate({ orderItemId: itemId, fromSplitId: null, toSplitId: s.id });
+                                    });
+                                    setSelectedItemIds([]);
+                                  }}
+                                  disabled={moveItemMutation.isPending}
+                                  data-testid={`button-move-to-split-${s.id}`}
+                                >
+                                  <ArrowRight className="w-3 h-3 mr-1" /> {s.label}
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Input
+                            placeholder={nextSplitLabel()}
+                            value={splitLabel}
+                            onChange={(e) => setSplitLabel(e.target.value)}
+                            className="flex-1 min-w-[150px]"
+                            data-testid="input-split-label"
+                          />
+                          <Button
+                            onClick={() => createSplitMutation.mutate()}
+                            disabled={createSplitMutation.isPending}
+                            data-testid="button-create-split"
+                          >
+                            {createSplitMutation.isPending ? (
+                              <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                            ) : (
+                              <Split className="w-4 h-4 mr-1" />
+                            )}
+                            Nueva Subcuenta ({selectedItemIds.length})
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Subtotal: ₡{selectedTable.items
+                            .filter((i) => selectedItemIds.includes(i.id))
+                            .reduce((s, i) => s + getItemUnitPrice(i), 0)
+                            .toLocaleString()}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="space-y-1">
+                    {selectedTable.items.map((item) => {
+                      const isPaid = item.status === "PAID";
+                      return (
+                        <div
+                          key={item.id}
+                          className={`flex items-center gap-2 py-2 px-2 rounded-md min-h-[48px] ${isPaid ? "opacity-50" : ""}`}
+                          data-testid={`item-row-${item.id}`}
+                        >
+                          {isPaid && <Badge variant="secondary" className="text-xs">Pagado</Badge>}
+                          <div className="flex-1">
+                            <span className="text-sm">{item.qty}x {item.productNameSnapshot}</span>
+                            {(item.modifiers && item.modifiers.length > 0) && (
+                              <div className="text-xs text-muted-foreground">
+                                {item.modifiers.map(m => m.nameSnapshot).join(", ")}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-sm text-muted-foreground">₡{getItemTotal(item).toLocaleString()}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
             </Card>
 
             <div className="space-y-4">
-              {canSplit && (
+              {splitMode && (
                 <h3 className="font-bold flex items-center gap-2">
-                  <Split className="w-4 h-4" /> Dividir Cuenta
+                  <Split className="w-4 h-4" /> Subcuentas
                 </h3>
               )}
 
-              {splitsLoading ? (
+              {splitMode && splitsLoading ? (
                 <div className="flex justify-center py-8">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                 </div>
-              ) : splits.length === 0 ? (
+              ) : splitMode && splits.length === 0 ? (
                 <Card>
                   <CardContent className="py-8 text-center">
                     <p className="text-muted-foreground text-sm">
-                      No hay subcuentas. Selecciona items y crea una subcuenta.
+                      Selecciona items de la cuenta principal y crea subcuentas.
                     </p>
                   </CardContent>
                 </Card>
-              ) : (
+              ) : splitMode ? (
                 splits.map((split) => {
                   const splitTotal = getSplitTotal(split);
                   const allSplitItemsPaid = split.items.every((si) => {
@@ -552,9 +683,7 @@ export default function POSPage() {
                       <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-bold">{split.label}</h4>
-                          {allSplitItemsPaid && (
-                            <Badge variant="default">Pagado</Badge>
-                          )}
+                          {allSplitItemsPaid && <Badge variant="default">Pagado</Badge>}
                         </div>
                         {!allSplitItemsPaid && (
                           <Button
@@ -574,9 +703,28 @@ export default function POSPage() {
                             const oi = selectedTable.items.find((i) => i.id === si.orderItemId);
                             if (!oi) return null;
                             return (
-                              <div key={si.id} className="flex items-center justify-between text-sm py-1">
-                                <span>{oi.qty}x {oi.productNameSnapshot}</span>
-                                <span className="text-muted-foreground">₡{getItemTotal(oi).toLocaleString()}</span>
+                              <div key={si.id} className="flex items-center gap-2 text-sm py-1">
+                                <div className="flex-1">
+                                  <span>{oi.productNameSnapshot}</span>
+                                  {(oi.modifiers && oi.modifiers.length > 0) && (
+                                    <div className="text-xs text-muted-foreground">
+                                      {oi.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="text-muted-foreground">₡{getItemUnitPrice(oi).toLocaleString()}</span>
+                                {!allSplitItemsPaid && oi.status !== "PAID" && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => moveItemMutation.mutate({ orderItemId: oi.id, fromSplitId: split.id, toSplitId: null })}
+                                    disabled={moveItemMutation.isPending}
+                                    data-testid={`button-return-item-${oi.id}`}
+                                  >
+                                    <ArrowLeft className="w-3 h-3" />
+                                  </Button>
+                                )}
                               </div>
                             );
                           })}
@@ -599,7 +747,7 @@ export default function POSPage() {
                     </Card>
                   );
                 })
-              )}
+              ) : null}
 
               {canVoid && orderPayments.filter(p => p.status === "PAID").length > 0 && (
                 <Card>

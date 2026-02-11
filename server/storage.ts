@@ -478,6 +478,10 @@ export async function deleteSplitAccount(id: number) {
   await db.delete(splitAccounts).where(eq(splitAccounts.id, id));
 }
 
+export async function removeSplitItemByOrderItemId(splitId: number, orderItemId: number) {
+  await db.delete(splitItems).where(and(eq(splitItems.splitId, splitId), eq(splitItems.orderItemId, orderItemId)));
+}
+
 export async function getPaymentsForOrder(orderId: number) {
   return db.select().from(payments).where(eq(payments.orderId, orderId));
 }
@@ -1019,4 +1023,115 @@ export async function getModifierOptionByGroupAndName(groupId: number, name: str
 export async function getDiscountByName(name: string): Promise<Discount | undefined> {
   const [d] = await db.select().from(discounts).where(eq(discounts.name, name));
   return d;
+}
+
+export async function normalizeOrderItemsForSplit(orderId: number) {
+  const items = await db.select().from(orderItems)
+    .where(and(eq(orderItems.orderId, orderId), ne(orderItems.status, "VOIDED")));
+
+  const toSplit = items.filter(i => i.qty > 1);
+  if (toSplit.length === 0) return { normalized: false, itemCount: items.length };
+
+  let newCount = 0;
+  for (const item of toSplit) {
+    const originalQty = item.qty;
+
+    await db.update(orderItems).set({ qty: 1 }).where(eq(orderItems.id, item.id));
+
+    const existingModifiers = await db.select().from(orderItemModifiers)
+      .where(eq(orderItemModifiers.orderItemId, item.id));
+
+    const existingLedger = await db.select().from(salesLedgerItems)
+      .where(eq(salesLedgerItems.orderItemId, item.id));
+
+    const existingKitchenItems = await db.select().from(kitchenTicketItems)
+      .where(eq(kitchenTicketItems.orderItemId, item.id));
+
+    if (existingLedger.length > 0) {
+      const ledger = existingLedger[0];
+      await db.update(salesLedgerItems).set({
+        qty: 1,
+        lineSubtotal: ledger.unitPrice,
+      }).where(eq(salesLedgerItems.id, ledger.id));
+    }
+
+    if (existingKitchenItems.length > 0) {
+      for (const kti of existingKitchenItems) {
+        await db.update(kitchenTicketItems).set({ qty: 1 }).where(eq(kitchenTicketItems.id, kti.id));
+      }
+    }
+
+    for (let i = 1; i < originalQty; i++) {
+      const [newItem] = await db.insert(orderItems).values({
+        orderId: item.orderId,
+        productId: item.productId,
+        productNameSnapshot: item.productNameSnapshot,
+        productPriceSnapshot: item.productPriceSnapshot,
+        qty: 1,
+        notes: item.notes,
+        origin: item.origin,
+        createdByUserId: item.createdByUserId,
+        responsibleWaiterId: item.responsibleWaiterId,
+        status: item.status,
+        roundNumber: item.roundNumber,
+        qrSubmissionId: item.qrSubmissionId,
+        sentToKitchenAt: item.sentToKitchenAt,
+      }).returning();
+
+      for (const mod of existingModifiers) {
+        await db.insert(orderItemModifiers).values({
+          orderItemId: newItem.id,
+          modifierOptionId: mod.modifierOptionId,
+          nameSnapshot: mod.nameSnapshot,
+          priceDeltaSnapshot: mod.priceDeltaSnapshot,
+          qty: mod.qty,
+        });
+      }
+
+      if (existingLedger.length > 0) {
+        const ledger = existingLedger[0];
+        await db.insert(salesLedgerItems).values({
+          businessDate: ledger.businessDate,
+          tableId: ledger.tableId,
+          tableNameSnapshot: ledger.tableNameSnapshot,
+          orderId: ledger.orderId,
+          orderItemId: newItem.id,
+          productId: ledger.productId,
+          productCodeSnapshot: ledger.productCodeSnapshot,
+          productNameSnapshot: ledger.productNameSnapshot,
+          categoryId: ledger.categoryId,
+          categoryCodeSnapshot: ledger.categoryCodeSnapshot,
+          categoryNameSnapshot: ledger.categoryNameSnapshot,
+          qty: 1,
+          unitPrice: ledger.unitPrice,
+          lineSubtotal: ledger.unitPrice,
+          origin: ledger.origin,
+          createdByUserId: ledger.createdByUserId,
+          responsibleWaiterId: ledger.responsibleWaiterId,
+          status: ledger.status,
+          sentToKitchenAt: ledger.sentToKitchenAt,
+          kdsReadyAt: ledger.kdsReadyAt,
+          paidAt: ledger.paidAt,
+        });
+      }
+
+      if (existingKitchenItems.length > 0) {
+        const kti = existingKitchenItems[0];
+        await db.insert(kitchenTicketItems).values({
+          kitchenTicketId: kti.kitchenTicketId,
+          orderItemId: newItem.id,
+          productNameSnapshot: kti.productNameSnapshot,
+          qty: 1,
+          notes: kti.notes,
+          status: kti.status,
+          prepStartedAt: kti.prepStartedAt,
+          readyAt: kti.readyAt,
+        });
+      }
+
+      newCount++;
+    }
+  }
+
+  return { normalized: true, itemCount: items.length + newCount };
 }

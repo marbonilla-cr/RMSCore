@@ -1,0 +1,59 @@
+Split muestra y mueve unidades individuales (no “unificados por producto”)
+
+Como cajero/salonero autorizado
+Quiero que en “Dividir cuenta” cada unidad del mismo producto se muestre por separado
+Para poder mover una unidad a una subcuenta y dejar la otra en la cuenta madre (o moverla a otra subcuenta).
+
+CDA (Criterios de aceptación)
+	1.	Representación por unidad
+
+	•	Si en la orden hay qty=2 del mismo producto, en el Split deben verse como:
+	•	“Producto X #1”
+	•	“Producto X #2”
+(o cualquier etiqueta equivalente), pero movibles por separado.
+	•	Si un ítem tiene modificadores/notas, cada unidad debe mantener sus modificadores/notas intactos.
+
+	2.	Movimiento por unidad
+
+	•	Cada unidad se puede mover:
+	•	de cuenta madre → subcuenta A
+	•	de subcuenta A → subcuenta B
+	•	de subcuenta → cuenta madre
+	•	El movimiento de una unidad no arrastra automáticamente otras unidades del mismo producto.
+
+	3.	Persistencia de identidad
+
+	•	Cada unidad debe tener un identificador único estable durante la sesión de split:
+	•	usar order_item_id si ya existe 1 por unidad,
+	•	o si hoy tienes un solo order_item con qty>1, crear una vista “virtual” por unidad para el Split con unit_id derivado (ej: ${order_item_id}:${index}).
+	•	Al confirmar split, el sistema debe reflejarlo sin ambigüedad:
+	•	Opción A (recomendada): en DB convertir qty>1 en múltiples order_items de qty=1 al momento de entrar al split o al confirmar split.
+	•	Opción B: mantener qty pero guardar distribución por unit_id en una tabla de split. (Solo si ya existe infraestructura.)
+	•	No se permite que se “pierdan” modificadores o notas al partir unidades.
+
+	4.	Totales consistentes
+
+	•	Cada subcuenta recalcula subtotal/impuestos/descuentos aplicables según los ítems que contiene.
+	•	La suma de subcuentas + lo que quede en madre = total original (salvo redondeos controlados).
+
+	5.	UI clara en móvil
+
+	•	En la lista de Split:
+	•	cada unidad visible con nombre + precio + modificadores debajo (si aplica)
+	•	botón/gesto para mover (ej: seleccionar y “Mover a …”)
+
+DoD (Definition of Done)
+	•	Caso 1: Orden tiene 2 × “Coca Cola” (sin modificadores).
+	•	En Split se ven 2 unidades separadas.
+	•	Se mueve una a Subcuenta A y la otra queda en Madre.
+	•	Totales cuadran.
+	•	Caso 2: Orden tiene 2 × “Hamburguesa Toro” y a una se le eligió “Tocineta extra”.
+	•	En Split se muestran como 2 unidades separadas, con modificadores correctos.
+	•	Se puede mover solo la que tiene “Tocineta extra”.
+	•	El extra ₡800 viaja con esa unidad.
+	•	Caso 3: Repetir mover ida/vuelta entre subcuentas no duplica ni desaparece unidades.
+
+⸻
+
+Nota de implementación (para evitar inventos)
+	•	Si hoy tu data model tiene order_items con qty, el cambio más limpio y simple es: normalizar a qty=1 (split de filas) antes de permitir movimientos, porque el Split por unidad es un problema clásico cuando se agrupa por producto.

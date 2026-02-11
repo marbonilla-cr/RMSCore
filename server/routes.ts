@@ -1366,6 +1366,11 @@ export async function registerRoutes(
       const items = await storage.getOrderItems(order.id);
       const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PENDING");
       if (activeItems.length === 0) continue;
+      const itemsWithModifiers = [];
+      for (const item of activeItems) {
+        const mods = await storage.getOrderItemModifiers(item.id);
+        itemsWithModifiers.push({ ...item, modifiers: mods });
+      }
       result.push({
         id: t.id,
         tableName: t.tableName,
@@ -1374,7 +1379,7 @@ export async function registerRoutes(
         globalNumber: order.globalNumber,
         totalAmount: order.totalAmount,
         itemCount: activeItems.length,
-        items: activeItems,
+        items: itemsWithModifiers,
       });
     }
     res.json(result);
@@ -1506,6 +1511,27 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== POS: NORMALIZE FOR SPLIT ====================
+  app.post("/api/pos/orders/:orderId/normalize-split", requirePermission("POS_SPLIT"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const result = await storage.normalizeOrderItemsForSplit(orderId);
+      if (result.normalized) {
+        const order = await storage.getOrder(orderId);
+        if (order) {
+          const items = await storage.getOrderItems(orderId);
+          const activeItems = items.filter(i => i.status !== "VOIDED");
+          const total = activeItems.reduce((s, i) => s + Number(i.productPriceSnapshot) * i.qty, 0);
+          await storage.updateOrder(orderId, { totalAmount: total.toFixed(2) });
+        }
+        broadcast("order_updated", { orderId });
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== POS: SPLIT ACCOUNTS ====================
   app.get("/api/pos/orders/:orderId/splits", requirePermission("POS_VIEW"), async (req, res) => {
     try {
@@ -1548,6 +1574,26 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       await storage.deleteSplitAccount(id);
+      broadcast("order_updated", {});
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/pos/split-items/move", requirePermission("POS_SPLIT"), async (req, res) => {
+    try {
+      const { orderItemId, fromSplitId, toSplitId } = req.body;
+      if (!orderItemId) return res.status(400).json({ message: "orderItemId requerido" });
+
+      if (fromSplitId) {
+        await storage.removeSplitItemByOrderItemId(fromSplitId, orderItemId);
+      }
+
+      if (toSplitId) {
+        await storage.createSplitItem({ splitId: toSplitId, orderItemId });
+      }
+
       broadcast("order_updated", {});
       res.json({ ok: true });
     } catch (err: any) {
