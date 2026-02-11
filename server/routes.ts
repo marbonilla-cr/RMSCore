@@ -2024,6 +2024,15 @@ export async function registerRoutes(
     res.json({ ...data, ledgerDetails, paymentMethodTotals });
   });
 
+  app.post("/api/admin/truncate-transactions", requireRole("MANAGER"), async (req, res) => {
+    try {
+      await storage.truncateTransactionalData();
+      res.json({ ok: true, message: "Datos transaccionales eliminados" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/dashboard/orders/:id", requireRole("MANAGER"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.id);
