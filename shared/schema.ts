@@ -304,6 +304,7 @@ export const taxCategories = pgTable("tax_categories", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   rate: numeric("rate", { precision: 5, scale: 2 }).notNull(),
+  inclusive: boolean("inclusive").notNull().default(false),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
 });
@@ -320,6 +321,7 @@ export const orderItemTaxes = pgTable("order_item_taxes", {
   taxCategoryId: integer("tax_category_id").notNull(),
   taxNameSnapshot: text("tax_name_snapshot").notNull(),
   taxRateSnapshot: numeric("tax_rate_snapshot", { precision: 5, scale: 2 }).notNull(),
+  inclusiveSnapshot: boolean("inclusive_snapshot").notNull().default(false),
   taxAmount: numeric("tax_amount", { precision: 10, scale: 2 }).notNull(),
 });
 

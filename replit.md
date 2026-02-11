@@ -101,6 +101,10 @@ users, tables, categories, products, payment_methods, orders, order_items, qr_su
 ## Recent Changes
 - Added per-item discounts in POS: cashier can apply percentage or fixed amount discount per order item
 - Added configurable tax categories: admin creates tax types (e.g., IVA 13%, Servicio 10%), assigns to products
+- Tax categories support inclusive (price already includes tax) and additive (tax added on top) modes
+- Inclusive tax formula: price*rate/(100+rate) — extracts tax from price without changing total
+- Additive tax formula: price*rate/100 — adds tax on top of price, increasing total
+- Default "Servicio" 10% inclusive tax created and assigned to all products
 - Taxes auto-calculated on order items during recalcOrderTotal based on product-tax mapping
 - POS detail view shows subtotal/discounts/taxes/total breakdown when applicable
 - POS payment dialog shows full breakdown (subtotal, discounts, tax lines, total)

@@ -60,6 +60,7 @@ interface POSItem {
 interface TaxBreakdownEntry {
   taxName: string;
   taxRate: string;
+  inclusive: boolean;
   totalAmount: number;
 }
 
@@ -596,8 +597,8 @@ export default function POSPage() {
                 )}
                 {selectedTable.taxBreakdown?.map((tb, idx) => (
                   <div key={idx} className="flex justify-between text-sm text-muted-foreground">
-                    <span>{tb.taxName} ({tb.taxRate}%)</span>
-                    <span>+₡{Number(tb.totalAmount).toLocaleString()}</span>
+                    <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                    <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                   </div>
                 ))}
                 <div className="flex justify-between font-bold text-lg border-t pt-1" data-testid="text-detail-total">
@@ -1087,8 +1088,8 @@ export default function POSPage() {
                   )}
                   {selectedTable.taxBreakdown?.map((tb, idx) => (
                     <div key={idx} className="flex justify-between text-muted-foreground">
-                      <span>{tb.taxName} ({tb.taxRate}%)</span>
-                      <span>+₡{Number(tb.totalAmount).toLocaleString()}</span>
+                      <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                      <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                     </div>
                   ))}
                 </div>

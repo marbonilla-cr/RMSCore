@@ -4,7 +4,7 @@ import { db } from "./db";
 import { eq, and } from "drizzle-orm";
 import {
   categories, products, modifierGroups, modifierOptions,
-  itemModifierGroups, discounts,
+  itemModifierGroups, discounts, taxCategories, productTaxCategories,
 } from "@shared/schema";
 
 const MODIFIER_GROUPS_DATA: Record<string, { options: { name: string; priceDelta: string }[] }> = {
@@ -234,6 +234,30 @@ export async function seedMenuFromCsv() {
       restricted: disc.restricted,
     });
     console.log(`  Discount: ${disc.name}`);
+  }
+
+  console.log("Seeding tax categories...");
+  const existingTaxes = await db.select().from(taxCategories);
+  if (existingTaxes.length === 0) {
+    const [servicioTax] = await db.insert(taxCategories).values({
+      name: "Servicio",
+      rate: "10.00",
+      inclusive: true,
+      active: true,
+      sortOrder: 0,
+    }).returning();
+    console.log(`  Tax: Servicio (10% inclusive) created`);
+
+    const allProducts = await db.select().from(products);
+    for (const p of allProducts) {
+      await db.insert(productTaxCategories).values({
+        productId: p.id,
+        taxCategoryId: servicioTax.id,
+      });
+    }
+    console.log(`  Assigned Servicio tax to ${allProducts.length} products`);
+  } else {
+    console.log("  Tax categories already exist, skipping...");
   }
 
   console.log("Menu seed complete!");

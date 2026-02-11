@@ -316,6 +316,8 @@ export async function recalcOrderTotal(orderId: number) {
   let totalDiscounts = 0;
   let totalTaxes = 0;
 
+  let totalInclusiveTaxes = 0;
+
   for (const item of items) {
     const mods = await db.select().from(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, item.id));
     const modTotal = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
@@ -336,13 +338,21 @@ export async function recalcOrderTotal(orderId: number) {
     for (const ptc of taxesForItem) {
       const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
       if (tc) {
-        const taxAmount = Math.round(discountedSubtotal * Number(tc.rate) / 100 * 100) / 100;
-        totalTaxes += taxAmount;
+        const rate = Number(tc.rate);
+        let taxAmount: number;
+        if (tc.inclusive) {
+          taxAmount = Math.round(discountedSubtotal * rate / (100 + rate) * 100) / 100;
+          totalInclusiveTaxes += taxAmount;
+        } else {
+          taxAmount = Math.round(discountedSubtotal * rate / 100 * 100) / 100;
+          totalTaxes += taxAmount;
+        }
         await createOrderItemTax({
           orderItemId: item.id,
           taxCategoryId: tc.id,
           taxNameSnapshot: tc.name,
           taxRateSnapshot: tc.rate,
+          inclusiveSnapshot: tc.inclusive,
           taxAmount: taxAmount.toFixed(2),
         });
       }

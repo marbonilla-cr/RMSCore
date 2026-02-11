@@ -16,7 +16,7 @@ export default function AdminTaxCategoriesPage() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<TaxCategory | null>(null);
-  const [form, setForm] = useState({ name: "", rate: "", active: true, sortOrder: 0 });
+  const [form, setForm] = useState({ name: "", rate: "", inclusive: false, active: true, sortOrder: 0 });
 
   const { data: taxList = [], isLoading } = useQuery<TaxCategory[]>({
     queryKey: ["/api/admin/tax-categories"],
@@ -42,7 +42,7 @@ export default function AdminTaxCategoriesPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: "", rate: "", active: true, sortOrder: 0 });
+    setForm({ name: "", rate: "", inclusive: false, active: true, sortOrder: 0 });
     setOpen(true);
   };
 
@@ -51,6 +51,7 @@ export default function AdminTaxCategoriesPage() {
     setForm({
       name: tc.name,
       rate: tc.rate,
+      inclusive: tc.inclusive,
       active: tc.active,
       sortOrder: tc.sortOrder,
     });
@@ -108,6 +109,15 @@ export default function AdminTaxCategoriesPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Switch
+                  checked={form.inclusive}
+                  onCheckedChange={(c) => setForm({ ...form, inclusive: c })}
+                  data-testid="switch-tax-inclusive"
+                />
+                <Label>Incluido en precio</Label>
+                <span className="text-xs text-muted-foreground">(el precio ya contiene este impuesto)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
                   checked={form.active}
                   onCheckedChange={(c) => setForm({ ...form, active: c })}
                   data-testid="switch-tax-active"
@@ -147,6 +157,9 @@ export default function AdminTaxCategoriesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                  {tc.inclusive && (
+                    <Badge variant="outline">Incl.</Badge>
+                  )}
                   <Badge variant={tc.active ? "default" : "secondary"}>
                     {tc.active ? "Activo" : "Inactivo"}
                   </Badge>

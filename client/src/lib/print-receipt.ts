@@ -8,6 +8,7 @@ interface ReceiptItem {
 interface TaxBreakdownEntry {
   taxName: string;
   taxRate: string;
+  inclusive: boolean;
   totalAmount: number;
 }
 
@@ -161,8 +162,8 @@ export function printReceipt(data: ReceiptData) {
     </tr>` : ""}
     ${(data.taxBreakdown || []).map(tb => `
     <tr>
-      <td style="font-size:11px;">${escapeHtml(tb.taxName)} (${tb.taxRate}%)</td>
-      <td style="text-align:right;font-size:11px;" colspan="3">+${formatCurrency(tb.totalAmount)}</td>
+      <td style="font-size:11px;">${escapeHtml(tb.taxName)} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}</td>
+      <td style="text-align:right;font-size:11px;" colspan="3">${tb.inclusive ? "" : "+"}${formatCurrency(tb.totalAmount)}</td>
     </tr>`).join("")}
     <tr class="total-row">
       <td>TOTAL</td>

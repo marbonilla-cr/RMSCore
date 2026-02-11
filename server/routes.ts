@@ -12,18 +12,18 @@ declare module "express-session" {
   }
 }
 
-function aggregateTaxBreakdown(taxes: { taxNameSnapshot: string; taxRateSnapshot: string; taxAmount: string }[]) {
-  const map = new Map<string, { taxName: string; taxRate: string; totalAmount: number }>();
+function aggregateTaxBreakdown(taxes: { taxNameSnapshot: string; taxRateSnapshot: string; taxAmount: string; inclusiveSnapshot: boolean }[]) {
+  const map = new Map<string, { taxName: string; taxRate: string; inclusive: boolean; totalAmount: number }>();
   for (const t of taxes) {
-    const key = `${t.taxNameSnapshot}|${t.taxRateSnapshot}`;
+    const key = `${t.taxNameSnapshot}|${t.taxRateSnapshot}|${t.inclusiveSnapshot}`;
     const existing = map.get(key);
     if (existing) {
       existing.totalAmount += Number(t.taxAmount);
     } else {
-      map.set(key, { taxName: t.taxNameSnapshot, taxRate: t.taxRateSnapshot, totalAmount: Number(t.taxAmount) });
+      map.set(key, { taxName: t.taxNameSnapshot, taxRate: t.taxRateSnapshot, inclusive: t.inclusiveSnapshot, totalAmount: Number(t.taxAmount) });
     }
   }
-  return Array.from(map.values()).map(v => ({ taxName: v.taxName, taxRate: v.taxRate, totalAmount: Number(v.totalAmount.toFixed(2)) }));
+  return Array.from(map.values()).map(v => ({ taxName: v.taxName, taxRate: v.taxRate, inclusive: v.inclusive, totalAmount: Number(v.totalAmount.toFixed(2)) }));
 }
 
 // WebSocket broadcast
@@ -1941,7 +1941,7 @@ export async function registerRoutes(
               <table style="width:100%;margin:8px 0">
                 <tr><td style="padding:2px 8px">Subtotal</td><td style="padding:2px 8px;text-align:right">₡${subtotal.toLocaleString()}</td></tr>
                 ${totalDiscounts > 0 ? `<tr><td style="padding:2px 8px;color:#16a34a">Descuentos</td><td style="padding:2px 8px;text-align:right;color:#16a34a">-₡${totalDiscounts.toLocaleString()}</td></tr>` : ""}
-                ${taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName} (${tb.taxRate}%)</td><td style="padding:2px 8px;text-align:right;color:#666">+₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("")}
+                ${taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}</td><td style="padding:2px 8px;text-align:right;color:#666">${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("")}
               </table>` : "";
 
           const html = `
@@ -1963,7 +1963,7 @@ export async function registerRoutes(
           const breakdownText = (totalDiscounts > 0 || totalTaxes > 0) ? [
             `Subtotal: ₡${subtotal.toLocaleString()}`,
             ...(totalDiscounts > 0 ? [`Descuentos: -₡${totalDiscounts.toLocaleString()}`] : []),
-            ...taxBk.map(tb => `${tb.taxName} (${tb.taxRate}%): +₡${Number(tb.totalAmount).toLocaleString()}`),
+            ...taxBk.map(tb => `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}: ${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}`),
           ] : [];
           const text = [
             `Ticket de Consumo`,

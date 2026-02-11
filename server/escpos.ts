@@ -93,6 +93,7 @@ interface ReceiptItem {
 interface TaxBreakdownEntry {
   taxName: string;
   taxRate: string;
+  inclusive: boolean;
   totalAmount: number;
 }
 
@@ -196,8 +197,8 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
 
     if (data.taxBreakdown) {
       for (const tb of data.taxBreakdown) {
-        const tLabel = `${tb.taxName} (${tb.taxRate}%)`;
-        const tValue = "+" + formatCurrency(tb.totalAmount);
+        const tLabel = `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}`;
+        const tValue = (tb.inclusive ? "" : "+") + formatCurrency(tb.totalAmount);
         parts.push(line(padRight(tLabel, cols - tValue.length - 1) + " " + tValue));
       }
     }
