@@ -1,0 +1,163 @@
+ÉPICA: Acceso y Caja Segura (lista para operar mañana)
+
+Alcance (NO tocar nada más)
+	•	Sí: módulo Empleados, PIN login, RBAC/permisos para POS, ocultar/bloquear acciones por permisos, auditoría mínima.
+	•	No: no refactorizar Mesas/QR/KDS/POS; no cambiar flujos de órdenes; no tocar inventario/import; no rediseñar UI (solo ocultar/disable botones cuando aplique).
+
+Roles para mañana (seed fijo)
+	•	GERENTE: Marcelo
+	•	SALONERO: Maria Lorenza Solis
+	•	COCINA: Alexa Mendez
+	•	STAFF: Maria Rivera
+
+⸻
+
+Historias (10) con CDA + DoD
+
+1) Empleados: crear/editar/desactivar usuarios (solo GERENTE)
+
+CDA
+	•	Crear/editar usuario con: full_name, username (único), role (uno de 4 roles seed), active, email (opcional).
+	•	Acciones: Reset password y Reset PIN.
+	•	Desactivar (active=false) impide login, pero conserva historial/auditoría.
+DoD
+	•	Crear 4 usuarios (los de mañana), desactivar 1 y confirmar que no puede iniciar sesión.
+
+⸻
+
+2) Login inicial por usuario/contraseña solo para enrolamiento y emergencia
+
+CDA
+	•	Mantener login actual username/password sin cambiar rutas internas del RMS.
+	•	Si el usuario no tiene PIN, al login exitoso redirige a “Crear PIN”.
+DoD
+	•	Usuario nuevo entra con password y queda obligado a crear PIN.
+
+⸻
+
+3) Enrolamiento de PIN de 4 dígitos obligatorio
+
+CDA
+	•	PIN exactamente 4 dígitos.
+	•	Bloquear PIN triviales mínimo: 0000, 1111, 1234, 2222…9999.
+	•	Guardar PIN hasheado.
+	•	Registrar auditoría: PIN_SET.
+DoD
+	•	Cada uno de los 4 usuarios crea su PIN; los PIN bloqueados se rechazan.
+
+Justificación: PIN único por empleado mejora trazabilidad y reduce uso de cuentas compartidas.  ￼
+
+⸻
+
+4) Pantalla principal de acceso por PIN (operación)
+
+CDA
+	•	La pantalla inicial del RMS pasa a ser “PIN Login”.
+	•	Link visible “Usar usuario/contraseña” para fallback.
+	•	Al PIN correcto: crea sesión con user_id y registra LOGIN_PIN.
+DoD
+	•	Se puede entrar al RMS con PIN en <5 segundos.
+
+⸻
+
+5) Protección por intentos fallidos de PIN
+
+CDA
+	•	5 intentos fallidos → bloquear 5 minutos ese usuario.
+	•	Mensaje neutro (no revelar si el usuario existe).
+	•	Auditoría PIN_FAILED y PIN_LOCKED.
+DoD
+	•	Bloqueo comprobado tras 5 intentos fallidos.
+
+⸻
+
+6) RBAC mínimo en base de datos (roles/permisos) + asignación por usuario
+
+CDA
+	•	Tablas: permissions, role_permissions, user_roles (o equivalente).
+	•	Roles seed fijos: GERENTE/CAJERO/SALONERO/COCINA/STAFF (aunque mañana uses 4).
+	•	Un usuario tiene 1 rol.
+DoD
+	•	Seed ejecutado y asignaciones a los 4 usuarios guardadas.
+
+Justificación: roles por función y mínimo privilegio son base de RBAC.  ￼
+
+⸻
+
+7) Catálogo cerrado de permisos POS/Caja (solo lo necesario para operar mañana)
+
+CDA
+Crear estos permisos (exactos):
+	•	POS_VIEW
+	•	POS_PAY
+	•	POS_SPLIT
+	•	POS_PRINT
+	•	POS_EMAIL_TICKET
+	•	POS_EDIT_CUSTOMER_PREPAY
+	•	POS_EDIT_CUSTOMER_POSTPAY
+	•	POS_VOID
+	•	POS_REOPEN
+	•	CASH_CLOSE
+DoD
+	•	Permisos existen y se pueden asignar por rol.
+
+Nota: funciones críticas void/refund/reopen deben controlarse por permisos.  ￼
+
+⸻
+
+8) Middleware server-side obligatorio para endpoints de POS
+
+CDA
+	•	Implementar requirePermission(permissionKey) que devuelva 403 si no aplica.
+	•	Envolver endpoints existentes de POS/Caja sin cambiar lógica:
+	•	pagar → POS_PAY
+	•	dividir → POS_SPLIT
+	•	imprimir → POS_PRINT
+	•	email ticket → POS_EMAIL_TICKET
+	•	editar cliente pre-pago → POS_EDIT_CUSTOMER_PREPAY
+	•	editar cliente post-pago → POS_EDIT_CUSTOMER_POSTPAY
+	•	void/anular → POS_VOID
+	•	reabrir → POS_REOPEN
+	•	cierre de caja → CASH_CLOSE
+DoD
+	•	Forzar acceso a endpoint restringido con usuario sin permiso devuelve 403.
+
+⸻
+
+9) Matriz de permisos preconfigurada para mañana (cerrada)
+
+CDA
+Asignar EXACTAMENTE:
+
+GERENTE (Marcelo): todos los permisos de la historia 7.
+
+SALONERO (Maria Lorenza Solis):
+	•	✅ POS_VIEW, POS_PAY, POS_SPLIT, POS_PRINT, POS_EMAIL_TICKET, POS_EDIT_CUSTOMER_PREPAY
+	•	❌ POS_VOID, POS_REOPEN, CASH_CLOSE, POS_EDIT_CUSTOMER_POSTPAY
+
+COCINA (Alexa Mendez):
+	•	❌ ninguno de POS (todos false)
+
+STAFF (Maria Rivera):
+	•	❌ ninguno de POS (todos false)
+
+DoD
+	•	Salonero puede cobrar/dividir/enviar ticket; no puede anular/reabrir/cierre de caja (bloqueado en UI y en API).
+
+Justificación: evitar “permission creep” y restringir void/refund reduce abuso/errores.  ￼
+
+⸻
+
+10) UI POS: ocultar/disable acciones según permisos + auditoría mínima de acciones críticas
+
+CDA
+	•	En POS/Caja:
+	•	ocultar/disable botones “Anular/Void”, “Reabrir”, “Cierre de caja” si no hay permiso.
+	•	mostrar tooltip “Sin permiso”.
+	•	Auditoría (sin cambiar estructura existente, solo agregar tipos):
+	•	POS_PAY, POS_SPLIT, POS_PRINT, POS_EMAIL_TICKET, POS_VOID, POS_REOPEN, CASH_CLOSE, CUSTOMER_EDIT_PREPAY, CUSTOMER_EDIT_POSTPAY
+	•	Incluir user_id, order_id, table_id si aplica.
+DoD
+	•	Se ejecuta un cobro, una división y un envío de ticket y se ven logs con el usuario correcto; un intento de void por salonero queda bloqueado y también registrado como “denegado” (si ya tienes logs para denegaciones; si no, al menos no se ejecuta).
+
+Justificación: monitorear activity logs/audit trail es recomendado para control interno en POS

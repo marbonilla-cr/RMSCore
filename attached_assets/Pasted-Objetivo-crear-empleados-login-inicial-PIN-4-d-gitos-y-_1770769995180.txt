@@ -1,0 +1,88 @@
+Objetivo: crear empleados, login inicial, PIN 4 dígitos, y base técnica de permisos.
+Regla de oro: No refactorizar módulos existentes (Mesas, KDS, POS) excepto agregar guards mínimos (middleware) sin cambiar flujos ni UI de negocio.
+
+Historia 1.1 — CRUD de empleados/usuarios (solo GERENTE)
+
+Alcance exacto: nuevo módulo “Empleados” + tablas necesarias.
+	•	Criterios de aceptación
+	•	Solo rol GERENTE ve el módulo.
+	•	Crear/editar/desactivar usuario con: name, username(unique), role, active, email(optional).
+	•	Botones: “Reset Password”, “Reset PIN”.
+	•	Desactivar bloquea acceso pero conserva auditoría.
+	•	DoD
+	•	Crear 3 usuarios, desactivar 1, comprobar que no puede entrar.
+
+Historia 1.2 — Login normal username/password (solo para enrolamiento y fallback)
+
+Alcance exacto: mantener login existente, sin cambiar rutas internas.
+	•	Criterios
+	•	Login funciona igual que hoy.
+	•	Si usuario no tiene PIN configurado → pasa a enrolamiento (Historia 1.3).
+	•	DoD
+	•	Usuario nuevo hace login y queda redirigido a crear PIN.
+
+Historia 1.3 — Enrolamiento PIN 4 dígitos obligatorio
+
+Criterios
+	•	PIN = exactamente 4 dígitos.
+	•	Bloquear PIN triviales (mínimo: 0000, 1111, 1234, 2222, 3333, 4444, 5555, 6666, 7777, 8888, 9999).
+	•	Guardar PIN hasheado.
+	•	DoD
+	•	Usuario nuevo crea PIN válido; PIN inválido es rechazado.  ￼
+
+Historia 1.4 — Pantalla de acceso por PIN como entrada principal
+
+Criterios
+	•	Nueva pantalla “PIN Login” que reemplace el login normal como primera pantalla del sistema.
+	•	Login normal queda accesible por link “Usar usuario/contraseña”.
+	•	DoD
+	•	Se puede entrar con PIN en <5 segundos.
+
+Historia 1.5 — Control de intentos fallidos en PIN
+
+Criterios
+	•	5 intentos fallidos → bloqueo 5 min para ese usuario.
+	•	Mensaje claro sin revelar si el usuario existe.
+	•	DoD
+	•	Bloqueo comprobado tras 5 fallos.
+
+Historia 1.6 — “Cambiar usuario” desde cualquier pantalla
+
+Criterios
+	•	Botón fijo “Cambiar usuario” que hace logout y vuelve a pantalla PIN.
+	•	No debe modificar datos de órdenes ni mesas.
+	•	DoD
+	•	Cambiar usuario no rompe el estado de órdenes/mesas.
+
+Historia 1.7 — Modelo RBAC mínimo en DB (roles/permisos)
+
+Criterios
+	•	Tablas: permissions, role_permissions, user_roles (o equivalente).
+	•	Roles fijos: GERENTE, CAJERO, SALONERO, COCINA, STAFF (no editables).
+	•	DoD
+	•	Seed aplicado y consultable.  ￼
+
+Historia 1.8 — Middleware server-side “requirePermission()”
+
+Criterios
+	•	Función middleware reutilizable que devuelva 403 si falta permiso.
+	•	No cambiar lógica interna de endpoints existentes; solo envolver endpoints.
+	•	DoD
+	•	Endpoint protegido devuelve 403 sin permiso.  ￼
+
+Historia 1.9 — Auditoría mínima de seguridad
+
+Criterios
+	•	Registrar eventos: LOGIN_PIN, LOGIN_PASSWORD, LOGOUT, PIN_RESET, PASSWORD_RESET, USER_DISABLED.
+	•	Sin cambiar esquema de auditoría ya existente: solo agregar tipos.
+	•	DoD
+	•	Se ven eventos en la tabla/registro existente.
+
+Historia 1.10 — Pantalla “Roles y Permisos” (solo GERENTE) versión 1
+
+Criterios
+	•	Lista de roles fijos.
+	•	Checklist de permisos (sin categorías todavía).
+	•	Guardar cambios y auditar.
+	•	DoD
+	•	Cambiar permisos de SALONERO y ver persistencia.
