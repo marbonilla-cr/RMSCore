@@ -897,6 +897,7 @@ export async function seedPermissions() {
     { key: "POS_EDIT_CUSTOMER_PREPAY", description: "Editar cliente antes del pago" },
     { key: "POS_EDIT_CUSTOMER_POSTPAY", description: "Editar cliente después del pago" },
     { key: "POS_VOID", description: "Anular pagos" },
+    { key: "POS_VOID_ORDER", description: "Anular orden/mesa completa" },
     { key: "POS_REOPEN", description: "Reabrir órdenes pagadas" },
     { key: "CASH_CLOSE", description: "Cierre de caja" },
     { key: "MODULE_TABLES_VIEW", description: "Acceso al módulo Mesas/Salón" },
@@ -918,7 +919,7 @@ export async function seedPermissions() {
     CASHIER: [
       "MODULE_TABLES_VIEW", "MODULE_POS_VIEW",
       "POS_VIEW", "POS_PAY", "POS_SPLIT", "POS_PRINT", "POS_EMAIL_TICKET",
-      "POS_EDIT_CUSTOMER_PREPAY", "POS_EDIT_CUSTOMER_POSTPAY", "POS_VOID", "POS_REOPEN", "CASH_CLOSE",
+      "POS_EDIT_CUSTOMER_PREPAY", "POS_EDIT_CUSTOMER_POSTPAY", "POS_VOID", "POS_VOID_ORDER", "POS_REOPEN", "CASH_CLOSE",
     ],
     WAITER: [
       "MODULE_TABLES_VIEW", "MODULE_POS_VIEW",

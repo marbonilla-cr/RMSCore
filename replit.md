@@ -1,207 +1,40 @@
 # Sistema Restaurante - MVP v1
 
 ## Overview
-Restaurant management system (PWA) for a small restaurant (20-30 concurrent orders). Includes order management by waiters, QR client ordering, KDS (kitchen display), POS/cash register, and manager dashboard.
+This project is a Progressive Web Application (PWA) designed as a comprehensive restaurant management system. It targets small to medium-sized restaurants, capable of handling 20-30 concurrent orders. The system integrates various functionalities crucial for restaurant operations, including order management for waiters, a QR-code based client ordering system, a Kitchen Display System (KDS), a Point of Sale (POS) / cash register, and a manager dashboard. The core vision is to streamline restaurant workflows, enhance customer experience through self-ordering, and provide management with real-time insights and control.
 
-## Architecture
-- **Frontend**: React + Vite + Tailwind + shadcn/ui, wouter for routing
-- **Backend**: Express.js + TypeScript
-- **Database**: PostgreSQL with Drizzle ORM
-- **Real-time**: WebSocket (ws library)
-- **Auth**: Session-based (express-session + memorystore)
+## User Preferences
+I prefer simple language. I want iterative development. Ask before making major changes.
 
-## User Roles
-- **MANAGER**: Full access to all modules + admin panel + void/reopen
-- **WAITER**: Table management, order taking, QR acceptance
-- **KITCHEN**: KDS (Kitchen Display System)
-- **CASHIER**: POS / Cash register
+## System Architecture
+The system is built as a PWA, ensuring accessibility across various devices.
+- **Frontend**: Developed using React, Vite for fast development, Tailwind CSS and shadcn/ui for a modern and responsive user interface, and wouter for routing. The UI/UX emphasizes a mobile-first approach with responsive layouts, accessible touch targets, and intuitive navigation patterns (e.g., accordion menus, card-based lists instead of HTML tables on mobile).
+- **Backend**: Implemented with Express.js and TypeScript, providing a robust and type-safe API layer.
+- **Database**: PostgreSQL is used for data persistence, managed with Drizzle ORM.
+- **Real-time Communication**: WebSocket (using the `ws` library) facilitates real-time updates across different modules (e.g., new QR orders, kitchen ticket updates, payment processing).
+- **Authentication**: Session-based authentication is handled using `express-session` with `memorystore`. A PIN-based login system is the primary entry method, with a password login as a fallback. Role-Based Access Control (RBAC) is implemented, where module access is determined by specific permissions (e.g., `MODULE_TABLES_VIEW`, `MODULE_POS_VIEW`), not solely by role. Permissions are configurable by the manager.
+- **Key Features**:
+    - **Order Management**: Waiter interface for table management, order taking, and QR order acceptance.
+    - **QR Client Ordering**: Customers can view menus and submit orders via QR codes specific to their table, with rate limiting to prevent abuse.
+    - **Kitchen Display System (KDS)**: Real-time display for kitchen staff to manage food preparation, update item statuses, and receive new orders with audio alerts.
+    - **Point of Sale (POS)**: Cash register functionality including payment processing, order splitting, voiding items/orders/payments, cash session management, and thermal/email receipt generation. Supports item-level discounts and configurable tax categories (inclusive/additive).
+    - **Manager Dashboard**: Provides a comprehensive overview of restaurant performance, including real-time metrics, historical data with period filters, and drill-down capabilities into specific orders.
+    - **Admin Panel**: For managing users, roles, permissions, tables, categories, products, payment methods, tax categories, business configurations, and printers.
+    - **PWA Support**: Includes `manifest.json`, service worker, and meta tags for installability on Android/iOS.
+    - **Item Voiding System**: Allows waiters to soft-void items with reasons, and managers to hard-delete, with full audit trails.
+    - **Order Consecutives**: Daily and global order numbering for traceability.
+    - **Multi-Printer Support**: Configuration for different printer types (cash register, kitchen, bar) with auto-printing on POS payment.
 
-## Default Login Credentials (All use password: 1234)
-- gerente / 1234 (MANAGER)
-- salonero / 1234 (WAITER)
-- salonero1 / 1234 (WAITER)
-- salonero2 / 1234 (WAITER)
-- cocina / 1234 (KITCHEN)
-- cajero / 1234 (CASHIER)
-- caja / 1234 (CASHIER)
-
-## Key Routes
-- `/` - Tables view (waiters)
-- `/tables/:id` - Table detail / order management
-- `/kds` - Kitchen Display System
-- `/pos` - POS / Cash register
-- `/dashboard` - Manager dashboard
-- `/admin/*` - Admin panel (tables, categories, products, payment methods, users)
-- `/qr/:tableCode` - QR client ordering (no auth required)
-
-## API Endpoints
-- `POST /api/auth/login` - Login
-- `GET /api/auth/me` - Current user
-- `GET/POST/PATCH /api/admin/tables` - Table CRUD
-- `GET/POST/PATCH /api/admin/categories` - Category CRUD
-- `GET/POST/PATCH /api/admin/products` - Product CRUD
-- `GET/POST/PATCH /api/admin/payment-methods` - Payment method CRUD
-- `GET/POST/PATCH /api/admin/users` - User CRUD
-- `GET /api/waiter/tables` - Tables with order status (includes lastSentToKitchenAt)
-- `POST /api/waiter/tables/:id/send-round` - Send items to kitchen
-- `POST /api/waiter/qr-submissions/:id/accept` - Accept QR order
-- `POST /api/waiter/orders/:orderId/items/:itemId/void` - Void order item (WAITER+MANAGER, blocked if PAID)
-- `DELETE /api/waiter/orders/:orderId/items/:itemId` - Hard delete order item (MANAGER only)
-- `GET /api/waiter/orders/:orderId/voided-items` - List voided items for order
-- `GET /api/qr/:tableCode/menu` - QR menu
-- `POST /api/qr/:tableCode/submit` - QR order submission (30s rate limit per table)
-- `GET /api/kds/tickets/:type` - KDS tickets (active/history)
-- `PATCH /api/kds/items/:id` - Update kitchen item status
-- `GET /api/pos/tables` - Tables ready for payment
-- `POST /api/pos/pay` - Process full payment
-- `GET /api/pos/orders/:orderId/payments` - Get payments for an order
-- `GET /api/pos/orders/:orderId/splits` - Get split accounts for order
-- `POST /api/pos/orders/:orderId/splits` - Create split account
-- `DELETE /api/pos/splits/:id` - Delete split account
-- `POST /api/pos/pay-split` - Pay a split account
-- `POST /api/pos/void-payment/:id` - Void payment (MANAGER only)
-- `POST /api/pos/reopen/:orderId` - Reopen paid order (MANAGER only)
-- `GET/POST /api/pos/cash-session/*` - Cash session management (close includes totalsByMethod)
-- `GET/POST /api/qbo/export` - QBO export job (MANAGER only)
-- `GET /api/dashboard` - Dashboard metrics (includes ledgerDetails, paymentMethodTotals)
-
-## WebSocket Events
-- `qr_submission_created` - New QR order
-- `order_updated` - Order changes
-- `kitchen_ticket_created` - New kitchen ticket
-- `kitchen_item_status_changed` - Item status update
-- `payment_completed` - Payment processed
-- `payment_voided` - Payment voided
-- `table_status_changed` - Table status change
-
-## Database Schema
-All tables defined in `shared/schema.ts` using Drizzle ORM:
-users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, qbo_export_jobs
-
-## API Endpoints (New)
-- `GET /api/tables/:id/current` - Single source of truth: table + activeOrder + orderItems + pendingQrSubmissions
-
-## Role-Based Access Control (Permission-Based Module Visibility)
-- Module access determined by MODULE_*_VIEW permissions, not by role alone
-- Frontend sidebar and route guards use usePermissions() hook, not role checks
-- Backend requireRole middleware has permission fallback: if user's role doesn't match, checks MODULE_* permissions
-- Default route after login = first available module by permission priority: Tables > POS > KDS > Dashboard > Admin
-- MODULE_TABLES_VIEW: access to /tables/*, /api/waiter/*
-- MODULE_POS_VIEW: access to /pos, /api/pos/*
-- MODULE_KDS_VIEW: access to /kds, /api/kds/*
-- MODULE_DASHBOARD_VIEW: access to /dashboard, /api/dashboard
-- MODULE_ADMIN_VIEW: access to /admin/*, /api/admin/*
-- Default role→module mapping: MANAGER=all, WAITER=Tables+POS, KITCHEN=Tables+KDS, CASHIER=Tables+POS, STAFF=Tables
-- Manager can reassign MODULE_* permissions per role from Admin > Roles page
-
-## Database Schema
-All tables defined in `shared/schema.ts` using Drizzle ORM:
-users, tables, categories, products, payment_methods, orders, order_items, qr_submissions, kitchen_tickets, kitchen_ticket_items, payments, cash_sessions, split_accounts, split_items, sales_ledger_items, audit_events, voided_items, qbo_export_jobs, modifier_groups, modifier_options, item_modifier_groups, order_item_modifiers, discounts, order_discounts, tax_categories, product_tax_categories, order_item_taxes, order_item_discounts
-
-## Recent Changes
-- Added per-item discounts in POS: cashier can apply percentage or fixed amount discount per order item
-- Added configurable tax categories: admin creates tax types (e.g., IVA 13%, Servicio 10%), assigns to products
-- Tax categories support inclusive (price already includes tax) and additive (tax added on top) modes
-- Inclusive tax formula: price*rate/(100+rate) — extracts tax from price without changing total
-- Additive tax formula: price*rate/100 — adds tax on top of price, increasing total
-- Default "Servicio" 10% inclusive tax created and assigned to all products
-- Taxes auto-calculated on order items during recalcOrderTotal based on product-tax mapping
-- POS detail view shows subtotal/discounts/taxes/total breakdown when applicable
-- POS payment dialog shows full breakdown (subtotal, discounts, tax lines, total)
-- All receipts (browser print, thermal ESC/POS, email ticket) show subtotal/discounts/taxes/total breakdown
-- Admin Products page: tax assignment checkboxes in product edit dialog
-- Admin Tax Categories page: CRUD for tax categories with name, rate, active toggle
-- New tables: tax_categories, product_tax_categories, order_item_taxes, order_item_discounts
-- New endpoints: GET/POST/PATCH /api/admin/tax-categories, PUT /api/admin/products/:id/taxes, GET /api/admin/products/:id/taxes, POST/DELETE /api/pos/order-items/:id/discount
-- Added dashboard historical mode: "Histórico" button with period filters (day, month, year, custom range)
-- Dashboard API accepts ?from=YYYY-MM-DD&to=YYYY-MM-DD query params for date range filtering
-- Added getLedgerItemsForDateRange and getPaymentsByDateRangeGrouped storage functions
-- Added order consecutives: dailyNumber (resets daily) and globalNumber (never resets, configurable start via ORDER_GLOBAL_START env var)
-- Dashboard drill-down: click summary cards (Open/Paid/Voided) to expand order lists; click order row to open detail dialog with items and payments
-- Added GET /api/dashboard/orders/:id endpoint for order detail (items + payments)
-- KDS now properly removes voided items from kitchen tickets (voidKitchenTicketItemsByOrderItem)
-- Dashboard "Ítems Anulados" card now shows real voided items count/amount from voided_items table
-- Added item voiding system: WAITER can void items (soft delete to voided_items table), MANAGER can hard delete
-- Added voided_items table with full traceability (who, when, why, qty, price snapshot)
-- Added order_items.voidedAt and voidedByUserId fields
-- Added void confirmation dialog with optional reason field
-- Added collapsible "Anulaciones" section in table detail showing void history
-- Added portion revert on void (if item was already sent to kitchen)
-- VOIDED items excluded from order totals, POS, and KDS
-- Added QR swipe-to-confirm gesture (drag 85% threshold)
-- Added split accounts (division de cuenta) with full POS UI
-- Added void payment and reopen order (manager only)
-- Added cash closing totals by payment method
-- Added QBO export validation stub
-- Added QR rate limiting (30s cooldown per table)
-- Added dashboard drill-down with expandable rows
-- Added tables page time columns and column selector
-- Added payment method totals to dashboard from backend
-- Added GET /api/tables/:id/current (single source of truth endpoint)
-- Fixed table-detail to use /current endpoint with loading skeleton (no more blank screen)
-- Added toast notification in tables page for new QR orders (with table name)
-- Improved QR acceptance: returns full payload, audit WAITER_ACCEPTED_QR
-- Added frontend role-based route protection (RoleGuard component)
-- Added backend requireRole middleware to KDS/POS/Dashboard/Waiter endpoints
-- Added "Open QR Client UI" button in Admin Tables
-- Added salonero/caja seed users
-- Added /api/pos/payment-methods endpoint (CASHIER+MANAGER access)
-- Added product description required validation (400 on empty)
-- Added available portions validation in send-round and QR submit (rejects with 400)
-- KDS notification sound upgraded to Web Audio API 3-tone alert
-- Added "No QR" badge in admin products list
-- Added /api/pos/send-ticket endpoint with real SMTP email support (nodemailer)
-- Added "Enviar Ticket por Email" button in POS payment dialog
-- Added GET /api/qr/:tableCode/my-items endpoint (client sees previous QR items)
-- Added "Tu Pedido" section in QR client UI showing previously sent items with status
-
-- Added business_config table and admin page for business legal data (name, tax ID, address, phone, email, legal note for tiquete electrónico)
-- Added printers table and admin page for configuring multiple printers (name, type: caja/cocina/bar, IP, port, paper width, enabled)
-- Added thermal receipt auto-print on POS payment: generates 80mm formatted receipt with business data, items, totals, payment method, legal note
-- Added GET/PUT /api/admin/business-config and full CRUD /api/admin/printers endpoints
-- Added GET /api/business-config endpoint for receipt printing (authenticated access)
-- POS tables response now includes dailyNumber/globalNumber for proper order numbering on receipts
-- Receipt uses global/daily order number format (G-XXX or D-XXX)
-
-## Mobile-First UI & UX Polish
-- Seed script wipes all products/categories/modifiers/discounts before CSV reimport (clean slate, no duplicates)
-- Admin products: accordion categories with sticky search (250ms debounce), single-open mode, conditional rendering
-- QR client menu: same accordion pattern with sticky search, auto-expand on match, "Sin resultados" empty state
-- All admin pages (categories, tables, payment-methods, employees, discounts, modifiers): p-3 md:p-4 max-w-lg containers, text-xl md:text-2xl titles, min-h-[48px] touch targets
-- Admin employees: card-based list (no HTML table) for mobile UX
-- Operational pages (KDS, POS, tables, dashboard): same mobile-first spacing/typography patterns
-
-## PIN Authentication & RBAC
-- PIN login is the primary entry screen (4-digit numpad interface)
-- Password login is fallback accessible via link from PIN screen
-- PINs are generated randomly by the manager from the Employees admin page
-- Manager can see all employee PINs in the employee list (pinPlain column)
-- PIN generation: POST /api/admin/employees/:id/generate-pin (MANAGER only, returns { pin })
-- No self-enrollment flow; PINs assigned exclusively by manager
-- 5-attempt lockout with 5-minute cooldown; trivial PINs (0000, 1111, ..., 1234) blocked
-- PIN auth endpoint: POST /api/auth/pin-login { pin }
-- PIN enrollment: POST /api/auth/enroll-pin { pin } (requires active session, legacy)
-- My permissions: GET /api/auth/my-permissions (returns {permissions: string[], role: string})
-- RBAC tables: permissions (id, key, description), role_permissions (id, role, permissionId)
-- 10 POS permissions: POS_VIEW, POS_PAY, POS_SPLIT, POS_PRINT, POS_EMAIL_TICKET, POS_EDIT_CUSTOMER_PREPAY, POS_EDIT_CUSTOMER_POSTPAY, POS_VOID, POS_REOPEN, CASH_CLOSE
-- requirePermission() middleware wraps all POS endpoints for server-side enforcement
-- Frontend usePermissions() hook for POS button visibility
-- Admin pages: /admin/employees (CRUD, reset PIN/password, deactivate), /admin/roles (permission grid per role)
-- Employee management: GET/POST/PATCH /api/admin/employees, POST reset-password, POST reset-pin
-- Role permissions: GET /api/admin/permissions, GET /api/admin/role-permissions, PUT /api/admin/role-permissions/:role
-
-## Build & Development
-- **Development**: `npm run dev` sets `NODE_ENV=development`, uses Vite middleware with HMR (hot module replacement). Frontend changes reflect without rebuilding.
-- **Production**: `NODE_ENV=production` serves pre-built static bundle from `dist/public/`. Run `npx vite build` before deploying.
-- `server/index.ts` dynamically imports `setupVite()` or `serveStatic()` based on `NODE_ENV`.
-- Mobile sidebar auto-close: SidebarProvider uses wouter's `useLocation` hook to detect route changes and close the Sheet on mobile.
-
-## Email Configuration (Optional)
-To enable email ticket sending, set these environment variables:
-- SMTP_HOST: SMTP server hostname
-- SMTP_USER: SMTP username/email
-- SMTP_PASS: SMTP password
-- SMTP_PORT: (optional, default 587)
-- SMTP_SECURE: (optional, "true" for SSL)
-- SMTP_FROM: (optional, defaults to SMTP_USER)
-When not configured, ticket sending logs the request but skips actual email delivery.
+## External Dependencies
+- **PostgreSQL**: Primary database for data storage.
+- **Vite**: Frontend build tool.
+- **Tailwind CSS**: Utility-first CSS framework for styling.
+- **shadcn/ui**: UI component library.
+- **wouter**: Small routing library for React.
+- **Express.js**: Backend web framework.
+- **TypeScript**: Superset of JavaScript for type safety.
+- **Drizzle ORM**: TypeScript ORM for PostgreSQL.
+- **ws**: WebSocket library for real-time communication.
+- **express-session**: Middleware for session management.
+- **memorystore**: Session store for `express-session`.
+- **Nodemailer**: For sending email receipts (requires SMTP configuration).

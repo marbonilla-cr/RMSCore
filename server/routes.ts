@@ -1520,6 +1520,7 @@ export async function registerRoutes(
         dailyNumber: order.dailyNumber,
         globalNumber: order.globalNumber,
         totalAmount: order.totalAmount,
+        openedAt: order.openedAt,
         itemCount: activeItems.length,
         items: itemsWithModifiers,
         totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
@@ -2009,6 +2010,94 @@ export async function registerRoutes(
       } else {
         res.json({ ok: true, message: `Ticket registrado. ${emailError}`, emailConfigured: false });
       }
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== POS: VOID ORDER (entire table) ====================
+  app.post("/api/pos/void-order/:orderId", requirePermission("POS_VOID_ORDER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const userId = req.session.userId!;
+      const { reason } = req.body || {};
+
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(401).json({ message: "Usuario no encontrado" });
+
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+      if (order.status === "PAID") return res.status(400).json({ message: "No se puede anular una orden ya pagada" });
+      if (order.status === "VOIDED") return res.status(400).json({ message: "La orden ya está anulada" });
+
+      const items = await storage.getOrderItems(orderId);
+      const table = await storage.getTable(order.tableId);
+      const allCategories = await storage.getAllCategories();
+
+      for (const item of items) {
+        if (item.status === "VOIDED") continue;
+
+        const product = await storage.getProduct(item.productId);
+        const category = allCategories.find(c => c.id === product?.categoryId);
+
+        await storage.updateOrderItem(item.id, {
+          status: "VOIDED",
+          voidedAt: new Date(),
+          voidedByUserId: userId,
+        });
+        await storage.updateSalesLedgerItems(item.id, { status: "VOIDED" });
+
+        await storage.createVoidedItem({
+          businessDate: order.businessDate || getBusinessDate(),
+          tableId: order.tableId,
+          tableNameSnapshot: table?.tableName || null,
+          orderId,
+          orderItemId: item.id,
+          productId: item.productId,
+          productNameSnapshot: item.productNameSnapshot,
+          categorySnapshot: category?.name || null,
+          qtyVoided: item.qty,
+          unitPriceSnapshot: item.productPriceSnapshot,
+          voidReason: reason || "Anulación de orden completa",
+          voidedByUserId: userId,
+          voidedByRole: user.role,
+          status: "VOIDED",
+          notes: null,
+        });
+
+        if (item.sentToKitchenAt) {
+          await storage.incrementPortions(item.productId, item.qty);
+          await storage.voidKitchenTicketItemsByOrderItem(item.id, item.qty, true);
+        }
+      }
+
+      await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date(), totalAmount: "0" });
+
+      // Delete any split accounts
+      const splits = await storage.getSplitAccountsForOrder(orderId);
+      for (const split of splits) {
+        await storage.deleteSplitAccount(split.id);
+      }
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "ORDER_VOIDED",
+        entityType: "order",
+        entityId: orderId,
+        tableId: order.tableId,
+        metadata: {
+          tableName: table?.tableName,
+          itemCount: items.filter(i => i.status !== "VOIDED").length,
+          reason: reason || "Anulación de orden completa",
+          role: user.role,
+        },
+      });
+
+      broadcast("order_updated", { tableId: order.tableId, orderId });
+      broadcast("table_status_changed", { tableId: order.tableId });
+
+      res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

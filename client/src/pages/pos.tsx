@@ -18,7 +18,7 @@ import {
   CreditCard, DollarSign, Loader2, Receipt,
   Banknote, ArrowLeft, Lock, Unlock,
   Split, Trash2, XCircle, Mail, Printer, ArrowRight, ArrowLeftRight,
-  Percent, X,
+  Percent, X, Plus, Minus,
 } from "lucide-react";
 import type { PaymentMethod } from "@shared/schema";
 import { printReceipt } from "@/lib/print-receipt";
@@ -71,6 +71,7 @@ interface POSTable {
   dailyNumber?: number | null;
   globalNumber?: number | null;
   totalAmount: string;
+  openedAt?: string | null;
   itemCount: number;
   items: POSItem[];
   totalDiscounts?: string;
@@ -98,6 +99,7 @@ export default function POSPage() {
   const canEditCustomerPrepay = hasPermission("POS_EDIT_CUSTOMER_PREPAY");
   const canVoid = hasPermission("POS_VOID");
   const canReopen = hasPermission("POS_REOPEN");
+  const canVoidOrder = hasPermission("POS_VOID_ORDER");
   const canCashClose = hasPermission("CASH_CLOSE");
 
   const [tab, setTab] = useState("tables");
@@ -123,6 +125,11 @@ export default function POSPage() {
   const [movingItemId, setMovingItemId] = useState<number | null>(null);
   const [lastPaidOrder, setLastPaidOrder] = useState<{orderId: number; tableName: string; orderNumber: string; paymentMethod: string; clientName?: string; _items: {name:string;qty:number;price:number;total:number}[]; _totalAmount: number; _totalDiscounts?: number; _totalTaxes?: number; _taxBreakdown?: TaxBreakdownEntry[]} | null>(null);
   const [printingDirect, setPrintingDirect] = useState(false);
+
+  const [voidOrderOpen, setVoidOrderOpen] = useState(false);
+  const [voidOrderId, setVoidOrderId] = useState<number | null>(null);
+  const [voidOrderReason, setVoidOrderReason] = useState("");
+  const [activeSplitId, setActiveSplitId] = useState<number | null>(null);
 
   const [discountOpen, setDiscountOpen] = useState(false);
   const [discountItemId, setDiscountItemId] = useState<number | null>(null);
@@ -471,6 +478,46 @@ export default function POSPage() {
     },
   });
 
+  const voidOrderMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", `/api/pos/void-order/${voidOrderId}`, {
+        reason: voidOrderReason || null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      setVoidOrderOpen(false);
+      setVoidOrderId(null);
+      setVoidOrderReason("");
+      setSelectedTable(null);
+      setDetailView(false);
+      toast({ title: "Orden anulada completamente" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const lastEmptySplit = splits.filter(s => s.items.length === 0).length > 0;
+
+  const removeLastEmptySplit = () => {
+    const emptySplits = splits.filter(s => s.items.length === 0);
+    if (emptySplits.length > 0) {
+      const lastEmpty = emptySplits[emptySplits.length - 1];
+      deleteSplitMutation.mutate(lastEmpty.id);
+      if (activeSplitId === lastEmpty.id) setActiveSplitId(null);
+    }
+  };
+
+  const moveSelectedToActive = () => {
+    if (!activeSplitId) return;
+    selectedItemIds.forEach(itemId => {
+      moveItemMutation.mutate({ orderItemId: itemId, fromSplitId: null, toSplitId: activeSplitId });
+    });
+    setSelectedItemIds([]);
+  };
+
   const openDiscountDialog = (itemId: number) => {
     setDiscountItemId(itemId);
     setDiscountType("percentage");
@@ -617,131 +664,180 @@ export default function POSPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-                <h3 className="font-bold">
-                  {splitMode ? "Cuenta Principal" : "Items de la Orden"}
-                </h3>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {canSplit && !splitMode && (
-                    <Button
-                      variant="outline"
-                      onClick={enterSplitMode}
-                      disabled={normalizing}
-                      data-testid="button-enter-split"
-                    >
-                      {normalizing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Split className="w-4 h-4 mr-1" />}
-                      Dividir Cuenta
-                    </Button>
-                  )}
-                  {splitMode && (
-                    <Button variant="ghost" onClick={() => setSplitMode(false)} data-testid="button-exit-split">
-                      <ArrowLeft className="w-4 h-4 mr-1" /> Salir Split
-                    </Button>
-                  )}
-                  {canPay && !splitMode && (
-                    <Button
-                      onClick={openPaymentForFull}
-                      disabled={!cashSession?.id || !!cashSession.closedAt}
-                      data-testid="button-pay-full"
-                    >
-                      <DollarSign className="w-4 h-4 mr-1" /> Pagar Todo
-                    </Button>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                {splitMode ? (
-                  <>
-                    <div className="space-y-1">
-                      {selectedTable.items
-                        .filter(item => !assignedItemIds.includes(item.id) && item.status !== "PAID")
-                        .map((item) => (
-                        <div
-                          key={item.id}
-                          className="flex items-center gap-2 py-2 px-2 rounded-md min-h-[48px]"
-                          data-testid={`split-item-row-${item.id}`}
-                        >
-                          <Checkbox
-                            checked={selectedItemIds.includes(item.id)}
-                            onCheckedChange={() => toggleItemSelection(item.id)}
-                            data-testid={`checkbox-item-${item.id}`}
-                          />
-                          <div className="flex-1">
-                            <span className="text-sm">{item.productNameSnapshot}</span>
-                            {(item.modifiers && item.modifiers.length > 0) && (
-                              <div className="text-xs text-muted-foreground">
-                                {item.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
-                              </div>
-                            )}
-                            {item.notes && <div className="text-xs text-muted-foreground italic">{item.notes}</div>}
-                          </div>
-                          <span className="text-sm text-muted-foreground">₡{getItemUnitPrice(item).toLocaleString()}</span>
-                        </div>
-                      ))}
-                      {selectedTable.items.filter(item => !assignedItemIds.includes(item.id) && item.status !== "PAID").length === 0 && (
-                        <p className="text-sm text-muted-foreground text-center py-4">Todos los items están asignados a subcuentas</p>
-                      )}
-                    </div>
-
-                    {selectedItemIds.length > 0 && (
-                      <div className="mt-4 border-t pt-3 space-y-3">
-                        {splits.length > 0 && (
-                          <div className="space-y-2">
-                            <p className="text-xs font-medium text-muted-foreground">Mover a subcuenta existente:</p>
-                            <div className="flex gap-2 flex-wrap">
-                              {splits.map(s => (
-                                <Button
-                                  key={s.id}
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    selectedItemIds.forEach(itemId => {
-                                      moveItemMutation.mutate({ orderItemId: itemId, fromSplitId: null, toSplitId: s.id });
-                                    });
-                                    setSelectedItemIds([]);
-                                  }}
-                                  disabled={moveItemMutation.isPending}
-                                  data-testid={`button-move-to-split-${s.id}`}
-                                >
-                                  <ArrowRight className="w-3 h-3 mr-1" /> {s.label}
-                                </Button>
-                              ))}
+          {splitMode ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+                  <h3 className="font-bold">Cuenta Principal</h3>
+                  <Button variant="ghost" onClick={() => setSplitMode(false)} data-testid="button-exit-split">
+                    <ArrowLeft className="w-4 h-4 mr-1" /> Salir Split
+                  </Button>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-1">
+                    {selectedTable.items
+                      .filter(item => !assignedItemIds.includes(item.id) && item.status !== "PAID")
+                      .map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center gap-2 py-2 px-2 rounded-md min-h-[48px]"
+                        data-testid={`split-item-row-${item.id}`}
+                      >
+                        <Checkbox
+                          checked={selectedItemIds.includes(item.id)}
+                          onCheckedChange={() => toggleItemSelection(item.id)}
+                          data-testid={`checkbox-item-${item.id}`}
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm">{item.productNameSnapshot}</span>
+                          {(item.modifiers && item.modifiers.length > 0) && (
+                            <div className="text-xs text-muted-foreground">
+                              {item.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
                             </div>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Input
-                            placeholder={nextSplitLabel()}
-                            value={splitLabel}
-                            onChange={(e) => setSplitLabel(e.target.value)}
-                            className="flex-1 min-w-[150px]"
-                            data-testid="input-split-label"
-                          />
-                          <Button
-                            onClick={() => createSplitMutation.mutate()}
-                            disabled={createSplitMutation.isPending}
-                            data-testid="button-create-split"
-                          >
-                            {createSplitMutation.isPending ? (
-                              <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                            ) : (
-                              <Split className="w-4 h-4 mr-1" />
-                            )}
-                            Nueva Subcuenta ({selectedItemIds.length})
-                          </Button>
+                          )}
+                          {item.notes && <div className="text-xs text-muted-foreground italic">{item.notes}</div>}
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          Subtotal: ₡{selectedTable.items
-                            .filter((i) => selectedItemIds.includes(i.id))
-                            .reduce((s, i) => s + getItemUnitPrice(i), 0)
-                            .toLocaleString()}
-                        </p>
+                        <span className="text-sm text-muted-foreground">₡{getItemUnitPrice(item).toLocaleString()}</span>
                       </div>
+                    ))}
+                    {selectedTable.items.filter(item => !assignedItemIds.includes(item.id) && item.status !== "PAID").length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">Todos los items están asignados a subcuentas</p>
                     )}
-                  </>
+                  </div>
+                  {selectedItemIds.length > 0 && activeSplitId && (
+                    <div className="mt-3 border-t pt-3">
+                      <Button onClick={moveSelectedToActive} disabled={moveItemMutation.isPending} className="w-full" data-testid="button-move-to-active">
+                        <ArrowRight className="w-4 h-4 mr-1" /> Mover {selectedItemIds.length} ítem(s) a {splits.find(s => s.id === activeSplitId)?.label || "Subcuenta"}
+                      </Button>
+                    </div>
+                  )}
+                  {selectedItemIds.length > 0 && !activeSplitId && splits.length > 0 && (
+                    <p className="text-xs text-muted-foreground mt-3">Selecciona una subcuenta destino</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-bold flex items-center gap-2">
+                    <Split className="w-4 h-4" /> Subcuentas
+                  </h3>
+                  <div className="flex items-center gap-1">
+                    <Button size="icon" variant="outline" onClick={() => createSplitMutation.mutate()} disabled={createSplitMutation.isPending} data-testid="button-add-split">
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                    <Button size="icon" variant="outline" onClick={removeLastEmptySplit} disabled={!lastEmptySplit} data-testid="button-remove-split">
+                      <Minus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {splitsLoading ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : splits.length === 0 ? (
+                  <Card>
+                    <CardContent className="py-8 text-center">
+                      <p className="text-muted-foreground text-sm">
+                        Usa el botón + para crear subcuentas.
+                      </p>
+                    </CardContent>
+                  </Card>
                 ) : (
+                  splits.map((split) => {
+                    const allSplitItemsPaid = split.items.every((si) => {
+                      const oi = selectedTable.items.find((i) => i.id === si.orderItemId);
+                      return oi?.status === "PAID";
+                    });
+
+                    return (
+                      <Card
+                        key={split.id}
+                        className={`cursor-pointer ${activeSplitId === split.id ? "ring-2 ring-primary" : ""}`}
+                        onClick={() => setActiveSplitId(activeSplitId === split.id ? null : split.id)}
+                        data-testid={`card-split-${split.id}`}
+                      >
+                        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold">{split.label}</h4>
+                            {allSplitItemsPaid && <Badge variant="default">Pagado</Badge>}
+                            {activeSplitId === split.id && <Badge variant="secondary">Destino</Badge>}
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          {split.items.map((si) => {
+                            const oi = selectedTable.items.find((i) => i.id === si.orderItemId);
+                            if (!oi) return null;
+                            return (
+                              <div key={si.id} className="flex items-center gap-2 text-sm py-1 min-h-[48px]">
+                                <div className="flex-1">
+                                  <span>{oi.qty}x {oi.productNameSnapshot}</span>
+                                  {(oi.modifiers && oi.modifiers.length > 0) && (
+                                    <div className="text-xs text-muted-foreground">
+                                      {oi.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
+                                    </div>
+                                  )}
+                                </div>
+                                <span>₡{getItemUnitPrice(oi).toLocaleString()}</span>
+                                {!allSplitItemsPaid && oi.status !== "PAID" && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={(e) => { e.stopPropagation(); moveItemMutation.mutate({ orderItemId: oi.id, fromSplitId: split.id, toSplitId: null }); }}
+                                    disabled={moveItemMutation.isPending}
+                                    data-testid={`button-return-item-${oi.id}`}
+                                  >
+                                    <ArrowLeft className="w-3 h-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            );
+                          })}
+                          <div className="border-t pt-2 mt-2 flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-bold" data-testid={`text-split-total-${split.id}`}>₡{getSplitTotal(split).toLocaleString()}</span>
+                            {canPay && !allSplitItemsPaid && (
+                              <Button size="sm" onClick={(e) => { e.stopPropagation(); openPaymentForSplit(split.id); }} disabled={!cashSession?.id || !!cashSession.closedAt} data-testid={`button-pay-split-${split.id}`}>
+                                <Banknote className="w-4 h-4 mr-1" /> Pagar
+                              </Button>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+                  <h3 className="font-bold">Items de la Orden</h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {canSplit && (
+                      <Button
+                        variant="outline"
+                        onClick={enterSplitMode}
+                        disabled={normalizing}
+                        data-testid="button-enter-split"
+                      >
+                        {normalizing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Split className="w-4 h-4 mr-1" />}
+                        Dividir Cuenta
+                      </Button>
+                    )}
+                    {canPay && (
+                      <Button
+                        onClick={openPaymentForFull}
+                        disabled={!cashSession?.id || !!cashSession.closedAt}
+                        data-testid="button-pay-full"
+                      >
+                        <DollarSign className="w-4 h-4 mr-1" /> Pagar Todo
+                      </Button>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
                   <div className="space-y-1">
                     {selectedTable.items.map((item) => {
                       const isPaid = item.status === "PAID";
@@ -801,109 +897,11 @@ export default function POSPage() {
                       );
                     })}
                   </div>
-                )}
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            <div className="space-y-4">
-              {splitMode && (
-                <h3 className="font-bold flex items-center gap-2">
-                  <Split className="w-4 h-4" /> Subcuentas
-                </h3>
-              )}
-
-              {splitMode && splitsLoading ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : splitMode && splits.length === 0 ? (
-                <Card>
-                  <CardContent className="py-8 text-center">
-                    <p className="text-muted-foreground text-sm">
-                      Selecciona items de la cuenta principal y crea subcuentas.
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : splitMode ? (
-                splits.map((split) => {
-                  const splitTotal = getSplitTotal(split);
-                  const allSplitItemsPaid = split.items.every((si) => {
-                    const oi = selectedTable.items.find((i) => i.id === si.orderItemId);
-                    return oi?.status === "PAID";
-                  });
-
-                  return (
-                    <Card key={split.id} data-testid={`card-split-${split.id}`}>
-                      <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-bold">{split.label}</h4>
-                          {allSplitItemsPaid && <Badge variant="default">Pagado</Badge>}
-                        </div>
-                        {!allSplitItemsPaid && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteSplitMutation.mutate(split.id)}
-                            disabled={deleteSplitMutation.isPending}
-                            data-testid={`button-delete-split-${split.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        )}
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-1 mb-3">
-                          {split.items.map((si) => {
-                            const oi = selectedTable.items.find((i) => i.id === si.orderItemId);
-                            if (!oi) return null;
-                            return (
-                              <div key={si.id} className="flex items-center gap-2 text-sm py-1">
-                                <div className="flex-1">
-                                  <span>{oi.productNameSnapshot}</span>
-                                  {(oi.modifiers && oi.modifiers.length > 0) && (
-                                    <div className="text-xs text-muted-foreground">
-                                      {oi.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
-                                    </div>
-                                  )}
-                                </div>
-                                <span className="text-muted-foreground">₡{getItemUnitPrice(oi).toLocaleString()}</span>
-                                {!allSplitItemsPaid && oi.status !== "PAID" && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => moveItemMutation.mutate({ orderItemId: oi.id, fromSplitId: split.id, toSplitId: null })}
-                                    disabled={moveItemMutation.isPending}
-                                    data-testid={`button-return-item-${oi.id}`}
-                                  >
-                                    <ArrowLeft className="w-3 h-3" />
-                                  </Button>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div className="border-t pt-3 flex items-center justify-between gap-2 flex-wrap">
-                          <span className="font-bold text-lg" data-testid={`text-split-total-${split.id}`}>
-                            ₡{splitTotal.toLocaleString()}
-                          </span>
-                          {!allSplitItemsPaid && canPay ? (
-                            <Button
-                              onClick={() => openPaymentForSplit(split.id)}
-                              disabled={!cashSession?.id || !!cashSession.closedAt}
-                              data-testid={`button-pay-split-${split.id}`}
-                            >
-                              <Banknote className="w-4 h-4 mr-1" /> Pagar Subcuenta
-                            </Button>
-                          ) : null}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })
-              ) : null}
-
-              {canVoid && orderPayments.filter(p => p.status === "PAID").length > 0 && (
+              <div className="space-y-4">
+                {canVoid && orderPayments.filter(p => p.status === "PAID").length > 0 && (
                 <Card>
                   <CardHeader className="pb-2 flex flex-row items-center gap-2">
                     <XCircle className="w-4 h-4" />
@@ -935,6 +933,7 @@ export default function POSPage() {
               )}
             </div>
           </div>
+        )}
         </div>
       ) : (
         <Tabs value={tab} onValueChange={setTab}>
@@ -953,8 +952,12 @@ export default function POSPage() {
               </CardContent></Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {posTables.map((t) => (
-                  <Card key={t.id} data-testid={`card-pos-table-${t.id}`}>
+                {[...posTables].sort((a, b) => {
+                  const aTime = a.openedAt ? new Date(a.openedAt).getTime() : 0;
+                  const bTime = b.openedAt ? new Date(b.openedAt).getTime() : 0;
+                  return aTime - bTime;
+                }).map((t) => (
+                  <Card key={t.id} className="hover-elevate cursor-pointer" onClick={() => { setSelectedTable(t); setDetailView(true); }} data-testid={`card-pos-table-${t.id}`}>
                     <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
                       <h3 className="font-bold text-lg">{t.tableName}</h3>
                       <Badge>{t.itemCount} items</Badge>
@@ -968,15 +971,40 @@ export default function POSPage() {
                           </div>
                         ))}
                       </div>
-                      <div className="border-t pt-3 flex items-center justify-between gap-2">
+                      <div className="border-t pt-3 flex items-center justify-between gap-2 flex-wrap">
                         <span className="font-bold text-lg">₡{Number(t.totalAmount).toLocaleString()}</span>
-                        <Button
-                          onClick={() => handleCobrarClick(t)}
-                          disabled={!cashSession?.id || !!cashSession.closedAt || !canPay}
-                          data-testid={`button-pay-table-${t.id}`}
-                        >
-                          <Banknote className="w-4 h-4 mr-1" /> Cobrar
-                        </Button>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {canPay && (
+                            <Button
+                              size="sm"
+                              onClick={(e) => { e.stopPropagation(); setSelectedTable(t); openPaymentForFull(); }}
+                              disabled={!cashSession?.id || !!cashSession.closedAt}
+                              data-testid={`button-pay-table-${t.id}`}
+                            >
+                              <DollarSign className="w-4 h-4 mr-1" /> Pagar
+                            </Button>
+                          )}
+                          {canSplit && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => { e.stopPropagation(); handleCobrarClick(t); enterSplitMode(); }}
+                              data-testid={`button-split-table-${t.id}`}
+                            >
+                              <Split className="w-4 h-4 mr-1" /> Dividir
+                            </Button>
+                          )}
+                          {canVoidOrder && (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={(e) => { e.stopPropagation(); setVoidOrderId(t.orderId); setVoidOrderOpen(true); }}
+                              data-testid={`button-void-order-table-${t.id}`}
+                            >
+                              <XCircle className="w-4 h-4 mr-1" /> Anular
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -1316,6 +1344,42 @@ export default function POSPage() {
               {applyDiscountMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
               Aplicar Descuento
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={voidOrderOpen} onOpenChange={(o) => { if (!o) { setVoidOrderOpen(false); setVoidOrderId(null); setVoidOrderReason(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Anular Orden Completa</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground mb-4">
+            Esta acción anulará todos los ítems de la orden y liberará la mesa. Esta acción no se puede deshacer.
+          </p>
+          <div className="space-y-3">
+            <div>
+              <Label>Motivo (opcional)</Label>
+              <Input
+                value={voidOrderReason}
+                onChange={(e) => setVoidOrderReason(e.target.value)}
+                placeholder="Motivo de la anulación..."
+                data-testid="input-void-order-reason"
+              />
+            </div>
+            <div className="flex gap-2 justify-end flex-wrap">
+              <Button variant="outline" onClick={() => { setVoidOrderOpen(false); setVoidOrderId(null); setVoidOrderReason(""); }} data-testid="button-cancel-void-order">
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => voidOrderMutation.mutate()}
+                disabled={voidOrderMutation.isPending}
+                data-testid="button-confirm-void-order"
+              >
+                {voidOrderMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <XCircle className="w-4 h-4 mr-1" />}
+                Anular Orden
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
