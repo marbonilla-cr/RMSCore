@@ -165,6 +165,15 @@ export default function POSPage() {
     refetchInterval: 10000,
   });
 
+  useEffect(() => {
+    if (selectedTable && posTables.length > 0) {
+      const fresh = posTables.find(t => t.orderId === selectedTable.orderId);
+      if (fresh && JSON.stringify(fresh) !== JSON.stringify(selectedTable)) {
+        setSelectedTable(fresh);
+      }
+    }
+  }, [posTables]);
+
   const { data: paymentMethods = [] } = useQuery<PaymentMethod[]>({
     queryKey: ["/api/pos/payment-methods"],
   });
@@ -465,8 +474,8 @@ export default function POSPage() {
         discountValue: params.discountValue,
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ["/api/pos/tables"] });
       setDiscountOpen(false);
       setDiscountItemId(null);
       toast({ title: "Descuento aplicado" });
@@ -480,8 +489,8 @@ export default function POSPage() {
     mutationFn: async (orderItemId: number) => {
       return apiRequest("DELETE", `/api/pos/order-items/${orderItemId}/discount`);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ["/api/pos/tables"] });
       toast({ title: "Descuento eliminado" });
     },
     onError: (err: any) => {

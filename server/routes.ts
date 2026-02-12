@@ -686,7 +686,7 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const items = await storage.getOrderItemsByOrder(orderId);
+      const items = await storage.getOrderItems(orderId);
       const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
 
       for (const orderItem of activeItems) {
