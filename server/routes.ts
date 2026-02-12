@@ -664,6 +664,64 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== POS: DISCOUNTS LIST ====================
+  app.get("/api/pos/discounts", requirePermission("POS_PAY"), async (_req, res) => {
+    const all = await storage.getAllDiscounts();
+    res.json(all.filter(d => d.active));
+  });
+
+  // ==================== POS: BULK APPLY DISCOUNT TO ALL ITEMS ====================
+  app.post("/api/pos/orders/:orderId/discount-all", requirePermission("POS_PAY"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const { discountName, discountType, discountValue } = req.body;
+      const userId = req.session.userId!;
+
+      if (!discountName || typeof discountName !== "string") return res.status(400).json({ message: "Nombre de descuento requerido" });
+      if (discountType !== "percentage" && discountType !== "fixed") return res.status(400).json({ message: "Tipo de descuento inválido" });
+      const numValue = Number(discountValue);
+      if (isNaN(numValue) || numValue <= 0) return res.status(400).json({ message: "Valor de descuento inválido" });
+      if (discountType === "percentage" && numValue > 100) return res.status(400).json({ message: "Porcentaje no puede ser mayor a 100" });
+
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const items = await storage.getOrderItemsByOrder(orderId);
+      const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
+
+      for (const orderItem of activeItems) {
+        const mods = await storage.getOrderItemModifiers(orderItem.id);
+        const unitPrice = Number(orderItem.productPriceSnapshot) + mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+        const lineSubtotal = unitPrice * orderItem.qty;
+
+        let amountApplied = 0;
+        if (discountType === "percentage") {
+          amountApplied = Math.round(lineSubtotal * Number(discountValue) / 100 * 100) / 100;
+        } else {
+          amountApplied = Math.min(Number(discountValue), lineSubtotal);
+        }
+
+        await storage.deleteOrderItemDiscountsByItem(orderItem.id);
+        await storage.createOrderItemDiscount({
+          orderItemId: orderItem.id,
+          orderId,
+          discountName,
+          discountType,
+          discountValue: discountValue.toString(),
+          amountApplied: amountApplied.toFixed(2),
+          appliedByUserId: userId,
+        });
+      }
+
+      await storage.recalcOrderTotal(orderId);
+      broadcast("order_updated", { orderId });
+
+      res.json({ ok: true, itemsAffected: activeItems.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== POS: ITEM DISCOUNTS ====================
   app.post("/api/pos/order-items/:id/discount", requirePermission("POS_PAY"), async (req, res) => {
     try {
@@ -2116,7 +2174,7 @@ export async function registerRoutes(
           const breakdownHtml = `
               <table style="width:100%;margin:8px 0">
                 <tr><td style="padding:2px 8px">Subtotal</td><td style="padding:2px 8px;text-align:right">₡${subtotal.toLocaleString()}</td></tr>
-                ${taxBk.length > 0 ? taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}</td><td style="padding:2px 8px;text-align:right;color:#666">${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("") : `<tr><td style="padding:2px 8px;color:#666">Impuestos</td><td style="padding:2px 8px;text-align:right;color:#666">₡0</td></tr>`}
+                ${taxBk.length > 0 ? taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName}${tb.inclusive ? " incl." : ""}</td><td style="padding:2px 8px;text-align:right;color:#666">${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("") : `<tr><td style="padding:2px 8px;color:#666">Impuestos</td><td style="padding:2px 8px;text-align:right;color:#666">₡0</td></tr>`}
                 <tr><td style="padding:2px 8px;${totalDiscounts > 0 ? "color:#16a34a" : "color:#666"}">Descuentos</td><td style="padding:2px 8px;text-align:right;${totalDiscounts > 0 ? "color:#16a34a" : "color:#666"}">${totalDiscounts > 0 ? `-₡${totalDiscounts.toLocaleString()}` : "₡0"}</td></tr>
               </table>`;
 
@@ -2138,7 +2196,7 @@ export async function registerRoutes(
           const textLines = emailItemsData.map(i => `${i.qty}x ${i.name} - ₡${i.lineTotal.toLocaleString()}`);
           const breakdownText = [
             `Subtotal: ₡${subtotal.toLocaleString()}`,
-            ...(taxBk.length > 0 ? taxBk.map(tb => `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}: ${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}`) : [`Impuestos: ₡0`]),
+            ...(taxBk.length > 0 ? taxBk.map(tb => `${tb.taxName}${tb.inclusive ? " incl." : ""}: ${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}`) : [`Impuestos: ₡0`]),
             `Descuentos: ${totalDiscounts > 0 ? `-₡${totalDiscounts.toLocaleString()}` : "₡0"}`,
           ];
           const text = [

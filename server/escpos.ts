@@ -188,7 +188,7 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
 
   if (data.taxBreakdown && data.taxBreakdown.length > 0) {
     for (const tb of data.taxBreakdown) {
-      const tLabel = `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}`;
+      const tLabel = `${tb.taxName}${tb.inclusive ? " incl." : ""}`;
       const tValue = (tb.inclusive ? "" : "+") + formatCurrency(tb.totalAmount);
       parts.push(line(padRight(tLabel, cols - tValue.length - 1) + " " + tValue));
     }

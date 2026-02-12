@@ -136,9 +136,6 @@ export default function POSPage() {
 
   const [discountOpen, setDiscountOpen] = useState(false);
   const [discountItemId, setDiscountItemId] = useState<number | null>(null);
-  const [discountType, setDiscountType] = useState<"percentage" | "fixed">("percentage");
-  const [discountValue, setDiscountValue] = useState("");
-  const [discountName, setDiscountName] = useState("Descuento");
 
   useEffect(() => {
     wsManager.connect();
@@ -213,6 +210,10 @@ export default function POSPage() {
 
   const { data: businessCfg } = useQuery<any>({
     queryKey: ["/api/business-config"],
+  });
+
+  const { data: systemDiscounts = [], isLoading: discountsLoading } = useQuery<any[]>({
+    queryKey: ["/api/pos/discounts"],
   });
 
   const triggerReceiptPrint = (items: { name: string; qty: number; price: number; total: number }[], total: number, pmName: string, tblName: string, ordNum: string, clName?: string, discounts?: number, taxes?: number, taxBk?: TaxBreakdownEntry[]) => {
@@ -450,19 +451,24 @@ export default function POSPage() {
   });
 
   const applyDiscountMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (params: { discountName: string; discountType: string; discountValue: string; applyToAll: boolean }) => {
+      if (params.applyToAll && selectedTable?.orderId) {
+        return apiRequest("POST", `/api/pos/orders/${selectedTable.orderId}/discount-all`, {
+          discountName: params.discountName,
+          discountType: params.discountType,
+          discountValue: params.discountValue,
+        });
+      }
       return apiRequest("POST", `/api/pos/order-items/${discountItemId}/discount`, {
-        discountName,
-        discountType,
-        discountValue,
+        discountName: params.discountName,
+        discountType: params.discountType,
+        discountValue: params.discountValue,
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       setDiscountOpen(false);
       setDiscountItemId(null);
-      setDiscountValue("");
-      setDiscountName("Descuento");
       toast({ title: "Descuento aplicado" });
     },
     onError: (err: any) => {
@@ -551,9 +557,6 @@ export default function POSPage() {
 
   const openDiscountDialog = (itemId: number) => {
     setDiscountItemId(itemId);
-    setDiscountType("percentage");
-    setDiscountValue("");
-    setDiscountName("Descuento");
     setDiscountOpen(true);
   };
 
@@ -889,10 +892,7 @@ export default function POSPage() {
                     })}
                   </div>
                 </CardContent>
-              </Card>
-
-              <Card className="mb-4">
-                <CardContent className="py-3 space-y-1">
+                <div className="border-t mx-4 mb-4 pt-3 space-y-1">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Subtotal</span>
                     <span>₡{getOrderSubtotal(selectedTable).toLocaleString()}</span>
@@ -900,7 +900,7 @@ export default function POSPage() {
                   {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
                     selectedTable.taxBreakdown.map((tb, idx) => (
                       <div key={idx} className="flex justify-between text-sm text-muted-foreground">
-                        <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                        <span>{tb.taxName}{tb.inclusive ? " incl." : ""}</span>
                         <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                       </div>
                     ))
@@ -914,11 +914,11 @@ export default function POSPage() {
                     <span>Descuentos</span>
                     <span>{Number(selectedTable.totalDiscounts || 0) > 0 ? `-₡${Number(selectedTable.totalDiscounts).toLocaleString()}` : "₡0"}</span>
                   </div>
-                  <div className="flex justify-between font-bold text-lg border-t pt-1" data-testid="text-detail-total">
+                  <div className="flex justify-between font-bold text-lg border-t pt-1 mt-1" data-testid="text-detail-total">
                     <span>Total a pagar</span>
                     <span>₡{Number(selectedTable.totalAmount).toLocaleString()}</span>
                   </div>
-                </CardContent>
+                </div>
               </Card>
 
               <div className="space-y-4">
@@ -1000,7 +1000,7 @@ export default function POSPage() {
                         {t.taxBreakdown && t.taxBreakdown.length > 0 ? (
                           t.taxBreakdown.map((tb, idx) => (
                             <div key={idx} className="flex justify-between text-xs text-muted-foreground">
-                              <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                              <span>{tb.taxName}{tb.inclusive ? " incl." : ""}</span>
                               <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                             </div>
                           ))
@@ -1181,7 +1181,7 @@ export default function POSPage() {
                   {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
                     selectedTable.taxBreakdown.map((tb, idx) => (
                       <div key={idx} className="flex justify-between text-muted-foreground">
-                        <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                        <span>{tb.taxName}{tb.inclusive ? " incl." : ""}</span>
                         <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                       </div>
                     ))
@@ -1362,7 +1362,7 @@ export default function POSPage() {
       <Dialog open={discountOpen} onOpenChange={setDiscountOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Aplicar Descuento</DialogTitle></DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-3">
             {discountItemId && selectedTable && (() => {
               const item = selectedTable.items.find(i => i.id === discountItemId);
               if (!item) return null;
@@ -1372,47 +1372,59 @@ export default function POSPage() {
                 </p>
               );
             })()}
-            <div className="space-y-2">
-              <Label>Nombre del Descuento</Label>
-              <Input
-                data-testid="input-discount-name"
-                value={discountName}
-                onChange={(e) => setDiscountName(e.target.value)}
-                placeholder="Descuento"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Tipo</Label>
-              <Select value={discountType} onValueChange={(v) => setDiscountType(v as "percentage" | "fixed")}>
-                <SelectTrigger data-testid="select-discount-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="percentage">Porcentaje (%)</SelectItem>
-                  <SelectItem value="fixed">Monto Fijo (₡)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>{discountType === "percentage" ? "Porcentaje" : "Monto"}</Label>
-              <Input
-                data-testid="input-discount-value"
-                type="number"
-                step="0.01"
-                value={discountValue}
-                onChange={(e) => setDiscountValue(e.target.value)}
-                placeholder={discountType === "percentage" ? "10" : "500"}
-              />
-            </div>
-            <Button
-              className="w-full"
-              onClick={() => applyDiscountMutation.mutate()}
-              disabled={!discountValue || applyDiscountMutation.isPending}
-              data-testid="button-apply-discount"
-            >
-              {applyDiscountMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
-              Aplicar Descuento
-            </Button>
+            {discountsLoading ? (
+              <div className="flex items-center justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+            ) : systemDiscounts.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">No hay descuentos configurados. Cree descuentos desde el panel de administración.</p>
+            ) : (
+              <div className="space-y-2">
+                {systemDiscounts.map((d: any) => (
+                  <Card key={d.id} data-testid={`discount-option-${d.id}`}>
+                    <CardContent className="py-3 px-4">
+                      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                        <div>
+                          <span className="font-medium text-sm">{d.name}</span>
+                          <Badge variant="secondary" className="ml-2">
+                            {d.type === "percentage" ? `${Number(d.value)}%` : `₡${Number(d.value).toLocaleString()}`}
+                          </Badge>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => applyDiscountMutation.mutate({
+                            discountName: d.name,
+                            discountType: d.type,
+                            discountValue: d.value,
+                            applyToAll: false,
+                          })}
+                          disabled={applyDiscountMutation.isPending}
+                          data-testid={`button-apply-discount-item-${d.id}`}
+                        >
+                          {applyDiscountMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                          Aplicar a este item
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => applyDiscountMutation.mutate({
+                            discountName: d.name,
+                            discountType: d.type,
+                            discountValue: d.value,
+                            applyToAll: true,
+                          })}
+                          disabled={applyDiscountMutation.isPending}
+                          data-testid={`button-apply-discount-all-${d.id}`}
+                        >
+                          {applyDiscountMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                          Aplicar a toda la cuenta
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

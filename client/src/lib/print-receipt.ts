@@ -156,7 +156,7 @@ export function printReceipt(data: ReceiptData) {
     </tr>
     ${(data.taxBreakdown && data.taxBreakdown.length > 0) ? data.taxBreakdown.map(tb => `
     <tr>
-      <td style="font-size:11px;">${escapeHtml(tb.taxName)} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}</td>
+      <td style="font-size:11px;">${escapeHtml(tb.taxName)}${tb.inclusive ? " incl." : ""}</td>
       <td style="text-align:right;font-size:11px;" colspan="3">${tb.inclusive ? "" : "+"}${formatCurrency(tb.totalAmount)}</td>
     </tr>`).join("") : `
     <tr>
