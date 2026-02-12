@@ -592,10 +592,15 @@ export default function TableDetailPage() {
                           <div key={item.id} className="flex items-center justify-between py-2 border-b last:border-0 gap-2" data-testid={`order-item-${item.id}`}>
                             <div className="min-w-0 flex-1">
                               <p className="text-base font-medium">{item.qty}x {item.productNameSnapshot}</p>
+                              {item.modifiers && item.modifiers.length > 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                  {item.modifiers.map((m: any) => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
+                                </p>
+                              )}
                               {item.notes && <p className="text-sm text-muted-foreground">{item.notes}</p>}
                             </div>
                             <div className="flex items-center gap-1 flex-shrink-0">
-                              <span className="text-sm">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
+                              <span className="text-sm">₡{Number((Number(item.productPriceSnapshot) + (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0)) * item.qty).toLocaleString()}</span>
                               {getStatusBadge(item.status)}
                               {activeOrder?.status !== "PAID" && (
                                 <Button

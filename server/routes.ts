@@ -785,11 +785,17 @@ export async function registerRoutes(
       }
 
       const items = await storage.getOrderItems(order.id);
+      const itemsWithMods = [];
+      for (const item of items) {
+        const mods = await storage.getOrderItemModifiers(item.id);
+        itemsWithMods.push({ ...item, modifiers: mods });
+      }
+
       const pendingSubs = await storage.getPendingSubmissions(order.id);
 
       const subsWithItems = [];
       for (const sub of pendingSubs) {
-        const subItems = items.filter(i => i.qrSubmissionId === sub.id);
+        const subItems = itemsWithMods.filter(i => i.qrSubmissionId === sub.id);
         subsWithItems.push({ ...sub, items: subItems });
       }
 
@@ -806,7 +812,7 @@ export async function registerRoutes(
         voidedByName: voidedUsersMap.get(i.voidedByUserId) || "Desconocido",
       }));
 
-      res.json({ table, activeOrder: order, orderItems: items, pendingQrSubmissions: subsWithItems, voidedItems: voidedItemsWithNames });
+      res.json({ table, activeOrder: order, orderItems: itemsWithMods, pendingQrSubmissions: subsWithItems, voidedItems: voidedItemsWithNames });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -1471,14 +1477,20 @@ export async function registerRoutes(
       const items = await storage.getKitchenTicketItems(t.id);
       const nonVoided = items.filter(i => i.status !== "VOIDED");
       if (type === "active" && nonVoided.length === 0) continue;
-      result.push({
-        ...t,
-        createdAt: t.createdAt?.toISOString() || new Date().toISOString(),
-        items: nonVoided.map(i => ({
+      const itemsWithMods = [];
+      for (const i of nonVoided) {
+        const mods = await storage.getOrderItemModifiers(i.orderItemId);
+        itemsWithMods.push({
           ...i,
           prepStartedAt: i.prepStartedAt?.toISOString() || null,
           readyAt: i.readyAt?.toISOString() || null,
-        })),
+          modifiers: mods,
+        });
+      }
+      result.push({
+        ...t,
+        createdAt: t.createdAt?.toISOString() || new Date().toISOString(),
+        items: itemsWithMods,
       });
     }
     res.json(result);
@@ -1981,12 +1993,17 @@ export async function registerRoutes(
 
       const cashier = req.session.userId ? await storage.getUser(req.session.userId) : null;
 
-      const receiptItems = activeItems.map(i => ({
-        name: i.productNameSnapshot,
-        qty: i.qty,
-        price: Number(i.productPriceSnapshot),
-        total: Number(i.productPriceSnapshot) * i.qty,
-      }));
+      const receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
+      for (const i of activeItems) {
+        const mods = await storage.getOrderItemModifiers(i.id);
+        const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+        receiptItems.push({
+          name: i.productNameSnapshot + (mods.length > 0 ? ` (${mods.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : ""),
+          qty: i.qty,
+          price: Number(i.productPriceSnapshot) + modDelta,
+          total: (Number(i.productPriceSnapshot) + modDelta) * i.qty,
+        });
+      }
 
       const oNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `#${order.id}`);
 
@@ -2056,7 +2073,16 @@ export async function registerRoutes(
       const items = await storage.getOrderItems(orderId);
       const activeItems = items.filter(i => i.status !== "VOIDED");
       const table = await storage.getTable(order.tableId);
-      const subtotal = activeItems.reduce((s, i) => s + Number(i.productPriceSnapshot) * i.qty, 0);
+      let subtotal = 0;
+      const emailItemsData: { name: string; qty: number; lineTotal: number }[] = [];
+      for (const i of activeItems) {
+        const mods = await storage.getOrderItemModifiers(i.id);
+        const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+        const lineTotal = (Number(i.productPriceSnapshot) + modDelta) * i.qty;
+        subtotal += lineTotal;
+        const modLabel = mods.length > 0 ? ` (${mods.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
+        emailItemsData.push({ name: i.productNameSnapshot + modLabel, qty: i.qty, lineTotal });
+      }
       const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
       const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
       const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
@@ -2083,8 +2109,8 @@ export async function registerRoutes(
             auth: { user: smtpUser, pass: smtpPass },
           });
 
-          const itemRows = activeItems.map(i =>
-            `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${i.productNameSnapshot}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:center">${i.qty}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right">₡${(Number(i.productPriceSnapshot) * i.qty).toLocaleString()}</td></tr>`
+          const itemRows = emailItemsData.map(i =>
+            `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${i.name}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:center">${i.qty}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right">₡${i.lineTotal.toLocaleString()}</td></tr>`
           ).join("");
 
           const breakdownHtml = (totalDiscounts > 0 || totalTaxes > 0) ? `
@@ -2109,7 +2135,7 @@ export async function registerRoutes(
               <p style="color:#999;font-size:12px;margin-top:24px;text-align:center">Gracias por su visita</p>
             </div>`;
 
-          const textLines = activeItems.map(i => `${i.qty}x ${i.productNameSnapshot} - ₡${(Number(i.productPriceSnapshot) * i.qty).toLocaleString()}`);
+          const textLines = emailItemsData.map(i => `${i.qty}x ${i.name} - ₡${i.lineTotal.toLocaleString()}`);
           const breakdownText = (totalDiscounts > 0 || totalTaxes > 0) ? [
             `Subtotal: ₡${subtotal.toLocaleString()}`,
             ...(totalDiscounts > 0 ? [`Descuentos: -₡${totalDiscounts.toLocaleString()}`] : []),

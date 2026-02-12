@@ -22,6 +22,7 @@ interface KDSTicket {
     status: string;
     prepStartedAt: string | null;
     readyAt: string | null;
+    modifiers?: { id: number; nameSnapshot: string; priceDeltaSnapshot: string; qty: number }[];
   }[];
 }
 
@@ -185,6 +186,11 @@ export default function KDSPage() {
                               <span className="font-bold mr-1">{item.qty}x</span>
                               {item.productNameSnapshot}
                             </p>
+                            {item.modifiers && item.modifiers.length > 0 && (
+                              <p className="text-xs font-medium opacity-90">
+                                {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
+                              </p>
+                            )}
                             {item.notes && <p className="text-xs opacity-75">{item.notes}</p>}
                           </div>
                           <Badge variant="secondary" className="text-xs flex-shrink-0">
