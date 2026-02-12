@@ -12,6 +12,7 @@ import {
   Send, Loader2, Check, ChevronRight, ChevronDown, ArrowRight, ClipboardList,
   Search, X,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface QRProduct {
   id: number;
@@ -22,18 +23,51 @@ interface QRProduct {
   availablePortions: number | null;
 }
 
+interface QRModifierOption {
+  id: number;
+  name: string;
+  priceDelta: string;
+}
+
+interface QRModifierGroup {
+  id: number;
+  name: string;
+  required: boolean;
+  multiSelect: boolean;
+  options: QRModifierOption[];
+}
+
+interface QRCartItem {
+  productId: number;
+  name: string;
+  price: string;
+  qty: number;
+  cartKey: string;
+  modifiers?: { optionId: number; name: string; priceDelta: string; qty: number }[];
+}
+
+function makeQRCartKey(productId: number, modifiers?: { optionId: number }[]) {
+  if (!modifiers || modifiers.length === 0) return `${productId}`;
+  const ids = modifiers.map((m) => m.optionId).sort((a, b) => a - b).join(",");
+  return `${productId}:${ids}`;
+}
+
 export default function QRClientPage() {
   const [, params] = useRoute("/qr/:tableCode");
   const tableCode = params?.tableCode || "";
   const { toast } = useToast();
 
-  const [cart, setCart] = useState<{ productId: number; name: string; price: string; qty: number }[]>([]);
+  const [cart, setCart] = useState<QRCartItem[]>([]);
   const [confirmSlide, setConfirmSlide] = useState(false);
   const [slideProgress, setSlideProgress] = useState(0);
   const [submitted, setSubmitted] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [modDialogProduct, setModDialogProduct] = useState<QRProduct | null>(null);
+  const [modGroups, setModGroups] = useState<QRModifierGroup[]>([]);
+  const [selectedMods, setSelectedMods] = useState<Record<number, number[]>>({});
+  const [loadingMods, setLoadingMods] = useState(false);
 
   const { data: tableInfo, isLoading: tableLoading, error: tableError } = useQuery<any>({
     queryKey: ["/api/qr", tableCode, "info"],
@@ -67,24 +101,81 @@ export default function QRClientPage() {
     },
   });
 
-  const addToCart = (product: QRProduct) => {
-    const existing = cart.find((c) => c.productId === product.id);
+  const handleProductClick = async (product: QRProduct) => {
+    setLoadingMods(true);
+    try {
+      const res = await fetch(`/api/products/${product.id}/modifiers`);
+      const groups: QRModifierGroup[] = await res.json();
+      if (groups.length > 0) {
+        setModDialogProduct(product);
+        setModGroups(groups);
+        setSelectedMods({});
+      } else {
+        addToCartDirect(product, []);
+      }
+    } catch {
+      addToCartDirect(product, []);
+    } finally {
+      setLoadingMods(false);
+    }
+  };
+
+  const addToCartDirect = (product: QRProduct, mods: { optionId: number; name: string; priceDelta: string; qty: number }[]) => {
+    const key = makeQRCartKey(product.id, mods);
+    const existing = cart.find((c) => c.cartKey === key);
     if (existing) {
-      setCart(cart.map((c) => (c.productId === product.id ? { ...c, qty: c.qty + 1 } : c)));
+      setCart(cart.map((c) => (c.cartKey === key ? { ...c, qty: c.qty + 1 } : c)));
     } else {
-      setCart([...cart, { productId: product.id, name: product.name, price: product.price, qty: 1 }]);
+      setCart([...cart, { productId: product.id, name: product.name, price: product.price, qty: 1, cartKey: key, modifiers: mods.length > 0 ? mods : undefined }]);
     }
   };
 
-  const updateQty = (productId: number, qty: number) => {
+  const toggleModOption = (groupId: number, optionId: number, multi: boolean) => {
+    setSelectedMods((prev) => {
+      const current = prev[groupId] || [];
+      if (multi) {
+        return { ...prev, [groupId]: current.includes(optionId) ? current.filter((id) => id !== optionId) : [...current, optionId] };
+      }
+      return { ...prev, [groupId]: current.includes(optionId) ? [] : [optionId] };
+    });
+  };
+
+  const confirmModifiers = () => {
+    if (!modDialogProduct) return;
+    for (const group of modGroups) {
+      const selected = selectedMods[group.id] || [];
+      if (group.required && selected.length === 0) {
+        toast({ title: `"${group.name}" es requerido`, variant: "destructive" });
+        return;
+      }
+    }
+    const mods: { optionId: number; name: string; priceDelta: string; qty: number }[] = [];
+    for (const group of modGroups) {
+      const selected = selectedMods[group.id] || [];
+      for (const optId of selected) {
+        const opt = group.options.find((o) => o.id === optId);
+        if (opt) mods.push({ optionId: opt.id, name: opt.name, priceDelta: opt.priceDelta, qty: 1 });
+      }
+    }
+    addToCartDirect(modDialogProduct, mods);
+    setModDialogProduct(null);
+    setModGroups([]);
+    setSelectedMods({});
+  };
+
+  const updateQty = (cartKey: string, qty: number) => {
     if (qty <= 0) {
-      setCart(cart.filter((c) => c.productId !== productId));
+      setCart(cart.filter((c) => c.cartKey !== cartKey));
     } else {
-      setCart(cart.map((c) => (c.productId === productId ? { ...c, qty } : c)));
+      setCart(cart.map((c) => (c.cartKey === cartKey ? { ...c, qty } : c)));
     }
   };
 
-  const cartTotal = cart.reduce((sum, c) => sum + Number(c.price) * c.qty, 0);
+  const getItemTotal = (item: QRCartItem) => {
+    const modDelta = (item.modifiers || []).reduce((s, m) => s + Number(m.priceDelta), 0);
+    return (Number(item.price) + modDelta) * item.qty;
+  };
+  const cartTotal = cart.reduce((sum, c) => sum + getItemTotal(c), 0);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 250);
@@ -277,7 +368,7 @@ export default function QRClientPage() {
               {isOpen && (
                 <div className="space-y-2 pb-2">
                   {items.map((product) => {
-                    const inCart = cart.find((c) => c.productId === product.id);
+                    const totalInCart = cart.filter((c) => c.productId === product.id).reduce((s, c) => s + c.qty, 0);
                     return (
                       <Card key={product.id} data-testid={`qr-product-${product.id}`}>
                         <CardContent className="p-3">
@@ -287,22 +378,13 @@ export default function QRClientPage() {
                               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
                               <p className="font-bold text-sm mt-1">₡{Number(product.price).toLocaleString()}</p>
                             </div>
-                            <div className="flex-shrink-0">
-                              {inCart ? (
-                                <div className="flex items-center gap-1">
-                                  <Button size="icon" variant="outline" onClick={() => updateQty(product.id, inCart.qty - 1)}>
-                                    <Minus className="w-3 h-3" />
-                                  </Button>
-                                  <span className="w-6 text-center text-sm font-bold">{inCart.qty}</span>
-                                  <Button size="icon" variant="outline" onClick={() => updateQty(product.id, inCart.qty + 1)}>
-                                    <Plus className="w-3 h-3" />
-                                  </Button>
-                                </div>
-                              ) : (
-                                <Button size="sm" variant="outline" onClick={() => addToCart(product)} data-testid={`button-add-qr-${product.id}`} className="min-h-[48px]">
-                                  <Plus className="w-3 h-3 mr-1" /> Agregar
-                                </Button>
+                            <div className="flex-shrink-0 flex items-center gap-2">
+                              {totalInCart > 0 && (
+                                <Badge variant="secondary">{totalInCart}</Badge>
                               )}
+                              <Button size="sm" variant="outline" onClick={() => handleProductClick(product)} disabled={loadingMods} data-testid={`button-add-qr-${product.id}`} className="min-h-[48px]">
+                                <Plus className="w-3 h-3 mr-1" /> Agregar
+                              </Button>
                             </div>
                           </div>
                         </CardContent>
@@ -333,11 +415,26 @@ export default function QRClientPage() {
               <div className="space-y-3">
                 <div className="space-y-2 max-h-40 overflow-y-auto">
                   {cart.map((item) => (
-                    <div key={item.productId} className="flex items-center justify-between text-sm">
-                      <span>{item.qty}x {item.name}</span>
-                      <div className="flex items-center gap-2">
-                        <span>₡{(Number(item.price) * item.qty).toLocaleString()}</span>
-                        <Button size="icon" variant="ghost" onClick={() => updateQty(item.productId, 0)} className="h-6 w-6">
+                    <div key={item.cartKey} className="flex items-center justify-between text-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span>{item.qty}x {item.name}</span>
+                          <div className="flex items-center gap-1">
+                            <Button size="icon" variant="ghost" onClick={() => updateQty(item.cartKey, item.qty - 1)}>
+                              <Minus className="w-3 h-3" />
+                            </Button>
+                            <Button size="icon" variant="ghost" onClick={() => updateQty(item.cartKey, item.qty + 1)}>
+                              <Plus className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        {item.modifiers && item.modifiers.length > 0 && (
+                          <p className="text-xs text-muted-foreground">{item.modifiers.map((m) => m.name).join(", ")}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span>₡{getItemTotal(item).toLocaleString()}</span>
+                        <Button size="icon" variant="ghost" onClick={() => updateQty(item.cartKey, 0)}>
                           <Trash2 className="w-3 h-3" />
                         </Button>
                       </div>
@@ -394,6 +491,74 @@ export default function QRClientPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {modDialogProduct && (
+        <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50" data-testid="qr-modifier-dialog-overlay" onClick={() => { setModDialogProduct(null); setModGroups([]); setSelectedMods({}); }}>
+          <Card className="w-full rounded-t-xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <CardHeader className="pb-2 flex-shrink-0">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="font-bold text-base">{modDialogProduct.name}</h3>
+                <span className="text-sm text-muted-foreground">₡{Number(modDialogProduct.price).toLocaleString()}</span>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4 overflow-y-auto flex-1 pb-4">
+              {modGroups.map((group) => (
+                <div key={group.id} data-testid={`qr-modifier-group-${group.id}`}>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="font-semibold text-sm">{group.name}</span>
+                    {group.required && <Badge variant="secondary">Requerido</Badge>}
+                    {group.multiSelect && <span className="text-xs text-muted-foreground">(varias opciones)</span>}
+                  </div>
+                  <div className="space-y-1">
+                    {group.options.map((opt) => {
+                      const isSelected = (selectedMods[group.id] || []).includes(opt.id);
+                      return (
+                        <div
+                          key={opt.id}
+                          className={`flex items-center justify-between p-3 rounded-md border cursor-pointer min-h-[44px] transition-colors ${isSelected ? "bg-primary/10 border-primary" : "hover-elevate"}`}
+                          onClick={() => toggleModOption(group.id, opt.id, group.multiSelect)}
+                          data-testid={`qr-modifier-option-${opt.id}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {group.multiSelect ? (
+                              <Checkbox checked={isSelected} className="pointer-events-none" />
+                            ) : (
+                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isSelected ? "border-primary" : "border-muted-foreground"}`}>
+                                {isSelected && <div className="w-2 h-2 rounded-full bg-primary" />}
+                              </div>
+                            )}
+                            <span className="text-sm">{opt.name}</span>
+                          </div>
+                          {Number(opt.priceDelta) > 0 && (
+                            <span className="text-sm text-muted-foreground">+₡{Number(opt.priceDelta).toLocaleString()}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => { setModDialogProduct(null); setModGroups([]); setSelectedMods({}); }}
+                  data-testid="button-cancel-qr-modifiers"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={confirmModifiers}
+                  data-testid="button-confirm-qr-modifiers"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> Agregar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>

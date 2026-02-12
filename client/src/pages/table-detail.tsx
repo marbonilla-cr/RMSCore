@@ -15,8 +15,46 @@ import {
   ArrowLeft, Plus, Send, Check, Trash2, Loader2,
   ShoppingBag, AlertCircle, ChefHat, Minus, Search, X,
   ClipboardList, Ban, ChevronDown, ChevronRight, Clock, Eye,
+  Settings2,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { Product, Category } from "@shared/schema";
+
+interface ModifierOption {
+  id: number;
+  groupId: number;
+  name: string;
+  priceDelta: string;
+  active: boolean;
+  sortOrder: number;
+}
+
+interface ModifierGroupWithOptions {
+  id: number;
+  name: string;
+  required: boolean;
+  multiSelect: boolean;
+  minSelections: number;
+  maxSelections: number | null;
+  options: ModifierOption[];
+}
+
+interface CartModifier {
+  optionId: number;
+  name: string;
+  priceDelta: string;
+  qty: number;
+}
+
+interface CartItem {
+  productId: number;
+  name: string;
+  price: string;
+  qty: number;
+  notes: string;
+  modifiers: CartModifier[];
+  cartKey: string;
+}
 
 interface TableCurrentView {
   table: any;
@@ -36,7 +74,7 @@ export default function TableDetailPage() {
   const tableId = params?.id ? parseInt(params.id) : 0;
 
   const [viewMode, setViewMode] = useState<ViewMode>("order");
-  const [cart, setCart] = useState<{ productId: number; name: string; price: string; qty: number; notes: string }[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
@@ -45,6 +83,11 @@ export default function TableDetailPage() {
   const [voidReason, setVoidReason] = useState("");
   const [voidQty, setVoidQty] = useState(1);
   const [showVoidedSection, setShowVoidedSection] = useState(false);
+  const [modifierDialogProduct, setModifierDialogProduct] = useState<Product | null>(null);
+  const [modifierGroups, setModifierGroups] = useState<ModifierGroupWithOptions[]>([]);
+  const [selectedModifiers, setSelectedModifiers] = useState<Record<number, number[]>>({});
+  const [loadingModifiers, setLoadingModifiers] = useState(false);
+  const [pendingClickEvent, setPendingClickEvent] = useState<HTMLElement | null>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
   const badgeRef = useRef<HTMLSpanElement>(null);
   const isManager = user?.role === "MANAGER";
@@ -189,25 +232,106 @@ export default function TableDetailPage() {
     setTimeout(() => ghost.remove(), 320);
   }, []);
 
-  const addToCart = (product: Product, e?: React.MouseEvent) => {
-    const existing = cart.find((c) => c.productId === product.id);
+  const makeCartKey = (productId: number, modifiers: CartModifier[]) => {
+    const modStr = modifiers.map(m => m.optionId).sort().join(",");
+    return `${productId}:${modStr}`;
+  };
+
+  const addToCart = async (product: Product, e?: React.MouseEvent) => {
+    const clickEl = e?.currentTarget as HTMLElement | undefined;
+    setLoadingModifiers(true);
+    try {
+      const res = await fetch(`/api/products/${product.id}/modifiers`);
+      const groups: ModifierGroupWithOptions[] = await res.json();
+      if (groups.length > 0) {
+        setModifierDialogProduct(product);
+        setModifierGroups(groups);
+        setSelectedModifiers({});
+        setPendingClickEvent(clickEl || null);
+        setLoadingModifiers(false);
+        return;
+      }
+    } catch {
+    }
+    setLoadingModifiers(false);
+
+    const key = makeCartKey(product.id, []);
+    const existing = cart.find((c) => c.cartKey === key);
     if (existing) {
-      setCart(cart.map((c) => (c.productId === product.id ? { ...c, qty: c.qty + 1 } : c)));
+      setCart(cart.map((c) => (c.cartKey === key ? { ...c, qty: c.qty + 1 } : c)));
     } else {
-      setCart([...cart, { productId: product.id, name: product.name, price: product.price, qty: 1, notes: "" }]);
+      setCart([...cart, { productId: product.id, name: product.name, price: product.price, qty: 1, notes: "", modifiers: [], cartKey: key }]);
     }
-    if (e?.currentTarget) {
-      triggerFlyAnimation(e.currentTarget as HTMLElement);
+    if (clickEl) {
+      triggerFlyAnimation(clickEl);
     }
   };
 
-  const removeFromCart = (productId: number) => {
-    setCart(cart.filter((c) => c.productId !== productId));
+  const confirmModifierSelection = () => {
+    if (!modifierDialogProduct) return;
+    const product = modifierDialogProduct;
+    for (const group of modifierGroups) {
+      const selected = selectedModifiers[group.id] || [];
+      if (group.required && selected.length === 0) {
+        toast({ title: `"${group.name}" es requerido`, variant: "destructive" });
+        return;
+      }
+      if (group.minSelections && selected.length < group.minSelections) {
+        toast({ title: `"${group.name}": seleccione al menos ${group.minSelections}`, variant: "destructive" });
+        return;
+      }
+      if (group.maxSelections && selected.length > group.maxSelections) {
+        toast({ title: `"${group.name}": máximo ${group.maxSelections} opciones`, variant: "destructive" });
+        return;
+      }
+    }
+    const mods: CartModifier[] = [];
+    for (const group of modifierGroups) {
+      const selected = selectedModifiers[group.id] || [];
+      for (const optId of selected) {
+        const opt = group.options.find(o => o.id === optId);
+        if (opt) {
+          mods.push({ optionId: opt.id, name: opt.name, priceDelta: opt.priceDelta, qty: 1 });
+        }
+      }
+    }
+    const key = makeCartKey(product.id, mods);
+    const existing = cart.find((c) => c.cartKey === key);
+    if (existing) {
+      setCart(cart.map((c) => (c.cartKey === key ? { ...c, qty: c.qty + 1 } : c)));
+    } else {
+      setCart([...cart, { productId: product.id, name: product.name, price: product.price, qty: 1, notes: "", modifiers: mods, cartKey: key }]);
+    }
+    if (pendingClickEvent) {
+      triggerFlyAnimation(pendingClickEvent);
+    }
+    setModifierDialogProduct(null);
+    setModifierGroups([]);
+    setSelectedModifiers({});
+    setPendingClickEvent(null);
   };
 
-  const updateCartQty = (productId: number, qty: number) => {
-    if (qty <= 0) return removeFromCart(productId);
-    setCart(cart.map((c) => (c.productId === productId ? { ...c, qty } : c)));
+  const toggleModifierOption = (groupId: number, optionId: number, multiSelect: boolean) => {
+    setSelectedModifiers(prev => {
+      const current = prev[groupId] || [];
+      if (multiSelect) {
+        if (current.includes(optionId)) {
+          return { ...prev, [groupId]: current.filter(id => id !== optionId) };
+        }
+        return { ...prev, [groupId]: [...current, optionId] };
+      } else {
+        return { ...prev, [groupId]: current.includes(optionId) ? [] : [optionId] };
+      }
+    });
+  };
+
+  const removeFromCart = (cartKey: string) => {
+    setCart(cart.filter((c) => c.cartKey !== cartKey));
+  };
+
+  const updateCartQty = (cartKey: string, qty: number) => {
+    if (qty <= 0) return removeFromCart(cartKey);
+    setCart(cart.map((c) => (c.cartKey === cartKey ? { ...c, qty } : c)));
   };
 
   const searchLower = debouncedSearch.toLowerCase();
@@ -253,7 +377,11 @@ export default function TableDetailPage() {
       return acc;
     }, {});
 
-  const cartTotal = cart.reduce((s, c) => s + Number(c.price) * c.qty, 0);
+  const getItemTotal = (item: CartItem) => {
+    const modTotal = item.modifiers.reduce((s, m) => s + Number(m.priceDelta) * m.qty, 0);
+    return (Number(item.price) + modTotal) * item.qty;
+  };
+  const cartTotal = cart.reduce((s, c) => s + getItemTotal(c), 0);
   const cartCount = cart.reduce((s, c) => s + c.qty, 0);
   const lastChips = cart.slice(-5);
 
@@ -343,22 +471,28 @@ export default function TableDetailPage() {
             </h2>
             <div className="space-y-2">
               {cart.map((item) => (
-                <Card key={item.productId} data-testid={`cart-item-${item.productId}`}>
+                <Card key={item.cartKey} data-testid={`cart-item-${item.cartKey}`}>
                   <CardContent className="p-3">
                     <div className="flex items-start gap-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-base font-medium">{item.name}</p>
                         <p className="text-sm text-muted-foreground">₡{Number(item.price).toLocaleString()} c/u</p>
+                        {item.modifiers.length > 0 && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            <Settings2 className="w-3 h-3 inline mr-1" />
+                            {item.modifiers.map(m => m.name + (Number(m.priceDelta) > 0 ? ` +₡${Number(m.priceDelta).toLocaleString()}` : "")).join(", ")}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        <Button size="icon" variant="outline" onClick={() => updateCartQty(item.productId, item.qty - 1)} data-testid={`button-qty-minus-${item.productId}`}>
+                        <Button size="icon" variant="outline" onClick={() => updateCartQty(item.cartKey, item.qty - 1)} data-testid={`button-qty-minus-${item.cartKey}`}>
                           <Minus className="w-4 h-4" />
                         </Button>
                         <span className="w-8 text-center text-base font-bold">{item.qty}</span>
-                        <Button size="icon" variant="outline" onClick={() => updateCartQty(item.productId, item.qty + 1)} data-testid={`button-qty-plus-${item.productId}`}>
+                        <Button size="icon" variant="outline" onClick={() => updateCartQty(item.cartKey, item.qty + 1)} data-testid={`button-qty-plus-${item.cartKey}`}>
                           <Plus className="w-4 h-4" />
                         </Button>
-                        <Button size="icon" variant="ghost" onClick={() => removeFromCart(item.productId)} data-testid={`button-remove-${item.productId}`}>
+                        <Button size="icon" variant="ghost" onClick={() => removeFromCart(item.cartKey)} data-testid={`button-remove-${item.cartKey}`}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -367,12 +501,12 @@ export default function TableDetailPage() {
                       placeholder="Notas..."
                       value={item.notes}
                       onChange={(e) =>
-                        setCart(cart.map((c) => (c.productId === item.productId ? { ...c, notes: e.target.value } : c)))
+                        setCart(cart.map((c) => (c.cartKey === item.cartKey ? { ...c, notes: e.target.value } : c)))
                       }
                       className="mt-2 text-sm min-h-[40px]"
-                      data-testid={`input-notes-${item.productId}`}
+                      data-testid={`input-notes-${item.cartKey}`}
                     />
-                    <p className="text-right text-sm font-semibold mt-1">₡{(Number(item.price) * item.qty).toLocaleString()}</p>
+                    <p className="text-right text-sm font-semibold mt-1">₡{getItemTotal(item).toLocaleString()}</p>
                   </CardContent>
                 </Card>
               ))}
@@ -620,7 +754,7 @@ export default function TableDetailPage() {
                       {isExpanded && (
                         <div className="space-y-1.5 pb-2 pt-1">
                           {items.map((p) => {
-                            const inCart = cart.find(c => c.productId === p.id);
+                            const inCartQty = cart.filter(c => c.productId === p.id).reduce((s, c) => s + c.qty, 0);
                             return (
                               <div
                                 key={p.id}
@@ -637,8 +771,8 @@ export default function TableDetailPage() {
                                   {p.availablePortions !== null && (
                                     <Badge variant="secondary">{p.availablePortions}</Badge>
                                   )}
-                                  {inCart && (
-                                    <Badge className="bg-primary text-primary-foreground min-w-[24px] text-center">{inCart.qty}</Badge>
+                                  {inCartQty > 0 && (
+                                    <Badge className="bg-primary text-primary-foreground min-w-[24px] text-center">{inCartQty}</Badge>
                                   )}
                                 </div>
                               </div>
@@ -672,11 +806,12 @@ export default function TableDetailPage() {
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
               {lastChips.map((item) => (
                 <span
-                  key={item.productId}
+                  key={item.cartKey}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-sm whitespace-nowrap flex-shrink-0"
-                  data-testid={`chip-item-${item.productId}`}
+                  data-testid={`chip-item-${item.cartKey}`}
                 >
                   {item.name.length > 12 ? item.name.slice(0, 12) + "…" : item.name}
+                  {item.modifiers.length > 0 && <Settings2 className="w-3 h-3" />}
                   <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-xs">{item.qty}</Badge>
                 </span>
               ))}
@@ -712,6 +847,74 @@ export default function TableDetailPage() {
               </Button>
             </div>
           </div>
+        </div>
+      )}
+
+      {modifierDialogProduct && (
+        <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50" data-testid="modifier-dialog-overlay" onClick={() => { setModifierDialogProduct(null); setModifierGroups([]); setSelectedModifiers({}); setPendingClickEvent(null); }}>
+          <Card className="w-full sm:w-[90%] sm:max-w-md mx-0 sm:mx-4 rounded-t-xl sm:rounded-xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <CardHeader className="pb-2 flex-shrink-0">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="font-bold text-base">{modifierDialogProduct.name}</h3>
+                <span className="text-sm text-muted-foreground">₡{Number(modifierDialogProduct.price).toLocaleString()}</span>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4 overflow-y-auto flex-1">
+              {modifierGroups.map((group) => (
+                <div key={group.id} data-testid={`modifier-group-${group.id}`}>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="font-semibold text-sm">{group.name}</span>
+                    {group.required && <Badge variant="secondary">Requerido</Badge>}
+                    {group.multiSelect && <span className="text-xs text-muted-foreground">(varias opciones)</span>}
+                  </div>
+                  <div className="space-y-1">
+                    {group.options.map((opt) => {
+                      const isSelected = (selectedModifiers[group.id] || []).includes(opt.id);
+                      return (
+                        <div
+                          key={opt.id}
+                          className={`flex items-center justify-between p-3 rounded-md border cursor-pointer min-h-[44px] transition-colors ${isSelected ? "bg-primary/10 border-primary" : "hover-elevate"}`}
+                          onClick={() => toggleModifierOption(group.id, opt.id, group.multiSelect)}
+                          data-testid={`modifier-option-${opt.id}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {group.multiSelect ? (
+                              <Checkbox checked={isSelected} className="pointer-events-none" />
+                            ) : (
+                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isSelected ? "border-primary" : "border-muted-foreground"}`}>
+                                {isSelected && <div className="w-2 h-2 rounded-full bg-primary" />}
+                              </div>
+                            )}
+                            <span className="text-sm">{opt.name}</span>
+                          </div>
+                          {Number(opt.priceDelta) > 0 && (
+                            <span className="text-sm text-muted-foreground">+₡{Number(opt.priceDelta).toLocaleString()}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <div className="flex gap-2 pt-2 pb-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => { setModifierDialogProduct(null); setModifierGroups([]); setSelectedModifiers({}); setPendingClickEvent(null); }}
+                  data-testid="button-cancel-modifiers"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={confirmModifierSelection}
+                  data-testid="button-confirm-modifiers"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> Agregar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 

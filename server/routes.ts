@@ -833,6 +833,26 @@ export async function registerRoutes(
     res.json(await storage.getActiveProducts());
   });
 
+  app.get("/api/products/:id/modifiers", async (req, res) => {
+    try {
+      const productId = parseInt(req.params.id);
+      const links = await storage.getItemModifierGroups(productId);
+      const result = [];
+      for (const link of links) {
+        const group = await storage.getModifierGroup(link.modifierGroupId);
+        if (!group || !group.active) continue;
+        const options = await storage.getModifierOptionsByGroup(group.id);
+        result.push({
+          ...group,
+          options: options.filter(o => o.active),
+        });
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // Waiter: Send round to kitchen
   app.post("/api/waiter/tables/:id/send-round", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
@@ -902,12 +922,29 @@ export async function registerRoutes(
 
         await storage.updateOrderItem(orderItem.id, { sentToKitchenAt: new Date() });
 
+        if (item.modifiers && Array.isArray(item.modifiers)) {
+          for (const mod of item.modifiers) {
+            await storage.createOrderItemModifier({
+              orderItemId: orderItem.id,
+              modifierOptionId: mod.optionId,
+              nameSnapshot: mod.name,
+              priceDeltaSnapshot: mod.priceDelta || "0",
+              qty: mod.qty || 1,
+            });
+          }
+        }
+
+        const modNotes = item.modifiers && item.modifiers.length > 0
+          ? item.modifiers.map((m: any) => m.name).join(", ")
+          : "";
+        const fullNotes = [item.notes, modNotes].filter(Boolean).join(" | ");
+
         await storage.createKitchenTicketItem({
           kitchenTicketId: ticket.id,
           orderItemId: orderItem.id,
           productNameSnapshot: product.name,
           qty: item.qty,
-          notes: item.notes || null,
+          notes: fullNotes || null,
           status: "NEW",
         });
 
@@ -1351,7 +1388,7 @@ export async function registerRoutes(
           productNameSnapshot: product.name,
           productPriceSnapshot: product.price,
           qty: item.qty,
-          notes: null,
+          notes: item.notes || null,
           origin: "QR",
           createdByUserId: null,
           responsibleWaiterId: order.responsibleWaiterId,
@@ -1359,6 +1396,18 @@ export async function registerRoutes(
           roundNumber,
           qrSubmissionId: sub.id,
         });
+
+        if (item.modifiers && Array.isArray(item.modifiers)) {
+          for (const mod of item.modifiers) {
+            await storage.createOrderItemModifier({
+              orderItemId: orderItem.id,
+              modifierOptionId: mod.optionId,
+              nameSnapshot: mod.name,
+              priceDeltaSnapshot: mod.priceDelta || "0",
+              qty: mod.qty || 1,
+            });
+          }
+        }
 
         // Sales ledger
         await storage.createSalesLedgerItem({
