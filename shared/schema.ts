@@ -76,6 +76,8 @@ export const orders = pgTable("orders", {
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).default("0"),
   dailyNumber: integer("daily_number"),
   globalNumber: integer("global_number"),
+  parentOrderId: integer("parent_order_id"),
+  splitIndex: integer("split_index"),
 });
 
 export const orderItems = pgTable("order_items", {

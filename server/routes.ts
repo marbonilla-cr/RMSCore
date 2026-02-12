@@ -1499,89 +1499,40 @@ export async function registerRoutes(
     const allTables = await storage.getAllTables();
     const result: any[] = [];
     for (const t of allTables) {
-      const order = await storage.getOpenOrderForTable(t.id);
-      if (!order) continue;
-      const items = await storage.getOrderItems(order.id);
-      const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PENDING");
-      if (activeItems.length === 0) continue;
-      const itemsWithModifiers = [];
-      for (const item of activeItems) {
-        const mods = await storage.getOrderItemModifiers(item.id);
-        const itemDiscounts = await storage.getOrderItemDiscounts(item.id);
-        const itemTaxes = await storage.getOrderItemTaxes(item.id);
-        itemsWithModifiers.push({ ...item, modifiers: mods, discounts: itemDiscounts, taxes: itemTaxes });
-      }
+      const openOrders = await storage.getOpenOrdersForTable(t.id);
+      if (openOrders.length === 0) continue;
 
-      const splits = await storage.getSplitAccountsForOrder(order.id);
-      const splitsWithItems = [];
-      for (const sp of splits) {
-        const spItems = await storage.getSplitItemsForSplit(sp.id);
-        splitsWithItems.push({ ...sp, items: spItems });
-      }
-      const hasSplitItems = splitsWithItems.some(s => s.items.length > 0);
-
-      if (hasSplitItems) {
-        const assignedItemIds = splitsWithItems.flatMap(s => s.items.map(si => si.orderItemId));
-        const unassignedItems = itemsWithModifiers.filter(i => !assignedItemIds.includes(i.id) && i.status !== "PAID");
-
-        if (unassignedItems.length > 0) {
-          const uDiscounts = unassignedItems.flatMap(i => (i as any).discounts || []);
-          const uTaxes = unassignedItems.flatMap(i => (i as any).taxes || []);
-          const uTotal = unassignedItems.reduce((s, i) => s + Number(i.productPriceSnapshot) * i.qty, 0);
-          result.push({
-            id: t.id,
-            tableName: `${t.tableName} - Principal`,
-            orderId: order.id,
-            splitId: null,
-            splitLabel: "Principal",
-            dailyNumber: order.dailyNumber,
-            globalNumber: order.globalNumber,
-            totalAmount: uTotal.toFixed(2),
-            openedAt: order.openedAt,
-            itemCount: unassignedItems.length,
-            items: unassignedItems,
-            totalDiscounts: uDiscounts.reduce((s: number, d: any) => s + Number(d.amountApplied), 0).toFixed(2),
-            totalTaxes: uTaxes.reduce((s: number, t: any) => s + Number(t.taxAmount), 0).toFixed(2),
-            taxBreakdown: aggregateTaxBreakdown(uTaxes),
-          });
+      for (const order of openOrders) {
+        const items = await storage.getOrderItems(order.id);
+        const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PENDING");
+        if (activeItems.length === 0) continue;
+        const itemsWithModifiers = [];
+        for (const item of activeItems) {
+          const mods = await storage.getOrderItemModifiers(item.id);
+          const itemDiscounts = await storage.getOrderItemDiscounts(item.id);
+          const itemTaxes = await storage.getOrderItemTaxes(item.id);
+          itemsWithModifiers.push({ ...item, modifiers: mods, discounts: itemDiscounts, taxes: itemTaxes });
         }
-
-        for (const sp of splitsWithItems) {
-          if (sp.items.length === 0) continue;
-          const splitItemObjs = sp.items.map(si => itemsWithModifiers.find(i => i.id === si.orderItemId)).filter(Boolean) as typeof itemsWithModifiers;
-          const unpaidSplitItems = splitItemObjs.filter(i => i.status !== "PAID");
-          if (unpaidSplitItems.length === 0) continue;
-          const spDiscounts = unpaidSplitItems.flatMap(i => (i as any).discounts || []);
-          const spTaxes = unpaidSplitItems.flatMap(i => (i as any).taxes || []);
-          const spTotal = unpaidSplitItems.reduce((s, i) => s + Number(i.productPriceSnapshot) * i.qty, 0);
-          result.push({
-            id: t.id,
-            tableName: `${t.tableName} - ${sp.label}`,
-            orderId: order.id,
-            splitId: sp.id,
-            splitLabel: sp.label,
-            dailyNumber: order.dailyNumber,
-            globalNumber: order.globalNumber,
-            totalAmount: spTotal.toFixed(2),
-            openedAt: order.openedAt,
-            itemCount: unpaidSplitItems.length,
-            items: unpaidSplitItems,
-            totalDiscounts: spDiscounts.reduce((s: number, d: any) => s + Number(d.amountApplied), 0).toFixed(2),
-            totalTaxes: spTaxes.reduce((s: number, t: any) => s + Number(t.taxAmount), 0).toFixed(2),
-            taxBreakdown: aggregateTaxBreakdown(spTaxes),
-          });
-        }
-      } else {
         const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(order.id);
         const orderTaxesList = await storage.getOrderItemTaxesByOrder(order.id);
+
+        const isChild = !!order.parentOrderId;
+        const ticketNumber = isChild
+          ? `${order.dailyNumber}-${order.splitIndex}`
+          : `${order.dailyNumber}`;
+        const displayName = isChild
+          ? `${t.tableName} #${ticketNumber}`
+          : `${t.tableName} #${order.dailyNumber}`;
+
         result.push({
           id: t.id,
-          tableName: t.tableName,
+          tableName: displayName,
           orderId: order.id,
-          splitId: null,
-          splitLabel: null,
+          parentOrderId: order.parentOrderId || null,
+          splitIndex: order.splitIndex || null,
           dailyNumber: order.dailyNumber,
           globalNumber: order.globalNumber,
+          ticketNumber,
           totalAmount: order.totalAmount,
           openedAt: order.openedAt,
           itemCount: activeItems.length,
@@ -1644,6 +1595,22 @@ export async function registerRoutes(
         tableId: null,
         metadata: { orderId, amount, paymentMethodId },
       });
+
+      const paidOrder = await storage.getOrder(orderId);
+      if (paidOrder?.parentOrderId) {
+        const siblings = await storage.getChildOrders(paidOrder.parentOrderId);
+        const allSiblingsPaid = siblings.every(s => s.status === "PAID" || s.status === "VOIDED");
+        if (allSiblingsPaid) {
+          const parentOrder = await storage.getOrder(paidOrder.parentOrderId);
+          if (parentOrder && (parentOrder.status === "SPLIT" || parentOrder.status === "OPEN")) {
+            const parentItems = await storage.getOrderItems(paidOrder.parentOrderId);
+            const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
+            if (parentActive.length === 0) {
+              await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() });
+            }
+          }
+        }
+      }
 
       broadcast("payment_completed", { orderId });
       broadcast("table_status_changed", {});
@@ -1806,6 +1773,75 @@ export async function registerRoutes(
 
       broadcast("order_updated", {});
       res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/pos/split-order", requirePermission("POS_SPLIT"), async (req, res) => {
+    try {
+      const { orderId } = req.body;
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+      if (order.status !== "OPEN" && order.status !== "IN_KITCHEN" && order.status !== "READY") {
+        return res.status(400).json({ message: "Orden no está abierta" });
+      }
+
+      const splits = await storage.getSplitAccountsForOrder(orderId);
+      const splitsWithItems = [];
+      for (const sp of splits) {
+        const items = await storage.getSplitItemsForSplit(sp.id);
+        if (items.length > 0) splitsWithItems.push({ ...sp, items });
+      }
+
+      if (splitsWithItems.length === 0) {
+        return res.status(400).json({ message: "No hay subcuentas con items para separar" });
+      }
+
+      const allOrderItems = await storage.getOrderItems(orderId);
+      const assignedItemIds = splitsWithItems.flatMap(s => s.items.map(si => si.orderItemId));
+      const unassignedActive = allOrderItems.filter(i => !assignedItemIds.includes(i.id) && i.status !== "VOIDED" && i.status !== "PAID");
+
+      const parentDailyNumber = order.dailyNumber || 0;
+      const createdOrderIds: number[] = [];
+      let splitIdx = 1;
+
+      for (const sp of splitsWithItems) {
+        const childOrder = await storage.createChildOrder({
+          tableId: order.tableId,
+          status: "OPEN",
+          responsibleWaiterId: order.responsibleWaiterId,
+          businessDate: order.businessDate,
+          totalAmount: "0",
+          parentOrderId: orderId,
+          splitIndex: splitIdx,
+          dailyNumber: parentDailyNumber,
+          globalNumber: order.globalNumber,
+        });
+
+        for (const si of sp.items) {
+          await storage.moveOrderItem(si.orderItemId, childOrder.id);
+        }
+
+        await storage.recalcOrderTotal(childOrder.id);
+        createdOrderIds.push(childOrder.id);
+        splitIdx++;
+      }
+
+      await storage.recalcOrderTotal(orderId);
+
+      for (const sp of splits) {
+        await storage.deleteSplitAccount(sp.id);
+      }
+
+      if (unassignedActive.length === 0) {
+        await storage.updateOrder(orderId, { status: "SPLIT", closedAt: new Date() });
+      }
+
+      broadcast("order_updated", { orderId });
+      broadcast("table_status_changed", {});
+
+      res.json({ ok: true, parentOrderId: orderId, childOrderIds: createdOrderIds });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

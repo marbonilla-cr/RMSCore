@@ -284,8 +284,55 @@ export async function getOpenOrderForTable(tableId: number) {
   const [order] = await db.select().from(orders)
     .where(and(
       eq(orders.tableId, tableId),
+      inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"]),
+      sql`${orders.parentOrderId} IS NULL`
+    ));
+  return order;
+}
+
+export async function getOpenOrdersForTable(tableId: number) {
+  return db.select().from(orders)
+    .where(and(
+      eq(orders.tableId, tableId),
       inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"])
     ));
+}
+
+export async function getChildOrders(parentOrderId: number) {
+  return db.select().from(orders)
+    .where(eq(orders.parentOrderId, parentOrderId));
+}
+
+export async function moveOrderItem(itemId: number, newOrderId: number) {
+  const [item] = await db.update(orderItems)
+    .set({ orderId: newOrderId })
+    .where(eq(orderItems.id, itemId))
+    .returning();
+  return item;
+}
+
+export async function createChildOrder(data: {
+  tableId: number;
+  status: string;
+  responsibleWaiterId: number | null;
+  businessDate: string;
+  totalAmount: string;
+  parentOrderId: number;
+  splitIndex: number;
+  dailyNumber: number;
+  globalNumber: number | null;
+}) {
+  const [order] = await db.insert(orders).values({
+    tableId: data.tableId,
+    status: data.status,
+    responsibleWaiterId: data.responsibleWaiterId,
+    businessDate: data.businessDate,
+    totalAmount: data.totalAmount,
+    parentOrderId: data.parentOrderId,
+    splitIndex: data.splitIndex,
+    dailyNumber: data.dailyNumber,
+    globalNumber: data.globalNumber,
+  }).returning();
   return order;
 }
 

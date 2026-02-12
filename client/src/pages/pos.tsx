@@ -67,10 +67,11 @@ interface POSTable {
   id: number;
   tableName: string;
   orderId: number;
-  splitId?: number | null;
-  splitLabel?: string | null;
+  parentOrderId?: number | null;
+  splitIndex?: number | null;
   dailyNumber?: number | null;
   globalNumber?: number | null;
+  ticketNumber?: string;
   totalAmount: string;
   openedAt?: string | null;
   itemCount: number;
@@ -501,6 +502,32 @@ export default function POSPage() {
     },
   });
 
+  const splitOrderMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedTable) throw new Error("No hay orden seleccionada");
+      return apiRequest("POST", "/api/pos/split-order", {
+        orderId: selectedTable.orderId,
+      });
+    },
+    onSuccess: async (res: any) => {
+      const data = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      setSplitMode(false);
+      setDetailView(false);
+      setSelectedTable(null);
+      setSelectedItemIds([]);
+      setActiveSplitId(null);
+      const childIds = data.childOrderIds || [];
+      setHighlightedOrderIds(childIds);
+      setTimeout(() => setHighlightedOrderIds([]), 2500);
+      toast({ title: "Cuenta separada en tiquetes independientes" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error al separar", description: err.message, variant: "destructive" });
+    },
+  });
+
   const lastEmptySplit = splits.filter(s => s.items.length === 0).length > 0;
 
   const removeLastEmptySplit = () => {
@@ -592,13 +619,8 @@ export default function POSPage() {
     setMovingItemId(null);
   };
 
-  const payingAmount = payingSplitId
-    ? getSplitTotal(splits.find((s) => s.id === payingSplitId)!)
-    : Number(selectedTable?.totalAmount || 0);
-
-  const payingLabel = payingSplitId
-    ? splits.find((s) => s.id === payingSplitId)?.label || "Subcuenta"
-    : selectedTable?.tableName || "";
+  const payingAmount = Number(selectedTable?.totalAmount || 0);
+  const payingLabel = selectedTable?.tableName || "";
 
   return (
     <div className="p-3 md:p-4 max-w-5xl mx-auto">
@@ -801,19 +823,12 @@ export default function POSPage() {
                 {splits.length > 0 && splits.some(s => s.items.length > 0) && (
                   <Button
                     className="w-full"
-                    onClick={() => {
-                      const orderId = selectedTable.orderId;
-                      setSplitMode(false);
-                      setDetailView(false);
-                      setSelectedTable(null);
-                      setSelectedItemIds([]);
-                      setActiveSplitId(null);
-                      setHighlightedOrderIds([orderId]);
-                      setTimeout(() => setHighlightedOrderIds([]), 2500);
-                    }}
+                    disabled={splitOrderMutation.isPending}
+                    onClick={() => splitOrderMutation.mutate()}
                     data-testid="button-confirm-split"
                   >
-                    <Split className="w-4 h-4 mr-1" /> Separar
+                    {splitOrderMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Split className="w-4 h-4 mr-1" />}
+                    Separar
                   </Button>
                 )}
               </div>
@@ -966,7 +981,7 @@ export default function POSPage() {
                   const bTime = b.openedAt ? new Date(b.openedAt).getTime() : 0;
                   return aTime - bTime;
                 }).map((t) => (
-                  <Card key={`${t.id}-${t.splitId || "main"}`} className={`hover-elevate cursor-pointer transition-all duration-700 ${highlightedOrderIds.includes(t.orderId) ? "ring-2 ring-primary bg-primary/10" : ""}`} onClick={() => { setSelectedTable(t); setDetailView(true); }} data-testid={`card-pos-table-${t.id}${t.splitId ? `-split-${t.splitId}` : ""}`}>
+                  <Card key={`${t.id}-${t.orderId}`} className={`hover-elevate cursor-pointer transition-all duration-700 ${highlightedOrderIds.includes(t.orderId) ? "ring-2 ring-primary bg-primary/10" : ""}`} onClick={() => { setSelectedTable(t); setDetailView(true); }} data-testid={`card-pos-table-${t.id}-order-${t.orderId}`}>
                     <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
                       <h3 className="font-bold text-lg">{t.tableName}</h3>
                       <Badge>{t.itemCount} items</Badge>
@@ -989,19 +1004,15 @@ export default function POSPage() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedTable(t);
-                                if (t.splitId) {
-                                  openPaymentForSplit(t.splitId);
-                                } else {
-                                  openPaymentForFull();
-                                }
+                                openPaymentForFull();
                               }}
                               disabled={!cashSession?.id || !!cashSession.closedAt}
-                              data-testid={`button-pay-table-${t.id}${t.splitId ? `-split-${t.splitId}` : ""}`}
+                              data-testid={`button-pay-table-${t.id}-order-${t.orderId}`}
                             >
                               <DollarSign className="w-4 h-4 mr-1" /> Pagar
                             </Button>
                           )}
-                          {canSplit && !t.splitId && !t.splitLabel && (
+                          {canSplit && !t.parentOrderId && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -1018,7 +1029,7 @@ export default function POSPage() {
                                   await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
                                   await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", t.orderId, "splits"] });
                                   const freshTables: POSTable[] = queryClient.getQueryData(["/api/pos/tables"]) || [];
-                                  const freshTable = freshTables.find(ft => ft.orderId === t.orderId && !ft.splitId);
+                                  const freshTable = freshTables.find(ft => ft.orderId === t.orderId);
                                   if (freshTable) setSelectedTable(freshTable);
                                   setSplitMode(true);
                                 } catch (err: any) {
@@ -1032,7 +1043,7 @@ export default function POSPage() {
                               <Split className="w-4 h-4 mr-1" /> Dividir
                             </Button>
                           )}
-                          {canVoidOrder && !t.splitId && (
+                          {canVoidOrder && !t.parentOrderId && (
                             <Button
                               size="sm"
                               variant="destructive"
@@ -1132,7 +1143,7 @@ export default function POSPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {payingSplitId ? `Pagar ${payingLabel}` : `Cobrar - ${selectedTable?.tableName}`}
+              Cobrar - {payingLabel}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -1140,7 +1151,7 @@ export default function POSPage() {
               <p className="text-3xl font-bold" data-testid="text-payment-total">
                 ₡{payingAmount.toLocaleString()}
               </p>
-              {!payingSplitId && selectedTable && (Number(selectedTable.totalDiscounts || 0) > 0 || Number(selectedTable.totalTaxes || 0) > 0) && (
+              {selectedTable && (Number(selectedTable.totalDiscounts || 0) > 0 || Number(selectedTable.totalTaxes || 0) > 0) && (
                 <div className="text-left mt-2 space-y-1 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Subtotal</span>
@@ -1160,11 +1171,8 @@ export default function POSPage() {
                   ))}
                 </div>
               )}
-              {!payingSplitId && !(Number(selectedTable?.totalDiscounts || 0) > 0 || Number(selectedTable?.totalTaxes || 0) > 0) && (
-                <p className="text-sm text-muted-foreground">{selectedTable?.itemCount} items</p>
-              )}
-              {payingSplitId && (
-                <p className="text-sm text-muted-foreground">{payingLabel}</p>
+              {selectedTable && !(Number(selectedTable.totalDiscounts || 0) > 0 || Number(selectedTable.totalTaxes || 0) > 0) && (
+                <p className="text-sm text-muted-foreground">{selectedTable.itemCount} items</p>
               )}
             </div>
             <div className="space-y-2">
@@ -1210,11 +1218,11 @@ export default function POSPage() {
             )}
             <Button
               className="w-full"
-              onClick={() => payingSplitId ? paySplitMutation.mutate() : payMutation.mutate()}
-              disabled={!paymentMethodId || payMutation.isPending || paySplitMutation.isPending}
+              onClick={() => payMutation.mutate()}
+              disabled={!paymentMethodId || payMutation.isPending}
               data-testid="button-process-payment"
             >
-              {(payMutation.isPending || paySplitMutation.isPending) ? (
+              {payMutation.isPending ? (
                 <Loader2 className="w-4 h-4 animate-spin mr-1" />
               ) : (
                 <DollarSign className="w-4 h-4 mr-1" />
