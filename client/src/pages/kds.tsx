@@ -191,7 +191,7 @@ export default function KDSPage() {
                                 {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
                               </p>
                             )}
-                            {item.notes && <p className="text-xs opacity-75">{item.notes}</p>}
+                            {item.notes && !(item.modifiers && item.modifiers.length > 0) && <p className="text-xs opacity-75">{item.notes}</p>}
                           </div>
                           <Badge variant="secondary" className="text-xs flex-shrink-0">
                             {item.status === "NEW" ? "NUEVO" : item.status === "PREPARING" ? "PREPARANDO" : "LISTO"}
