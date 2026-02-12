@@ -67,6 +67,8 @@ interface POSTable {
   id: number;
   tableName: string;
   orderId: number;
+  splitId?: number | null;
+  splitLabel?: string | null;
   dailyNumber?: number | null;
   globalNumber?: number | null;
   totalAmount: string;
@@ -964,7 +966,7 @@ export default function POSPage() {
                   const bTime = b.openedAt ? new Date(b.openedAt).getTime() : 0;
                   return aTime - bTime;
                 }).map((t) => (
-                  <Card key={t.id} className={`hover-elevate cursor-pointer transition-all duration-700 ${highlightedOrderIds.includes(t.orderId) ? "ring-2 ring-primary bg-primary/10" : ""}`} onClick={() => { setSelectedTable(t); setDetailView(true); }} data-testid={`card-pos-table-${t.id}`}>
+                  <Card key={`${t.id}-${t.splitId || "main"}`} className={`hover-elevate cursor-pointer transition-all duration-700 ${highlightedOrderIds.includes(t.orderId) ? "ring-2 ring-primary bg-primary/10" : ""}`} onClick={() => { setSelectedTable(t); setDetailView(true); }} data-testid={`card-pos-table-${t.id}${t.splitId ? `-split-${t.splitId}` : ""}`}>
                     <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
                       <h3 className="font-bold text-lg">{t.tableName}</h3>
                       <Badge>{t.itemCount} items</Badge>
@@ -984,14 +986,22 @@ export default function POSPage() {
                           {canPay && (
                             <Button
                               size="sm"
-                              onClick={(e) => { e.stopPropagation(); setSelectedTable(t); openPaymentForFull(); }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTable(t);
+                                if (t.splitId) {
+                                  openPaymentForSplit(t.splitId);
+                                } else {
+                                  openPaymentForFull();
+                                }
+                              }}
                               disabled={!cashSession?.id || !!cashSession.closedAt}
-                              data-testid={`button-pay-table-${t.id}`}
+                              data-testid={`button-pay-table-${t.id}${t.splitId ? `-split-${t.splitId}` : ""}`}
                             >
                               <DollarSign className="w-4 h-4 mr-1" /> Pagar
                             </Button>
                           )}
-                          {canSplit && (
+                          {canSplit && !t.splitId && !t.splitLabel && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -1008,7 +1018,7 @@ export default function POSPage() {
                                   await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
                                   await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", t.orderId, "splits"] });
                                   const freshTables: POSTable[] = queryClient.getQueryData(["/api/pos/tables"]) || [];
-                                  const freshTable = freshTables.find(ft => ft.orderId === t.orderId);
+                                  const freshTable = freshTables.find(ft => ft.orderId === t.orderId && !ft.splitId);
                                   if (freshTable) setSelectedTable(freshTable);
                                   setSplitMode(true);
                                 } catch (err: any) {
@@ -1022,7 +1032,7 @@ export default function POSPage() {
                               <Split className="w-4 h-4 mr-1" /> Dividir
                             </Button>
                           )}
-                          {canVoidOrder && (
+                          {canVoidOrder && !t.splitId && (
                             <Button
                               size="sm"
                               variant="destructive"
