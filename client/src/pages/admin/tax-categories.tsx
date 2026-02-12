@@ -9,17 +9,31 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Loader2, Receipt } from "lucide-react";
+import { Plus, Pencil, Loader2, Receipt, CheckCheck } from "lucide-react";
 import type { TaxCategory } from "@shared/schema";
 
 export default function AdminTaxCategoriesPage() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [applyAllConfirm, setApplyAllConfirm] = useState<TaxCategory | null>(null);
   const [editing, setEditing] = useState<TaxCategory | null>(null);
   const [form, setForm] = useState({ name: "", rate: "", inclusive: false, active: true, sortOrder: 0 });
 
   const { data: taxList = [], isLoading } = useQuery<TaxCategory[]>({
     queryKey: ["/api/admin/tax-categories"],
+  });
+
+  const applyAllMutation = useMutation({
+    mutationFn: async (taxCategoryId: number) => {
+      const res = await apiRequest("POST", `/api/admin/tax-categories/${taxCategoryId}/apply-all`);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Listo", description: data.message });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
   });
 
   const saveMutation = useMutation({
@@ -163,6 +177,9 @@ export default function AdminTaxCategoriesPage() {
                   <Badge variant={tc.active ? "default" : "secondary"}>
                     {tc.active ? "Activo" : "Inactivo"}
                   </Badge>
+                  <Button size="icon" variant="ghost" onClick={() => setApplyAllConfirm(tc)} data-testid={`button-apply-all-tax-${tc.id}`} disabled={applyAllMutation.isPending}>
+                    {applyAllMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCheck className="w-4 h-4" />}
+                  </Button>
                   <Button size="icon" variant="ghost" onClick={() => openEdit(tc)} data-testid={`button-edit-tax-${tc.id}`}>
                     <Pencil className="w-4 h-4" />
                   </Button>
@@ -172,6 +189,35 @@ export default function AdminTaxCategoriesPage() {
           ))}
         </div>
       )}
+
+      <Dialog open={!!applyAllConfirm} onOpenChange={(v) => !v && setApplyAllConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Aplicar "{applyAllConfirm?.name}" a todos los productos</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Esto asignará el impuesto "{applyAllConfirm?.name}" ({applyAllConfirm?.rate}%) a todos los productos que aún no lo tengan. Los productos que ya lo tienen no se verán afectados.
+          </p>
+          <div className="flex gap-2 justify-end mt-4">
+            <Button variant="outline" onClick={() => setApplyAllConfirm(null)} data-testid="button-cancel-apply-all">
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (applyAllConfirm) {
+                  applyAllMutation.mutate(applyAllConfirm.id);
+                  setApplyAllConfirm(null);
+                }
+              }}
+              disabled={applyAllMutation.isPending}
+              data-testid="button-confirm-apply-all"
+            >
+              {applyAllMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
+              Aplicar a todos
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

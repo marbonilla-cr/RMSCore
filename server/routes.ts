@@ -647,6 +647,18 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/admin/tax-categories/:id/apply-all", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const taxCategoryId = parseInt(req.params.id);
+      const tc = await storage.getTaxCategory(taxCategoryId);
+      if (!tc) return res.status(404).json({ message: "Impuesto no encontrado" });
+      const result = await storage.applyTaxToAllProducts(taxCategoryId);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   // Product tax assignment
   app.get("/api/admin/products/:id/taxes", requireRole("MANAGER"), async (req, res) => {
     const ptcs = await storage.getProductTaxCategories(parseInt(req.params.id));

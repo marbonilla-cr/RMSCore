@@ -1311,6 +1311,24 @@ export async function setProductTaxCategories(productId: number, taxCategoryIds:
   }
 }
 
+export async function applyTaxToAllProducts(taxCategoryId: number) {
+  const allProds = await db.select({ id: products.id }).from(products);
+  const existing = await db.select().from(productTaxCategories)
+    .where(eq(productTaxCategories.taxCategoryId, taxCategoryId));
+  const existingSet = new Set(existing.map(e => e.productId));
+  const toInsert = allProds.filter(p => !existingSet.has(p.id));
+  if (toInsert.length > 0) {
+    await db.insert(productTaxCategories).values(
+      toInsert.map(p => ({ productId: p.id, taxCategoryId }))
+    );
+  }
+  return {
+    message: `Impuesto aplicado a ${toInsert.length} productos nuevos (${existingSet.size} ya lo tenían)`,
+    added: toInsert.length,
+    skipped: existingSet.size,
+  };
+}
+
 // ==================== ORDER ITEM TAXES ====================
 export async function getOrderItemTaxes(orderItemId: number) {
   return db.select().from(orderItemTaxes).where(eq(orderItemTaxes.orderItemId, orderItemId));
