@@ -181,32 +181,28 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
 
   parts.push(divider(cols));
 
-  const hasBreakdown = (data.totalDiscounts && data.totalDiscounts > 0) || (data.totalTaxes && data.totalTaxes > 0);
+  const subtotal = data.items.reduce((s, i) => s + i.total, 0);
+  const subLabel = "Subtotal";
+  const subValue = formatCurrency(subtotal);
+  parts.push(line(padRight(subLabel, cols - subValue.length - 1) + " " + subValue));
 
-  if (hasBreakdown) {
-    const subtotal = data.items.reduce((s, i) => s + i.total, 0);
-    const subLabel = "Subtotal";
-    const subValue = formatCurrency(subtotal);
-    parts.push(line(padRight(subLabel, cols - subValue.length - 1) + " " + subValue));
-
-    if (data.totalDiscounts && data.totalDiscounts > 0) {
-      const dLabel = "Descuentos";
-      const dValue = "-" + formatCurrency(data.totalDiscounts);
-      parts.push(line(padRight(dLabel, cols - dValue.length - 1) + " " + dValue));
+  if (data.taxBreakdown) {
+    for (const tb of data.taxBreakdown) {
+      const tLabel = `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}`;
+      const tValue = (tb.inclusive ? "" : "+") + formatCurrency(tb.totalAmount);
+      parts.push(line(padRight(tLabel, cols - tValue.length - 1) + " " + tValue));
     }
+  }
 
-    if (data.taxBreakdown) {
-      for (const tb of data.taxBreakdown) {
-        const tLabel = `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}`;
-        const tValue = (tb.inclusive ? "" : "+") + formatCurrency(tb.totalAmount);
-        parts.push(line(padRight(tLabel, cols - tValue.length - 1) + " " + tValue));
-      }
-    }
+  if (data.totalDiscounts && data.totalDiscounts > 0) {
+    const dLabel = "Descuentos";
+    const dValue = "-" + formatCurrency(data.totalDiscounts);
+    parts.push(line(padRight(dLabel, cols - dValue.length - 1) + " " + dValue));
   }
 
   parts.push(CMD.DOUBLE_ON);
   parts.push(CMD.BOLD_ON);
-  const totalLabel = "TOTAL";
+  const totalLabel = "TOTAL A PAGAR";
   const totalValue = formatCurrency(data.totalAmount);
   const totalSpacing = cols / 2 - totalLabel.length - totalValue.length;
   parts.push(line(totalLabel + " ".repeat(Math.max(totalSpacing, 2)) + totalValue));

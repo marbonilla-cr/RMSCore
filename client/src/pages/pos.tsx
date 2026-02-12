@@ -253,12 +253,12 @@ export default function POSPage() {
       const tbl = selectedTable!;
       const pm = paymentMethods.find((m) => m.id === parseInt(paymentMethodId));
       const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
-      const receiptItems = tbl.items.filter(i => i.status !== "VOIDED").map((i) => ({
-        name: i.productNameSnapshot,
-        qty: i.qty,
-        price: Number(i.productPriceSnapshot),
-        total: Number(i.productPriceSnapshot) * i.qty,
-      }));
+      const receiptItems = tbl.items.filter(i => i.status !== "VOIDED").map((i) => {
+        const modDelta = (i.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+        const modLabel = (i.modifiers && i.modifiers.length > 0) ? ` (${i.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
+        const unitPrice = Number(i.productPriceSnapshot) + modDelta;
+        return { name: i.productNameSnapshot + modLabel, qty: i.qty, price: unitPrice, total: unitPrice * i.qty };
+      });
 
       setLastPaidOrder({
         orderId: tbl.orderId,
@@ -306,9 +306,11 @@ export default function POSPage() {
       if (split && tbl) {
         receiptItems = split.items.map((si) => {
           const oi = tbl.items.find((i) => i.id === si.orderItemId);
-          const price = oi ? Number(oi.productPriceSnapshot) : 0;
-          const qty = oi ? oi.qty : 0;
-          return { name: oi?.productNameSnapshot || "", qty, price, total: price * qty };
+          if (!oi) return { name: "", qty: 0, price: 0, total: 0 };
+          const modDelta = (oi.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+          const modLabel = (oi.modifiers && oi.modifiers.length > 0) ? ` (${oi.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
+          const unitPrice = Number(oi.productPriceSnapshot) + modDelta;
+          return { name: oi.productNameSnapshot + modLabel, qty: oi.qty, price: unitPrice, total: unitPrice * oi.qty };
         });
         total = receiptItems.reduce((s, i) => s + i.total, 0);
       }
@@ -653,40 +655,30 @@ export default function POSPage() {
             <Badge variant="secondary">{selectedTable.itemCount} items</Badge>
           </div>
 
-          {(Number(selectedTable.totalDiscounts || 0) > 0 || Number(selectedTable.totalTaxes || 0) > 0) && (
-            <Card className="mb-4">
-              <CardContent className="py-3 space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Subtotal</span>
-                  <span>₡{getOrderSubtotal(selectedTable).toLocaleString()}</span>
+          <Card className="mb-4">
+            <CardContent className="py-3 space-y-1">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span>₡{getOrderSubtotal(selectedTable).toLocaleString()}</span>
+              </div>
+              {selectedTable.taxBreakdown?.map((tb, idx) => (
+                <div key={idx} className="flex justify-between text-sm text-muted-foreground">
+                  <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                  <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                 </div>
-                {Number(selectedTable.totalDiscounts || 0) > 0 && (
-                  <div className="flex justify-between text-sm text-green-600 dark:text-green-400">
-                    <span>Descuentos</span>
-                    <span>-₡{Number(selectedTable.totalDiscounts).toLocaleString()}</span>
-                  </div>
-                )}
-                {selectedTable.taxBreakdown?.map((tb, idx) => (
-                  <div key={idx} className="flex justify-between text-sm text-muted-foreground">
-                    <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
-                    <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between font-bold text-lg border-t pt-1" data-testid="text-detail-total">
-                  <span>Total</span>
-                  <span>₡{Number(selectedTable.totalAmount).toLocaleString()}</span>
+              ))}
+              {Number(selectedTable.totalDiscounts || 0) > 0 && (
+                <div className="flex justify-between text-sm text-green-600 dark:text-green-400">
+                  <span>Descuentos</span>
+                  <span>-₡{Number(selectedTable.totalDiscounts).toLocaleString()}</span>
                 </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {!(Number(selectedTable.totalDiscounts || 0) > 0 || Number(selectedTable.totalTaxes || 0) > 0) && (
-            <div className="flex items-center justify-end mb-4">
-              <span className="font-bold text-lg" data-testid="text-detail-total">
-                Total: ₡{Number(selectedTable.totalAmount).toLocaleString()}
-              </span>
-            </div>
-          )}
+              )}
+              <div className="flex justify-between font-bold text-lg border-t pt-1" data-testid="text-detail-total">
+                <span>Total a pagar</span>
+                <span>₡{Number(selectedTable.totalAmount).toLocaleString()}</span>
+              </div>
+            </CardContent>
+          </Card>
 
           {splitMode ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

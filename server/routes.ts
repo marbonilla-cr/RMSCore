@@ -2113,12 +2113,12 @@ export async function registerRoutes(
             `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${i.name}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:center">${i.qty}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right">₡${i.lineTotal.toLocaleString()}</td></tr>`
           ).join("");
 
-          const breakdownHtml = (totalDiscounts > 0 || totalTaxes > 0) ? `
+          const breakdownHtml = `
               <table style="width:100%;margin:8px 0">
                 <tr><td style="padding:2px 8px">Subtotal</td><td style="padding:2px 8px;text-align:right">₡${subtotal.toLocaleString()}</td></tr>
-                ${totalDiscounts > 0 ? `<tr><td style="padding:2px 8px;color:#16a34a">Descuentos</td><td style="padding:2px 8px;text-align:right;color:#16a34a">-₡${totalDiscounts.toLocaleString()}</td></tr>` : ""}
                 ${taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}</td><td style="padding:2px 8px;text-align:right;color:#666">${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("")}
-              </table>` : "";
+                ${totalDiscounts > 0 ? `<tr><td style="padding:2px 8px;color:#16a34a">Descuentos</td><td style="padding:2px 8px;text-align:right;color:#16a34a">-₡${totalDiscounts.toLocaleString()}</td></tr>` : ""}
+              </table>`;
 
           const html = `
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
@@ -2131,16 +2131,16 @@ export async function registerRoutes(
                 <tbody>${itemRows}</tbody>
               </table>
               ${breakdownHtml}
-              <p style="font-size:18px;font-weight:bold;text-align:right">Total: ₡${total.toLocaleString()}</p>
+              <p style="font-size:18px;font-weight:bold;text-align:right">Total a pagar: ₡${total.toLocaleString()}</p>
               <p style="color:#999;font-size:12px;margin-top:24px;text-align:center">Gracias por su visita</p>
             </div>`;
 
           const textLines = emailItemsData.map(i => `${i.qty}x ${i.name} - ₡${i.lineTotal.toLocaleString()}`);
-          const breakdownText = (totalDiscounts > 0 || totalTaxes > 0) ? [
+          const breakdownText = [
             `Subtotal: ₡${subtotal.toLocaleString()}`,
-            ...(totalDiscounts > 0 ? [`Descuentos: -₡${totalDiscounts.toLocaleString()}`] : []),
             ...taxBk.map(tb => `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}: ${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}`),
-          ] : [];
+            ...(totalDiscounts > 0 ? [`Descuentos: -₡${totalDiscounts.toLocaleString()}`] : []),
+          ];
           const text = [
             `Ticket de Consumo`,
             `Mesa: ${table?.tableName || "N/A"}`,
@@ -2150,7 +2150,7 @@ export async function registerRoutes(
             ...textLines,
             `---`,
             ...breakdownText,
-            `Total: ₡${total.toLocaleString()}`,
+            `Total a pagar: ₡${total.toLocaleString()}`,
             ``,
             `Gracias por su visita`,
           ].filter(Boolean).join("\n");
