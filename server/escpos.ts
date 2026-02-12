@@ -186,17 +186,21 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
   const subValue = formatCurrency(subtotal);
   parts.push(line(padRight(subLabel, cols - subValue.length - 1) + " " + subValue));
 
-  if (data.taxBreakdown) {
+  if (data.taxBreakdown && data.taxBreakdown.length > 0) {
     for (const tb of data.taxBreakdown) {
       const tLabel = `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}`;
       const tValue = (tb.inclusive ? "" : "+") + formatCurrency(tb.totalAmount);
       parts.push(line(padRight(tLabel, cols - tValue.length - 1) + " " + tValue));
     }
+  } else {
+    const tLabel = "Impuestos";
+    const tValue = formatCurrency(0);
+    parts.push(line(padRight(tLabel, cols - tValue.length - 1) + " " + tValue));
   }
 
-  if (data.totalDiscounts && data.totalDiscounts > 0) {
+  {
     const dLabel = "Descuentos";
-    const dValue = "-" + formatCurrency(data.totalDiscounts);
+    const dValue = data.totalDiscounts && data.totalDiscounts > 0 ? "-" + formatCurrency(data.totalDiscounts) : formatCurrency(0);
     parts.push(line(padRight(dLabel, cols - dValue.length - 1) + " " + dValue));
   }
 

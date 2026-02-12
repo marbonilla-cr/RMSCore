@@ -2116,8 +2116,8 @@ export async function registerRoutes(
           const breakdownHtml = `
               <table style="width:100%;margin:8px 0">
                 <tr><td style="padding:2px 8px">Subtotal</td><td style="padding:2px 8px;text-align:right">₡${subtotal.toLocaleString()}</td></tr>
-                ${taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}</td><td style="padding:2px 8px;text-align:right;color:#666">${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("")}
-                ${totalDiscounts > 0 ? `<tr><td style="padding:2px 8px;color:#16a34a">Descuentos</td><td style="padding:2px 8px;text-align:right;color:#16a34a">-₡${totalDiscounts.toLocaleString()}</td></tr>` : ""}
+                ${taxBk.length > 0 ? taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}</td><td style="padding:2px 8px;text-align:right;color:#666">${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("") : `<tr><td style="padding:2px 8px;color:#666">Impuestos</td><td style="padding:2px 8px;text-align:right;color:#666">₡0</td></tr>`}
+                <tr><td style="padding:2px 8px;${totalDiscounts > 0 ? "color:#16a34a" : "color:#666"}">Descuentos</td><td style="padding:2px 8px;text-align:right;${totalDiscounts > 0 ? "color:#16a34a" : "color:#666"}">${totalDiscounts > 0 ? `-₡${totalDiscounts.toLocaleString()}` : "₡0"}</td></tr>
               </table>`;
 
           const html = `
@@ -2138,8 +2138,8 @@ export async function registerRoutes(
           const textLines = emailItemsData.map(i => `${i.qty}x ${i.name} - ₡${i.lineTotal.toLocaleString()}`);
           const breakdownText = [
             `Subtotal: ₡${subtotal.toLocaleString()}`,
-            ...taxBk.map(tb => `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}: ${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}`),
-            ...(totalDiscounts > 0 ? [`Descuentos: -₡${totalDiscounts.toLocaleString()}`] : []),
+            ...(taxBk.length > 0 ? taxBk.map(tb => `${tb.taxName} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}: ${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}`) : [`Impuestos: ₡0`]),
+            `Descuentos: ${totalDiscounts > 0 ? `-₡${totalDiscounts.toLocaleString()}` : "₡0"}`,
           ];
           const text = [
             `Ticket de Consumo`,

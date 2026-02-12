@@ -897,18 +897,23 @@ export default function POSPage() {
                     <span className="text-muted-foreground">Subtotal</span>
                     <span>₡{getOrderSubtotal(selectedTable).toLocaleString()}</span>
                   </div>
-                  {selectedTable.taxBreakdown?.map((tb, idx) => (
-                    <div key={idx} className="flex justify-between text-sm text-muted-foreground">
-                      <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
-                      <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
-                    </div>
-                  ))}
-                  {Number(selectedTable.totalDiscounts || 0) > 0 && (
-                    <div className="flex justify-between text-sm text-green-600 dark:text-green-400">
-                      <span>Descuentos</span>
-                      <span>-₡{Number(selectedTable.totalDiscounts).toLocaleString()}</span>
+                  {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
+                    selectedTable.taxBreakdown.map((tb, idx) => (
+                      <div key={idx} className="flex justify-between text-sm text-muted-foreground">
+                        <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                        <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex justify-between text-sm text-muted-foreground">
+                      <span>Impuestos</span>
+                      <span>₡0</span>
                     </div>
                   )}
+                  <div className={`flex justify-between text-sm ${Number(selectedTable.totalDiscounts || 0) > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
+                    <span>Descuentos</span>
+                    <span>{Number(selectedTable.totalDiscounts || 0) > 0 ? `-₡${Number(selectedTable.totalDiscounts).toLocaleString()}` : "₡0"}</span>
+                  </div>
                   <div className="flex justify-between font-bold text-lg border-t pt-1" data-testid="text-detail-total">
                     <span>Total a pagar</span>
                     <span>₡{Number(selectedTable.totalAmount).toLocaleString()}</span>
@@ -992,18 +997,23 @@ export default function POSPage() {
                           <span className="text-muted-foreground">Subtotal</span>
                           <span>₡{getOrderSubtotal(t).toLocaleString()}</span>
                         </div>
-                        {t.taxBreakdown?.map((tb, idx) => (
-                          <div key={idx} className="flex justify-between text-xs text-muted-foreground">
-                            <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
-                            <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
-                          </div>
-                        ))}
-                        {Number(t.totalDiscounts || 0) > 0 && (
-                          <div className="flex justify-between text-xs text-green-600 dark:text-green-400">
-                            <span>Descuentos</span>
-                            <span>-₡{Number(t.totalDiscounts).toLocaleString()}</span>
+                        {t.taxBreakdown && t.taxBreakdown.length > 0 ? (
+                          t.taxBreakdown.map((tb, idx) => (
+                            <div key={idx} className="flex justify-between text-xs text-muted-foreground">
+                              <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                              <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>Impuestos</span>
+                            <span>₡0</span>
                           </div>
                         )}
+                        <div className={`flex justify-between text-xs ${Number(t.totalDiscounts || 0) > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
+                          <span>Descuentos</span>
+                          <span>{Number(t.totalDiscounts || 0) > 0 ? `-₡${Number(t.totalDiscounts).toLocaleString()}` : "₡0"}</span>
+                        </div>
                         <div className="flex justify-between font-bold text-lg pt-1">
                           <span>Total a pagar</span>
                           <span>₡{Number(t.totalAmount).toLocaleString()}</span>
@@ -1168,18 +1178,23 @@ export default function POSPage() {
                     <span className="text-muted-foreground">Subtotal</span>
                     <span>₡{getOrderSubtotal(selectedTable).toLocaleString()}</span>
                   </div>
-                  {selectedTable.taxBreakdown?.map((tb, idx) => (
-                    <div key={idx} className="flex justify-between text-muted-foreground">
-                      <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
-                      <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
-                    </div>
-                  ))}
-                  {Number(selectedTable.totalDiscounts || 0) > 0 && (
-                    <div className="flex justify-between text-green-600 dark:text-green-400">
-                      <span>Descuentos</span>
-                      <span>-₡{Number(selectedTable.totalDiscounts).toLocaleString()}</span>
+                  {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
+                    selectedTable.taxBreakdown.map((tb, idx) => (
+                      <div key={idx} className="flex justify-between text-muted-foreground">
+                        <span>{tb.taxName} ({tb.taxRate}%){tb.inclusive ? " incl." : ""}</span>
+                        <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Impuestos</span>
+                      <span>₡0</span>
                     </div>
                   )}
+                  <div className={`flex justify-between ${Number(selectedTable.totalDiscounts || 0) > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
+                    <span>Descuentos</span>
+                    <span>{Number(selectedTable.totalDiscounts || 0) > 0 ? `-₡${Number(selectedTable.totalDiscounts).toLocaleString()}` : "₡0"}</span>
+                  </div>
                 </div>
               )}
             </div>

@@ -154,16 +154,19 @@ export function printReceipt(data: ReceiptData) {
       <td style="font-size:11px;">Subtotal</td>
       <td style="text-align:right;font-size:11px;" colspan="3">${formatCurrency(data.items.reduce((s, i) => s + i.total, 0))}</td>
     </tr>
-    ${(data.taxBreakdown || []).map(tb => `
+    ${(data.taxBreakdown && data.taxBreakdown.length > 0) ? data.taxBreakdown.map(tb => `
     <tr>
       <td style="font-size:11px;">${escapeHtml(tb.taxName)} (${tb.taxRate}%)${tb.inclusive ? " incl." : ""}</td>
       <td style="text-align:right;font-size:11px;" colspan="3">${tb.inclusive ? "" : "+"}${formatCurrency(tb.totalAmount)}</td>
-    </tr>`).join("")}
-    ${data.totalDiscounts && data.totalDiscounts > 0 ? `
+    </tr>`).join("") : `
+    <tr>
+      <td style="font-size:11px;">Impuestos</td>
+      <td style="text-align:right;font-size:11px;" colspan="3">${formatCurrency(0)}</td>
+    </tr>`}
     <tr>
       <td style="font-size:11px;">Descuentos</td>
-      <td style="text-align:right;font-size:11px;" colspan="3">-${formatCurrency(data.totalDiscounts)}</td>
-    </tr>` : ""}
+      <td style="text-align:right;font-size:11px;" colspan="3">${data.totalDiscounts && data.totalDiscounts > 0 ? `-${formatCurrency(data.totalDiscounts)}` : formatCurrency(0)}</td>
+    </tr>
     <tr class="total-row">
       <td>TOTAL A PAGAR</td>
       <td style="text-align:right;" colspan="3">${formatCurrency(data.totalAmount)}</td>
