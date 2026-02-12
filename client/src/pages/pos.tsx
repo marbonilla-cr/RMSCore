@@ -988,7 +988,28 @@ export default function POSPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={(e) => { e.stopPropagation(); handleCobrarClick(t); enterSplitMode(); }}
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                setSelectedTable(t);
+                                setDetailView(true);
+                                setSelectedItemIds([]);
+                                setSplitLabel("");
+                                setMovingItemId(null);
+                                setNormalizing(true);
+                                try {
+                                  await apiRequest("POST", `/api/pos/orders/${t.orderId}/normalize-split`);
+                                  await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+                                  await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", t.orderId, "splits"] });
+                                  const freshTables: POSTable[] = queryClient.getQueryData(["/api/pos/tables"]) || [];
+                                  const freshTable = freshTables.find(ft => ft.orderId === t.orderId);
+                                  if (freshTable) setSelectedTable(freshTable);
+                                  setSplitMode(true);
+                                } catch (err: any) {
+                                  toast({ title: "Error", description: err.message, variant: "destructive" });
+                                } finally {
+                                  setNormalizing(false);
+                                }
+                              }}
                               data-testid={`button-split-table-${t.id}`}
                             >
                               <Split className="w-4 h-4 mr-1" /> Dividir
