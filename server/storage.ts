@@ -382,7 +382,15 @@ export async function recalcOrderTotal(orderId: number) {
 
     const discountedSubtotal = lineSubtotal - discountAmount;
 
-    const taxesForItem = await getProductTaxCategories(item.productId);
+    let taxesForItem = await getProductTaxCategories(item.productId);
+    if (taxesForItem.length === 0) {
+      const productByName = await db.select().from(products)
+        .where(eq(products.name, item.productNameSnapshot))
+        .limit(1);
+      if (productByName.length > 0) {
+        taxesForItem = await getProductTaxCategories(productByName[0].id);
+      }
+    }
     const allTaxCats = await getAllTaxCategories();
 
     await deleteOrderItemTaxesByItem(item.id);
@@ -1318,6 +1326,18 @@ export async function setProductTaxCategories(productId: number, taxCategoryIds:
 
 export async function applyTaxToAllProducts(taxCategoryId: number) {
   const allProds = await db.select({ id: products.id }).from(products);
+  const productIdSet = new Set(allProds.map(p => p.id));
+
+  const allPtc = await db.select().from(productTaxCategories);
+  const orphaned = allPtc.filter(ptc => !productIdSet.has(ptc.productId));
+  if (orphaned.length > 0) {
+    for (const o of orphaned) {
+      await db.delete(productTaxCategories).where(
+        and(eq(productTaxCategories.productId, o.productId), eq(productTaxCategories.taxCategoryId, o.taxCategoryId))
+      );
+    }
+  }
+
   const existing = await db.select().from(productTaxCategories)
     .where(eq(productTaxCategories.taxCategoryId, taxCategoryId));
   const existingSet = new Set(existing.map(e => e.productId));
@@ -1328,9 +1348,10 @@ export async function applyTaxToAllProducts(taxCategoryId: number) {
     );
   }
   return {
-    message: `Impuesto aplicado a ${toInsert.length} productos nuevos (${existingSet.size} ya lo tenían)`,
+    message: `Impuesto aplicado a ${toInsert.length} productos nuevos (${existingSet.size} ya lo tenían). ${orphaned.length} asignaciones huérfanas eliminadas.`,
     added: toInsert.length,
     skipped: existingSet.size,
+    orphansRemoved: orphaned.length,
   };
 }
 

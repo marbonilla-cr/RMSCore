@@ -667,7 +667,13 @@ export async function registerRoutes(
       const tc = await storage.getTaxCategory(taxCategoryId);
       if (!tc) return res.status(404).json({ message: "Impuesto no encontrado" });
       const result = await storage.applyTaxToAllProducts(taxCategoryId);
-      res.json(result);
+      const openOrders = await storage.getOpenOrders();
+      let recalced = 0;
+      for (const order of openOrders) {
+        await storage.recalcOrderTotal(order.id);
+        recalced++;
+      }
+      res.json({ ...result, ordersRecalculated: recalced });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }

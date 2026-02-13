@@ -1,10 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, notInArray, inArray } from "drizzle-orm";
 import {
   categories, products, modifierGroups, modifierOptions,
-  itemModifierGroups, discounts, taxCategories, productTaxCategories,
+  itemModifierGroups, discounts, taxCategories, productTaxCategories, orders,
 } from "@shared/schema";
 
 const MODIFIER_GROUPS_DATA: Record<string, { options: { name: string; priceDelta: string }[] }> = {
@@ -257,7 +257,45 @@ export async function seedMenuFromCsv() {
     }
     console.log(`  Assigned Servicio tax to ${allProducts.length} products`);
   } else {
-    console.log("  Tax categories already exist, skipping...");
+    console.log("  Tax categories already exist, re-assigning to all products...");
+    const activeTaxes = existingTaxes.filter(t => t.active);
+    const allProds = await db.select({ id: products.id }).from(products);
+    const productIdSet = new Set(allProds.map(p => p.id));
+    const allPtc = await db.select().from(productTaxCategories);
+    const orphaned = allPtc.filter(ptc => !productIdSet.has(ptc.productId));
+    if (orphaned.length > 0) {
+      const validProductIds = allProds.map(p => p.id);
+      if (validProductIds.length > 0) {
+        await db.delete(productTaxCategories).where(
+          notInArray(productTaxCategories.productId, validProductIds)
+        );
+      } else {
+        await db.delete(productTaxCategories);
+      }
+      console.log(`  Cleaned ${orphaned.length} orphaned tax assignments`);
+    }
+    for (const tc of activeTaxes) {
+      const existing = await db.select().from(productTaxCategories)
+        .where(eq(productTaxCategories.taxCategoryId, tc.id));
+      const existingSet = new Set(existing.map(e => e.productId));
+      const toInsert = allProds.filter(p => !existingSet.has(p.id));
+      if (toInsert.length > 0) {
+        await db.insert(productTaxCategories).values(
+          toInsert.map(p => ({ productId: p.id, taxCategoryId: tc.id }))
+        );
+        console.log(`  Assigned ${tc.name} tax to ${toInsert.length} products`);
+      }
+    }
+  }
+
+  const { recalcOrderTotal } = await import("./storage");
+  const openOrders = await db.select({ id: orders.id }).from(orders)
+    .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"]));
+  if (openOrders.length > 0) {
+    for (const o of openOrders) {
+      await recalcOrderTotal(o.id);
+    }
+    console.log(`  Recalculated ${openOrders.length} open orders`);
   }
 
   console.log("Menu seed complete!");
