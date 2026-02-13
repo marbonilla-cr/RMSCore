@@ -909,7 +909,7 @@ export default function POSPage() {
                   {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
                     selectedTable.taxBreakdown.map((tb, idx) => (
                       <div key={idx} className="flex justify-between text-sm text-muted-foreground">
-                        <span>{tb.taxName}{tb.inclusive ? " incl." : ""}</span>
+                        <span>{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
                         <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                       </div>
                     ))
@@ -1009,7 +1009,7 @@ export default function POSPage() {
                         {t.taxBreakdown && t.taxBreakdown.length > 0 ? (
                           t.taxBreakdown.map((tb, idx) => (
                             <div key={idx} className="flex justify-between text-xs text-muted-foreground">
-                              <span>{tb.taxName}{tb.inclusive ? " incl." : ""}</span>
+                              <span>{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
                               <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                             </div>
                           ))
@@ -1190,7 +1190,7 @@ export default function POSPage() {
                   {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
                     selectedTable.taxBreakdown.map((tb, idx) => (
                       <div key={idx} className="flex justify-between text-muted-foreground">
-                        <span>{tb.taxName}{tb.inclusive ? " incl." : ""}</span>
+                        <span>{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
                         <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
                       </div>
                     ))

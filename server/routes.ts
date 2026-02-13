@@ -647,6 +647,20 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/admin/recalc-open-orders", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const openOrders = await storage.getOpenOrders();
+      let recalced = 0;
+      for (const order of openOrders) {
+        await storage.recalcOrderTotal(order.id);
+        recalced++;
+      }
+      res.json({ message: `${recalced} órdenes recalculadas`, recalced });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   app.post("/api/admin/tax-categories/:id/apply-all", requireRole("MANAGER"), async (req, res) => {
     try {
       const taxCategoryId = parseInt(req.params.id);
@@ -2104,7 +2118,7 @@ export async function registerRoutes(
         totalAmount: Number(order.totalAmount),
         totalDiscounts: totalDiscounts > 0 ? totalDiscounts : undefined,
         totalTaxes: totalTaxes > 0 ? totalTaxes : undefined,
-        taxBreakdown: totalTaxes > 0 ? aggregateTaxBreakdown(orderTaxesList) : undefined,
+        taxBreakdown: orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : undefined,
         paymentMethod: paymentMethodName,
         clientName: lastPayment?.clientNameSnapshot || undefined,
         cashierName: cashier?.displayName || undefined,
@@ -2157,7 +2171,7 @@ export async function registerRoutes(
       const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
       const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
       const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
-      const taxBk = totalTaxes > 0 ? aggregateTaxBreakdown(orderTaxesList) : [];
+      const taxBk = orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : [];
       const total = Number(order.totalAmount);
 
       let emailSent = false;
@@ -2186,7 +2200,7 @@ export async function registerRoutes(
           const breakdownHtml = `
               <table style="width:100%;margin:8px 0">
                 <tr><td style="padding:2px 8px">Subtotal</td><td style="padding:2px 8px;text-align:right">₡${subtotal.toLocaleString()}</td></tr>
-                ${taxBk.length > 0 ? taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName}${tb.inclusive ? " incl." : ""}</td><td style="padding:2px 8px;text-align:right;color:#666">${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("") : `<tr><td style="padding:2px 8px;color:#666">Impuestos</td><td style="padding:2px 8px;text-align:right;color:#666">₡0</td></tr>`}
+                ${taxBk.length > 0 ? taxBk.map(tb => `<tr><td style="padding:2px 8px;color:#666">${tb.taxName}${tb.inclusive ? " (ii)" : ""}</td><td style="padding:2px 8px;text-align:right;color:#666">${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}</td></tr>`).join("") : `<tr><td style="padding:2px 8px;color:#666">Impuestos</td><td style="padding:2px 8px;text-align:right;color:#666">₡0</td></tr>`}
                 <tr><td style="padding:2px 8px;${totalDiscounts > 0 ? "color:#16a34a" : "color:#666"}">Descuentos</td><td style="padding:2px 8px;text-align:right;${totalDiscounts > 0 ? "color:#16a34a" : "color:#666"}">${totalDiscounts > 0 ? `-₡${totalDiscounts.toLocaleString()}` : "₡0"}</td></tr>
               </table>`;
 
@@ -2208,7 +2222,7 @@ export async function registerRoutes(
           const textLines = emailItemsData.map(i => `${i.qty}x ${i.name} - ₡${i.lineTotal.toLocaleString()}`);
           const breakdownText = [
             `Subtotal: ₡${subtotal.toLocaleString()}`,
-            ...(taxBk.length > 0 ? taxBk.map(tb => `${tb.taxName}${tb.inclusive ? " incl." : ""}: ${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}`) : [`Impuestos: ₡0`]),
+            ...(taxBk.length > 0 ? taxBk.map(tb => `${tb.taxName}${tb.inclusive ? " (ii)" : ""}: ${tb.inclusive ? "" : "+"}₡${Number(tb.totalAmount).toLocaleString()}`) : [`Impuestos: ₡0`]),
             `Descuentos: ${totalDiscounts > 0 ? `-₡${totalDiscounts.toLocaleString()}` : "₡0"}`,
           ];
           const text = [

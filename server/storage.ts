@@ -298,6 +298,11 @@ export async function getOpenOrdersForTable(tableId: number) {
     ));
 }
 
+export async function getOpenOrders() {
+  return db.select().from(orders)
+    .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"]));
+}
+
 export async function getChildOrders(parentOrderId: number) {
   return db.select().from(orders)
     .where(eq(orders.parentOrderId, parentOrderId));
