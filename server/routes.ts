@@ -2496,6 +2496,109 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== POS: RECEIPT DATA (for screen print) ====================
+  app.get("/api/pos/receipt-data/:orderId", requirePermission("POS_PRINT"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const table = await storage.getTable(order.tableId);
+      const items = await storage.getOrderItems(orderId);
+      const activeItems = items.filter(i => i.status !== "VOIDED");
+      const orderPayments = await storage.getPaymentsForOrder(orderId);
+      const paidPayments = orderPayments.filter(p => p.status === "PAID");
+      const paymentMethodName = paidPayments.length > 0 ? paidPayments.map(p => p.paymentMethodName || "Efectivo").join(", ") : "";
+
+      let orderNumber = "";
+      if (order.dailyNumber) {
+        orderNumber = `#${order.dailyNumber}`;
+        if (order.splitIndex) orderNumber += `-${order.splitIndex}`;
+      }
+
+      const receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
+      for (const i of activeItems) {
+        const mods = await storage.getOrderItemModifiers(i.id);
+        const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+        const unitPrice = Number(i.productPriceSnapshot) + modDelta;
+        const modLabel = mods.length > 0 ? ` (${mods.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
+        receiptItems.push({
+          name: i.productNameSnapshot + modLabel,
+          qty: i.qty,
+          price: unitPrice,
+          total: unitPrice * i.qty,
+        });
+      }
+
+      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
+      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
+      const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
+      const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
+      const taxBreakdown = orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : [];
+
+      res.json({
+        items: receiptItems,
+        total: Number(order.totalAmount),
+        paymentMethod: paymentMethodName,
+        tableName: table?.tableName || `Mesa ${order.tableId}`,
+        orderNumber,
+        clientName: paidPayments[0]?.clientName || undefined,
+        totalDiscounts,
+        totalTaxes,
+        taxBreakdown,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== POS: PAID ORDERS LIST ====================
+  app.get("/api/pos/paid-orders", requirePermission("MODULE_POS_VIEW"), async (req, res) => {
+    try {
+      const date = (req.query.date as string) || undefined;
+      const paidOrders = await storage.getPaidOrdersForDate(date);
+      const allTables = await storage.getAllTables();
+
+      const result = [];
+      for (const order of paidOrders) {
+        const table = allTables.find(t => t.id === order.tableId);
+        const items = await storage.getOrderItems(order.id);
+        const activeItems = items.filter(i => i.status !== "VOIDED");
+        const orderPayments = await storage.getPaymentsForOrder(order.id);
+        const paidPayments = orderPayments.filter(p => p.status === "PAID");
+        const paymentMethodNames = paidPayments.map(p => p.paymentMethodName || "Efectivo");
+
+        let ticketNumber = "";
+        if (order.dailyNumber) {
+          ticketNumber = `#${order.dailyNumber}`;
+          if (order.splitIndex) ticketNumber += `-${order.splitIndex}`;
+        }
+
+        result.push({
+          orderId: order.id,
+          tableName: table?.tableName || `Mesa ${order.tableId}`,
+          ticketNumber,
+          dailyNumber: order.dailyNumber,
+          splitIndex: order.splitIndex,
+          totalAmount: order.totalAmount,
+          closedAt: order.closedAt,
+          paymentMethods: paymentMethodNames,
+          itemCount: activeItems.length,
+          items: activeItems.map(i => ({
+            id: i.id,
+            productNameSnapshot: i.productNameSnapshot,
+            qty: i.qty,
+            productPriceSnapshot: i.productPriceSnapshot,
+          })),
+        });
+      }
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== POS: REOPEN TABLE ====================
   app.post("/api/pos/reopen/:orderId", requirePermission("POS_REOPEN"), async (req, res) => {
     try {

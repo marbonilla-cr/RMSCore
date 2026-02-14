@@ -141,6 +141,12 @@ export default function POSPage() {
   const [discountOpen, setDiscountOpen] = useState(false);
   const [discountItemId, setDiscountItemId] = useState<number | null>(null);
 
+  const [paidTicketActions, setPaidTicketActions] = useState<{orderId: number; tableName: string; ticketNumber: string} | null>(null);
+  const [paidEmailInput, setPaidEmailInput] = useState("");
+  const [paidShowEmailForm, setPaidShowEmailForm] = useState(false);
+  const [paidSendingEmail, setPaidSendingEmail] = useState(false);
+  const [paidPrintingDirect, setPaidPrintingDirect] = useState(false);
+
   useEffect(() => {
     wsManager.connect();
     const unsub1 = wsManager.on("order_updated", () => {
@@ -156,10 +162,12 @@ export default function POSPage() {
     const unsub3 = wsManager.on("payment_completed", () => {
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/paid-orders"] });
     });
     const unsub4 = wsManager.on("payment_voided", () => {
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/paid-orders"] });
     });
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, [selectedTable?.orderId]);
@@ -184,6 +192,24 @@ export default function POSPage() {
 
   const { data: cashSession } = useQuery<any>({
     queryKey: ["/api/pos/cash-session"],
+  });
+
+  interface PaidOrder {
+    orderId: number;
+    tableName: string;
+    ticketNumber: string;
+    dailyNumber: number | null;
+    splitIndex: number | null;
+    totalAmount: string;
+    closedAt: string | null;
+    paymentMethods: string[];
+    itemCount: number;
+    items: { id: number; productNameSnapshot: string; qty: number; productPriceSnapshot: string }[];
+  }
+
+  const { data: paidOrders = [], isLoading: paidLoading } = useQuery<PaidOrder[]>({
+    queryKey: ["/api/pos/paid-orders"],
+    enabled: tab === "paid",
   });
 
   const { data: splits = [], isLoading: splitsLoading } = useQuery<SplitAccountData[]>({
@@ -984,6 +1010,7 @@ export default function POSPage() {
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="mb-4">
             <TabsTrigger value="tables" className="min-h-[44px]" data-testid="tab-pos-tables">Mesas por Cobrar</TabsTrigger>
+            <TabsTrigger value="paid" className="min-h-[44px]" data-testid="tab-paid-tickets">Tiquetes Pagados</TabsTrigger>
             <TabsTrigger value="cash" className="min-h-[44px]" data-testid="tab-cash">Caja</TabsTrigger>
           </TabsList>
 
@@ -1105,6 +1132,52 @@ export default function POSPage() {
                               <XCircle className="w-4 h-4 mr-1" /> Anular
                             </Button>
                           )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="paid">
+            {paidLoading ? (
+              <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
+            ) : paidOrders.length === 0 ? (
+              <Card><CardContent className="py-12 text-center">
+                <Receipt className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                <p className="text-muted-foreground">No hay tiquetes pagados hoy</p>
+              </CardContent></Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {paidOrders.map((t) => (
+                  <Card key={t.orderId} className="hover-elevate cursor-pointer" onClick={() => setPaidTicketActions({ orderId: t.orderId, tableName: t.tableName, ticketNumber: t.ticketNumber })} data-testid={`card-paid-ticket-${t.orderId}`}>
+                    <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+                      <div>
+                        <h3 className="font-bold text-lg">{t.tableName}</h3>
+                        {t.ticketNumber && <span className="text-sm text-muted-foreground">{t.ticketNumber}</span>}
+                      </div>
+                      <Badge variant="secondary">{t.paymentMethods.join(", ")}</Badge>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-1 mb-3 max-h-32 overflow-y-auto">
+                        {t.items.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between text-sm py-0.5">
+                            <span>{item.qty}x {item.productNameSnapshot}</span>
+                            <span className="text-muted-foreground">₡{(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t pt-2 flex items-center justify-between">
+                        <div>
+                          <span className="font-bold text-lg">₡{Number(t.totalAmount).toLocaleString()}</span>
+                          {t.closedAt && (
+                            <span className="text-xs text-muted-foreground ml-2">
+                              {new Date(t.closedAt).toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          )}
+                        </div>
+                        <Badge>{t.itemCount} items</Badge>
                       </div>
                     </CardContent>
                   </Card>
@@ -1567,6 +1640,162 @@ export default function POSPage() {
                 Anular Orden
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!paidTicketActions} onOpenChange={(open) => { if (!open) { setPaidTicketActions(null); setPaidShowEmailForm(false); setPaidEmailInput(""); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Tiquete Pagado</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {paidTicketActions?.tableName} {paidTicketActions?.ticketNumber}
+            </p>
+            {paidShowEmailForm ? (
+              <div className="space-y-3">
+                <Label>Correo electrónico del cliente</Label>
+                <Input
+                  data-testid="input-paid-client-email"
+                  type="email"
+                  placeholder="cliente@ejemplo.com"
+                  value={paidEmailInput}
+                  onChange={(e) => setPaidEmailInput(e.target.value)}
+                />
+                <div className="flex flex-col gap-2">
+                  <Button
+                    data-testid="button-paid-confirm-send-email"
+                    disabled={paidSendingEmail || !paidEmailInput.trim()}
+                    onClick={async () => {
+                      if (!paidTicketActions || !paidEmailInput.trim()) return;
+                      setPaidSendingEmail(true);
+                      try {
+                        await apiRequest("POST", "/api/pos/send-ticket", {
+                          orderId: paidTicketActions.orderId,
+                          clientEmail: paidEmailInput.trim(),
+                        });
+                        toast({ title: "Tiquete enviado", description: `Enviado a ${paidEmailInput.trim()}` });
+                        setPaidShowEmailForm(false);
+                        setPaidEmailInput("");
+                      } catch (err: any) {
+                        toast({ title: "Error al enviar", description: err.message, variant: "destructive" });
+                      } finally {
+                        setPaidSendingEmail(false);
+                      }
+                    }}
+                  >
+                    {paidSendingEmail ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Mail className="w-4 h-4 mr-1" />}
+                    Enviar
+                  </Button>
+                  <Button
+                    data-testid="button-paid-cancel-email"
+                    variant="ghost"
+                    onClick={() => { setPaidShowEmailForm(false); setPaidEmailInput(""); }}
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Regresar
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {canPrint && (
+                  <>
+                    <Button
+                      data-testid="button-paid-direct-print"
+                      disabled={paidPrintingDirect}
+                      onClick={async () => {
+                        if (!paidTicketActions) return;
+                        setPaidPrintingDirect(true);
+                        try {
+                          const res = await apiRequest("POST", "/api/pos/print-receipt", {
+                            orderId: paidTicketActions.orderId,
+                          });
+                          const data = await res.json();
+                          toast({ title: "Impreso", description: `Enviado a ${data.printer}` });
+                        } catch (err: any) {
+                          toast({ title: "Error de impresora", description: err.message, variant: "destructive" });
+                        } finally {
+                          setPaidPrintingDirect(false);
+                        }
+                      }}
+                    >
+                      {paidPrintingDirect ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Printer className="w-4 h-4 mr-1" />}
+                      Imprimir en Impresora WiFi
+                    </Button>
+                    <Button
+                      data-testid="button-paid-browser-print"
+                      variant="outline"
+                      onClick={async () => {
+                        if (!paidTicketActions) return;
+                        try {
+                          const res = await fetch(`/api/pos/receipt-data/${paidTicketActions.orderId}`, { credentials: "include" });
+                          if (res.ok) {
+                            const data = await res.json();
+                            triggerReceiptPrint(
+                              data.items,
+                              data.total,
+                              data.paymentMethod,
+                              data.tableName,
+                              data.orderNumber,
+                              data.clientName,
+                              data.totalDiscounts,
+                              data.totalTaxes,
+                              data.taxBreakdown
+                            );
+                          } else {
+                            toast({ title: "Error", description: "No se pudo obtener datos del tiquete", variant: "destructive" });
+                          }
+                        } catch (err: any) {
+                          toast({ title: "Error", description: err.message, variant: "destructive" });
+                        }
+                      }}
+                    >
+                      <Receipt className="w-4 h-4 mr-1" />
+                      Ver Tiquete en Pantalla
+                    </Button>
+                  </>
+                )}
+                {canEmailTicket && (
+                  <Button
+                    data-testid="button-paid-send-email"
+                    variant="outline"
+                    onClick={() => setPaidShowEmailForm(true)}
+                  >
+                    <Mail className="w-4 h-4 mr-1" />
+                    Enviar Tiquete por Correo
+                  </Button>
+                )}
+                {canReopen && (
+                  <Button
+                    data-testid="button-paid-reopen"
+                    variant="destructive"
+                    onClick={async () => {
+                      if (!paidTicketActions) return;
+                      try {
+                        await apiRequest("POST", `/api/pos/reopen/${paidTicketActions.orderId}`);
+                        toast({ title: "Orden reabierta" });
+                        queryClient.invalidateQueries({ queryKey: ["/api/pos/paid-orders"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+                        setPaidTicketActions(null);
+                      } catch (err: any) {
+                        toast({ title: "Error", description: err.message, variant: "destructive" });
+                      }
+                    }}
+                  >
+                    <Unlock className="w-4 h-4 mr-1" />
+                    Reabrir Orden
+                  </Button>
+                )}
+                <Button
+                  data-testid="button-paid-close-dialog"
+                  variant="ghost"
+                  onClick={() => setPaidTicketActions(null)}
+                >
+                  <ArrowLeft className="w-4 h-4 mr-1" />
+                  Regresar
+                </Button>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

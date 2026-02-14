@@ -153,12 +153,20 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "MODULE_ADMIN_VIEW", description: "Ver módulo Administración" },
   { key: "MODULE_PRODUCTS_VIEW", description: "Ver módulo Productos" },
   { key: "POS_VIEW", description: "Acceso al punto de venta" },
+  { key: "POS_PAY", description: "Procesar pagos" },
+  { key: "POS_PRINT", description: "Imprimir tiquetes" },
+  { key: "POS_EMAIL_TICKET", description: "Enviar tiquete por email" },
+  { key: "POS_REOPEN", description: "Reabrir órdenes pagadas" },
+  { key: "POS_SPLIT", description: "Dividir cuentas" },
+  { key: "POS_VOID", description: "Anular pagos" },
   { key: "POS_VOID_ITEM", description: "Anular ítems en POS" },
   { key: "POS_VOID_ORDER", description: "Anular órdenes en POS" },
   { key: "POS_VOID_PAYMENT", description: "Anular pagos en POS" },
   { key: "POS_APPLY_DISCOUNT", description: "Aplicar descuentos en POS" },
   { key: "POS_SPLIT_ORDER", description: "Dividir órdenes en POS" },
   { key: "POS_VIEW_CASH_REPORT", description: "Ver desglose de totales por método de pago" },
+  { key: "POS_EDIT_CUSTOMER_PREPAY", description: "Editar cliente antes del pago" },
+  { key: "POS_EDIT_CUSTOMER_POSTPAY", description: "Editar cliente después del pago" },
   { key: "CASH_OPEN", description: "Abrir caja" },
   { key: "CASH_CLOSE", description: "Cerrar caja" },
   { key: "KDS_VIEW", description: "Ver pantalla de cocina" },
@@ -740,6 +748,13 @@ export async function updateQboExportJob(id: number, data: any) {
 export async function getOrder(id: number) {
   const [order] = await db.select().from(orders).where(eq(orders.id, id));
   return order;
+}
+
+export async function getPaidOrdersForDate(date?: string) {
+  const targetDate = date || getBusinessDate();
+  return db.select().from(orders)
+    .where(and(eq(orders.status, "PAID"), eq(orders.businessDate, targetDate)))
+    .orderBy(desc(orders.closedAt));
 }
 
 export async function getPayment(id: number) {
