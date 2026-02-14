@@ -941,34 +941,6 @@ export async function seedData() {
     { tableCode: "BAR2", tableName: "Barra 2", active: true, sortOrder: 8 },
   ]);
 
-  // Default categories
-  await db.insert(categories).values([
-    { categoryCode: "ENT", name: "Entradas", active: true, sortOrder: 1 },
-    { categoryCode: "PLA", name: "Platos Fuertes", active: true, sortOrder: 2 },
-    { categoryCode: "BEB", name: "Bebidas", active: true, sortOrder: 3 },
-    { categoryCode: "POS", name: "Postres", active: true, sortOrder: 4 },
-  ]);
-
-  const allCats = await db.select().from(categories);
-  const catMap = new Map(allCats.map(c => [c.categoryCode, c.id]));
-
-  // Default products
-  await db.insert(products).values([
-    { productCode: "ENT01", name: "Nachos Supreme", description: "Nachos con queso fundido, jalapeños, guacamole y crema agria", categoryId: catMap.get("ENT")!, price: "5500", active: true, visibleQr: true },
-    { productCode: "ENT02", name: "Ceviche de Pescado", description: "Ceviche fresco del día con limón, cilantro y cebolla morada", categoryId: catMap.get("ENT")!, price: "7200", active: true, visibleQr: true },
-    { productCode: "ENT03", name: "Empanadas de Pollo", description: "3 empanadas rellenas de pollo especiado con chimichurri", categoryId: catMap.get("ENT")!, price: "4800", active: true, visibleQr: true },
-    { productCode: "PLA01", name: "Casado Completo", description: "Arroz, frijoles, ensalada, plátano maduro con carne a elección", categoryId: catMap.get("PLA")!, price: "6500", active: true, visibleQr: true },
-    { productCode: "PLA02", name: "Lomo en Salsa BBQ", description: "200g de lomo de res en salsa BBQ casera, papas al horno y vegetales", categoryId: catMap.get("PLA")!, price: "12500", active: true, visibleQr: true },
-    { productCode: "PLA03", name: "Pasta Alfredo con Pollo", description: "Fettuccine en cremosa salsa alfredo con pollo grillado", categoryId: catMap.get("PLA")!, price: "9800", active: true, visibleQr: true },
-    { productCode: "PLA04", name: "Filete de Pescado", description: "Filete de corvina a la plancha con arroz de coco y ensalada tropical", categoryId: catMap.get("PLA")!, price: "11200", active: true, visibleQr: true },
-    { productCode: "BEB01", name: "Café Americano", description: "Café negro recién preparado", categoryId: catMap.get("BEB")!, price: "1800", active: true, visibleQr: true },
-    { productCode: "BEB02", name: "Jugo Natural", description: "Jugo fresco de frutas de temporada (naranja, piña, mango)", categoryId: catMap.get("BEB")!, price: "2500", active: true, visibleQr: true },
-    { productCode: "BEB03", name: "Cerveza Artesanal", description: "Cerveza artesanal local 330ml", categoryId: catMap.get("BEB")!, price: "3200", active: true, visibleQr: true },
-    { productCode: "BEB04", name: "Agua Mineral", description: "Agua mineral con o sin gas 500ml", categoryId: catMap.get("BEB")!, price: "1500", active: true, visibleQr: true },
-    { productCode: "POS01", name: "Tres Leches", description: "Pastel tres leches con crema batida y canela", categoryId: catMap.get("POS")!, price: "4200", active: true, visibleQr: true },
-    { productCode: "POS02", name: "Flan de Coco", description: "Flan cremoso de coco con caramelo", categoryId: catMap.get("POS")!, price: "3800", active: true, visibleQr: true },
-  ]);
-
   console.log("Seed data created successfully");
 }
 

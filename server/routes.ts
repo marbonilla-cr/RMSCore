@@ -120,8 +120,6 @@ export async function registerRoutes(
   // Seed data
   await storage.seedData();
   await storage.seedPermissions();
-  const { seedMenuFromCsv } = await import("./seed-menu");
-  await seedMenuFromCsv();
 
   // ==================== AUTH ====================
   app.post("/api/auth/login", async (req, res) => {
