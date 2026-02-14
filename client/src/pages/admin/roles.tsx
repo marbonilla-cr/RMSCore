@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, Loader2, Save } from "lucide-react";
+import { Shield, Loader2, Save, LayoutGrid, ShoppingCart, Vault } from "lucide-react";
 
 interface Permission {
   id: number;
@@ -25,6 +25,30 @@ const ROLE_LABELS: Record<string, string> = {
   KITCHEN: "Cocina",
   STAFF: "Personal",
 };
+
+interface PermissionGroup {
+  label: string;
+  icon: typeof Shield;
+  keys: string[];
+}
+
+const PERMISSION_GROUPS: PermissionGroup[] = [
+  {
+    label: "Acceso a Módulos",
+    icon: LayoutGrid,
+    keys: ["MODULE_TABLES_VIEW", "MODULE_POS_VIEW", "MODULE_KDS_VIEW", "MODULE_DASHBOARD_VIEW", "MODULE_ADMIN_VIEW"],
+  },
+  {
+    label: "Operaciones POS",
+    icon: ShoppingCart,
+    keys: ["POS_VIEW", "POS_PAY", "POS_SPLIT", "POS_PRINT", "POS_EMAIL_TICKET", "POS_EDIT_CUSTOMER_PREPAY", "POS_EDIT_CUSTOMER_POSTPAY", "POS_VOID", "POS_VOID_ORDER", "POS_REOPEN"],
+  },
+  {
+    label: "Caja",
+    icon: Vault,
+    keys: ["CASH_CLOSE"],
+  },
+];
 
 export default function AdminRolesPage() {
   const { toast } = useToast();
@@ -77,6 +101,18 @@ export default function AdminRolesPage() {
     });
     setDirtyRoles((prev) => new Set(prev).add(role));
   };
+
+  const permissionMap = useMemo(() => {
+    const map = new Map<string, Permission>();
+    for (const p of permissions) map.set(p.key, p);
+    return map;
+  }, [permissions]);
+
+  const groupedPermissions = useMemo(() => {
+    const knownKeys = new Set(PERMISSION_GROUPS.flatMap(g => g.keys));
+    const ungrouped = permissions.filter(p => !knownKeys.has(p.key));
+    return { groups: PERMISSION_GROUPS, ungrouped };
+  }, [permissions]);
 
   const isLoading = permLoading || rpLoading;
 
@@ -138,34 +174,34 @@ export default function AdminRolesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {permissions.map((perm) => (
-                    <TableRow key={perm.id} data-testid={`row-permission-${perm.key}`}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium text-sm" data-testid={`text-permission-key-${perm.key}`}>
-                            {perm.key}
-                          </p>
-                          <p className="text-xs text-muted-foreground" data-testid={`text-permission-desc-${perm.key}`}>
-                            {perm.description}
-                          </p>
-                        </div>
-                      </TableCell>
-                      {ROLES.map((role) => {
-                        const checked = (localPermissions[role] || []).includes(perm.key);
-                        return (
-                          <TableCell key={role} className="text-center">
-                            <div className="flex justify-center">
-                              <Checkbox
-                                checked={checked}
-                                onCheckedChange={() => togglePermission(role, perm.key)}
-                                data-testid={`checkbox-perm-${role}-${perm.key}`}
-                              />
-                            </div>
-                          </TableCell>
-                        );
-                      })}
-                    </TableRow>
-                  ))}
+                  {groupedPermissions.groups.map((group) => {
+                    const groupPerms = group.keys
+                      .map(k => permissionMap.get(k))
+                      .filter(Boolean) as Permission[];
+                    if (groupPerms.length === 0) return null;
+                    const GroupIcon = group.icon;
+                    return (
+                      <PermissionSection
+                        key={group.label}
+                        label={group.label}
+                        icon={<GroupIcon className="w-4 h-4" />}
+                        permissions={groupPerms}
+                        roles={ROLES}
+                        localPermissions={localPermissions}
+                        onToggle={togglePermission}
+                      />
+                    );
+                  })}
+                  {groupedPermissions.ungrouped.length > 0 && (
+                    <PermissionSection
+                      label="Otros"
+                      icon={<Shield className="w-4 h-4" />}
+                      permissions={groupedPermissions.ungrouped}
+                      roles={ROLES}
+                      localPermissions={localPermissions}
+                      onToggle={togglePermission}
+                    />
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -173,5 +209,62 @@ export default function AdminRolesPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+function PermissionSection({
+  label,
+  icon,
+  permissions,
+  roles,
+  localPermissions,
+  onToggle,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  permissions: Permission[];
+  roles: string[];
+  localPermissions: RolePermissions;
+  onToggle: (role: string, permKey: string) => void;
+}) {
+  return (
+    <>
+      <TableRow data-testid={`row-group-${label}`}>
+        <TableCell colSpan={roles.length + 1} className="bg-muted/50 py-2 px-4">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            {icon}
+            {label}
+          </div>
+        </TableCell>
+      </TableRow>
+      {permissions.map((perm) => (
+        <TableRow key={perm.id} data-testid={`row-permission-${perm.key}`}>
+          <TableCell className="pl-8">
+            <div>
+              <p className="font-medium text-sm" data-testid={`text-permission-key-${perm.key}`}>
+                {perm.description || perm.key}
+              </p>
+              <p className="text-xs text-muted-foreground" data-testid={`text-permission-desc-${perm.key}`}>
+                {perm.key}
+              </p>
+            </div>
+          </TableCell>
+          {roles.map((role) => {
+            const checked = (localPermissions[role] || []).includes(perm.key);
+            return (
+              <TableCell key={role} className="text-center">
+                <div className="flex justify-center">
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={() => onToggle(role, perm.key)}
+                    data-testid={`checkbox-perm-${role}-${perm.key}`}
+                  />
+                </div>
+              </TableCell>
+            );
+          })}
+        </TableRow>
+      ))}
+    </>
   );
 }
