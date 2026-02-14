@@ -754,8 +754,23 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   }
 
   const openOrders = allOrders.filter(o => o.status === "OPEN" || o.status === "IN_KITCHEN" || o.status === "READY");
-  const paidOrders = allOrders.filter(o => o.status === "PAID");
   const cancelledOrders = allOrders.filter(o => o.status === "CANCELLED" || o.status === "VOID");
+
+  const paidOrdersFromAllOrders = allOrders.filter(o => o.status === "PAID");
+  const paidOrderIds = new Set(paidOrdersFromAllOrders.map(o => o.id));
+
+  let crossDayPaidPayments = fromDate === toDate
+    ? await db.select().from(payments).where(and(eq(payments.businessDate, fromDate), eq(payments.status, "PAID")))
+    : await db.select().from(payments).where(and(gte(payments.businessDate, fromDate), lte(payments.businessDate, toDate), eq(payments.status, "PAID")));
+  crossDayPaidPayments = filterByHour(crossDayPaidPayments, "paidAt");
+
+  const crossDayOrderIds = Array.from(new Set(crossDayPaidPayments.map(p => p.orderId).filter(id => id && !paidOrderIds.has(id))));
+  let crossDayOrders: typeof allOrders = [];
+  if (crossDayOrderIds.length > 0) {
+    crossDayOrders = await db.select().from(orders).where(and(inArray(orders.id, crossDayOrderIds as number[]), eq(orders.status, "PAID")));
+  }
+
+  const paidOrders = [...paidOrdersFromAllOrders, ...crossDayOrders];
 
   const sumAmount = (orders: any[]) => orders.reduce((s, o) => s + Number(o.totalAmount || 0), 0);
 
