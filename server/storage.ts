@@ -145,6 +145,38 @@ export async function clearPinLock(userId: number) {
   return user;
 }
 
+const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
+  { key: "MODULE_TABLES_VIEW", description: "Ver módulo de mesas" },
+  { key: "MODULE_POS_VIEW", description: "Ver módulo POS" },
+  { key: "MODULE_KDS_VIEW", description: "Ver módulo KDS" },
+  { key: "MODULE_DASHBOARD_VIEW", description: "Ver módulo Dashboard" },
+  { key: "MODULE_ADMIN_VIEW", description: "Ver módulo Administración" },
+  { key: "MODULE_PRODUCTS_VIEW", description: "Ver módulo Productos" },
+  { key: "POS_VIEW", description: "Acceso al punto de venta" },
+  { key: "POS_VOID_ITEM", description: "Anular ítems en POS" },
+  { key: "POS_VOID_ORDER", description: "Anular órdenes en POS" },
+  { key: "POS_VOID_PAYMENT", description: "Anular pagos en POS" },
+  { key: "POS_APPLY_DISCOUNT", description: "Aplicar descuentos en POS" },
+  { key: "POS_SPLIT_ORDER", description: "Dividir órdenes en POS" },
+  { key: "POS_VIEW_CASH_REPORT", description: "Ver desglose de totales por método de pago" },
+  { key: "CASH_OPEN", description: "Abrir caja" },
+  { key: "CASH_CLOSE", description: "Cerrar caja" },
+  { key: "KDS_VIEW", description: "Ver pantalla de cocina" },
+  { key: "ORDER_CREATE", description: "Crear órdenes" },
+  { key: "ORDER_EDIT", description: "Editar órdenes" },
+  { key: "QR_MANAGE", description: "Gestionar pedidos QR" },
+];
+
+export async function ensureSystemPermissions() {
+  const existing = await db.select({ key: permissions.key }).from(permissions);
+  const existingKeys = new Set(existing.map(p => p.key));
+  const missing = SYSTEM_PERMISSIONS.filter(p => !existingKeys.has(p.key));
+  if (missing.length > 0) {
+    await db.insert(permissions).values(missing);
+    console.log(`[system] Added ${missing.length} missing permissions: ${missing.map(p => p.key).join(", ")}`);
+  }
+}
+
 // Permissions
 export async function getAllPermissions() {
   return db.select().from(permissions).orderBy(asc(permissions.key));
