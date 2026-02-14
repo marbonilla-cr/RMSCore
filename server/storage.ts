@@ -323,7 +323,7 @@ export async function getOpenOrderForTable(tableId: number) {
   const [order] = await db.select().from(orders)
     .where(and(
       eq(orders.tableId, tableId),
-      inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"]),
+      inArray(orders.status, ["OPEN", "IN_KITCHEN", "PREPARING", "READY"]),
       sql`${orders.parentOrderId} IS NULL`
     ));
   return order;
@@ -333,13 +333,13 @@ export async function getOpenOrdersForTable(tableId: number) {
   return db.select().from(orders)
     .where(and(
       eq(orders.tableId, tableId),
-      inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"])
+      inArray(orders.status, ["OPEN", "IN_KITCHEN", "PREPARING", "READY"])
     ));
 }
 
 export async function getOpenOrders() {
   return db.select().from(orders)
-    .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"]));
+    .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "PREPARING", "READY"]));
 }
 
 export async function getChildOrders(parentOrderId: number) {
@@ -826,7 +826,7 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
     });
   }
 
-  const openOrders = allOrders.filter(o => o.status === "OPEN" || o.status === "IN_KITCHEN" || o.status === "READY");
+  const openOrders = allOrders.filter(o => o.status === "OPEN" || o.status === "IN_KITCHEN" || o.status === "PREPARING" || o.status === "READY");
   const cancelledOrders = allOrders.filter(o => o.status === "CANCELLED" || o.status === "VOID");
 
   const paidOrdersFromAllOrders = allOrders.filter(o => o.status === "PAID");
@@ -1355,7 +1355,7 @@ export async function deleteOrderItemDiscountsByItem(orderItemId: number) {
 
 export async function getAllOpenOrders() {
   return db.select().from(orders)
-    .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"]));
+    .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "PREPARING", "READY"]));
 }
 
 export async function getOrderItemsByOrderIds(orderIds: number[]) {

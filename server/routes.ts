@@ -2245,7 +2245,7 @@ export async function registerRoutes(
       const { orderId } = req.body;
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
-      if (order.status !== "OPEN" && order.status !== "IN_KITCHEN" && order.status !== "READY") {
+      if (order.status !== "OPEN" && order.status !== "IN_KITCHEN" && order.status !== "PREPARING" && order.status !== "READY") {
         return res.status(400).json({ message: "Orden no está abierta" });
       }
 
