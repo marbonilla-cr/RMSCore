@@ -621,10 +621,13 @@ export async function voidPayment(id: number) {
 export async function getPaymentsByDateGrouped(date: string) {
   const allPayments = await db.select().from(payments)
     .where(and(eq(payments.businessDate, date), eq(payments.status, "PAID")));
-  const allMethods = await db.select().from(paymentMethods);
+  const allMethods = await db.select().from(paymentMethods).where(eq(paymentMethods.active, true)).orderBy(paymentMethods.sortOrder);
   const methodMap = new Map(allMethods.map(m => [m.id, m.paymentName]));
 
   const grouped: Record<string, number> = {};
+  for (const m of allMethods) {
+    grouped[m.paymentName] = 0;
+  }
   for (const p of allPayments) {
     const methodName = methodMap.get(p.paymentMethodId) || "Otro";
     grouped[methodName] = (grouped[methodName] || 0) + Number(p.amount);
@@ -703,10 +706,13 @@ export async function getLedgerItemsForDateRange(fromDate: string, toDate: strin
 export async function getPaymentsByDateRangeGrouped(fromDate: string, toDate: string) {
   const allPayments = await db.select().from(payments)
     .where(and(gte(payments.businessDate, fromDate), lte(payments.businessDate, toDate), eq(payments.status, "PAID")));
-  const allMethods = await db.select().from(paymentMethods);
+  const allMethods = await db.select().from(paymentMethods).where(eq(paymentMethods.active, true)).orderBy(paymentMethods.sortOrder);
   const methodMap = new Map(allMethods.map(m => [m.id, m.paymentName]));
 
   const grouped: Record<string, number> = {};
+  for (const m of allMethods) {
+    grouped[m.paymentName] = 0;
+  }
   for (const p of allPayments) {
     const methodName = methodMap.get(p.paymentMethodId) || "Otro";
     grouped[methodName] = (grouped[methodName] || 0) + Number(p.amount);
