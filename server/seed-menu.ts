@@ -317,19 +317,36 @@ async function fixUtcBusinessDates() {
     )
   );
 
-  let fixedCount = 0;
+  let fixedOrders = 0;
   for (const o of affectedOrders) {
     if (!o.openedAt) continue;
     const correctDate = new Date(o.openedAt).toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
     if (o.businessDate !== correctDate) {
       await db.update(orders).set({ businessDate: correctDate }).where(eq(orders.id, o.id));
-      await db.update(payments).set({ businessDate: correctDate }).where(eq(payments.orderId, o.id));
       await db.update(salesLedgerItems).set({ businessDate: correctDate }).where(eq(salesLedgerItems.orderId, o.id));
       await db.update(voidedItems).set({ businessDate: correctDate }).where(eq(voidedItems.orderId, o.id));
-      fixedCount++;
+      fixedOrders++;
     }
   }
-  if (fixedCount > 0) {
-    console.log(`  Fixed business_date for ${fixedCount} orders (UTC -> America/Costa_Rica)`);
+
+  const allPayments = await db.select({
+    id: payments.id,
+    businessDate: payments.businessDate,
+    paidAt: payments.paidAt,
+  }).from(payments).where(
+    sql`${payments.businessDate} <= ${cutoffDate} AND ${payments.paidAt} IS NOT NULL`
+  );
+  let fixedPayments = 0;
+  for (const p of allPayments) {
+    if (!p.paidAt) continue;
+    const correctPayDate = new Date(p.paidAt).toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+    if (p.businessDate !== correctPayDate) {
+      await db.update(payments).set({ businessDate: correctPayDate }).where(eq(payments.id, p.id));
+      fixedPayments++;
+    }
+  }
+
+  if (fixedOrders > 0 || fixedPayments > 0) {
+    console.log(`  Fixed business_date: ${fixedOrders} orders, ${fixedPayments} payments (UTC -> America/Costa_Rica)`);
   }
 }
