@@ -806,6 +806,150 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== POS: ADD ITEMS TO ORDER ====================
+  app.post("/api/pos/orders/:orderId/add-items", requirePermission("MODULE_POS_VIEW"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      const userId = req.session.userId!;
+      const { items, sendToKds } = req.body;
+      if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
+
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const table = order.tableId ? await storage.getTable(order.tableId) : null;
+      const tableId = order.tableId || 0;
+      const tableName = table?.tableName || "Mostrador";
+
+      const existingItems = await storage.getOrderItems(order.id);
+      const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
+      const roundNumber = maxRound + 1;
+
+      const allCategories = await storage.getAllCategories();
+      const kdsTickets: Map<string, number> = new Map();
+      const createdTicketIds: number[] = [];
+
+      for (const item of items) {
+        const product = await storage.getProduct(item.productId);
+        if (!product || !product.active) continue;
+
+        if (product.availablePortions !== null && product.availablePortions < item.qty) {
+          return res.status(400).json({ message: `${product.name}: solo ${product.availablePortions} porciones disponibles` });
+        }
+
+        const category = allCategories.find(c => c.id === product.categoryId);
+        const kdsDestination = category?.kdsDestination || "cocina";
+
+        if (sendToKds && !kdsTickets.has(kdsDestination)) {
+          const ticket = await storage.createKitchenTicket({
+            orderId: order.id,
+            tableId,
+            tableNameSnapshot: tableName,
+            status: "NEW",
+            kdsDestination,
+          });
+          kdsTickets.set(kdsDestination, ticket.id);
+          createdTicketIds.push(ticket.id);
+        }
+
+        const orderItem = await storage.createOrderItem({
+          orderId: order.id,
+          productId: product.id,
+          productNameSnapshot: product.name,
+          productPriceSnapshot: product.price,
+          qty: item.qty,
+          notes: item.notes || null,
+          origin: "POS",
+          createdByUserId: userId,
+          responsibleWaiterId: userId,
+          status: sendToKds ? "SENT" : "OPEN",
+          roundNumber,
+          qrSubmissionId: null,
+        });
+
+        if (sendToKds) {
+          await storage.updateOrderItem(orderItem.id, { sentToKitchenAt: new Date() });
+
+          const ticketId = kdsTickets.get(kdsDestination)!;
+          const modNotes = item.modifiers && item.modifiers.length > 0
+            ? item.modifiers.map((m: any) => m.name).join(", ")
+            : "";
+          const fullNotes = [item.notes, modNotes].filter(Boolean).join(" | ");
+
+          await storage.createKitchenTicketItem({
+            kitchenTicketId: ticketId,
+            orderItemId: orderItem.id,
+            productNameSnapshot: product.name,
+            qty: item.qty,
+            notes: fullNotes || null,
+            status: "NEW",
+          });
+        }
+
+        if (item.modifiers && Array.isArray(item.modifiers)) {
+          for (const mod of item.modifiers) {
+            await storage.createOrderItemModifier({
+              orderItemId: orderItem.id,
+              modifierOptionId: mod.optionId,
+              nameSnapshot: mod.name,
+              priceDeltaSnapshot: mod.priceDelta || "0",
+              qty: mod.qty || 1,
+            });
+          }
+        }
+
+        await storage.decrementPortions(product.id, item.qty);
+
+        await storage.createSalesLedgerItem({
+          businessDate: getBusinessDate(),
+          tableId,
+          tableNameSnapshot: tableName,
+          orderId: order.id,
+          orderItemId: orderItem.id,
+          productId: product.id,
+          productCodeSnapshot: product.productCode,
+          productNameSnapshot: product.name,
+          categoryId: product.categoryId,
+          categoryCodeSnapshot: category?.categoryCode || null,
+          categoryNameSnapshot: category?.name || null,
+          qty: item.qty,
+          unitPrice: product.price,
+          lineSubtotal: (Number(product.price) * item.qty).toFixed(2),
+          origin: "POS",
+          createdByUserId: userId,
+          responsibleWaiterId: userId,
+          status: sendToKds ? "SENT" : "OPEN",
+          sentToKitchenAt: sendToKds ? new Date() : null,
+        });
+
+        await storage.createAuditEvent({
+          actorType: "USER",
+          actorUserId: userId,
+          action: "ORDER_ITEM_CREATED",
+          entityType: "order_item",
+          entityId: orderItem.id,
+          tableId,
+          metadata: { productName: product.name, qty: item.qty, origin: "POS", sendToKds },
+        });
+      }
+
+      if (sendToKds) {
+        await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
+      }
+      await storage.recalcOrderTotal(order.id);
+
+      for (const ticketId of createdTicketIds) {
+        broadcast("kitchen_ticket_created", { ticketId, tableId, tableName });
+      }
+      broadcast("order_updated", { tableId, orderId: order.id });
+      broadcast("table_status_changed", { tableId });
+
+      res.json({ ok: true, ticketIds: createdTicketIds });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== WAITER: TABLES ====================
   app.get("/api/waiter/tables", requireRole("WAITER", "MANAGER"), async (_req, res) => {
     const allTables = await storage.getAllTables();

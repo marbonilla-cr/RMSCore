@@ -19,8 +19,10 @@ import {
   Split, Trash2, XCircle, Mail, Printer, ArrowRight, ArrowLeftRight,
   Percent, X, Plus, Minus,
 } from "lucide-react";
-import type { PaymentMethod } from "@shared/schema";
+import type { PaymentMethod, Product, Category } from "@shared/schema";
 import { printReceipt } from "@/lib/print-receipt";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface POSItemModifier {
   id: number;
@@ -616,6 +618,180 @@ export default function POSPage() {
     return table.items.filter(i => i.status !== "VOIDED" && i.status !== "PAID").reduce((s, i) => s + getItemTotal(i), 0);
   };
 
+  interface GroupedPOSItem {
+    key: string;
+    items: POSItem[];
+    totalQty: number;
+    productNameSnapshot: string;
+    productPriceSnapshot: string;
+    modifiers: POSItemModifier[];
+    totalAmount: number;
+    totalDiscount: number;
+    discounts: POSItemDiscount[];
+    hasPaid: boolean;
+    firstItemId: number;
+  }
+
+  const groupItems = (items: POSItem[]): GroupedPOSItem[] => {
+    const map = new Map<string, GroupedPOSItem>();
+    for (const item of items) {
+      if (item.status === "VOIDED") continue;
+      const modSig = (item.modifiers || []).map(m => `${m.nameSnapshot}:${m.priceDeltaSnapshot}`).sort().join("|");
+      const key = `${item.productNameSnapshot}::${item.productPriceSnapshot}::${modSig}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.items.push(item);
+        existing.totalQty += item.qty;
+        existing.totalAmount += getItemTotal(item);
+        const itemDiscounts = item.discounts || [];
+        const itemDiscountTotal = itemDiscounts.reduce((s, d) => s + Number(d.amountApplied), 0);
+        existing.totalDiscount += itemDiscountTotal;
+        existing.discounts = [...existing.discounts, ...itemDiscounts];
+        if (item.status === "PAID") existing.hasPaid = true;
+      } else {
+        const itemDiscounts = item.discounts || [];
+        const itemDiscountTotal = itemDiscounts.reduce((s, d) => s + Number(d.amountApplied), 0);
+        map.set(key, {
+          key,
+          items: [item],
+          totalQty: item.qty,
+          productNameSnapshot: item.productNameSnapshot,
+          productPriceSnapshot: item.productPriceSnapshot,
+          modifiers: item.modifiers || [],
+          totalAmount: getItemTotal(item),
+          totalDiscount: itemDiscountTotal,
+          discounts: [...itemDiscounts],
+          hasPaid: item.status === "PAID",
+          firstItemId: item.id,
+        });
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const [addItemsOpen, setAddItemsOpen] = useState(false);
+  const [posCart, setPosCart] = useState<{ productId: number; name: string; price: string; qty: number; notes: string; modifiers: { optionId: number; name: string; priceDelta: string; qty: number }[] }[]>([]);
+
+  const { data: posProducts = [] } = useQuery<Product[]>({
+    queryKey: ["/api/waiter/menu"],
+    enabled: addItemsOpen,
+  });
+
+  const { data: posCategories = [] } = useQuery<Category[]>({
+    queryKey: ["/api/waiter/categories"],
+    enabled: addItemsOpen,
+  });
+
+  const posCategoryProducts = posProducts.filter(p => p.active).reduce((acc: Record<number | string, Product[]>, p) => {
+    const catId = p.categoryId ?? "sin-categoria";
+    if (!acc[catId]) acc[catId] = [];
+    acc[catId].push(p);
+    return acc;
+  }, {});
+
+  const [posModDialogProduct, setPosModDialogProduct] = useState<Product | null>(null);
+  const [posModGroups, setPosModGroups] = useState<{ id: number; name: string; required: boolean; multiSelect: boolean; minSelections: number; maxSelections: number | null; options: { id: number; name: string; priceDelta: string; active: boolean; sortOrder: number }[] }[]>([]);
+  const [posSelectedMods, setPosSelectedMods] = useState<Record<number, number[]>>({});
+  const [posLoadingMods, setPosLoadingMods] = useState(false);
+
+  const makePosCartKey = (productId: number, mods: { optionId: number }[]) => {
+    return `${productId}:${mods.map(m => m.optionId).sort((a, b) => a - b).join(",")}`;
+  };
+
+  const addToPosCart = async (product: Product) => {
+    setPosLoadingMods(true);
+    try {
+      const res = await fetch(`/api/products/${product.id}/modifiers`);
+      const groups = await res.json();
+      if (groups.length > 0) {
+        setPosModDialogProduct(product);
+        setPosModGroups(groups);
+        setPosSelectedMods({});
+        setPosLoadingMods(false);
+        return;
+      }
+    } catch {}
+    setPosLoadingMods(false);
+
+    const key = makePosCartKey(product.id, []);
+    const existing = posCart.find(c => c.productId === product.id && c.modifiers.length === 0);
+    if (existing) {
+      setPosCart(posCart.map(c => c.productId === product.id && c.modifiers.length === 0 ? { ...c, qty: c.qty + 1 } : c));
+    } else {
+      setPosCart([...posCart, { productId: product.id, name: product.name, price: product.price, qty: 1, notes: "", modifiers: [] }]);
+    }
+  };
+
+  const confirmPosModifiers = () => {
+    if (!posModDialogProduct) return;
+    const product = posModDialogProduct;
+    for (const group of posModGroups) {
+      const selected = posSelectedMods[group.id] || [];
+      if (group.required && selected.length === 0) {
+        toast({ title: `"${group.name}" es requerido`, variant: "destructive" });
+        return;
+      }
+      if (group.minSelections && selected.length < group.minSelections) {
+        toast({ title: `"${group.name}": seleccione al menos ${group.minSelections}`, variant: "destructive" });
+        return;
+      }
+      if (group.maxSelections && selected.length > group.maxSelections) {
+        toast({ title: `"${group.name}": máximo ${group.maxSelections} opciones`, variant: "destructive" });
+        return;
+      }
+    }
+    const mods: { optionId: number; name: string; priceDelta: string; qty: number }[] = [];
+    for (const group of posModGroups) {
+      const selected = posSelectedMods[group.id] || [];
+      for (const optId of selected) {
+        const opt = group.options.find(o => o.id === optId);
+        if (opt) mods.push({ optionId: opt.id, name: opt.name, priceDelta: opt.priceDelta, qty: 1 });
+      }
+    }
+    const key = makePosCartKey(product.id, mods);
+    const existing = posCart.find(c => makePosCartKey(c.productId, c.modifiers) === key);
+    if (existing) {
+      setPosCart(posCart.map(c => makePosCartKey(c.productId, c.modifiers) === key ? { ...c, qty: c.qty + 1 } : c));
+    } else {
+      const modDelta = mods.reduce((s, m) => s + Number(m.priceDelta), 0);
+      const displayPrice = (Number(product.price) + modDelta).toFixed(2);
+      setPosCart([...posCart, { productId: product.id, name: product.name + (mods.length > 0 ? ` (${mods.map(m => m.name).join(", ")})` : ""), price: displayPrice, qty: 1, notes: "", modifiers: mods }]);
+    }
+    setPosModDialogProduct(null);
+    setPosModGroups([]);
+    setPosSelectedMods({});
+  };
+
+  const removePosCartItem = (idx: number) => {
+    setPosCart(posCart.filter((_, i) => i !== idx));
+  };
+
+  const updatePosCartQty = (idx: number, qty: number) => {
+    if (qty <= 0) return removePosCartItem(idx);
+    setPosCart(posCart.map((c, i) => i === idx ? { ...c, qty } : c));
+  };
+
+  const posCartTotal = posCart.reduce((s, c) => s + Number(c.price) * c.qty, 0);
+
+  const addItemsMutation = useMutation({
+    mutationFn: async (sendToKds: boolean) => {
+      return apiRequest("POST", `/api/pos/orders/${selectedTable!.orderId}/add-items`, {
+        items: posCart.map(c => ({ productId: c.productId, qty: c.qty, notes: c.notes || null, modifiers: c.modifiers })),
+        sendToKds,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      setPosCart([]);
+      setAddItemsOpen(false);
+      toast({ title: "Items agregados" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const toggleItemSelection = (itemId: number) => {
     setSelectedItemIds((prev) =>
       prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]
@@ -859,6 +1035,13 @@ export default function POSPage() {
                 <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
                   <h3 className="font-bold">Items de la Orden</h3>
                   <div className="flex items-center gap-2 flex-wrap">
+                    <Button
+                      variant="outline"
+                      onClick={() => { setPosCart([]); setAddItemsOpen(true); }}
+                      data-testid="button-add-items"
+                    >
+                      <Plus className="w-4 h-4 mr-1" /> Agregar
+                    </Button>
                     {canSplit && (
                       <Button
                         variant="outline"
@@ -883,33 +1066,31 @@ export default function POSPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-1">
-                    {selectedTable.items.map((item) => {
-                      const isPaid = item.status === "PAID";
-                      const hasDiscount = item.discounts && item.discounts.length > 0;
-                      const discountTotal = (item.discounts || []).reduce((s, d) => s + Number(d.amountApplied), 0);
+                    {groupItems(selectedTable.items).map((group) => {
+                      const hasDiscount = group.totalDiscount > 0;
                       return (
                         <div
-                          key={item.id}
-                          className={`py-2 px-2 rounded-md min-h-[48px] ${isPaid ? "opacity-50" : ""}`}
-                          data-testid={`item-row-${item.id}`}
+                          key={group.key}
+                          className={`py-2 px-2 rounded-md min-h-[48px] ${group.hasPaid ? "opacity-50" : ""}`}
+                          data-testid={`item-row-${group.firstItemId}`}
                         >
                           <div className="flex items-center gap-2">
-                            {isPaid && <Badge variant="secondary" className="text-xs">Pagado</Badge>}
+                            {group.hasPaid && <Badge variant="secondary" className="text-xs">Pagado</Badge>}
                             <div className="flex-1">
-                              <span className="text-sm">{item.qty}x {item.productNameSnapshot}</span>
-                              {(item.modifiers && item.modifiers.length > 0) && (
+                              <span className="text-sm">{group.totalQty}x {group.productNameSnapshot}</span>
+                              {group.modifiers.length > 0 && (
                                 <div className="text-xs text-muted-foreground">
-                                  {item.modifiers.map(m => m.nameSnapshot).join(", ")}
+                                  {group.modifiers.map(m => m.nameSnapshot).join(", ")}
                                 </div>
                               )}
                             </div>
-                            <span className={`text-sm ${hasDiscount ? "line-through text-muted-foreground" : ""}`}>₡{getItemTotal(item).toLocaleString()}</span>
-                            {!isPaid && canPay && (
+                            <span className={`text-sm ${hasDiscount ? "line-through text-muted-foreground" : ""}`}>₡{group.totalAmount.toLocaleString()}</span>
+                            {!group.hasPaid && canPay && (
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => openDiscountDialog(item.id)}
-                                data-testid={`button-discount-item-${item.id}`}
+                                onClick={() => openDiscountDialog(group.firstItemId)}
+                                data-testid={`button-discount-item-${group.firstItemId}`}
                               >
                                 <Percent className="w-3.5 h-3.5" />
                               </Button>
@@ -918,19 +1099,19 @@ export default function POSPage() {
                           {hasDiscount && (
                             <div className="flex items-center gap-2 mt-1 ml-6">
                               <span className="text-xs text-green-600 dark:text-green-400">
-                                -{item.discounts![0].discountName}: ₡{discountTotal.toLocaleString()}
+                                -{group.discounts[0]?.discountName}: ₡{group.totalDiscount.toLocaleString()}
                               </span>
                               <span className="text-xs font-medium">
-                                = ₡{(getItemTotal(item) - discountTotal).toLocaleString()}
+                                = ₡{(group.totalAmount - group.totalDiscount).toLocaleString()}
                               </span>
-                              {!isPaid && canPay && (
+                              {!group.hasPaid && canPay && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-6 w-6"
-                                  onClick={() => removeDiscountMutation.mutate(item.id)}
+                                  onClick={() => removeDiscountMutation.mutate(group.firstItemId)}
                                   disabled={removeDiscountMutation.isPending}
-                                  data-testid={`button-remove-discount-${item.id}`}
+                                  data-testid={`button-remove-discount-${group.firstItemId}`}
                                 >
                                   <X className="w-3 h-3" />
                                 </Button>
@@ -967,6 +1148,37 @@ export default function POSPage() {
                   <div className="flex justify-between font-bold text-lg border-t pt-1 mt-1" data-testid="text-detail-total">
                     <span>Total a pagar</span>
                     <span>₡{Number(selectedTable.totalAmount).toLocaleString()}</span>
+                  </div>
+                  <div className="pt-2">
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        const tbl = selectedTable;
+                        const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
+                        const grouped = groupItems(tbl.items);
+                        const receiptItems = grouped.map((g) => {
+                          const modDelta = g.modifiers.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+                          const modLabel = g.modifiers.length > 0 ? ` (${g.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
+                          const unitPrice = Number(g.productPriceSnapshot) + modDelta;
+                          return { name: g.productNameSnapshot + modLabel, qty: g.totalQty, price: unitPrice, total: g.totalAmount };
+                        });
+                        triggerReceiptPrint(
+                          receiptItems,
+                          Number(tbl.totalAmount),
+                          "PRE-CUENTA",
+                          tbl.tableName,
+                          orderNum,
+                          undefined,
+                          Number(tbl.totalDiscounts || 0),
+                          Number(tbl.totalTaxes || 0),
+                          tbl.taxBreakdown
+                        );
+                      }}
+                      data-testid="button-pre-cuenta"
+                    >
+                      <Receipt className="w-4 h-4 mr-1" /> Pre-cuenta
+                    </Button>
                   </div>
                 </div>
               </Card>
@@ -1640,6 +1852,152 @@ export default function POSPage() {
                 Anular Orden
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={addItemsOpen} onOpenChange={(open) => { if (!open) { setAddItemsOpen(false); setPosCart([]); } }}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Agregar Productos</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Accordion type="multiple" className="w-full">
+              {posCategories.filter((c: Category) => c.active).map((cat: Category) => {
+                const prods = posCategoryProducts[cat.id] || [];
+                if (prods.length === 0) return null;
+                return (
+                  <AccordionItem key={cat.id} value={`cat-${cat.id}`}>
+                    <AccordionTrigger data-testid={`accordion-category-${cat.id}`}>{cat.name}</AccordionTrigger>
+                    <AccordionContent>
+                      <div className="space-y-1">
+                        {prods.map((p: Product) => {
+                          const inCart = posCart.find(c => c.productId === p.id);
+                          return (
+                            <div key={p.id} className="flex items-center justify-between gap-2 py-1 px-2 rounded-md min-h-[40px]" data-testid={`product-row-${p.id}`}>
+                              <div className="flex-1">
+                                <span className="text-sm">{p.name}</span>
+                                <span className="text-xs text-muted-foreground ml-2">₡{Number(p.price).toLocaleString()}</span>
+                              </div>
+                              {inCart ? (
+                                <div className="flex items-center gap-1">
+                                  <Button size="icon" variant="outline" onClick={() => updatePosCartQty(posCart.indexOf(inCart), inCart.qty - 1)} data-testid={`button-decrease-${p.id}`}>
+                                    <Minus className="w-3 h-3" />
+                                  </Button>
+                                  <span className="text-sm w-6 text-center" data-testid={`text-cart-qty-${p.id}`}>{inCart.qty}</span>
+                                  <Button size="icon" variant="outline" onClick={() => updatePosCartQty(posCart.indexOf(inCart), inCart.qty + 1)} data-testid={`button-increase-${p.id}`}>
+                                    <Plus className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Button size="icon" variant="ghost" onClick={() => addToPosCart(p)} data-testid={`button-add-product-${p.id}`}>
+                                  <Plus className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                );
+              })}
+            </Accordion>
+
+            {posCart.length > 0 && (
+              <div className="border-t pt-3 space-y-2">
+                <h4 className="font-bold text-sm">Resumen ({posCart.reduce((s, c) => s + c.qty, 0)} items)</h4>
+                {posCart.map((c, idx) => (
+                  <div key={idx} className="flex items-center justify-between gap-2 text-sm" data-testid={`cart-item-${idx}`}>
+                    <span>{c.qty}x {c.name}</span>
+                    <div className="flex items-center gap-1">
+                      <span>₡{(Number(c.price) * c.qty).toLocaleString()}</span>
+                      <Button size="icon" variant="ghost" onClick={() => removePosCartItem(idx)} data-testid={`button-remove-cart-${idx}`}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex justify-between font-bold text-sm border-t pt-2">
+                  <span>Total</span>
+                  <span>₡{posCartTotal.toLocaleString()}</span>
+                </div>
+                <div className="flex flex-col gap-2 pt-2">
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    onClick={() => addItemsMutation.mutate(false)}
+                    disabled={addItemsMutation.isPending}
+                    data-testid="button-save-only"
+                  >
+                    {addItemsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                    Solo Guardar
+                  </Button>
+                  <Button
+                    className="w-full"
+                    onClick={() => addItemsMutation.mutate(true)}
+                    disabled={addItemsMutation.isPending}
+                    data-testid="button-save-and-kds"
+                  >
+                    {addItemsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                    Guardar y Enviar a KDS
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!posModDialogProduct} onOpenChange={(open) => { if (!open) { setPosModDialogProduct(null); setPosModGroups([]); setPosSelectedMods({}); } }}>
+        <DialogContent className="max-w-sm max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle data-testid="text-pos-modifier-title">{posModDialogProduct?.name} - Modificadores</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {posModGroups.map((group) => (
+              <div key={group.id}>
+                <h4 className="text-sm font-bold mb-1">
+                  {group.name}
+                  {group.required && <span className="text-destructive ml-1">*</span>}
+                </h4>
+                <div className="space-y-1">
+                  {group.options.filter(o => o.active).map((opt) => {
+                    const selected = posSelectedMods[group.id] || [];
+                    const isChecked = selected.includes(opt.id);
+                    return (
+                      <label key={opt.id} className="flex items-center gap-2 py-1.5 px-2 rounded-md cursor-pointer hover-elevate" data-testid={`pos-mod-option-${opt.id}`}>
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={(checked) => {
+                            if (group.multiSelect) {
+                              setPosSelectedMods(prev => ({
+                                ...prev,
+                                [group.id]: checked
+                                  ? [...(prev[group.id] || []), opt.id]
+                                  : (prev[group.id] || []).filter(id => id !== opt.id),
+                              }));
+                            } else {
+                              setPosSelectedMods(prev => ({
+                                ...prev,
+                                [group.id]: checked ? [opt.id] : [],
+                              }));
+                            }
+                          }}
+                        />
+                        <span className="text-sm flex-1">{opt.name}</span>
+                        {Number(opt.priceDelta) > 0 && (
+                          <span className="text-xs text-muted-foreground">+₡{Number(opt.priceDelta).toLocaleString()}</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <Button className="w-full" onClick={confirmPosModifiers} data-testid="button-confirm-pos-modifiers">
+              Agregar al carrito
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
