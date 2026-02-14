@@ -389,6 +389,20 @@ export default function POSPage() {
     },
   });
 
+  const moveBulkMutation = useMutation({
+    mutationFn: async ({ orderItemIds, fromSplitId, toSplitId }: { orderItemIds: number[]; fromSplitId?: number | null; toSplitId?: number | null }) => {
+      return apiRequest("POST", "/api/pos/split-items/move-bulk", { orderItemIds, fromSplitId: fromSplitId || null, toSplitId: toSplitId || null });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      setSelectedItemIds([]);
+    },
+    onError: (err: any) => {
+      toast({ title: "Error al mover items", description: err.message, variant: "destructive" });
+    },
+  });
+
   const voidPaymentMutation = useMutation({
     mutationFn: async (paymentId: number) => {
       return apiRequest("POST", `/api/pos/void-payment/${paymentId}`);
@@ -558,11 +572,8 @@ export default function POSPage() {
   };
 
   const moveSelectedToActive = () => {
-    if (!activeSplitId) return;
-    selectedItemIds.forEach(itemId => {
-      moveItemMutation.mutate({ orderItemId: itemId, fromSplitId: null, toSplitId: activeSplitId });
-    });
-    setSelectedItemIds([]);
+    if (!activeSplitId || selectedItemIds.length === 0) return;
+    moveBulkMutation.mutate({ orderItemIds: selectedItemIds, fromSplitId: null, toSplitId: activeSplitId });
   };
 
   const openDiscountDialog = (itemId: number) => {
@@ -707,7 +718,7 @@ export default function POSPage() {
                   {selectedItemIds.length > 0 && (
                     <div className="mt-3 border-t pt-3">
                       {activeSplitId ? (
-                        <Button onClick={moveSelectedToActive} disabled={moveItemMutation.isPending} className="w-full" data-testid="button-move-to-active">
+                        <Button onClick={moveSelectedToActive} disabled={moveBulkMutation.isPending} className="w-full" data-testid="button-move-to-active">
                           <ArrowRight className="w-4 h-4 mr-1" /> Mover {selectedItemIds.length} ítem(s) a {splits.find(s => s.id === activeSplitId)?.label || "Subcuenta"}
                         </Button>
                       ) : (

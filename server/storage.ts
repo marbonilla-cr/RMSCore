@@ -647,6 +647,19 @@ export async function removeSplitItemByOrderItemId(splitId: number, orderItemId:
   await db.delete(splitItems).where(and(eq(splitItems.splitId, splitId), eq(splitItems.orderItemId, orderItemId)));
 }
 
+export async function bulkMoveSplitItems(orderItemIds: number[], fromSplitId: number | null, toSplitId: number | null) {
+  await db.transaction(async (tx) => {
+    for (const orderItemId of orderItemIds) {
+      if (fromSplitId) {
+        await tx.delete(splitItems).where(and(eq(splitItems.splitId, fromSplitId), eq(splitItems.orderItemId, orderItemId)));
+      }
+      if (toSplitId) {
+        await tx.insert(splitItems).values({ splitId: toSplitId, orderItemId });
+      }
+    }
+  });
+}
+
 export async function getPaymentsForOrder(orderId: number) {
   return db.select().from(payments).where(eq(payments.orderId, orderId));
 }

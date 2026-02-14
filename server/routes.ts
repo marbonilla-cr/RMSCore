@@ -1969,6 +1969,22 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/pos/split-items/move-bulk", requirePermission("POS_SPLIT"), async (req, res) => {
+    try {
+      const { orderItemIds, fromSplitId, toSplitId } = req.body;
+      if (!orderItemIds || !Array.isArray(orderItemIds) || orderItemIds.length === 0) {
+        return res.status(400).json({ message: "orderItemIds requerido (array)" });
+      }
+
+      await storage.bulkMoveSplitItems(orderItemIds, fromSplitId || null, toSplitId || null);
+
+      broadcast("order_updated", {});
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/pos/split-order", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
       const { orderId } = req.body;
