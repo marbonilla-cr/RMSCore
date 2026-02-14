@@ -43,6 +43,7 @@ export const categories = pgTable("categories", {
   parentCategoryCode: text("parent_category_code"),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  kdsDestination: text("kds_destination").notNull().default("cocina"),
 });
 
 export const products = pgTable("products", {
@@ -116,6 +117,7 @@ export const kitchenTickets = pgTable("kitchen_tickets", {
   tableId: integer("table_id").notNull(),
   tableNameSnapshot: text("table_name_snapshot").notNull(),
   status: text("status").notNull().default("NEW"),
+  kdsDestination: text("kds_destination").notNull().default("cocina"),
   createdAt: timestamp("created_at").defaultNow(),
   clearedAt: timestamp("cleared_at"),
 });

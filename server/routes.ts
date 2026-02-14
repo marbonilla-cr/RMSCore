@@ -981,16 +981,11 @@ export async function registerRoutes(
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
       const roundNumber = maxRound + 1;
 
-      // Create kitchen ticket
-      const ticket = await storage.createKitchenTicket({
-        orderId: order.id,
-        tableId,
-        tableNameSnapshot: table.tableName,
-        status: "NEW",
-      });
-
-      // Create items
+      // Create items and group by KDS destination
       const allCategories = await storage.getAllCategories();
+      const kdsTickets: Map<string, number> = new Map();
+      const createdTicketIds: number[] = [];
+
       for (const item of items) {
         const product = await storage.getProduct(item.productId);
         if (!product || !product.active) continue;
@@ -1000,6 +995,21 @@ export async function registerRoutes(
         }
 
         const category = allCategories.find(c => c.id === product.categoryId);
+        const kdsDestination = category?.kdsDestination || "cocina";
+
+        if (!kdsTickets.has(kdsDestination)) {
+          const ticket = await storage.createKitchenTicket({
+            orderId: order.id,
+            tableId,
+            tableNameSnapshot: table.tableName,
+            status: "NEW",
+            kdsDestination,
+          });
+          kdsTickets.set(kdsDestination, ticket.id);
+          createdTicketIds.push(ticket.id);
+        }
+
+        const ticketId = kdsTickets.get(kdsDestination)!;
 
         const orderItem = await storage.createOrderItem({
           orderId: order.id,
@@ -1036,7 +1046,7 @@ export async function registerRoutes(
         const fullNotes = [item.notes, modNotes].filter(Boolean).join(" | ");
 
         await storage.createKitchenTicketItem({
-          kitchenTicketId: ticket.id,
+          kitchenTicketId: ticketId,
           orderItemId: orderItem.id,
           productNameSnapshot: product.name,
           qty: item.qty,
@@ -1044,10 +1054,8 @@ export async function registerRoutes(
           status: "NEW",
         });
 
-        // Decrement portions
         await storage.decrementPortions(product.id, item.qty);
 
-        // Sales ledger
         await storage.createSalesLedgerItem({
           businessDate: getBusinessDate(),
           tableId,
@@ -1070,7 +1078,6 @@ export async function registerRoutes(
           sentToKitchenAt: new Date(),
         });
 
-        // Audit
         await storage.createAuditEvent({
           actorType: "USER",
           actorUserId: userId,
@@ -1082,15 +1089,16 @@ export async function registerRoutes(
         });
       }
 
-      // Update order status and total
       await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
       await storage.recalcOrderTotal(order.id);
 
-      broadcast("kitchen_ticket_created", { ticketId: ticket.id, tableId, tableName: table.tableName });
+      for (const ticketId of createdTicketIds) {
+        broadcast("kitchen_ticket_created", { ticketId, tableId, tableName: table.tableName });
+      }
       broadcast("order_updated", { tableId, orderId: order.id });
       broadcast("table_status_changed", { tableId });
 
-      res.json({ ok: true, ticketId: ticket.id });
+      res.json({ ok: true, ticketIds: createdTicketIds });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -1126,19 +1134,33 @@ export async function registerRoutes(
       const orderItemsList = await storage.getOrderItems(order.id);
       const subItems = orderItemsList.filter(i => i.qrSubmissionId === subId);
 
-      let ticketId: number | null = null;
+      const createdTicketIds: number[] = [];
 
       if (subItems.length > 0) {
-        // Create kitchen ticket
-        const ticket = await storage.createKitchenTicket({
-          orderId: order.id,
-          tableId: sub.tableId,
-          tableNameSnapshot: table.tableName,
-          status: "NEW",
-        });
-        ticketId = ticket.id;
+        const allCategories = await storage.getAllCategories();
+        const allProducts = await Promise.all(subItems.map(i => storage.getProduct(i.productId)));
+        const kdsTickets: Map<string, number> = new Map();
 
-        for (const item of subItems) {
+        for (let idx = 0; idx < subItems.length; idx++) {
+          const item = subItems[idx];
+          const product = allProducts[idx];
+          const category = product ? allCategories.find(c => c.id === product.categoryId) : null;
+          const kdsDestination = category?.kdsDestination || "cocina";
+
+          if (!kdsTickets.has(kdsDestination)) {
+            const ticket = await storage.createKitchenTicket({
+              orderId: order.id,
+              tableId: sub.tableId,
+              tableNameSnapshot: table.tableName,
+              status: "NEW",
+              kdsDestination,
+            });
+            kdsTickets.set(kdsDestination, ticket.id);
+            createdTicketIds.push(ticket.id);
+          }
+
+          const ticketId = kdsTickets.get(kdsDestination)!;
+
           await storage.updateOrderItem(item.id, {
             status: "SENT",
             sentToKitchenAt: new Date(),
@@ -1146,7 +1168,7 @@ export async function registerRoutes(
           });
 
           await storage.createKitchenTicketItem({
-            kitchenTicketId: ticket.id,
+            kitchenTicketId: ticketId,
             orderItemId: item.id,
             productNameSnapshot: item.productNameSnapshot,
             qty: item.qty,
@@ -1154,22 +1176,18 @@ export async function registerRoutes(
             status: "NEW",
           });
 
-          // Decrement portions
           await storage.decrementPortions(item.productId, item.qty);
 
-          // Update ledger
           await storage.updateSalesLedgerItems(item.id, {
             sentToKitchenAt: new Date(),
             responsibleWaiterId: userId,
           });
         }
 
-        // Update order status
         await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
         await storage.recalcOrderTotal(order.id);
       }
 
-      // Audit
       await storage.createAuditEvent({
         actorType: "USER",
         actorUserId: userId,
@@ -1180,7 +1198,7 @@ export async function registerRoutes(
         metadata: { itemCount: subItems.length, submissionId: subId },
       });
 
-      if (ticketId) {
+      for (const ticketId of createdTicketIds) {
         broadcast("kitchen_ticket_created", { ticketId, tableId: sub.tableId, tableName: table.tableName });
       }
       broadcast("order_updated", { tableId: sub.tableId, orderId: order.id });
@@ -1555,11 +1573,12 @@ export async function registerRoutes(
   // ==================== KDS ====================
   app.get("/api/kds/tickets/:type", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     const type = req.params.type;
+    const destination = (req.query.destination as string) || undefined;
     let tickets;
     if (type === "active") {
-      tickets = await storage.getActiveKitchenTickets();
+      tickets = await storage.getActiveKitchenTickets(destination);
     } else {
-      tickets = await storage.getHistoryKitchenTickets();
+      tickets = await storage.getHistoryKitchenTickets(destination);
     }
 
     const result = [];
@@ -1635,8 +1654,9 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/kds/clear-history", requireRole("KITCHEN", "MANAGER"), async (_req, res) => {
-    await storage.clearKitchenHistory();
+  app.post("/api/kds/clear-history", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
+    const destination = (req.query.destination as string) || undefined;
+    await storage.clearKitchenHistory(destination);
     res.json({ ok: true });
   });
 

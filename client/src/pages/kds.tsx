@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { wsManager } from "@/lib/ws";
-import { ChefHat, Clock, CheckCircle, Loader2, Trash2 } from "lucide-react";
+import { ChefHat, Clock, CheckCircle, Loader2, Trash2, Wine } from "lucide-react";
 
 interface KDSTicket {
   id: number;
@@ -35,14 +35,20 @@ function formatElapsed(dateStr: string) {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
-export default function KDSPage() {
+export function KDSDisplay({ destination, title, icon: Icon }: { destination: string; title: string; icon: typeof ChefHat }) {
   const [tab, setTab] = useState("active");
-  const lastTicketCountRef = useRef(0);
   const ticketOrderRef = useRef<number[]>([]);
   const [, forceUpdate] = useState(0);
 
+  const activeQueryKey = ["/api/kds/tickets", "active", destination];
+  const historyQueryKey = ["/api/kds/tickets", "history", destination];
+
   const { data: activeTickets = [], isLoading } = useQuery<KDSTicket[]>({
-    queryKey: ["/api/kds/tickets", "active"],
+    queryKey: activeQueryKey,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/kds/tickets/active?destination=${destination}`);
+      return res.json();
+    },
     refetchInterval: 1000,
   });
 
@@ -57,7 +63,11 @@ export default function KDSPage() {
   }, [activeTickets]);
 
   const { data: historyTickets = [] } = useQuery<KDSTicket[]>({
-    queryKey: ["/api/kds/tickets", "history"],
+    queryKey: historyQueryKey,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/kds/tickets/history?destination=${destination}`);
+      return res.json();
+    },
     enabled: tab === "history",
   });
 
@@ -103,7 +113,7 @@ export default function KDSPage() {
   };
 
   const updateItemOptimistically = (itemId: number, newStatus: string) => {
-    queryClient.setQueryData<KDSTicket[]>(["/api/kds/tickets", "active"], (old) => {
+    queryClient.setQueryData<KDSTicket[]>(activeQueryKey, (old) => {
       if (!old) return old;
       return old.map(ticket => ({
         ...ticket,
@@ -119,14 +129,14 @@ export default function KDSPage() {
       return apiRequest("PATCH", `/api/kds/items/${itemId}`, { status });
     },
     onMutate: async ({ itemId, status }) => {
-      await queryClient.cancelQueries({ queryKey: ["/api/kds/tickets", "active"] });
-      const previous = queryClient.getQueryData<KDSTicket[]>(["/api/kds/tickets", "active"]);
+      await queryClient.cancelQueries({ queryKey: activeQueryKey });
+      const previous = queryClient.getQueryData<KDSTicket[]>(activeQueryKey);
       updateItemOptimistically(itemId, status);
       return { previous };
     },
     onError: (_err, _vars, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(["/api/kds/tickets", "active"], context.previous);
+        queryClient.setQueryData(activeQueryKey, context.previous);
       }
     },
     onSettled: () => {
@@ -139,10 +149,10 @@ export default function KDSPage() {
       return apiRequest("PATCH", `/api/kds/tickets/${ticketId}`, { status: "READY" });
     },
     onMutate: async (ticketId) => {
-      await queryClient.cancelQueries({ queryKey: ["/api/kds/tickets", "active"] });
-      const previous = queryClient.getQueryData<KDSTicket[]>(["/api/kds/tickets", "active"]);
+      await queryClient.cancelQueries({ queryKey: activeQueryKey });
+      const previous = queryClient.getQueryData<KDSTicket[]>(activeQueryKey);
       const previousOrder = [...ticketOrderRef.current];
-      queryClient.setQueryData<KDSTicket[]>(["/api/kds/tickets", "active"], (old) => {
+      queryClient.setQueryData<KDSTicket[]>(activeQueryKey, (old) => {
         if (!old) return old;
         return old.filter(t => t.id !== ticketId);
       });
@@ -151,7 +161,7 @@ export default function KDSPage() {
     },
     onError: (_err, _vars, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(["/api/kds/tickets", "active"], context.previous);
+        queryClient.setQueryData(activeQueryKey, context.previous);
       }
       if (context?.previousOrder) {
         ticketOrderRef.current = context.previousOrder;
@@ -164,10 +174,10 @@ export default function KDSPage() {
 
   const clearHistoryMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest("POST", "/api/kds/clear-history");
+      return apiRequest("POST", `/api/kds/clear-history?destination=${destination}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets", "history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
     },
   });
 
@@ -185,11 +195,13 @@ export default function KDSPage() {
     return () => clearInterval(interval);
   }, []);
 
+  const emptyMessage = destination === "bar" ? "No hay tickets activos en bar" : "No hay tickets activos en cocina";
+
   return (
     <div className="p-3 md:p-4">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
         <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
-          <ChefHat className="w-6 h-6" /> Cocina (KDS)
+          <Icon className="w-6 h-6" /> {title}
         </h1>
       </div>
 
@@ -209,8 +221,8 @@ export default function KDSPage() {
           ) : stableTickets.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <ChefHat className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-muted-foreground">No hay tickets activos en cocina</p>
+                <Icon className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                <p className="text-muted-foreground">{emptyMessage}</p>
               </CardContent>
             </Card>
           ) : (
@@ -308,4 +320,8 @@ export default function KDSPage() {
       </Tabs>
     </div>
   );
+}
+
+export default function KDSPage() {
+  return <KDSDisplay destination="cocina" title="Cocina (KDS)" icon={ChefHat} />;
 }

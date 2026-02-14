@@ -15,6 +15,7 @@ import LoginPage from "@/pages/login";
 import TablesPage from "@/pages/tables";
 import TableDetailPage from "@/pages/table-detail";
 import KDSPage from "@/pages/kds";
+import KDSBarPage from "@/pages/kds-bar";
 import POSPage from "@/pages/pos";
 import DashboardPage from "@/pages/dashboard";
 import QRClientPage from "@/pages/qr-client";
@@ -43,7 +44,7 @@ function getDefaultRouteByPermissions(perms: string[]): string {
 function canAccessRouteByPermissions(perms: string[], path: string): boolean {
   if (path === "/") return true;
   if (path === "/tables" || path.startsWith("/tables/")) return perms.includes("MODULE_TABLES_VIEW");
-  if (path === "/kds") return perms.includes("MODULE_KDS_VIEW");
+  if (path === "/kds" || path === "/kds-bar") return perms.includes("MODULE_KDS_VIEW");
   if (path === "/pos") return perms.includes("MODULE_POS_VIEW");
   if (path === "/dashboard") return perms.includes("MODULE_DASHBOARD_VIEW");
   if (path.startsWith("/admin/")) return perms.includes("MODULE_ADMIN_VIEW");
@@ -96,6 +97,7 @@ function AuthenticatedRouter() {
       <Route path="/tables" component={TablesPage} />
       <Route path="/tables/:id" component={TableDetailPage} />
       <Route path="/kds" component={KDSPage} />
+      <Route path="/kds-bar" component={KDSBarPage} />
       <Route path="/pos" component={POSPage} />
       <Route path="/dashboard" component={DashboardPage} />
       <Route path="/admin/tables" component={AdminTablesPage} />

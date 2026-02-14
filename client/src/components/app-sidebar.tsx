@@ -31,6 +31,7 @@ import {
   Settings2,
   Percent,
   Receipt,
+  Wine,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
@@ -40,6 +41,7 @@ const tablesItems = [
 
 const kitchenItems = [
   { title: "Cocina (KDS)", url: "/kds", icon: ChefHat },
+  { title: "Bar (KDS)", url: "/kds-bar", icon: Wine },
 ];
 
 const cashierItems = [
@@ -116,7 +118,7 @@ export function AppSidebar() {
 
         {showKDS && (
           <SidebarGroup>
-            <SidebarGroupLabel>Cocina</SidebarGroupLabel>
+            <SidebarGroupLabel>Cocina / Bar</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {kitchenItems.map((item) => (

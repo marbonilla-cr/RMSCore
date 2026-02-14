@@ -467,15 +467,19 @@ export async function createKitchenTicket(data: InsertKitchenTicket) {
   return ticket;
 }
 
-export async function getActiveKitchenTickets() {
+export async function getActiveKitchenTickets(destination?: string) {
+  const conditions = [ne(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)];
+  if (destination) conditions.push(eq(kitchenTickets.kdsDestination, destination));
   return db.select().from(kitchenTickets)
-    .where(and(ne(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)))
+    .where(and(...conditions))
     .orderBy(asc(kitchenTickets.createdAt));
 }
 
-export async function getHistoryKitchenTickets() {
+export async function getHistoryKitchenTickets(destination?: string) {
+  const conditions = [eq(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)];
+  if (destination) conditions.push(eq(kitchenTickets.kdsDestination, destination));
   return db.select().from(kitchenTickets)
-    .where(and(eq(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)))
+    .where(and(...conditions))
     .orderBy(desc(kitchenTickets.createdAt));
 }
 
@@ -484,10 +488,12 @@ export async function updateKitchenTicket(id: number, data: any) {
   return ticket;
 }
 
-export async function clearKitchenHistory() {
+export async function clearKitchenHistory(destination?: string) {
+  const conditions = [eq(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)];
+  if (destination) conditions.push(eq(kitchenTickets.kdsDestination, destination));
   await db.update(kitchenTickets)
     .set({ clearedAt: new Date() })
-    .where(and(eq(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)));
+    .where(and(...conditions));
 }
 
 // Kitchen Ticket Items
