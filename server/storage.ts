@@ -1353,6 +1353,49 @@ export async function deleteOrderItemDiscountsByItem(orderItemId: number) {
   await db.delete(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, orderItemId));
 }
 
+export async function getAllOpenOrders() {
+  return db.select().from(orders)
+    .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "READY"]));
+}
+
+export async function getOrderItemsByOrderIds(orderIds: number[]) {
+  if (orderIds.length === 0) return [];
+  return db.select().from(orderItems)
+    .where(inArray(orderItems.orderId, orderIds))
+    .orderBy(asc(orderItems.roundNumber), asc(orderItems.id));
+}
+
+export async function getOrderItemModifiersByItemIds(itemIds: number[]) {
+  if (itemIds.length === 0) return [];
+  return db.select().from(orderItemModifiers).where(inArray(orderItemModifiers.orderItemId, itemIds));
+}
+
+export async function getOrderItemDiscountsByItemIds(itemIds: number[]) {
+  if (itemIds.length === 0) return [];
+  return db.select().from(orderItemDiscounts).where(inArray(orderItemDiscounts.orderItemId, itemIds));
+}
+
+export async function getOrderItemTaxesByItemIds(itemIds: number[]) {
+  if (itemIds.length === 0) return [];
+  return db.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, itemIds));
+}
+
+export async function getPendingSubmissionsByOrderIds(orderIds: number[]) {
+  if (orderIds.length === 0) return [];
+  return db.select().from(qrSubmissions)
+    .where(and(inArray(qrSubmissions.orderId, orderIds), eq(qrSubmissions.status, "PENDING")));
+}
+
+export async function getUsersByIds(userIds: number[]) {
+  if (userIds.length === 0) return [];
+  return db.select().from(users).where(inArray(users.id, userIds));
+}
+
+export async function getPaymentsByOrderIds(orderIds: number[]) {
+  if (orderIds.length === 0) return [];
+  return db.select().from(payments).where(inArray(payments.orderId, orderIds));
+}
+
 export async function truncateTransactionalData() {
   await db.delete(splitItems);
   await db.delete(splitAccounts);

@@ -952,22 +952,50 @@ export async function registerRoutes(
 
   // ==================== WAITER: TABLES ====================
   app.get("/api/waiter/tables", requireRole("WAITER", "MANAGER"), async (_req, res) => {
-    const allTables = await storage.getAllTables();
-    const result = [];
-    for (const t of allTables) {
-      const order = await storage.getOpenOrderForTable(t.id);
-      let waiterName = null;
+    const [allTables, allOpenOrders] = await Promise.all([
+      storage.getAllTables(),
+      storage.getAllOpenOrders(),
+    ]);
+
+    const parentOrders = allOpenOrders.filter(o => !o.parentOrderId);
+    const orderByTable = new Map<number, typeof parentOrders[0]>();
+    for (const o of parentOrders) {
+      if (!orderByTable.has(o.tableId)) orderByTable.set(o.tableId, o);
+    }
+
+    const orderIds = parentOrders.map(o => o.id);
+    const waiterIds = Array.from(new Set(parentOrders.filter(o => o.responsibleWaiterId).map(o => o.responsibleWaiterId!)));
+
+    const [allItems, allSubs, waiters] = await Promise.all([
+      storage.getOrderItemsByOrderIds(orderIds),
+      storage.getPendingSubmissionsByOrderIds(orderIds),
+      storage.getUsersByIds(waiterIds),
+    ]);
+
+    const waiterMap = new Map(waiters.map(w => [w.id, w.displayName]));
+
+    const itemsByOrder = new Map<number, typeof allItems>();
+    for (const item of allItems) {
+      if (!itemsByOrder.has(item.orderId)) itemsByOrder.set(item.orderId, []);
+      itemsByOrder.get(item.orderId)!.push(item);
+    }
+
+    const subsByOrder = new Map<number, number>();
+    for (const s of allSubs) {
+      subsByOrder.set(s.orderId, (subsByOrder.get(s.orderId) || 0) + 1);
+    }
+
+    const result = allTables.map(t => {
+      const order = orderByTable.get(t.id);
+      let waiterName: string | null = null;
       let pendingQrCount = 0;
       let itemCount = 0;
       let lastSentToKitchenAt: string | null = null;
+
       if (order) {
-        if (order.responsibleWaiterId) {
-          const waiter = await storage.getUser(order.responsibleWaiterId);
-          waiterName = waiter?.displayName || null;
-        }
-        const subs = await storage.getPendingSubmissions(order.id);
-        pendingQrCount = subs.length;
-        const items = await storage.getOrderItems(order.id);
+        waiterName = order.responsibleWaiterId ? (waiterMap.get(order.responsibleWaiterId) || null) : null;
+        pendingQrCount = subsByOrder.get(order.id) || 0;
+        const items = itemsByOrder.get(order.id) || [];
         itemCount = items.filter(i => i.status !== "VOIDED").length;
         const sentTimes = items
           .filter(i => i.status !== "VOIDED" && i.sentToKitchenAt)
@@ -976,7 +1004,8 @@ export async function registerRoutes(
           lastSentToKitchenAt = new Date(Math.max(...sentTimes)).toISOString();
         }
       }
-      result.push({
+
+      return {
         id: t.id,
         tableCode: t.tableCode,
         tableName: t.tableName,
@@ -990,8 +1019,8 @@ export async function registerRoutes(
         itemCount,
         totalAmount: order?.totalAmount || null,
         lastSentToKitchenAt,
-      });
-    }
+      };
+    });
     res.json(result);
   });
 
@@ -1839,52 +1868,98 @@ export async function registerRoutes(
 
   // ==================== POS ====================
   app.get("/api/pos/tables", requirePermission("POS_VIEW"), async (_req, res) => {
-    const allTables = await storage.getAllTables();
+    const [allTables, allOpenOrders] = await Promise.all([
+      storage.getAllTables(),
+      storage.getAllOpenOrders(),
+    ]);
+    const tableMap = new Map(allTables.map(t => [t.id, t]));
+    const relevantOrders = allOpenOrders.filter(o => tableMap.has(o.tableId));
+    if (relevantOrders.length === 0) return res.json([]);
+
+    const orderIds = relevantOrders.map(o => o.id);
+    const allItems = await storage.getOrderItemsByOrderIds(orderIds);
+
+    const activeItems = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PENDING");
+    const allItemIds = allItems.map(i => i.id);
+    const activeItemIds = activeItems.map(i => i.id);
+
+    const [allMods, allItemDiscounts, allItemTaxes] = await Promise.all([
+      storage.getOrderItemModifiersByItemIds(activeItemIds),
+      storage.getOrderItemDiscountsByItemIds(allItemIds),
+      storage.getOrderItemTaxesByItemIds(allItemIds),
+    ]);
+
+    const modsMap = new Map<number, typeof allMods>();
+    for (const m of allMods) {
+      if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []);
+      modsMap.get(m.orderItemId)!.push(m);
+    }
+    const discountsMap = new Map<number, typeof allItemDiscounts>();
+    for (const d of allItemDiscounts) {
+      if (!discountsMap.has(d.orderItemId)) discountsMap.set(d.orderItemId, []);
+      discountsMap.get(d.orderItemId)!.push(d);
+    }
+    const taxesMap = new Map<number, typeof allItemTaxes>();
+    for (const t of allItemTaxes) {
+      if (!taxesMap.has(t.orderItemId)) taxesMap.set(t.orderItemId, []);
+      taxesMap.get(t.orderItemId)!.push(t);
+    }
+
+    const itemsByOrder = new Map<number, typeof activeItems>();
+    for (const item of activeItems) {
+      if (!itemsByOrder.has(item.orderId)) itemsByOrder.set(item.orderId, []);
+      itemsByOrder.get(item.orderId)!.push(item);
+    }
+
+    const allItemsByOrder = new Map<number, typeof allItems>();
+    for (const item of allItems) {
+      if (!allItemsByOrder.has(item.orderId)) allItemsByOrder.set(item.orderId, []);
+      allItemsByOrder.get(item.orderId)!.push(item);
+    }
+
     const result: any[] = [];
-    for (const t of allTables) {
-      const openOrders = await storage.getOpenOrdersForTable(t.id);
-      if (openOrders.length === 0) continue;
+    for (const order of relevantOrders) {
+      const orderActiveItems = itemsByOrder.get(order.id) || [];
+      if (orderActiveItems.length === 0) continue;
+      const table = tableMap.get(order.tableId)!;
 
-      for (const order of openOrders) {
-        const items = await storage.getOrderItems(order.id);
-        const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PENDING");
-        if (activeItems.length === 0) continue;
-        const itemsWithModifiers = [];
-        for (const item of activeItems) {
-          const mods = await storage.getOrderItemModifiers(item.id);
-          const itemDiscounts = await storage.getOrderItemDiscounts(item.id);
-          const itemTaxes = await storage.getOrderItemTaxes(item.id);
-          itemsWithModifiers.push({ ...item, modifiers: mods, discounts: itemDiscounts, taxes: itemTaxes });
-        }
-        const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(order.id);
-        const orderTaxesList = await storage.getOrderItemTaxesByOrder(order.id);
+      const itemsWithModifiers = orderActiveItems.map(item => ({
+        ...item,
+        modifiers: modsMap.get(item.id) || [],
+        discounts: discountsMap.get(item.id) || [],
+        taxes: taxesMap.get(item.id) || [],
+      }));
 
-        const isChild = !!order.parentOrderId;
-        const ticketNumber = isChild
-          ? `${order.dailyNumber}-${order.splitIndex}`
-          : `${order.dailyNumber}`;
-        const displayName = isChild
-          ? `${t.tableName} #${ticketNumber}`
-          : `${t.tableName} #${order.dailyNumber}`;
+      const orderAllItems = allItemsByOrder.get(order.id) || [];
+      const orderAllItemIds = new Set(orderAllItems.map(i => i.id));
+      const orderDiscountsList = allItemDiscounts.filter(d => orderAllItemIds.has(d.orderItemId));
+      const orderTaxesList = allItemTaxes.filter(t => orderAllItemIds.has(t.orderItemId));
 
-        result.push({
-          id: t.id,
-          tableName: displayName,
-          orderId: order.id,
-          parentOrderId: order.parentOrderId || null,
-          splitIndex: order.splitIndex || null,
-          dailyNumber: order.dailyNumber,
-          globalNumber: order.globalNumber,
-          ticketNumber,
-          totalAmount: order.totalAmount,
-          openedAt: order.openedAt,
-          itemCount: activeItems.length,
-          items: itemsWithModifiers,
-          totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
-          totalTaxes: orderTaxesList.reduce((s, t) => s + Number(t.taxAmount), 0).toFixed(2),
-          taxBreakdown: aggregateTaxBreakdown(orderTaxesList),
-        });
-      }
+      const isChild = !!order.parentOrderId;
+      const ticketNumber = isChild
+        ? `${order.dailyNumber}-${order.splitIndex}`
+        : `${order.dailyNumber}`;
+      const displayName = isChild
+        ? `${table.tableName} #${ticketNumber}`
+        : `${table.tableName} #${order.dailyNumber}`;
+
+      result.push({
+        id: table.id,
+        tableName: displayName,
+        orderId: order.id,
+        parentOrderId: order.parentOrderId || null,
+        splitIndex: order.splitIndex || null,
+        dailyNumber: order.dailyNumber,
+        globalNumber: order.globalNumber,
+        ticketNumber,
+        totalAmount: order.totalAmount,
+        openedAt: order.openedAt,
+        itemCount: orderActiveItems.length,
+        items: itemsWithModifiers,
+        totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
+        totalTaxes: orderTaxesList.reduce((s, t) => s + Number(t.taxAmount), 0).toFixed(2),
+        taxBreakdown: aggregateTaxBreakdown(orderTaxesList),
+      });
     }
     res.json(result);
   });
@@ -2647,12 +2722,16 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const table = await storage.getTable(order.tableId);
-      const items = await storage.getOrderItems(orderId);
+      const [table, items, orderPayments, allPaymentMethods] = await Promise.all([
+        storage.getTable(order.tableId),
+        storage.getOrderItems(orderId),
+        storage.getPaymentsForOrder(orderId),
+        storage.getAllPaymentMethods(),
+      ]);
+      const pmMap = new Map(allPaymentMethods.map(m => [m.id, m.paymentName]));
       const activeItems = items.filter(i => i.status !== "VOIDED");
-      const orderPayments = await storage.getPaymentsForOrder(orderId);
       const paidPayments = orderPayments.filter(p => p.status === "PAID");
-      const paymentMethodName = paidPayments.length > 0 ? paidPayments.map(p => p.paymentMethodName || "Efectivo").join(", ") : "";
+      const paymentMethodName = paidPayments.length > 0 ? paidPayments.map(p => pmMap.get(p.paymentMethodId) || "Efectivo").join(", ") : "";
 
       let orderNumber = "";
       if (order.dailyNumber) {
@@ -2660,9 +2739,22 @@ export async function registerRoutes(
         if (order.splitIndex) orderNumber += `-${order.splitIndex}`;
       }
 
+      const activeItemIds = activeItems.map(i => i.id);
+      const [allMods, orderDiscountsList, orderTaxesList] = await Promise.all([
+        storage.getOrderItemModifiersByItemIds(activeItemIds),
+        storage.getOrderItemDiscountsByOrder(orderId),
+        storage.getOrderItemTaxesByOrder(orderId),
+      ]);
+
+      const modsMap = new Map<number, typeof allMods>();
+      for (const m of allMods) {
+        if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []);
+        modsMap.get(m.orderItemId)!.push(m);
+      }
+
       const receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
       for (const i of activeItems) {
-        const mods = await storage.getOrderItemModifiers(i.id);
+        const mods = modsMap.get(i.id) || [];
         const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
         const unitPrice = Number(i.productPriceSnapshot) + modDelta;
         const modLabel = mods.length > 0 ? ` (${mods.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
@@ -2673,9 +2765,6 @@ export async function registerRoutes(
           total: unitPrice * i.qty,
         });
       }
-
-      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
-      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
       const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
       const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
       const taxBreakdown = orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : [];
@@ -2686,7 +2775,7 @@ export async function registerRoutes(
         paymentMethod: paymentMethodName,
         tableName: table?.tableName || `Mesa ${order.tableId}`,
         orderNumber,
-        clientName: paidPayments[0]?.clientName || undefined,
+        clientName: paidPayments[0]?.clientNameSnapshot || undefined,
         totalDiscounts,
         totalTaxes,
         taxBreakdown,
@@ -2700,17 +2789,41 @@ export async function registerRoutes(
   app.get("/api/pos/paid-orders", requirePermission("MODULE_POS_VIEW"), async (req, res) => {
     try {
       const date = (req.query.date as string) || undefined;
-      const paidOrders = await storage.getPaidOrdersForDate(date);
-      const allTables = await storage.getAllTables();
+      const [paidOrders, allTables] = await Promise.all([
+        storage.getPaidOrdersForDate(date),
+        storage.getAllTables(),
+      ]);
+      const tableMap = new Map(allTables.map(t => [t.id, t]));
 
-      const result = [];
-      for (const order of paidOrders) {
-        const table = allTables.find(t => t.id === order.tableId);
-        const items = await storage.getOrderItems(order.id);
+      if (paidOrders.length === 0) return res.json([]);
+
+      const orderIds = paidOrders.map(o => o.id);
+      const [allItems, allPaymentsList, allPaymentMethods] = await Promise.all([
+        storage.getOrderItemsByOrderIds(orderIds),
+        storage.getPaymentsByOrderIds(orderIds),
+        storage.getAllPaymentMethods(),
+      ]);
+      const pmNameMap = new Map(allPaymentMethods.map(m => [m.id, m.paymentName]));
+
+      const itemsByOrder = new Map<number, typeof allItems>();
+      for (const item of allItems) {
+        if (!itemsByOrder.has(item.orderId)) itemsByOrder.set(item.orderId, []);
+        itemsByOrder.get(item.orderId)!.push(item);
+      }
+
+      const paymentsByOrder = new Map<number, typeof allPaymentsList>();
+      for (const p of allPaymentsList) {
+        if (!paymentsByOrder.has(p.orderId)) paymentsByOrder.set(p.orderId, []);
+        paymentsByOrder.get(p.orderId)!.push(p);
+      }
+
+      const result = paidOrders.map(order => {
+        const table = tableMap.get(order.tableId);
+        const items = itemsByOrder.get(order.id) || [];
         const activeItems = items.filter(i => i.status !== "VOIDED");
-        const orderPayments = await storage.getPaymentsForOrder(order.id);
+        const orderPayments = paymentsByOrder.get(order.id) || [];
         const paidPayments = orderPayments.filter(p => p.status === "PAID");
-        const paymentMethodNames = paidPayments.map(p => p.paymentMethodName || "Efectivo");
+        const paymentMethodNames = paidPayments.map(p => pmNameMap.get(p.paymentMethodId) || "Efectivo");
 
         let ticketNumber = "";
         if (order.dailyNumber) {
@@ -2718,7 +2831,7 @@ export async function registerRoutes(
           if (order.splitIndex) ticketNumber += `-${order.splitIndex}`;
         }
 
-        result.push({
+        return {
           orderId: order.id,
           tableName: table?.tableName || `Mesa ${order.tableId}`,
           ticketNumber,
@@ -2734,8 +2847,8 @@ export async function registerRoutes(
             qty: i.qty,
             productPriceSnapshot: i.productPriceSnapshot,
           })),
-        });
-      }
+        };
+      });
 
       res.json(result);
     } catch (err: any) {
