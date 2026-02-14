@@ -923,6 +923,11 @@ export async function registerRoutes(
     res.json(await storage.getActiveProducts());
   });
 
+  app.get("/api/waiter/categories", requireRole("WAITER", "MANAGER"), async (_req, res) => {
+    const allCats = await storage.getAllCategories();
+    res.json(allCats.filter(c => c.active));
+  });
+
   app.get("/api/products/:id/modifiers", async (req, res) => {
     try {
       const productId = parseInt(req.params.id);

@@ -103,7 +103,7 @@ export default function TableDetailPage() {
   });
 
   const { data: categories = [] } = useQuery<Category[]>({
-    queryKey: ["/api/admin/categories"],
+    queryKey: ["/api/waiter/categories"],
   });
 
   useEffect(() => {
