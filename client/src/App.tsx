@@ -8,7 +8,7 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/use-permissions";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
-import { Loader2, LogOut } from "lucide-react";
+import { Loader2, LogOut, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PinLoginPage from "@/pages/pin-login";
 import LoginPage from "@/pages/login";
@@ -127,7 +127,17 @@ function AuthenticatedLayout() {
         <AppSidebar />
         <div className="flex flex-col flex-1 min-w-0">
           <header className="flex items-center justify-between gap-2 p-2 border-b sticky top-0 bg-background z-[9]">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
+            <div className="flex items-center gap-1">
+              <SidebarTrigger data-testid="button-sidebar-toggle" />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => window.location.reload()}
+                data-testid="button-refresh"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </Button>
+            </div>
             <div className="flex items-center gap-2">
               {user && (
                 <span className="text-xs text-muted-foreground hidden sm:inline" data-testid="text-current-user">
