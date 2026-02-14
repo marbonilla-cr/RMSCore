@@ -5,7 +5,6 @@ import { eq, and, notInArray, inArray, sql } from "drizzle-orm";
 import {
   categories, products, modifierGroups, modifierOptions,
   itemModifierGroups, discounts, taxCategories, productTaxCategories, orders,
-  payments, salesLedgerItems, voidedItems,
 } from "@shared/schema";
 
 const MODIFIER_GROUPS_DATA: Record<string, { options: { name: string; priceDelta: string }[] }> = {
@@ -299,54 +298,5 @@ export async function seedMenuFromCsv() {
     console.log(`  Recalculated ${openOrders.length} open orders`);
   }
 
-  await fixUtcBusinessDates();
-
   console.log("Menu seed complete!");
-}
-
-async function fixUtcBusinessDates() {
-  const cutoffDate = "2026-02-15";
-  const affectedOrders = await db.select({
-    id: orders.id,
-    businessDate: orders.businessDate,
-    openedAt: orders.openedAt,
-  }).from(orders).where(
-    and(
-      sql`${orders.businessDate} <= ${cutoffDate}`,
-      sql`${orders.openedAt} IS NOT NULL`
-    )
-  );
-
-  let fixedOrders = 0;
-  for (const o of affectedOrders) {
-    if (!o.openedAt) continue;
-    const correctDate = new Date(o.openedAt).toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
-    if (o.businessDate !== correctDate) {
-      await db.update(orders).set({ businessDate: correctDate }).where(eq(orders.id, o.id));
-      await db.update(salesLedgerItems).set({ businessDate: correctDate }).where(eq(salesLedgerItems.orderId, o.id));
-      await db.update(voidedItems).set({ businessDate: correctDate }).where(eq(voidedItems.orderId, o.id));
-      fixedOrders++;
-    }
-  }
-
-  const allPayments = await db.select({
-    id: payments.id,
-    businessDate: payments.businessDate,
-    paidAt: payments.paidAt,
-  }).from(payments).where(
-    sql`${payments.businessDate} <= ${cutoffDate} AND ${payments.paidAt} IS NOT NULL`
-  );
-  let fixedPayments = 0;
-  for (const p of allPayments) {
-    if (!p.paidAt) continue;
-    const correctPayDate = new Date(p.paidAt).toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
-    if (p.businessDate !== correctPayDate) {
-      await db.update(payments).set({ businessDate: correctPayDate }).where(eq(payments.id, p.id));
-      fixedPayments++;
-    }
-  }
-
-  if (fixedOrders > 0 || fixedPayments > 0) {
-    console.log(`  Fixed business_date: ${fixedOrders} orders, ${fixedPayments} payments (UTC -> America/Costa_Rica)`);
-  }
 }

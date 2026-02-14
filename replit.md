@@ -25,6 +25,12 @@ The system is built as a PWA, ensuring accessibility across various devices.
     - **Order Consecutives**: Daily and global order numbering for traceability.
     - **Multi-Printer Support**: Configuration for different printer types (cash register, kitchen, bar) with auto-printing on POS payment.
 
+## Critical Business Logic Rules
+- **Timezone**: All business date calculations use `America/Costa_Rica` (UTC-6) via `getBusinessDate()` in `server/storage.ts`. This function uses `toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" })` to ensure orders and payments after 6pm local time are correctly assigned to the current day.
+- **Payment business_date**: Payments use `getBusinessDate()` at the moment of payment (not the order's business_date). This correctly handles orders that span midnight (opened one day, paid the next).
+- **Dashboard cross-day logic**: The dashboard "Órdenes Pagadas" section includes orders paid on the selected date even if the order was opened on a different day. This ensures totals match the payment method breakdown.
+- **Payment method totals**: Both dashboard and cash closing always display ALL active payment methods, showing ₡0 for methods with no transactions that day.
+
 ## External Dependencies
 - **PostgreSQL**: Primary database for data storage.
 - **Vite**: Frontend build tool.
