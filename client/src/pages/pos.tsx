@@ -995,6 +995,12 @@ export default function POSPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[...posTables].sort((a, b) => {
+                  const aDaily = a.dailyNumber || 0;
+                  const bDaily = b.dailyNumber || 0;
+                  if (aDaily !== bDaily) return aDaily - bDaily;
+                  const aSplit = a.splitIndex || 0;
+                  const bSplit = b.splitIndex || 0;
+                  if (aSplit !== bSplit) return aSplit - bSplit;
                   const aTime = a.openedAt ? new Date(a.openedAt).getTime() : 0;
                   const bTime = b.openedAt ? new Date(b.openedAt).getTime() : 0;
                   return aTime - bTime;
