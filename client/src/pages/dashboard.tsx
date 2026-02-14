@@ -66,6 +66,7 @@ interface VoidedItemSummary {
   reason: string | null;
   notes: string | null;
   voidedAt: string | null;
+  voidedBy: string;
 }
 
 interface OrderDetailItem {
@@ -326,6 +327,7 @@ function VoidedItemsListSection({ items }: { items: VoidedItemSummary[] }) {
             <th className="text-right p-2 font-medium">Cant</th>
             <th className="text-right p-2 font-medium">Total</th>
             <th className="text-left p-2 font-medium">Razón</th>
+            <th className="text-left p-2 font-medium">Anuló</th>
             <th className="text-left p-2 font-medium">Hora</th>
           </tr>
         </thead>
@@ -337,6 +339,7 @@ function VoidedItemsListSection({ items }: { items: VoidedItemSummary[] }) {
               <td className="p-2 text-right">{v.qtyVoided}</td>
               <td className="p-2 text-right">₡{v.total.toLocaleString()}</td>
               <td className="p-2 text-muted-foreground">{v.reason || v.notes || "—"}</td>
+              <td className="p-2" data-testid={`text-voided-by-${v.id}`}>{v.voidedBy}</td>
               <td className="p-2 text-muted-foreground">{formatTime(v.voidedAt)}</td>
             </tr>
           ))}

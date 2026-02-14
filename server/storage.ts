@@ -914,21 +914,30 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
     paidOrders: { count: paidOrders.length, amount: sumAmount(paidOrders), orders: mapOrders(paidOrders) },
     cancelledOrders: { count: cancelledOrders.length, amount: sumAmount(cancelledOrders), orders: mapOrders(cancelledOrders) },
     totalDiscounts,
-    voidedItemsSummary: {
-      count: voidedItemsCount,
-      amount: voidedItemsAmount,
-      items: todayVoidedItems.map(v => ({
-        id: v.id,
-        tableName: tableMap.get(v.tableId!) || v.tableNameSnapshot || "—",
-        productName: v.productNameSnapshot || "—",
-        qtyVoided: v.qtyVoided,
-        unitPrice: Number(v.unitPriceSnapshot || 0),
-        total: v.qtyVoided * Number(v.unitPriceSnapshot || 0),
-        reason: v.voidReason,
-        notes: v.notes,
-        voidedAt: v.voidedAt?.toISOString() || null,
-      })),
-    },
+    voidedItemsSummary: await (async () => {
+      const voidedUserIds = Array.from(new Set(todayVoidedItems.map(v => v.voidedByUserId).filter(Boolean))) as number[];
+      const voidedUsersMap = new Map<number, string>();
+      if (voidedUserIds.length > 0) {
+        const vUsers = await db.select().from(users).where(inArray(users.id, voidedUserIds));
+        for (const u of vUsers) voidedUsersMap.set(u.id, u.displayName || u.username);
+      }
+      return {
+        count: voidedItemsCount,
+        amount: voidedItemsAmount,
+        items: todayVoidedItems.map(v => ({
+          id: v.id,
+          tableName: tableMap.get(v.tableId!) || v.tableNameSnapshot || "—",
+          productName: v.productNameSnapshot || "—",
+          qtyVoided: v.qtyVoided,
+          unitPrice: Number(v.unitPriceSnapshot || 0),
+          total: v.qtyVoided * Number(v.unitPriceSnapshot || 0),
+          reason: v.voidReason,
+          notes: v.notes,
+          voidedAt: v.voidedAt?.toISOString() || null,
+          voidedBy: voidedUsersMap.get(v.voidedByUserId) || "—",
+        })),
+      };
+    })(),
     topProducts,
     topCategories,
   };
