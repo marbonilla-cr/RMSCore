@@ -89,6 +89,8 @@ export default function TablesPage() {
 
   const getStatusColor = (t: TableView) => {
     if (t.pendingQrCount > 0) return "ring-2 ring-orange-500";
+    if (t.orderStatus === "READY") return "ring-2 ring-emerald-500";
+    if (t.orderStatus === "PREPARING") return "ring-2 ring-yellow-500";
     if (t.orderStatus === "IN_KITCHEN") return "ring-2 ring-blue-500";
     if (t.hasOpenOrder) return "ring-2 ring-green-500";
     return "";
@@ -97,6 +99,9 @@ export default function TablesPage() {
   const getStatusLabel = (t: TableView) => {
     if (t.pendingQrCount > 0) return "QR Pendiente";
     if (!t.hasOpenOrder) return "Libre";
+    if (t.orderStatus === "READY") return "En mesa";
+    if (t.orderStatus === "PREPARING") return "Preparando";
+    if (t.orderStatus === "IN_KITCHEN") return "En cocina";
     return t.orderStatus || "Abierta";
   };
 

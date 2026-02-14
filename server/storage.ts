@@ -544,6 +544,13 @@ export async function updateKitchenTicketItem(id: number, data: any) {
   return item;
 }
 
+export async function getKitchenTicketByItemId(kitchenTicketItemId: number) {
+  const [item] = await db.select().from(kitchenTicketItems).where(eq(kitchenTicketItems.id, kitchenTicketItemId));
+  if (!item) return null;
+  const [ticket] = await db.select().from(kitchenTickets).where(eq(kitchenTickets.id, item.kitchenTicketId));
+  return ticket || null;
+}
+
 export async function voidKitchenTicketItemsByOrderItem(orderItemId: number, qtyToVoid: number, isFullVoid: boolean) {
   if (isFullVoid) {
     await db.update(kitchenTicketItems)

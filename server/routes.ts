@@ -1599,6 +1599,28 @@ export async function registerRoutes(
     res.json(result);
   });
 
+  async function recalcOrderStatusFromItems(orderId: number) {
+    const items = await storage.getOrderItems(orderId);
+    const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
+    if (activeItems.length === 0) return;
+
+    const allReady = activeItems.every(i => i.status === "READY");
+    const allPreparingOrReady = activeItems.every(i => i.status === "PREPARING" || i.status === "READY");
+
+    const order = await storage.getOrder(orderId);
+    if (!order || order.status === "PAID" || order.status === "VOIDED" || order.status === "SPLIT") return;
+
+    if (allReady) {
+      await storage.updateOrder(orderId, { status: "READY" });
+    } else if (allPreparingOrReady) {
+      await storage.updateOrder(orderId, { status: "PREPARING" });
+    } else if (order.status !== "IN_KITCHEN") {
+      await storage.updateOrder(orderId, { status: "IN_KITCHEN" });
+    }
+    broadcast("order_updated", { orderId });
+    broadcast("table_status_changed", {});
+  }
+
   app.patch("/api/kds/items/:id", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     try {
       const itemId = parseInt(req.params.id);
@@ -1609,12 +1631,16 @@ export async function registerRoutes(
 
       const item = await storage.updateKitchenTicketItem(itemId, data);
 
-      // Update order item status too
       if (item) {
         const orderItemStatus = status === "PREPARING" ? "PREPARING" : status === "READY" ? "READY" : item.status;
         await storage.updateOrderItem(item.orderItemId, { status: orderItemStatus });
         if (status === "READY") {
           await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+        }
+
+        const ticket = await storage.getKitchenTicketByItemId(item.id);
+        if (ticket) {
+          await recalcOrderStatusFromItems(ticket.orderId);
         }
       }
 
@@ -1629,9 +1655,8 @@ export async function registerRoutes(
     try {
       const ticketId = parseInt(req.params.id);
       const { status } = req.body;
-      await storage.updateKitchenTicket(ticketId, { status });
+      const ticket = await storage.updateKitchenTicket(ticketId, { status });
 
-      // Also mark all items READY
       const items = await storage.getKitchenTicketItems(ticketId);
       for (const item of items) {
         if (item.status !== "READY") {
@@ -1639,6 +1664,10 @@ export async function registerRoutes(
           await storage.updateOrderItem(item.orderItemId, { status: "READY" });
           await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
         }
+      }
+
+      if (ticket) {
+        await recalcOrderStatusFromItems(ticket.orderId);
       }
 
       broadcast("kitchen_item_status_changed", { ticketId, status: "READY" });
