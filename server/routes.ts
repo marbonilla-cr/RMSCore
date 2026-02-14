@@ -1787,12 +1787,33 @@ export async function registerRoutes(
   });
 
   // ==================== CASH SESSION ====================
-  app.get("/api/pos/cash-session", requirePermission("POS_VIEW"), async (_req, res) => {
+  app.get("/api/pos/cash-session", requirePermission("POS_VIEW"), async (req, res) => {
     const session = await storage.getLatestCashSession();
     if (!session) return res.json({});
+
+    const user = (req as any).user;
+    const userPerms = await storage.getPermissionKeysForRole(user.role);
+    const canViewReport = userPerms.includes("POS_VIEW_CASH_REPORT");
+
     if (!session.closedAt) {
-      const totalsByMethod = await storage.getPaymentsByDateGrouped(getBusinessDate());
-      return res.json({ ...session, totalsByMethod });
+      const totalsByMethod = canViewReport ? await storage.getPaymentsByDateGrouped(getBusinessDate()) : undefined;
+      const result: any = { id: session.id, openingCash: session.openingCash, closedAt: session.closedAt, openedByUserId: session.openedByUserId };
+      if (canViewReport) {
+        result.expectedCash = session.expectedCash;
+        result.totalsByMethod = totalsByMethod;
+      }
+      return res.json(result);
+    }
+
+    if (!canViewReport) {
+      return res.json({
+        id: session.id,
+        openingCash: session.openingCash,
+        closedAt: session.closedAt,
+        countedCash: session.countedCash,
+        openedByUserId: session.openedByUserId,
+        closedByUserId: session.closedByUserId,
+      });
     }
     res.json(session);
   });

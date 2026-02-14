@@ -103,6 +103,7 @@ export default function POSPage() {
   const canReopen = hasPermission("POS_REOPEN");
   const canVoidOrder = hasPermission("POS_VOID_ORDER");
   const canCashClose = hasPermission("CASH_CLOSE");
+  const canViewCashReport = hasPermission("POS_VIEW_CASH_REPORT");
 
   const [tab, setTab] = useState("tables");
   const [selectedTable, setSelectedTable] = useState<POSTable | null>(null);
@@ -1105,11 +1106,13 @@ export default function POSPage() {
                         <span className="text-sm text-muted-foreground">Apertura</span>
                         <span className="font-medium">₡{Number(cashSession.openingCash).toLocaleString()}</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Efectivo Esperado</span>
-                        <span className="font-medium">₡{Number(cashSession.expectedCash || 0).toLocaleString()}</span>
-                      </div>
-                      {cashSession.totalsByMethod && typeof cashSession.totalsByMethod === "object" && (
+                      {canViewCashReport && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Efectivo Esperado</span>
+                          <span className="font-medium">₡{Number(cashSession.expectedCash || 0).toLocaleString()}</span>
+                        </div>
+                      )}
+                      {canViewCashReport && cashSession.totalsByMethod && typeof cashSession.totalsByMethod === "object" && (
                         <div className="border-t pt-2 mt-2 space-y-1">
                           <p className="text-sm font-bold mb-1">Totales por Método</p>
                           {Object.entries(cashSession.totalsByMethod as Record<string, number>).map(([method, amount]) => (
@@ -1148,29 +1151,33 @@ export default function POSPage() {
                       <span>₡{Number(cashSession.openingCash).toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Esperado</span>
-                      <span>₡{Number(cashSession.expectedCash || 0).toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Contado</span>
                       <span>₡{Number(cashSession.countedCash || 0).toLocaleString()}</span>
                     </div>
-                    <div className="flex justify-between text-sm font-bold border-t pt-2">
-                      <span>Diferencia</span>
-                      <span className={Number(cashSession.difference || 0) < 0 ? "text-destructive" : ""}>
-                        ₡{Number(cashSession.difference || 0).toLocaleString()}
-                      </span>
-                    </div>
-                    {cashSession.totalsByMethod && typeof cashSession.totalsByMethod === "object" && (
-                      <div className="border-t pt-2 mt-2 space-y-1">
-                        <p className="text-sm font-bold mb-1">Totales por Método</p>
-                        {Object.entries(cashSession.totalsByMethod as Record<string, number>).map(([method, amount]) => (
-                          <div key={method} className="flex justify-between text-sm" data-testid={`text-total-method-${method}`}>
-                            <span className="text-muted-foreground">{method}</span>
-                            <span>₡{Number(amount).toLocaleString()}</span>
+                    {canViewCashReport && (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Esperado</span>
+                          <span>₡{Number(cashSession.expectedCash || 0).toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-sm font-bold border-t pt-2">
+                          <span>Diferencia</span>
+                          <span className={Number(cashSession.difference || 0) < 0 ? "text-destructive" : ""}>
+                            ₡{Number(cashSession.difference || 0).toLocaleString()}
+                          </span>
+                        </div>
+                        {cashSession.totalsByMethod && typeof cashSession.totalsByMethod === "object" && (
+                          <div className="border-t pt-2 mt-2 space-y-1">
+                            <p className="text-sm font-bold mb-1">Totales por Método</p>
+                            {Object.entries(cashSession.totalsByMethod as Record<string, number>).map(([method, amount]) => (
+                              <div key={method} className="flex justify-between text-sm" data-testid={`text-total-method-${method}`}>
+                                <span className="text-muted-foreground">{method}</span>
+                                <span>₡{Number(amount).toLocaleString()}</span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                        )}
+                      </>
                     )}
                   </CardContent>
                 </Card>
