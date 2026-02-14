@@ -57,7 +57,6 @@ const adminItems = [
   { title: "Roles y Permisos", url: "/admin/roles", icon: Shield },
   { title: "Mesas", url: "/admin/tables", icon: Grid3x3 },
   { title: "Categorías", url: "/admin/categories", icon: Tag },
-  { title: "Productos", url: "/admin/products", icon: ShoppingBag },
   { title: "Modificadores", url: "/admin/modifiers", icon: Settings2 },
   { title: "Descuentos", url: "/admin/discounts", icon: Percent },
   { title: "Impuestos", url: "/admin/tax-categories", icon: Receipt },
@@ -65,6 +64,8 @@ const adminItems = [
   { title: "Config. Negocio", url: "/admin/business-config", icon: Building2 },
   { title: "Impresoras", url: "/admin/printers", icon: Printer },
 ];
+
+const productsItem = { title: "Productos", url: "/admin/products", icon: ShoppingBag };
 
 export function AppSidebar() {
   const [location] = useLocation();
@@ -76,6 +77,7 @@ export function AppSidebar() {
   const showPOS = hasPermission("MODULE_POS_VIEW");
   const showDashboard = hasPermission("MODULE_DASHBOARD_VIEW");
   const showAdmin = hasPermission("MODULE_ADMIN_VIEW");
+  const showProducts = hasPermission("MODULE_PRODUCTS_VIEW");
 
   const initials = user?.displayName
     ? user.displayName
@@ -176,6 +178,24 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
+        {showProducts && !showAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Menú</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === productsItem.url}>
+                    <Link href={productsItem.url} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
+                      <productsItem.icon className="w-4 h-4" />
+                      <span>{productsItem.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
         {showAdmin && (
           <SidebarGroup>
             <SidebarGroupLabel>
@@ -184,6 +204,16 @@ export function AppSidebar() {
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
+                {showProducts && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location === productsItem.url}>
+                      <Link href={productsItem.url} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
+                        <productsItem.icon className="w-4 h-4" />
+                        <span>{productsItem.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
                 {adminItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild isActive={location === item.url}>

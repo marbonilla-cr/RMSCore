@@ -423,11 +423,11 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: PRODUCTS ====================
-  app.get("/api/admin/products", requireRole("MANAGER"), async (_req, res) => {
+  app.get("/api/admin/products", requirePermission("MODULE_PRODUCTS_VIEW"), async (_req, res) => {
     res.json(await storage.getAllProducts());
   });
 
-  app.post("/api/admin/products", requireRole("MANAGER"), async (req, res) => {
+  app.post("/api/admin/products", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
     try {
       if (!req.body.description || req.body.description.trim() === "") {
         return res.status(400).json({ message: "La descripción es obligatoria" });
@@ -439,7 +439,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/admin/products/:id", requireRole("MANAGER"), async (req, res) => {
+  app.patch("/api/admin/products/:id", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
     try {
       if (req.body.description !== undefined && req.body.description.trim() === "") {
         return res.status(400).json({ message: "La descripción es obligatoria" });
@@ -680,12 +680,12 @@ export async function registerRoutes(
   });
 
   // Product tax assignment
-  app.get("/api/admin/products/:id/taxes", requireRole("MANAGER"), async (req, res) => {
+  app.get("/api/admin/products/:id/taxes", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
     const ptcs = await storage.getProductTaxCategories(parseInt(req.params.id));
     res.json(ptcs.map(p => p.taxCategoryId));
   });
 
-  app.put("/api/admin/products/:id/taxes", requireRole("MANAGER"), async (req, res) => {
+  app.put("/api/admin/products/:id/taxes", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
     try {
       const { taxCategoryIds } = req.body;
       if (!Array.isArray(taxCategoryIds)) return res.status(400).json({ message: "taxCategoryIds debe ser un array" });

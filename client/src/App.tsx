@@ -38,6 +38,7 @@ function getDefaultRouteByPermissions(perms: string[]): string {
   if (perms.includes("MODULE_KDS_VIEW")) return "/kds";
   if (perms.includes("MODULE_DASHBOARD_VIEW")) return "/dashboard";
   if (perms.includes("MODULE_ADMIN_VIEW")) return "/admin/employees";
+  if (perms.includes("MODULE_PRODUCTS_VIEW")) return "/admin/products";
   return "/tables";
 }
 
@@ -47,6 +48,7 @@ function canAccessRouteByPermissions(perms: string[], path: string): boolean {
   if (path === "/kds" || path === "/kds-bar") return perms.includes("MODULE_KDS_VIEW");
   if (path === "/pos") return perms.includes("MODULE_POS_VIEW");
   if (path === "/dashboard") return perms.includes("MODULE_DASHBOARD_VIEW");
+  if (path === "/admin/products") return perms.includes("MODULE_PRODUCTS_VIEW");
   if (path.startsWith("/admin/")) return perms.includes("MODULE_ADMIN_VIEW");
   return false;
 }

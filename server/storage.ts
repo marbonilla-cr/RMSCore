@@ -991,6 +991,7 @@ export async function seedPermissions() {
     { key: "MODULE_KDS_VIEW", description: "Acceso al módulo Cocina (KDS)" },
     { key: "MODULE_DASHBOARD_VIEW", description: "Acceso al módulo Dashboard" },
     { key: "MODULE_ADMIN_VIEW", description: "Acceso al módulo Admin" },
+    { key: "MODULE_PRODUCTS_VIEW", description: "Acceso al módulo Productos" },
   ];
 
   for (const p of ALL_PERMS) {

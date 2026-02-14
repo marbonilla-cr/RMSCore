@@ -36,7 +36,7 @@ const PERMISSION_GROUPS: PermissionGroup[] = [
   {
     label: "Acceso a Módulos",
     icon: LayoutGrid,
-    keys: ["MODULE_TABLES_VIEW", "MODULE_POS_VIEW", "MODULE_KDS_VIEW", "MODULE_DASHBOARD_VIEW", "MODULE_ADMIN_VIEW"],
+    keys: ["MODULE_TABLES_VIEW", "MODULE_POS_VIEW", "MODULE_KDS_VIEW", "MODULE_DASHBOARD_VIEW", "MODULE_ADMIN_VIEW", "MODULE_PRODUCTS_VIEW"],
   },
   {
     label: "Operaciones POS",
