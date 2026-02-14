@@ -17,7 +17,7 @@ import {
   CreditCard, DollarSign, Loader2, Receipt,
   Banknote, ArrowLeft, Lock, Unlock,
   Split, Trash2, XCircle, Mail, Printer, ArrowRight, ArrowLeftRight,
-  Percent, X, Plus, Minus,
+  Percent, X, Plus, Minus, Save, SendHorizontal,
 } from "lucide-react";
 import type { PaymentMethod, Product, Category } from "@shared/schema";
 import { printReceipt } from "@/lib/print-receipt";
@@ -1857,11 +1857,11 @@ export default function POSPage() {
       </Dialog>
 
       <Dialog open={addItemsOpen} onOpenChange={(open) => { if (!open) { setAddItemsOpen(false); setPosCart([]); } }}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6 pb-2">
             <DialogTitle>Agregar Productos</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="flex-1 overflow-y-auto px-6 pb-2">
             <Accordion type="multiple" className="w-full">
               {posCategories.filter((c: Category) => c.active).map((cat: Category) => {
                 const prods = posCategoryProducts[cat.id] || [];
@@ -1903,49 +1903,36 @@ export default function POSPage() {
                 );
               })}
             </Accordion>
-
-            {posCart.length > 0 && (
-              <div className="border-t pt-3 space-y-2">
-                <h4 className="font-bold text-sm">Resumen ({posCart.reduce((s, c) => s + c.qty, 0)} items)</h4>
-                {posCart.map((c, idx) => (
-                  <div key={idx} className="flex items-center justify-between gap-2 text-sm" data-testid={`cart-item-${idx}`}>
-                    <span>{c.qty}x {c.name}</span>
-                    <div className="flex items-center gap-1">
-                      <span>₡{(Number(c.price) * c.qty).toLocaleString()}</span>
-                      <Button size="icon" variant="ghost" onClick={() => removePosCartItem(idx)} data-testid={`button-remove-cart-${idx}`}>
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                <div className="flex justify-between font-bold text-sm border-t pt-2">
-                  <span>Total</span>
-                  <span>₡{posCartTotal.toLocaleString()}</span>
-                </div>
-                <div className="flex flex-col gap-2 pt-2">
-                  <Button
-                    className="w-full"
-                    variant="outline"
-                    onClick={() => addItemsMutation.mutate(false)}
-                    disabled={addItemsMutation.isPending}
-                    data-testid="button-save-only"
-                  >
-                    {addItemsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                    Solo Guardar
-                  </Button>
-                  <Button
-                    className="w-full"
-                    onClick={() => addItemsMutation.mutate(true)}
-                    disabled={addItemsMutation.isPending}
-                    data-testid="button-save-and-kds"
-                  >
-                    {addItemsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                    Guardar y Enviar a KDS
-                  </Button>
-                </div>
-              </div>
-            )}
           </div>
+          {posCart.length > 0 && (
+            <div className="border-t px-6 py-3 flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-bold">{posCart.reduce((s, c) => s + c.qty, 0)} items</span>
+                <span className="text-sm font-bold ml-2">₡{posCartTotal.toLocaleString()}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={() => addItemsMutation.mutate(false)}
+                  disabled={addItemsMutation.isPending}
+                  title="Solo Guardar"
+                  data-testid="button-save-only"
+                >
+                  {addItemsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                </Button>
+                <Button
+                  size="icon"
+                  onClick={() => addItemsMutation.mutate(true)}
+                  disabled={addItemsMutation.isPending}
+                  title="Guardar y Enviar a KDS"
+                  data-testid="button-save-and-kds"
+                >
+                  {addItemsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <SendHorizontal className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
