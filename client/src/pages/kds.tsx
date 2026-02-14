@@ -8,22 +8,33 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { wsManager } from "@/lib/ws";
 import { ChefHat, Clock, CheckCircle, Loader2, Trash2, Wine } from "lucide-react";
 
+interface KDSTicketItem {
+  id: number;
+  productNameSnapshot: string;
+  qty: number;
+  notes: string | null;
+  status: string;
+  prepStartedAt: string | null;
+  readyAt: string | null;
+  modifiers?: { id: number; nameSnapshot: string; priceDeltaSnapshot: string; qty: number }[];
+}
+
 interface KDSTicket {
   id: number;
   orderId: number;
   tableNameSnapshot: string;
   status: string;
   createdAt: string;
-  items: {
-    id: number;
-    productNameSnapshot: string;
-    qty: number;
-    notes: string | null;
-    status: string;
-    prepStartedAt: string | null;
-    readyAt: string | null;
-    modifiers?: { id: number; nameSnapshot: string; priceDeltaSnapshot: string; qty: number }[];
-  }[];
+  items: KDSTicketItem[];
+}
+
+interface GroupedTicket {
+  orderId: number;
+  tableNameSnapshot: string;
+  earliestCreatedAt: string;
+  ticketIds: number[];
+  items: KDSTicketItem[];
+  allReady: boolean;
 }
 
 function formatElapsed(dateStr: string) {
@@ -65,9 +76,36 @@ function playAlertSound() {
   } catch {}
 }
 
+function groupTicketsByOrder(tickets: KDSTicket[]): GroupedTicket[] {
+  const map = new Map<number, GroupedTicket>();
+  for (const t of tickets) {
+    const existing = map.get(t.orderId);
+    if (existing) {
+      existing.ticketIds.push(t.id);
+      existing.items.push(...t.items);
+      if (new Date(t.createdAt).getTime() < new Date(existing.earliestCreatedAt).getTime()) {
+        existing.earliestCreatedAt = t.createdAt;
+      }
+    } else {
+      map.set(t.orderId, {
+        orderId: t.orderId,
+        tableNameSnapshot: t.tableNameSnapshot,
+        earliestCreatedAt: t.createdAt,
+        ticketIds: [t.id],
+        items: [...t.items],
+        allReady: false,
+      });
+    }
+  }
+  Array.from(map.values()).forEach((g) => {
+    g.allReady = g.items.length > 0 && g.items.every((i: KDSTicketItem) => i.status === "READY");
+  });
+  return Array.from(map.values());
+}
+
 export function KDSDisplay({ destination, title, icon: Icon }: { destination: string; title: string; icon: typeof ChefHat }) {
   const [tab, setTab] = useState("active");
-  const ticketOrderRef = useRef<number[]>([]);
+  const groupOrderRef = useRef<number[]>([]);
   const [, forceUpdate] = useState(0);
   const [pendingAlertCount, setPendingAlertCount] = useState(0);
   const knownTicketIdsRef = useRef<Set<number> | null>(null);
@@ -84,15 +122,17 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
     refetchInterval: 1000,
   });
 
-  const stableTickets = useMemo(() => {
-    const currentIds = new Set(activeTickets.map(t => t.id));
-    const existingOrder = ticketOrderRef.current.filter(id => currentIds.has(id));
-    const newIds = activeTickets.map(t => t.id).filter(id => !existingOrder.includes(id));
-    ticketOrderRef.current = [...existingOrder, ...newIds];
+  const groupedTickets = useMemo(() => groupTicketsByOrder(activeTickets), [activeTickets]);
 
-    const ticketMap = new Map(activeTickets.map(t => [t.id, t]));
-    return ticketOrderRef.current.map(id => ticketMap.get(id)!).filter(Boolean);
-  }, [activeTickets]);
+  const stableGroups = useMemo(() => {
+    const currentOrderIds = new Set(groupedTickets.map(g => g.orderId));
+    const existingOrder = groupOrderRef.current.filter(id => currentOrderIds.has(id));
+    const newIds = groupedTickets.map(g => g.orderId).filter(id => !existingOrder.includes(id));
+    groupOrderRef.current = [...existingOrder, ...newIds];
+
+    const groupMap = new Map(groupedTickets.map(g => [g.orderId, g]));
+    return groupOrderRef.current.map(id => groupMap.get(id)!).filter(Boolean);
+  }, [groupedTickets]);
 
   const { data: historyTickets = [] } = useQuery<KDSTicket[]>({
     queryKey: historyQueryKey,
@@ -102,6 +142,8 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
     },
     enabled: tab === "history",
   });
+
+  const groupedHistory = useMemo(() => groupTicketsByOrder(historyTickets), [historyTickets]);
 
   const dataLoadedRef = useRef(false);
 
@@ -179,19 +221,24 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
     },
   });
 
-  const markTicketReadyMutation = useMutation({
-    mutationFn: async (ticketId: number) => {
-      return apiRequest("PATCH", `/api/kds/tickets/${ticketId}`, { status: "READY" });
+  const markGroupReadyMutation = useMutation({
+    mutationFn: async (ticketIds: number[]) => {
+      await Promise.all(
+        ticketIds.map(id => apiRequest("PATCH", `/api/kds/tickets/${id}`, { status: "READY" }))
+      );
     },
-    onMutate: async (ticketId) => {
+    onMutate: async (ticketIds) => {
       await queryClient.cancelQueries({ queryKey: activeQueryKey });
       const previous = queryClient.getQueryData<KDSTicket[]>(activeQueryKey);
-      const previousOrder = [...ticketOrderRef.current];
+      const previousOrder = [...groupOrderRef.current];
+      const idsSet = new Set(ticketIds);
       queryClient.setQueryData<KDSTicket[]>(activeQueryKey, (old) => {
         if (!old) return old;
-        return old.filter(t => t.id !== ticketId);
+        const remaining = old.filter(t => !idsSet.has(t.id));
+        const remainingOrderIds = new Set(remaining.map(t => t.orderId));
+        groupOrderRef.current = groupOrderRef.current.filter(id => remainingOrderIds.has(id));
+        return remaining;
       });
-      ticketOrderRef.current = ticketOrderRef.current.filter(id => id !== ticketId);
       return { previous, previousOrder };
     },
     onError: (_err, _vars, context) => {
@@ -199,7 +246,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
         queryClient.setQueryData(activeQueryKey, context.previous);
       }
       if (context?.previousOrder) {
-        ticketOrderRef.current = context.previousOrder;
+        groupOrderRef.current = context.previousOrder;
       }
     },
     onSettled: () => {
@@ -270,7 +317,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
           <TabsTrigger value="active" className="min-h-[44px]" data-testid="tab-active">
-            Activos ({stableTickets.length})
+            Activos ({stableGroups.length})
           </TabsTrigger>
           <TabsTrigger value="history" className="min-h-[44px]" data-testid="tab-history">
             Historial
@@ -280,7 +327,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
         <TabsContent value="active">
           {isLoading ? (
             <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
-          ) : stableTickets.length === 0 ? (
+          ) : stableGroups.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
                 <Icon className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
@@ -289,59 +336,64 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
             </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {stableTickets.map((ticket) => (
-                <Card key={ticket.id} className={ticket.status === "NEW" ? "border-yellow-500 border-2" : ""} data-testid={`card-ticket-${ticket.id}`}>
-                  <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-                    <div>
-                      <h3 className="font-bold text-lg">{ticket.tableNameSnapshot}</h3>
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Clock className="w-3 h-3" /> {formatElapsed(ticket.createdAt)}
-                      </p>
-                    </div>
-                    <Badge variant={ticket.status === "NEW" ? "destructive" : "default"}>
-                      #{ticket.id}
-                    </Badge>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2 mb-3">
-                      {ticket.items.map((item) => (
-                        <div
-                          key={item.id}
-                          className={`flex items-center justify-between p-2 rounded-md min-h-[48px] ${getItemStatusColor(item.status)} cursor-pointer transition-colors duration-150`}
-                          onClick={() => {
-                            const next = getNextStatus(item.status);
-                            if (next) updateItemMutation.mutate({ itemId: item.id, status: next });
-                          }}
-                          data-testid={`kds-item-${item.id}`}
-                        >
-                          <div className="min-w-0">
-                            <p className="font-medium text-sm">
-                              <span className="font-bold mr-1">{item.qty}x</span>
-                              {item.productNameSnapshot}
-                            </p>
-                            {item.modifiers && item.modifiers.length > 0 && (
-                              <p className="text-xs font-medium opacity-90">
-                                {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
+              {stableGroups.map((group) => {
+                const hasNewItems = group.items.some(i => i.status === "NEW");
+                return (
+                  <Card key={group.orderId} className={hasNewItems ? "border-yellow-500 border-2" : ""} data-testid={`card-group-${group.orderId}`}>
+                    <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+                      <div>
+                        <h3 className="font-bold text-lg">{group.tableNameSnapshot}</h3>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> {formatElapsed(group.earliestCreatedAt)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Badge variant={hasNewItems ? "destructive" : "default"}>
+                          {group.items.length} {group.items.length === 1 ? "ítem" : "ítems"}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2 mb-3">
+                        {group.items.map((item) => (
+                          <div
+                            key={item.id}
+                            className={`flex items-center justify-between p-2 rounded-md min-h-[48px] ${getItemStatusColor(item.status)} cursor-pointer transition-colors duration-150`}
+                            onClick={() => {
+                              const next = getNextStatus(item.status);
+                              if (next) updateItemMutation.mutate({ itemId: item.id, status: next });
+                            }}
+                            data-testid={`kds-item-${item.id}`}
+                          >
+                            <div className="min-w-0">
+                              <p className="font-medium text-sm">
+                                <span className="font-bold mr-1">{item.qty}x</span>
+                                {item.productNameSnapshot}
                               </p>
-                            )}
-                            {item.notes && !(item.modifiers && item.modifiers.length > 0) && <p className="text-xs opacity-75">{item.notes}</p>}
+                              {item.modifiers && item.modifiers.length > 0 && (
+                                <p className="text-xs font-medium opacity-90">
+                                  {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
+                                </p>
+                              )}
+                              {item.notes && !(item.modifiers && item.modifiers.length > 0) && <p className="text-xs opacity-75">{item.notes}</p>}
+                            </div>
+                            <Badge variant="secondary" className="text-xs flex-shrink-0">
+                              {item.status === "NEW" ? "NUEVO" : item.status === "PREPARING" ? "PREPARANDO" : "LISTO"}
+                            </Badge>
                           </div>
-                          <Badge variant="secondary" className="text-xs flex-shrink-0">
-                            {item.status === "NEW" ? "NUEVO" : item.status === "PREPARING" ? "PREPARANDO" : "LISTO"}
-                          </Badge>
-                        </div>
-                      ))}
-                    </div>
-                    {ticket.items.every((i) => i.status === "READY") ? (
-                      <Button className="w-full min-h-[48px] bg-green-600 dark:bg-green-700 text-white" disabled={markTicketReadyMutation.isPending} onClick={() => markTicketReadyMutation.mutate(ticket.id)} data-testid={`button-complete-ticket-${ticket.id}`}>
-                        <CheckCircle className="w-4 h-4 mr-1" /> Ticket Completo
-                      </Button>
-                    ) : (
-                      <p className="text-xs text-center text-muted-foreground">Toque cada ítem para avanzar su estado</p>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                        ))}
+                      </div>
+                      {group.allReady ? (
+                        <Button className="w-full min-h-[48px] bg-green-600 dark:bg-green-700 text-white" disabled={markGroupReadyMutation.isPending} onClick={() => markGroupReadyMutation.mutate(group.ticketIds)} data-testid={`button-complete-group-${group.orderId}`}>
+                          <CheckCircle className="w-4 h-4 mr-1" /> Ticket Completo
+                        </Button>
+                      ) : (
+                        <p className="text-xs text-center text-muted-foreground">Toque cada ítem para avanzar su estado</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -352,22 +404,22 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
               <Trash2 className="w-4 h-4 mr-1" /> Vaciar Vista
             </Button>
           </div>
-          {historyTickets.length === 0 ? (
+          {groupedHistory.length === 0 ? (
             <Card><CardContent className="py-12 text-center">
               <p className="text-muted-foreground">No hay tickets en historial</p>
             </CardContent></Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {historyTickets.map((ticket) => (
-                <Card key={ticket.id} className="opacity-75" data-testid={`card-history-ticket-${ticket.id}`}>
+              {groupedHistory.map((group) => (
+                <Card key={group.orderId} className="opacity-75" data-testid={`card-history-group-${group.orderId}`}>
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-bold">{ticket.tableNameSnapshot}</h3>
-                      <Badge variant="secondary">#{ticket.id}</Badge>
+                      <h3 className="font-bold">{group.tableNameSnapshot}</h3>
+                      <Badge variant="secondary">{group.items.length} ítems</Badge>
                     </div>
                   </CardHeader>
                   <CardContent>
-                    {ticket.items.map((item) => (
+                    {group.items.map((item) => (
                       <div key={item.id} className="flex items-center justify-between py-1 text-sm">
                         <span>{item.qty}x {item.productNameSnapshot}</span>
                         <Badge variant="secondary" className="text-xs">LISTO</Badge>

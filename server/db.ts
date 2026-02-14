@@ -11,3 +11,11 @@ export const pool = new Pool({
 });
 
 export const db = drizzle(pool, { schema });
+
+pool.query(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_open_order_per_table 
+  ON orders (table_id) 
+  WHERE parent_order_id IS NULL AND status IN ('OPEN', 'IN_KITCHEN', 'READY', 'PREPARING');
+`).catch((err) => {
+  console.error("[db] Failed to create unique open order index:", err.message);
+});

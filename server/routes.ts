@@ -12,6 +12,24 @@ declare module "express-session" {
   }
 }
 
+async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: number | null) {
+  let order = await storage.getOpenOrderForTable(tableId);
+  if (order) return order;
+  try {
+    order = await storage.createOrder({
+      tableId,
+      status: "OPEN",
+      responsibleWaiterId,
+      businessDate: getBusinessDate(),
+    });
+  } catch (e: any) {
+    order = await storage.getOpenOrderForTable(tableId);
+    if (order) return order;
+    throw e;
+  }
+  return order;
+}
+
 function aggregateTaxBreakdown(taxes: { taxNameSnapshot: string; taxRateSnapshot: string; taxAmount: string; inclusiveSnapshot: boolean }[]) {
   const map = new Map<string, { taxName: string; taxRate: string; inclusive: boolean; totalAmount: number }>();
   for (const t of taxes) {
@@ -1132,16 +1150,8 @@ export async function registerRoutes(
       const table = await storage.getTable(tableId);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
-      // Get or create order
-      let order = await storage.getOpenOrderForTable(tableId);
-      if (!order) {
-        order = await storage.createOrder({
-          tableId,
-          status: "OPEN",
-          responsibleWaiterId: userId,
-          businessDate: getBusinessDate(),
-        });
-      }
+      // Get or create order (defensive: prevents duplicates via race condition)
+      let order = await getOrCreateOrderForTable(tableId, userId);
 
       // Assign waiter if not assigned
       if (!order.responsibleWaiterId) {
@@ -1633,16 +1643,8 @@ export async function registerRoutes(
       const { items } = req.body;
       if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
 
-      // Get or create order
-      let order = await storage.getOpenOrderForTable(table.id);
-      if (!order) {
-        order = await storage.createOrder({
-          tableId: table.id,
-          status: "OPEN",
-          responsibleWaiterId: null,
-          businessDate: getBusinessDate(),
-        });
-      }
+      // Get or create order (defensive: prevents duplicates via race condition)
+      let order = await getOrCreateOrderForTable(table.id, null);
 
       // Get max round number
       const existingItems = await storage.getOrderItems(order.id);
