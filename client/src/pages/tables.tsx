@@ -46,9 +46,16 @@ const COLUMN_OPTIONS: { key: ColumnKey; label: string }[] = [
 
 export default function TablesPage() {
   const { toast } = useToast();
-  const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(
-    () => new Set<ColumnKey>(["waiter", "items", "amount", "time"])
-  );
+  const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
+    try {
+      const saved = localStorage.getItem("tables_visible_columns");
+      if (saved) {
+        const parsed = JSON.parse(saved) as ColumnKey[];
+        return new Set<ColumnKey>(parsed);
+      }
+    } catch {}
+    return new Set<ColumnKey>(["waiter", "items", "amount", "time"]);
+  });
 
   const { data: tables = [], isLoading } = useQuery<TableView[]>({
     queryKey: ["/api/waiter/tables"],
@@ -83,6 +90,7 @@ export default function TablesPage() {
       } else {
         next.add(key);
       }
+      localStorage.setItem("tables_visible_columns", JSON.stringify([...next]));
       return next;
     });
   };
