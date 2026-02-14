@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -38,11 +38,23 @@ function formatElapsed(dateStr: string) {
 export default function KDSPage() {
   const [tab, setTab] = useState("active");
   const lastTicketCountRef = useRef(0);
+  const ticketOrderRef = useRef<number[]>([]);
+  const [, forceUpdate] = useState(0);
 
   const { data: activeTickets = [], isLoading } = useQuery<KDSTicket[]>({
     queryKey: ["/api/kds/tickets", "active"],
-    refetchInterval: 5000,
+    refetchInterval: 1000,
   });
+
+  const stableTickets = useMemo(() => {
+    const currentIds = new Set(activeTickets.map(t => t.id));
+    const existingOrder = ticketOrderRef.current.filter(id => currentIds.has(id));
+    const newIds = activeTickets.map(t => t.id).filter(id => !existingOrder.includes(id));
+    ticketOrderRef.current = [...existingOrder, ...newIds];
+
+    const ticketMap = new Map(activeTickets.map(t => [t.id, t]));
+    return ticketOrderRef.current.map(id => ticketMap.get(id)!).filter(Boolean);
+  }, [activeTickets]);
 
   const { data: historyTickets = [] } = useQuery<KDSTicket[]>({
     queryKey: ["/api/kds/tickets", "history"],
@@ -84,11 +96,40 @@ export default function KDSPage() {
     return () => { unsub(); unsub2(); unsub3(); };
   }, []);
 
+  const getNextStatus = (status: string) => {
+    if (status === "NEW") return "PREPARING";
+    if (status === "PREPARING") return "READY";
+    return null;
+  };
+
+  const updateItemOptimistically = (itemId: number, newStatus: string) => {
+    queryClient.setQueryData<KDSTicket[]>(["/api/kds/tickets", "active"], (old) => {
+      if (!old) return old;
+      return old.map(ticket => ({
+        ...ticket,
+        items: ticket.items.map(item =>
+          item.id === itemId ? { ...item, status: newStatus } : item
+        ),
+      }));
+    });
+  };
+
   const updateItemMutation = useMutation({
     mutationFn: async ({ itemId, status }: { itemId: number; status: string }) => {
       return apiRequest("PATCH", `/api/kds/items/${itemId}`, { status });
     },
-    onSuccess: () => {
+    onMutate: async ({ itemId, status }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/kds/tickets", "active"] });
+      const previous = queryClient.getQueryData<KDSTicket[]>(["/api/kds/tickets", "active"]);
+      updateItemOptimistically(itemId, status);
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["/api/kds/tickets", "active"], context.previous);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
     },
   });
@@ -97,7 +138,26 @@ export default function KDSPage() {
     mutationFn: async (ticketId: number) => {
       return apiRequest("PATCH", `/api/kds/tickets/${ticketId}`, { status: "READY" });
     },
-    onSuccess: () => {
+    onMutate: async (ticketId) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/kds/tickets", "active"] });
+      const previous = queryClient.getQueryData<KDSTicket[]>(["/api/kds/tickets", "active"]);
+      const previousOrder = [...ticketOrderRef.current];
+      queryClient.setQueryData<KDSTicket[]>(["/api/kds/tickets", "active"], (old) => {
+        if (!old) return old;
+        return old.filter(t => t.id !== ticketId);
+      });
+      ticketOrderRef.current = ticketOrderRef.current.filter(id => id !== ticketId);
+      return { previous, previousOrder };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["/api/kds/tickets", "active"], context.previous);
+      }
+      if (context?.previousOrder) {
+        ticketOrderRef.current = context.previousOrder;
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
     },
   });
@@ -120,11 +180,10 @@ export default function KDSPage() {
     }
   };
 
-  const getNextStatus = (status: string) => {
-    if (status === "NEW") return "PREPARING";
-    if (status === "PREPARING") return "READY";
-    return null;
-  };
+  useEffect(() => {
+    const interval = setInterval(() => forceUpdate(c => c + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className="p-3 md:p-4">
@@ -137,7 +196,7 @@ export default function KDSPage() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
           <TabsTrigger value="active" className="min-h-[44px]" data-testid="tab-active">
-            Activos ({activeTickets.length})
+            Activos ({stableTickets.length})
           </TabsTrigger>
           <TabsTrigger value="history" className="min-h-[44px]" data-testid="tab-history">
             Historial
@@ -147,7 +206,7 @@ export default function KDSPage() {
         <TabsContent value="active">
           {isLoading ? (
             <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
-          ) : activeTickets.length === 0 ? (
+          ) : stableTickets.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
                 <ChefHat className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
@@ -156,7 +215,7 @@ export default function KDSPage() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {activeTickets.map((ticket) => (
+              {stableTickets.map((ticket) => (
                 <Card key={ticket.id} className={ticket.status === "NEW" ? "border-yellow-500 border-2" : ""} data-testid={`card-ticket-${ticket.id}`}>
                   <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
                     <div>
@@ -174,7 +233,7 @@ export default function KDSPage() {
                       {ticket.items.map((item) => (
                         <div
                           key={item.id}
-                          className={`flex items-center justify-between p-2 rounded-md min-h-[48px] ${getItemStatusColor(item.status)} cursor-pointer`}
+                          className={`flex items-center justify-between p-2 rounded-md min-h-[48px] ${getItemStatusColor(item.status)} cursor-pointer transition-colors duration-150`}
                           onClick={() => {
                             const next = getNextStatus(item.status);
                             if (next) updateItemMutation.mutate({ itemId: item.id, status: next });
