@@ -28,7 +28,7 @@ import {
 import {
   LayoutDashboard, ShoppingBag, DollarSign,
   TrendingUp, XCircle, Clock, ChevronDown, ChevronRight,
-  FileText, Loader2, CreditCard, Eye, History, CalendarDays, ArrowLeft,
+  FileText, Loader2, CreditCard, Eye, History, CalendarDays, ArrowLeft, Percent, Calculator,
 } from "lucide-react";
 
 interface LedgerDetail {
@@ -104,6 +104,7 @@ interface DashboardData {
   openOrders: { count: number; amount: number; orders: OrderSummary[] };
   paidOrders: { count: number; amount: number; orders: OrderSummary[] };
   cancelledOrders: { count: number; amount: number; orders: OrderSummary[] };
+  totalDiscounts: number;
   voidedItemsSummary: { count: number; amount: number; items: VoidedItemSummary[] };
   topProducts: { name: string; qty: number; amount: number }[];
   topCategories: { name: string; qty: number; amount: number }[];
@@ -584,8 +585,8 @@ export default function DashboardPage() {
         <h1 className="text-xl md:text-2xl font-bold mb-4 flex items-center gap-2">
           <LayoutDashboard className="w-6 h-6" /> Dashboard
         </h1>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-          {[1, 2, 3].map((i) => (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+          {[1, 2, 3, 4, 5].map((i) => (
             <Skeleton key={i} className="h-28 rounded-md" />
           ))}
         </div>
@@ -787,6 +788,37 @@ export default function DashboardPage() {
             {expandedCard === "paid" && (
               <ChevronDown className="w-4 h-4 text-muted-foreground mx-auto mt-1" />
             )}
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-total-projected">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-sm text-muted-foreground">
+                Total Proyectado
+              </span>
+              <Calculator className="w-4 h-4 text-blue-500" />
+            </div>
+            <p className="text-2xl font-bold text-blue-600">
+              ₡{((data?.openOrders.amount || 0) + (data?.paidOrders.amount || 0) - (data?.totalDiscounts || 0)).toLocaleString()}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Abiertas + Pagadas - Descuentos
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-discounts">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-sm text-muted-foreground">
+                Descuentos
+              </span>
+              <Percent className="w-4 h-4 text-orange-500" />
+            </div>
+            <p className="text-2xl font-bold text-orange-600">
+              ₡{(data?.totalDiscounts || 0).toLocaleString()}
+            </p>
           </CardContent>
         </Card>
 

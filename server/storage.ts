@@ -900,10 +900,20 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
     closedAt: o.closedAt?.toISOString() || null,
   }));
 
+  const allRelevantOrderIds = [...openOrders, ...paidOrders].map(o => o.id);
+  let totalDiscounts = 0;
+  if (allRelevantOrderIds.length > 0) {
+    const discountRows = await db.select({ amountApplied: orderItemDiscounts.amountApplied })
+      .from(orderItemDiscounts)
+      .where(inArray(orderItemDiscounts.orderId, allRelevantOrderIds));
+    totalDiscounts = discountRows.reduce((s, d) => s + Number(d.amountApplied || 0), 0);
+  }
+
   return {
     openOrders: { count: openOrders.length, amount: sumAmount(openOrders), orders: mapOrders(openOrders) },
     paidOrders: { count: paidOrders.length, amount: sumAmount(paidOrders), orders: mapOrders(paidOrders) },
     cancelledOrders: { count: cancelledOrders.length, amount: sumAmount(cancelledOrders), orders: mapOrders(cancelledOrders) },
+    totalDiscounts,
     voidedItemsSummary: {
       count: voidedItemsCount,
       amount: voidedItemsAmount,
