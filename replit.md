@@ -22,6 +22,7 @@ The system is built as a PWA, ensuring accessibility across various devices.
     - **Admin Panel**: For managing users, roles, permissions, tables, categories, products, payment methods, tax categories, business configurations, and printers.
     - **PWA Support**: Includes `manifest.json`, service worker, and meta tags for installability on Android/iOS.
     - **Item Voiding System**: Allows waiters to soft-void items with reasons, and managers to hard-delete, with full audit trails.
+    - **POS Cash Report Permission**: `POS_VIEW_CASH_REPORT` controls visibility of expected cash, difference, and payment method breakdowns. Backend enforces data filtering at API level (not just UI hiding).
     - **Order Consecutives**: Daily and global order numbering for traceability.
     - **Multi-Printer Support**: Configuration for different printer types (cash register, kitchen, bar) with auto-printing on POS payment.
 
