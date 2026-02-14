@@ -117,10 +117,6 @@ export async function registerRoutes(
     })
   );
 
-  // Seed data
-  await storage.seedData();
-  await storage.seedPermissions();
-
   // ==================== AUTH ====================
   app.post("/api/auth/login", async (req, res) => {
     try {
