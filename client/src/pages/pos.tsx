@@ -128,6 +128,9 @@ export default function POSPage() {
   const [movingItemId, setMovingItemId] = useState<number | null>(null);
   const [lastPaidOrder, setLastPaidOrder] = useState<{orderId: number; tableName: string; orderNumber: string; paymentMethod: string; clientName?: string; _items: {name:string;qty:number;price:number;total:number}[]; _totalAmount: number; _totalDiscounts?: number; _totalTaxes?: number; _taxBreakdown?: TaxBreakdownEntry[]} | null>(null);
   const [printingDirect, setPrintingDirect] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailInput, setEmailInput] = useState("");
+  const [showEmailForm, setShowEmailForm] = useState(false);
 
   const [voidOrderOpen, setVoidOrderOpen] = useState(false);
   const [voidOrderId, setVoidOrderId] = useState<number | null>(null);
@@ -1316,69 +1319,128 @@ export default function POSPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!lastPaidOrder} onOpenChange={(open) => { if (!open) setLastPaidOrder(null); }}>
+      <Dialog open={!!lastPaidOrder} onOpenChange={(open) => { if (!open) { setLastPaidOrder(null); setShowEmailForm(false); setEmailInput(""); } }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Pago Exitoso</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               Orden {lastPaidOrder?.orderNumber} - {lastPaidOrder?.tableName}
             </p>
-            <div className="flex flex-col gap-2">
-              {canPrint && (
-                <>
+            {showEmailForm ? (
+              <div className="space-y-3">
+                <Label>Correo electrónico del cliente</Label>
+                <Input
+                  data-testid="input-client-email"
+                  type="email"
+                  placeholder="cliente@ejemplo.com"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                />
+                <div className="flex flex-col gap-2">
                   <Button
-                    data-testid="button-direct-print"
-                    disabled={printingDirect}
+                    data-testid="button-confirm-send-email"
+                    disabled={sendingEmail || !emailInput.trim()}
                     onClick={async () => {
-                      if (!lastPaidOrder) return;
-                      setPrintingDirect(true);
+                      if (!lastPaidOrder || !emailInput.trim()) return;
+                      setSendingEmail(true);
                       try {
-                        const res = await apiRequest("POST", "/api/pos/print-receipt", {
+                        await apiRequest("POST", "/api/pos/send-ticket", {
                           orderId: lastPaidOrder.orderId,
+                          clientEmail: emailInput.trim(),
+                          clientName: lastPaidOrder.clientName || "",
                         });
-                        const data = await res.json();
-                        toast({ title: "Impreso", description: `Enviado a ${data.printer}` });
+                        toast({ title: "Tiquete enviado", description: `Enviado a ${emailInput.trim()}` });
+                        setShowEmailForm(false);
+                        setEmailInput("");
                       } catch (err: any) {
-                        toast({ title: "Error de impresora", description: err.message, variant: "destructive" });
+                        toast({ title: "Error al enviar", description: err.message, variant: "destructive" });
                       } finally {
-                        setPrintingDirect(false);
+                        setSendingEmail(false);
                       }
                     }}
                   >
-                    {printingDirect ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Printer className="w-4 h-4 mr-1" />}
-                    Imprimir en Impresora WiFi
+                    {sendingEmail ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Mail className="w-4 h-4 mr-1" />}
+                    Enviar
                   </Button>
                   <Button
-                    data-testid="button-browser-print"
-                    variant="outline"
-                    onClick={() => {
-                      if (!lastPaidOrder) return;
-                      triggerReceiptPrint(
-                        lastPaidOrder._items,
-                        lastPaidOrder._totalAmount,
-                        lastPaidOrder.paymentMethod,
-                        lastPaidOrder.tableName,
-                        lastPaidOrder.orderNumber,
-                        lastPaidOrder.clientName,
-                        lastPaidOrder._totalDiscounts,
-                        lastPaidOrder._totalTaxes,
-                        lastPaidOrder._taxBreakdown
-                      );
-                    }}
+                    data-testid="button-cancel-email"
+                    variant="ghost"
+                    onClick={() => { setShowEmailForm(false); setEmailInput(""); }}
                   >
-                    <Receipt className="w-4 h-4 mr-1" />
-                    Ver Tiquete en Pantalla
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Regresar
                   </Button>
-                </>
-              )}
-              <Button
-                data-testid="button-close-print-dialog"
-                variant="ghost"
-                onClick={() => setLastPaidOrder(null)}
-              >
-                Cerrar
-              </Button>
-            </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {canPrint && (
+                  <>
+                    <Button
+                      data-testid="button-direct-print"
+                      disabled={printingDirect}
+                      onClick={async () => {
+                        if (!lastPaidOrder) return;
+                        setPrintingDirect(true);
+                        try {
+                          const res = await apiRequest("POST", "/api/pos/print-receipt", {
+                            orderId: lastPaidOrder.orderId,
+                          });
+                          const data = await res.json();
+                          toast({ title: "Impreso", description: `Enviado a ${data.printer}` });
+                        } catch (err: any) {
+                          toast({ title: "Error de impresora", description: err.message, variant: "destructive" });
+                        } finally {
+                          setPrintingDirect(false);
+                        }
+                      }}
+                    >
+                      {printingDirect ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Printer className="w-4 h-4 mr-1" />}
+                      Imprimir en Impresora WiFi
+                    </Button>
+                    <Button
+                      data-testid="button-browser-print"
+                      variant="outline"
+                      onClick={() => {
+                        if (!lastPaidOrder) return;
+                        triggerReceiptPrint(
+                          lastPaidOrder._items,
+                          lastPaidOrder._totalAmount,
+                          lastPaidOrder.paymentMethod,
+                          lastPaidOrder.tableName,
+                          lastPaidOrder.orderNumber,
+                          lastPaidOrder.clientName,
+                          lastPaidOrder._totalDiscounts,
+                          lastPaidOrder._totalTaxes,
+                          lastPaidOrder._taxBreakdown
+                        );
+                      }}
+                    >
+                      <Receipt className="w-4 h-4 mr-1" />
+                      Ver Tiquete en Pantalla
+                    </Button>
+                  </>
+                )}
+                {canEmailTicket && (
+                  <Button
+                    data-testid="button-send-email-receipt"
+                    variant="outline"
+                    onClick={() => setShowEmailForm(true)}
+                  >
+                    <Mail className="w-4 h-4 mr-1" />
+                    Enviar Tiquete por Correo
+                  </Button>
+                )}
+                <Button
+                  data-testid="button-close-print-dialog"
+                  variant="ghost"
+                  onClick={() => setLastPaidOrder(null)}
+                >
+                  <ArrowLeft className="w-4 h-4 mr-1" />
+                  Regresar
+                </Button>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

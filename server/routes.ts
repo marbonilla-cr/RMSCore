@@ -2243,11 +2243,8 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      if (order.status === "PAID") {
-        const user = await storage.getUser(userId);
-        if (!user || user.role !== "MANAGER") {
-          return res.status(403).json({ message: "Solo gerente puede reenviar ticket después de pagar" });
-        }
+      if (order.status !== "PAID" && order.status !== "OPEN" && order.status !== "IN_KITCHEN" && order.status !== "PREPARING" && order.status !== "READY") {
+        return res.status(400).json({ message: "No se puede enviar tiquete para esta orden" });
       }
 
       const items = await storage.getOrderItems(orderId);
