@@ -121,6 +121,12 @@ function slugify(text: string): string {
 }
 
 export async function seedMenuFromCsv() {
+  const existingProducts = await db.select({ id: products.id }).from(products).limit(1);
+  if (existingProducts.length > 0) {
+    console.log("Menu already seeded (products exist), skipping CSV import.");
+    return;
+  }
+
   const csvPath = path.resolve(process.cwd(), "server", "menu_seed.csv");
   if (!fs.existsSync(csvPath)) {
     console.log("menu_seed.csv not found, skipping menu seed");
@@ -143,7 +149,7 @@ export async function seedMenuFromCsv() {
     modColIndices.push(idx);
   }
 
-  console.log("Cleaning existing menu data before reimport...");
+  console.log("First-time menu seed: importing from CSV...");
   await db.delete(itemModifierGroups);
   await db.delete(modifierOptions);
   await db.delete(modifierGroups);
