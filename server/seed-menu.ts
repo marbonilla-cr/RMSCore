@@ -1,10 +1,11 @@
 import fs from "fs";
 import path from "path";
 import { db } from "./db";
-import { eq, and, notInArray, inArray } from "drizzle-orm";
+import { eq, and, notInArray, inArray, sql } from "drizzle-orm";
 import {
   categories, products, modifierGroups, modifierOptions,
   itemModifierGroups, discounts, taxCategories, productTaxCategories, orders,
+  payments, salesLedgerItems, voidedItems,
 } from "@shared/schema";
 
 const MODIFIER_GROUPS_DATA: Record<string, { options: { name: string; priceDelta: string }[] }> = {
@@ -298,5 +299,37 @@ export async function seedMenuFromCsv() {
     console.log(`  Recalculated ${openOrders.length} open orders`);
   }
 
+  await fixUtcBusinessDates();
+
   console.log("Menu seed complete!");
+}
+
+async function fixUtcBusinessDates() {
+  const cutoffDate = "2026-02-15";
+  const affectedOrders = await db.select({
+    id: orders.id,
+    businessDate: orders.businessDate,
+    openedAt: orders.openedAt,
+  }).from(orders).where(
+    and(
+      sql`${orders.businessDate} <= ${cutoffDate}`,
+      sql`${orders.openedAt} IS NOT NULL`
+    )
+  );
+
+  let fixedCount = 0;
+  for (const o of affectedOrders) {
+    if (!o.openedAt) continue;
+    const correctDate = new Date(o.openedAt).toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+    if (o.businessDate !== correctDate) {
+      await db.update(orders).set({ businessDate: correctDate }).where(eq(orders.id, o.id));
+      await db.update(payments).set({ businessDate: correctDate }).where(eq(payments.orderId, o.id));
+      await db.update(salesLedgerItems).set({ businessDate: correctDate }).where(eq(salesLedgerItems.orderId, o.id));
+      await db.update(voidedItems).set({ businessDate: correctDate }).where(eq(voidedItems.orderId, o.id));
+      fixedCount++;
+    }
+  }
+  if (fixedCount > 0) {
+    console.log(`  Fixed business_date for ${fixedCount} orders (UTC -> America/Costa_Rica)`);
+  }
 }

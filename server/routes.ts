@@ -86,7 +86,7 @@ function requirePermission(...permissionKeys: string[]) {
 }
 
 function getBusinessDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
 }
 
 const qrRateLimitMap = new Map<string, number>();
@@ -2187,7 +2187,7 @@ export async function registerRoutes(
       const smtpUser = process.env.SMTP_USER;
       const smtpPass = process.env.SMTP_PASS;
       const smtpFrom = process.env.SMTP_FROM || (smtpUser ? `La Antigua Lechería <${smtpUser}>` : undefined);
-      const dateStr = new Date().toISOString().split("T")[0];
+      const dateStr = getBusinessDate();
 
       if (smtpHost && smtpUser && smtpPass) {
         try {

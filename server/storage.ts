@@ -41,8 +41,7 @@ import {
 import bcrypt from "bcryptjs";
 
 function getBusinessDate(): string {
-  const now = new Date();
-  return now.toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
 }
 
 // Users
