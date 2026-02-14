@@ -35,10 +35,42 @@ function formatElapsed(dateStr: string) {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
+function playAlertSound() {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const playTone = (freq: number, start: number, duration: number, type: OscillatorType = "square") => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = type;
+      gain.gain.setValueAtTime(0.8, ctx.currentTime + start);
+      gain.gain.setValueAtTime(0.8, ctx.currentTime + start + duration * 0.7);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + start + duration);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + duration);
+    };
+    playTone(1200, 0, 0.12, "square");
+    playTone(1500, 0.14, 0.12, "square");
+    playTone(1200, 0.28, 0.12, "square");
+    playTone(1500, 0.42, 0.12, "square");
+    playTone(1800, 0.56, 0.25, "sawtooth");
+
+    playTone(1200, 0.9, 0.12, "square");
+    playTone(1500, 1.04, 0.12, "square");
+    playTone(1200, 1.18, 0.12, "square");
+    playTone(1500, 1.32, 0.12, "square");
+    playTone(1800, 1.46, 0.25, "sawtooth");
+  } catch {}
+}
+
 export function KDSDisplay({ destination, title, icon: Icon }: { destination: string; title: string; icon: typeof ChefHat }) {
   const [tab, setTab] = useState("active");
   const ticketOrderRef = useRef<number[]>([]);
   const [, forceUpdate] = useState(0);
+  const [pendingAlertCount, setPendingAlertCount] = useState(0);
+  const knownTicketIdsRef = useRef<Set<number> | null>(null);
 
   const activeQueryKey = ["/api/kds/tickets", "active", destination];
   const historyQueryKey = ["/api/kds/tickets", "history", destination];
@@ -71,28 +103,31 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
     enabled: tab === "history",
   });
 
+  const dataLoadedRef = useRef(false);
+
+  useEffect(() => {
+    if (!dataLoadedRef.current && !isLoading) {
+      knownTicketIdsRef.current = new Set(activeTickets.map(t => t.id));
+      dataLoadedRef.current = true;
+      return;
+    }
+
+    if (!dataLoadedRef.current) return;
+
+    const currentIds = new Set(activeTickets.map(t => t.id));
+    const newTicketIds = Array.from(currentIds).filter(id => !knownTicketIdsRef.current!.has(id));
+    if (newTicketIds.length > 0) {
+      setPendingAlertCount(prev => prev + newTicketIds.length);
+      playAlertSound();
+    }
+
+    knownTicketIdsRef.current = currentIds;
+  }, [activeTickets, isLoading]);
+
   useEffect(() => {
     wsManager.connect();
     const unsub = wsManager.on("kitchen_ticket_created", () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
-      try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const playTone = (freq: number, start: number, duration: number) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.frequency.value = freq;
-          osc.type = "sine";
-          gain.gain.setValueAtTime(0.3, ctx.currentTime + start);
-          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + start + duration);
-          osc.start(ctx.currentTime + start);
-          osc.stop(ctx.currentTime + start + duration);
-        };
-        playTone(880, 0, 0.15);
-        playTone(1100, 0.18, 0.15);
-        playTone(1320, 0.36, 0.25);
-      } catch {}
     });
 
     const unsub2 = wsManager.on("kitchen_item_status_changed", () => {
@@ -199,6 +234,33 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
 
   return (
     <div className="p-3 md:p-4">
+      {pendingAlertCount > 0 && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60" data-testid="modal-new-order-alert">
+          <Card className="w-[90%] max-w-sm mx-auto shadow-2xl border-2 border-yellow-500 animate-in fade-in zoom-in-95 duration-200">
+            <CardContent className="pt-6 pb-4 text-center space-y-4">
+              <div className="w-16 h-16 mx-auto rounded-full bg-yellow-100 dark:bg-yellow-900/40 flex items-center justify-center">
+                <Icon className="w-9 h-9 text-yellow-600 dark:text-yellow-400" />
+              </div>
+              <h2 className="text-xl font-bold" data-testid="text-new-order-title">
+                {pendingAlertCount === 1 ? "Nueva Orden" : `${pendingAlertCount} Nuevas Órdenes`}
+              </h2>
+              <p className="text-muted-foreground text-sm">
+                {destination === "bar"
+                  ? (pendingAlertCount === 1 ? "Ha llegado un nuevo pedido al bar" : `Han llegado ${pendingAlertCount} nuevos pedidos al bar`)
+                  : (pendingAlertCount === 1 ? "Ha llegado un nuevo pedido a cocina" : `Han llegado ${pendingAlertCount} nuevos pedidos a cocina`)}
+              </p>
+              <Button
+                className="w-full min-h-[48px] text-base font-bold"
+                onClick={() => setPendingAlertCount(0)}
+                data-testid="button-dismiss-new-order"
+              >
+                OK
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
         <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
           <Icon className="w-6 h-6" /> {title}
