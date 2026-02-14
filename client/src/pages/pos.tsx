@@ -1109,6 +1109,17 @@ export default function POSPage() {
                         <span className="text-sm text-muted-foreground">Efectivo Esperado</span>
                         <span className="font-medium">₡{Number(cashSession.expectedCash || 0).toLocaleString()}</span>
                       </div>
+                      {cashSession.totalsByMethod && typeof cashSession.totalsByMethod === "object" && (
+                        <div className="border-t pt-2 mt-2 space-y-1">
+                          <p className="text-sm font-bold mb-1">Totales por Método</p>
+                          {Object.entries(cashSession.totalsByMethod as Record<string, number>).map(([method, amount]) => (
+                            <div key={method} className="flex justify-between text-sm" data-testid={`text-live-total-method-${method}`}>
+                              <span className="text-muted-foreground">{method}</span>
+                              <span>₡{Number(amount).toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {canCashClose && (
                         <Button variant="destructive" className="w-full mt-4" onClick={() => setCloseOpen(true)} data-testid="button-close-cash">
                           <Lock className="w-4 h-4 mr-1" /> Cerrar Caja

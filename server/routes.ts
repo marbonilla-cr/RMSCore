@@ -1775,7 +1775,12 @@ export async function registerRoutes(
   // ==================== CASH SESSION ====================
   app.get("/api/pos/cash-session", requirePermission("POS_VIEW"), async (_req, res) => {
     const session = await storage.getLatestCashSession();
-    res.json(session || {});
+    if (!session) return res.json({});
+    if (!session.closedAt) {
+      const totalsByMethod = await storage.getPaymentsByDateGrouped(getBusinessDate());
+      return res.json({ ...session, totalsByMethod });
+    }
+    res.json(session);
   });
 
   app.post("/api/pos/cash-session/open", requirePermission("POS_VIEW"), async (req, res) => {
