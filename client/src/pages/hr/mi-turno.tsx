@@ -1,0 +1,278 @@
+import { useState, useEffect, useCallback } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, Clock, LogIn, LogOut, MapPin, AlertCircle } from "lucide-react";
+
+interface PunchStatus {
+  clockedIn: boolean;
+  clockInTime?: string;
+  punchId?: number;
+}
+
+interface PunchRecord {
+  id: number;
+  clockIn: string;
+  clockOut?: string | null;
+  workedMinutes?: number | null;
+  late?: boolean;
+}
+
+function formatTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatElapsed(startStr: string): string {
+  const start = new Date(startStr).getTime();
+  const now = Date.now();
+  const diff = Math.max(0, now - start);
+  const hours = Math.floor(diff / 3600000);
+  const minutes = Math.floor((diff % 3600000) / 60000);
+  const seconds = Math.floor((diff % 60000) / 1000);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatWorked(minutes: number | null | undefined): string {
+  if (!minutes && minutes !== 0) return "-";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}h ${m}m`;
+}
+
+export default function MiTurno() {
+  const { toast } = useToast();
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState("");
+
+  const { data: status, isLoading: statusLoading } = useQuery<PunchStatus>({
+    queryKey: ["/api/hr/my-punch"],
+    refetchInterval: 30000,
+  });
+
+  const { data: punches, isLoading: punchesLoading } = useQuery<PunchRecord[]>({
+    queryKey: ["/api/hr/punches/my"],
+  });
+
+  useEffect(() => {
+    if (!status?.clockedIn || !status.clockInTime) {
+      setElapsed("");
+      return;
+    }
+    const update = () => setElapsed(formatElapsed(status.clockInTime!));
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [status?.clockedIn, status?.clockInTime]);
+
+  const clockInMutation = useMutation({
+    mutationFn: async (coords: { lat: number; lng: number; accuracy: number }) => {
+      await apiRequest("POST", "/api/hr/clock-in", coords);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/my-punch"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/punches/my"] });
+      toast({ title: "Entrada registrada" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error al registrar entrada", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const clockOutMutation = useMutation({
+    mutationFn: async (coords: { lat: number; lng: number; accuracy: number }) => {
+      await apiRequest("POST", "/api/hr/clock-out", coords);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/my-punch"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/punches/my"] });
+      toast({ title: "Salida registrada" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error al registrar salida", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const getLocationAndPunch = useCallback((type: "in" | "out") => {
+    setGeoError(null);
+    setGeoLoading(true);
+
+    if (!navigator.geolocation) {
+      setGeoError("Geolocalización no disponible en este dispositivo.");
+      setGeoLoading(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const coords = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        };
+        setGeoLoading(false);
+        if (type === "in") {
+          clockInMutation.mutate(coords);
+        } else {
+          clockOutMutation.mutate(coords);
+        }
+      },
+      (err) => {
+        setGeoLoading(false);
+        let msg = "Error al obtener ubicación.";
+        if (err.code === err.PERMISSION_DENIED) {
+          msg = "Permiso de ubicación denegado. Activa la ubicación en tu navegador.";
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          msg = "Ubicación no disponible.";
+        } else if (err.code === err.TIMEOUT) {
+          msg = "Tiempo de espera agotado al obtener ubicación.";
+        }
+        setGeoError(msg);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }, [clockInMutation, clockOutMutation]);
+
+  const isBusy = geoLoading || clockInMutation.isPending || clockOutMutation.isPending;
+
+  if (statusLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]" data-testid="status-loading">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-lg mx-auto p-4 space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+          <CardTitle className="text-lg">Mi Turno</CardTitle>
+          {status?.clockedIn ? (
+            <Badge variant="default" data-testid="badge-status-active">Activo</Badge>
+          ) : (
+            <Badge variant="secondary" data-testid="badge-status-inactive">Inactivo</Badge>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="text-center space-y-2">
+            {status?.clockedIn && status.clockInTime ? (
+              <>
+                <p className="text-sm text-muted-foreground" data-testid="text-status-message">
+                  Turno activo desde {formatTime(status.clockInTime)}
+                </p>
+                <p className="text-4xl font-mono font-bold tabular-nums" data-testid="text-elapsed-timer">
+                  {elapsed}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground" data-testid="text-status-message">
+                Sin turno activo
+              </p>
+            )}
+          </div>
+
+          {geoError && (
+            <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-geo-error">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              <span>{geoError}</span>
+            </div>
+          )}
+
+          <div className="flex justify-center">
+            {status?.clockedIn ? (
+              <Button
+                size="lg"
+                variant="destructive"
+                className="w-full"
+                disabled={isBusy}
+                onClick={() => getLocationAndPunch("out")}
+                data-testid="button-clock-out"
+              >
+                {isBusy ? (
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                ) : (
+                  <LogOut className="h-5 w-5 mr-2" />
+                )}
+                Registrar Salida
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                className="w-full"
+                disabled={isBusy}
+                onClick={() => getLocationAndPunch("in")}
+                data-testid="button-clock-in"
+              >
+                {isBusy ? (
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                ) : (
+                  <LogIn className="h-5 w-5 mr-2" />
+                )}
+                Registrar Entrada
+              </Button>
+            )}
+          </div>
+
+          <p className="text-xs text-center text-muted-foreground flex items-center justify-center gap-1">
+            <MapPin className="h-3 w-3" />
+            Se registrará tu ubicación
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
+            <Clock className="h-5 w-5" />
+            Registros de Hoy
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {punchesLoading ? (
+            <div className="flex justify-center py-4" data-testid="status-punches-loading">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : !punches || punches.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-punches">
+              No hay registros para hoy
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="table-punches">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-2 pr-2 font-medium">Entrada</th>
+                    <th className="pb-2 pr-2 font-medium">Salida</th>
+                    <th className="pb-2 pr-2 font-medium">Trabajado</th>
+                    <th className="pb-2 font-medium">Tardía</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {punches.map((punch, idx) => (
+                    <tr key={punch.id} className="border-b last:border-0" data-testid={`row-punch-${idx}`}>
+                      <td className="py-2 pr-2">{formatTime(punch.clockIn)}</td>
+                      <td className="py-2 pr-2">{punch.clockOut ? formatTime(punch.clockOut) : "-"}</td>
+                      <td className="py-2 pr-2">{formatWorked(punch.workedMinutes)}</td>
+                      <td className="py-2">
+                        {punch.late ? (
+                          <Badge variant="destructive" data-testid={`badge-late-${idx}`}>Sí</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">No</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

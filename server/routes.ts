@@ -4,7 +4,7 @@ import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
 import * as storage from "./storage";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -105,6 +105,15 @@ function requirePermission(...permissionKeys: string[]) {
 
 function getBusinessDate(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+}
+
+function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (deg: number) => deg * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 export async function registerRoutes(
@@ -2113,6 +2122,39 @@ export async function registerRoutes(
             await storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: new Date() });
           }
         }
+
+        try {
+          const hrSettings = await storage.getHrSettings();
+          const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
+          if (scRate > 0) {
+            const allProducts = await storage.getAllProducts();
+            const productMap = new Map(allProducts.map(p => [p.id, p]));
+            const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
+            for (const item of items) {
+              if (item.status === "VOIDED") continue;
+              const prod = item.productId ? productMap.get(item.productId) : null;
+              if (prod && !prod.serviceTaxApplicable) continue;
+              const baseAmount = Number(item.unitPrice) * item.quantity;
+              const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
+              if (serviceAmount > 0) {
+                await storage.createServiceChargeLedgerEntry({
+                  businessDate: getBusinessDate(),
+                  orderId,
+                  orderItemId: item.id,
+                  tableId: order.tableId || null,
+                  tableNameSnapshot: tableName || null,
+                  responsibleWaiterEmployeeId: order.responsibleWaiterId || null,
+                  rateSnapshot: scRate.toFixed(4),
+                  baseAmountSnapshot: baseAmount.toFixed(2),
+                  serviceAmount: serviceAmount.toFixed(2),
+                  status: "PAID",
+                });
+              }
+            }
+          }
+        } catch (scErr) {
+          console.error("[ServiceCharge] Error creating ledger entries:", scErr);
+        }
       }
 
       if (pm?.paymentCode === "CASH") {
@@ -2474,9 +2516,44 @@ export async function registerRoutes(
         businessDate: getBusinessDate(),
       });
 
+      const order = await storage.getOrder(orderId);
       for (const si of splitItemsList) {
         await storage.updateOrderItem(si.orderItemId, { status: "PAID" });
         await storage.updateSalesLedgerItems(si.orderItemId, { status: "PAID", paidAt: new Date() });
+      }
+
+      try {
+        const hrSettings = await storage.getHrSettings();
+        const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
+        if (scRate > 0 && order) {
+          const allProducts = await storage.getAllProducts();
+          const productMap = new Map(allProducts.map(p => [p.id, p]));
+          const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
+          for (const si of splitItemsList) {
+            const oi = orderItemsList.find(i => i.id === si.orderItemId);
+            if (!oi || oi.status === "VOIDED") continue;
+            const prod = oi.productId ? productMap.get(oi.productId) : null;
+            if (prod && !prod.serviceTaxApplicable) continue;
+            const baseAmount = Number(oi.unitPrice) * oi.quantity;
+            const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
+            if (serviceAmount > 0) {
+              await storage.createServiceChargeLedgerEntry({
+                businessDate: getBusinessDate(),
+                orderId,
+                orderItemId: oi.id,
+                tableId: order.tableId || null,
+                tableNameSnapshot: tableName || null,
+                responsibleWaiterEmployeeId: order.responsibleWaiterId || null,
+                rateSnapshot: scRate.toFixed(4),
+                baseAmountSnapshot: baseAmount.toFixed(2),
+                serviceAmount: serviceAmount.toFixed(2),
+                status: "PAID",
+              });
+            }
+          }
+        }
+      } catch (scErr) {
+        console.error("[ServiceCharge] Split payment ledger error:", scErr);
       }
 
       if (pm?.paymentCode === "CASH") {
@@ -2852,6 +2929,7 @@ export async function registerRoutes(
       const order = await storage.getOrder(payment.orderId);
       if (order && order.status === "PAID" && balanceDue > 0) {
         await storage.updateOrder(payment.orderId, { status: "OPEN", closedAt: null });
+        await storage.voidServiceChargeByOrder(payment.orderId);
       }
 
       await storage.createAuditEvent({
@@ -3167,6 +3245,597 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
+  });
+
+  // ==================== HR MODULE ====================
+
+  // -- HR Settings --
+  app.get("/api/hr/settings", requirePermission("HR_MANAGE_SETTINGS"), async (_req, res) => {
+    const settings = await storage.getHrSettings();
+    res.json(settings || {});
+  });
+
+  app.put("/api/hr/settings", requirePermission("HR_MANAGE_SETTINGS"), async (req, res) => {
+    try {
+      const settings = await storage.upsertHrSettings(req.body);
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "HR_SETTINGS_UPDATED",
+        entityType: "HR_SETTINGS",
+        metadata: req.body,
+      });
+      broadcast("hr_settings_updated", settings);
+      res.json(settings);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- Weekly Schedules --
+  app.get("/api/hr/schedules", requirePermission("HR_MANAGE_SCHEDULES", "HR_VIEW_TEAM"), async (req, res) => {
+    const weekStartDate = req.query.weekStartDate as string;
+    if (!weekStartDate) return res.status(400).json({ message: "weekStartDate required" });
+    const schedules = await storage.getWeeklySchedulesByWeek(weekStartDate);
+    const result = [];
+    for (const s of schedules) {
+      const days = await storage.getScheduleDays(s.id);
+      result.push({ ...s, days });
+    }
+    res.json(result);
+  });
+
+  app.get("/api/hr/schedules/my", requirePermission("HR_VIEW_SELF"), async (req, res) => {
+    const weekStartDate = req.query.weekStartDate as string;
+    if (!weekStartDate) return res.status(400).json({ message: "weekStartDate required" });
+    const schedule = await storage.getWeeklySchedule(req.session.userId!, weekStartDate);
+    if (!schedule) return res.json(null);
+    const days = await storage.getScheduleDays(schedule.id);
+    res.json({ ...schedule, days });
+  });
+
+  app.post("/api/hr/schedules", requirePermission("HR_MANAGE_SCHEDULES"), async (req, res) => {
+    try {
+      const { employeeId, weekStartDate, days } = req.body;
+      if (!employeeId || !weekStartDate) return res.status(400).json({ message: "employeeId and weekStartDate required" });
+      
+      const existing = await storage.getWeeklySchedule(employeeId, weekStartDate);
+      if (existing) return res.status(409).json({ message: "Schedule already exists for this employee/week" });
+      
+      const schedule = await storage.createWeeklySchedule({ employeeId, weekStartDate });
+      let savedDays: any[] = [];
+      if (days && Array.isArray(days) && days.length > 0) {
+        savedDays = await storage.upsertScheduleDays(schedule.id, days);
+      }
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "SCHEDULE_CREATED",
+        entityType: "HR_SCHEDULE",
+        entityId: schedule.id,
+        metadata: { employeeId, weekStartDate },
+      });
+      broadcast("schedule_updated", { employeeId, weekStartDate });
+      res.json({ ...schedule, days: savedDays });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/hr/schedules/:id", requirePermission("HR_MANAGE_SCHEDULES"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { days } = req.body;
+      const schedule = await storage.updateWeeklySchedule(id, {});
+      let savedDays: any[] = [];
+      if (days && Array.isArray(days)) {
+        savedDays = await storage.upsertScheduleDays(id, days);
+      }
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "SCHEDULE_UPDATED",
+        entityType: "HR_SCHEDULE",
+        entityId: id,
+        metadata: { days },
+      });
+      broadcast("schedule_updated", { employeeId: schedule.employeeId, weekStartDate: schedule.weekStartDate });
+      res.json({ ...schedule, days: savedDays });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/hr/schedules/:id", requirePermission("HR_MANAGE_SCHEDULES"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      await storage.deleteWeeklySchedule(id);
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "SCHEDULE_DELETED",
+        entityType: "HR_SCHEDULE",
+        entityId: id,
+      });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- Time Punches: Clock-in --
+  app.post("/api/hr/clock-in", requirePermission("HR_CLOCK_IN_OUT_ALLOW"), async (req, res) => {
+    try {
+      const employeeId = req.session.userId!;
+      const { lat, lng, accuracy } = req.body;
+      
+      const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+      if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta. Marque salida primero." });
+      
+      const settings = await storage.getHrSettings();
+      const now = new Date();
+      const businessDate = getBusinessDate();
+      
+      let geoVerified = false;
+      if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockin && settings.businessLat && settings.businessLng) {
+        if (!lat || !lng) return res.status(400).json({ message: "Ubicación requerida para marcar entrada" });
+        if (accuracy && Number(accuracy) > (settings.geoAccuracyMaxMeters || 100)) {
+          return res.status(400).json({ message: `Precisión GPS insuficiente (${Math.round(Number(accuracy))}m). Intente en un área abierta.` });
+        }
+        const distance = haversineDistance(Number(settings.businessLat), Number(settings.businessLng), Number(lat), Number(lng));
+        if (distance > (settings.geoRadiusMeters || 120)) {
+          return res.status(403).json({ message: `Fuera del rango permitido (${Math.round(distance)}m de ${settings.geoRadiusMeters || 120}m). Solicite override al gerente.` });
+        }
+        geoVerified = true;
+      }
+      
+      // Find today's schedule to compute lateness
+      const weekDay = now.getDay(); // 0=Sunday
+      let lateMinutes = 0;
+      let scheduledStartAt: Date | undefined;
+      let scheduledEndAt: Date | undefined;
+      
+      // Get the Monday of this week
+      const dayOffset = weekDay === 0 ? 6 : weekDay - 1;
+      const mondayDate = new Date(now);
+      mondayDate.setDate(mondayDate.getDate() - dayOffset);
+      const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+      
+      const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
+      if (schedule) {
+        const days = await storage.getScheduleDays(schedule.id);
+        const todaySchedule = days.find(d => d.dayOfWeek === weekDay);
+        if (todaySchedule && !todaySchedule.isDayOff && todaySchedule.startTime) {
+          const [h, m] = todaySchedule.startTime.split(":").map(Number);
+          scheduledStartAt = new Date(now);
+          scheduledStartAt.setHours(h, m, 0, 0);
+          
+          if (todaySchedule.endTime) {
+            const [eh, em] = todaySchedule.endTime.split(":").map(Number);
+            scheduledEndAt = new Date(now);
+            scheduledEndAt.setHours(eh, em, 0, 0);
+          }
+          
+          const graceMinutes = settings?.latenessGraceMinutes || 0;
+          const diffMs = now.getTime() - scheduledStartAt.getTime();
+          const diffMinutes = Math.floor(diffMs / 60000);
+          if (diffMinutes > graceMinutes) {
+            lateMinutes = diffMinutes - graceMinutes;
+          }
+        }
+      }
+      
+      const punch = await storage.createTimePunch({
+        employeeId,
+        businessDate,
+        clockInAt: now,
+        scheduledStartAt: scheduledStartAt || null,
+        scheduledEndAt: scheduledEndAt || null,
+        lateMinutes,
+        clockinGeoLat: lat ? String(lat) : null,
+        clockinGeoLng: lng ? String(lng) : null,
+        clockinGeoAccuracyM: accuracy ? String(accuracy) : null,
+        clockinGeoVerified: geoVerified,
+      });
+      
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: employeeId,
+        action: "CLOCK_IN",
+        entityType: "HR_PUNCH",
+        entityId: punch.id,
+        metadata: { lateMinutes, geoVerified },
+      });
+      
+      // Send late alert email if late
+      if (lateMinutes > 0 && settings?.lateAlertEmailTo) {
+        try {
+          const user = await storage.getUser(employeeId);
+          const nodemailer = await import("nodemailer");
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || "smtp.gmail.com",
+            port: Number(process.env.SMTP_PORT) || 587,
+            secure: false,
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+          });
+          await transporter.sendMail({
+            from: process.env.SMTP_USER,
+            to: settings.lateAlertEmailTo,
+            subject: `[Tardía] ${user?.displayName || "Empleado"} - ${lateMinutes} min tarde`,
+            text: `${user?.displayName} marcó entrada ${lateMinutes} minutos tarde el ${businessDate}.\nHora programada: ${scheduledStartAt?.toLocaleTimeString("es-CR") || "N/A"}\nHora de entrada: ${now.toLocaleTimeString("es-CR")}`,
+          });
+        } catch (emailErr) {
+          console.error("[HR] Failed to send late alert email:", emailErr);
+        }
+      }
+      
+      broadcast("hr_punch_update", { employeeId, type: "clock_in" });
+      res.json(punch);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- Time Punches: Clock-out --
+  app.post("/api/hr/clock-out", requirePermission("HR_CLOCK_IN_OUT_ALLOW"), async (req, res) => {
+    try {
+      const employeeId = req.session.userId!;
+      const { lat, lng, accuracy } = req.body;
+      
+      const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+      if (!openPunch) return res.status(404).json({ message: "No hay entrada abierta para marcar salida" });
+      
+      const settings = await storage.getHrSettings();
+      const now = new Date();
+      
+      let geoVerified = false;
+      if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockout && settings.businessLat && settings.businessLng) {
+        if (!lat || !lng) return res.status(400).json({ message: "Ubicación requerida para marcar salida" });
+        if (accuracy && Number(accuracy) > (settings.geoAccuracyMaxMeters || 100)) {
+          return res.status(400).json({ message: `Precisión GPS insuficiente (${Math.round(Number(accuracy))}m). Intente en un área abierta.` });
+        }
+        const distance = haversineDistance(Number(settings.businessLat), Number(settings.businessLng), Number(lat), Number(lng));
+        if (distance > (settings.geoRadiusMeters || 120)) {
+          return res.status(403).json({ message: `Fuera del rango permitido (${Math.round(distance)}m de ${settings.geoRadiusMeters || 120}m). Solicite override al gerente.` });
+        }
+        geoVerified = true;
+      }
+      
+      const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
+      const workedMinutes = Math.floor(workedMs / 60000);
+      
+      const dailyThresholdMinutes = settings ? Number(settings.overtimeDailyThresholdHours) * 60 : 480;
+      const overtimeMinutesDaily = Math.max(0, workedMinutes - dailyThresholdMinutes);
+      
+      const updatedPunch = await storage.updateTimePunch(openPunch.id, {
+        clockOutAt: now,
+        clockOutType: "MANUAL",
+        workedMinutes,
+        overtimeMinutesDaily,
+        clockoutGeoLat: lat ? String(lat) : null,
+        clockoutGeoLng: lng ? String(lng) : null,
+        clockoutGeoAccuracyM: accuracy ? String(accuracy) : null,
+        clockoutGeoVerified: geoVerified,
+      });
+      
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: employeeId,
+        action: "CLOCK_OUT",
+        entityType: "HR_PUNCH",
+        entityId: openPunch.id,
+        metadata: { workedMinutes, overtimeMinutesDaily, geoVerified },
+      });
+      
+      broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+      res.json(updatedPunch);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- Manager geo override clock-in/out --
+  app.post("/api/hr/override-clock", requirePermission("GEO_OVERRIDE"), async (req, res) => {
+    try {
+      const { employeeId, action, reason } = req.body;
+      if (!employeeId || !action) return res.status(400).json({ message: "employeeId and action required" });
+      
+      const now = new Date();
+      const businessDate = getBusinessDate();
+      
+      if (action === "clock_in") {
+        const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+        if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta" });
+        
+        const punch = await storage.createTimePunch({
+          employeeId,
+          businessDate,
+          clockInAt: now,
+          clockinGeoVerified: false,
+          notes: `Override por gerente: ${reason || "Sin razón"}`,
+        });
+        
+        await storage.createAuditEvent({
+          actorType: "USER",
+          actorUserId: req.session.userId!,
+          action: "GEO_OVERRIDE_CLOCK_IN",
+          entityType: "HR_PUNCH",
+          entityId: punch.id,
+          metadata: { targetEmployeeId: employeeId, reason },
+        });
+        
+        broadcast("hr_punch_update", { employeeId, type: "clock_in" });
+        return res.json(punch);
+      }
+      
+      if (action === "clock_out") {
+        const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+        if (!openPunch) return res.status(404).json({ message: "No hay entrada abierta" });
+        
+        const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
+        const workedMinutes = Math.floor(workedMs / 60000);
+        
+        const updatedPunch = await storage.updateTimePunch(openPunch.id, {
+          clockOutAt: now,
+          clockOutType: "OVERRIDE",
+          workedMinutes,
+          notes: `Override por gerente: ${reason || "Sin razón"}`,
+          clockoutGeoVerified: false,
+        });
+        
+        await storage.createAuditEvent({
+          actorType: "USER",
+          actorUserId: req.session.userId!,
+          action: "GEO_OVERRIDE_CLOCK_OUT",
+          entityType: "HR_PUNCH",
+          entityId: openPunch.id,
+          metadata: { targetEmployeeId: employeeId, reason, workedMinutes },
+        });
+        
+        broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+        return res.json(updatedPunch);
+      }
+      
+      res.status(400).json({ message: "Invalid action. Use clock_in or clock_out" });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- My current punch status --
+  app.get("/api/hr/my-punch", requireAuth, async (req, res) => {
+    const punch = await storage.getOpenPunchForEmployee(req.session.userId!);
+    res.json(punch || null);
+  });
+
+  // -- Time Punches queries --
+  app.get("/api/hr/punches", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    const { date, dateFrom, dateTo, employeeId } = req.query;
+    if (employeeId) {
+      const punches = await storage.getTimePunchesByEmployee(
+        Number(employeeId),
+        (dateFrom as string) || undefined,
+        (dateTo as string) || undefined
+      );
+      return res.json(punches);
+    }
+    if (dateFrom && dateTo) {
+      return res.json(await storage.getTimePunchesByDateRange(dateFrom as string, dateTo as string));
+    }
+    if (date) {
+      return res.json(await storage.getTimePunchesByDate(date as string));
+    }
+    return res.json(await storage.getTimePunchesByDate(getBusinessDate()));
+  });
+
+  app.get("/api/hr/punches/my", requirePermission("HR_VIEW_SELF"), async (req, res) => {
+    const { dateFrom, dateTo } = req.query;
+    const punches = await storage.getTimePunchesByEmployee(
+      req.session.userId!,
+      (dateFrom as string) || undefined,
+      (dateTo as string) || undefined
+    );
+    res.json(punches);
+  });
+
+  // -- Punch edit (manager) --
+  app.patch("/api/hr/punches/:id", requirePermission("HR_EDIT_PUNCHES"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { clockInAt, clockOutAt, reason } = req.body;
+      
+      if (!reason) return res.status(400).json({ message: "Razón de edición obligatoria" });
+      
+      const existing = await storage.getTimePunch(id);
+      if (!existing) return res.status(404).json({ message: "Marca no encontrada" });
+      
+      const updates: any = {
+        editedByEmployeeId: req.session.userId!,
+        editedAt: new Date(),
+        editReason: reason,
+      };
+      
+      if (clockInAt) updates.clockInAt = new Date(clockInAt);
+      if (clockOutAt) {
+        updates.clockOutAt = new Date(clockOutAt);
+        const inTime = clockInAt ? new Date(clockInAt) : new Date(existing.clockInAt);
+        const outTime = new Date(clockOutAt);
+        if (outTime <= inTime) return res.status(400).json({ message: "Salida debe ser posterior a entrada" });
+        updates.workedMinutes = Math.floor((outTime.getTime() - inTime.getTime()) / 60000);
+      }
+      
+      const updated = await storage.updateTimePunch(id, updates);
+      
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "PUNCH_EDITED",
+        entityType: "HR_PUNCH",
+        entityId: id,
+        metadata: {
+          before: { clockInAt: existing.clockInAt, clockOutAt: existing.clockOutAt },
+          after: { clockInAt: updated.clockInAt, clockOutAt: updated.clockOutAt },
+          reason,
+        },
+      });
+      
+      broadcast("hr_punch_update", { employeeId: existing.employeeId, type: "edited" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- Overtime report --
+  app.get("/api/hr/overtime-report", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    const { dateFrom, dateTo } = req.query;
+    if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom and dateTo required" });
+    
+    const punches = await storage.getTimePunchesByDateRange(dateFrom as string, dateTo as string);
+    const employees = await storage.getAllUsers();
+    
+    const report: Record<number, {
+      employeeId: number;
+      displayName: string;
+      totalWorkedMinutes: number;
+      totalOvertimeMinutes: number;
+      totalLateDays: number;
+      totalLateMinutes: number;
+      punchCount: number;
+    }> = {};
+    
+    for (const p of punches) {
+      if (!report[p.employeeId]) {
+        const emp = employees.find(e => e.id === p.employeeId);
+        report[p.employeeId] = {
+          employeeId: p.employeeId,
+          displayName: emp?.displayName || `Empleado ${p.employeeId}`,
+          totalWorkedMinutes: 0,
+          totalOvertimeMinutes: 0,
+          totalLateDays: 0,
+          totalLateMinutes: 0,
+          punchCount: 0,
+        };
+      }
+      report[p.employeeId].totalWorkedMinutes += p.workedMinutes || 0;
+      report[p.employeeId].totalOvertimeMinutes += p.overtimeMinutesDaily || 0;
+      if (p.lateMinutes > 0) {
+        report[p.employeeId].totalLateDays++;
+        report[p.employeeId].totalLateMinutes += p.lateMinutes;
+      }
+      report[p.employeeId].punchCount++;
+    }
+    
+    const settings = await storage.getHrSettings();
+    const weeklyThreshold = settings ? Number(settings.overtimeWeeklyThresholdHours) * 60 : 2880;
+    
+    res.json({
+      report: Object.values(report),
+      weeklyThresholdMinutes: weeklyThreshold,
+      overtimeMultiplier: settings ? Number(settings.overtimeMultiplier) : 1.5,
+    });
+  });
+
+  // -- Service charge ledger --
+  app.get("/api/hr/service-charges", requirePermission("SERVICE_VIEW_REPORTS"), async (req, res) => {
+    const { dateFrom, dateTo } = req.query;
+    if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom and dateTo required" });
+    const entries = await storage.getServiceChargeLedgerByDateRange(dateFrom as string, dateTo as string);
+    res.json(entries);
+  });
+
+  // -- Service charge payouts --
+  app.get("/api/hr/service-payouts", requirePermission("SERVICE_VIEW_REPORTS"), async (req, res) => {
+    const { periodStart, periodEnd } = req.query;
+    if (!periodStart || !periodEnd) return res.status(400).json({ message: "periodStart and periodEnd required" });
+    const payouts = await storage.getServiceChargePayouts(periodStart as string, periodEnd as string);
+    res.json(payouts);
+  });
+
+  app.post("/api/hr/service-payouts/generate", requirePermission("SERVICE_GENERATE_PAYOUTS"), async (req, res) => {
+    try {
+      const { periodStart, periodEnd } = req.body;
+      if (!periodStart || !periodEnd) return res.status(400).json({ message: "periodStart and periodEnd required" });
+      
+      await storage.deleteServiceChargePayoutsByPeriod(periodStart, periodEnd, "PREVIEW");
+      
+      const entries = await storage.getServiceChargeLedgerByDateRange(periodStart, periodEnd);
+      
+      const byEmployee: Record<number, number> = {};
+      for (const e of entries) {
+        const empId = e.responsibleWaiterEmployeeId || 0;
+        byEmployee[empId] = (byEmployee[empId] || 0) + Number(e.serviceAmount);
+      }
+      
+      const payouts = [];
+      for (const [empIdStr, amount] of Object.entries(byEmployee)) {
+        const empId = Number(empIdStr);
+        if (empId === 0 || amount <= 0) continue;
+        const payout = await storage.createServiceChargePayout({
+          periodStart,
+          periodEnd,
+          employeeId: empId,
+          amount: amount.toFixed(2),
+          generatedByEmployeeId: req.session.userId!,
+          status: "PREVIEW",
+        });
+        payouts.push(payout);
+      }
+      
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "SERVICE_PAYOUTS_GENERATED",
+        entityType: "SERVICE_PAYOUT",
+        metadata: { periodStart, periodEnd, count: payouts.length },
+      });
+      
+      res.json(payouts);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/hr/service-payouts/finalize", requirePermission("SERVICE_GENERATE_PAYOUTS"), async (req, res) => {
+    try {
+      const { periodStart, periodEnd } = req.body;
+      if (!periodStart || !periodEnd) return res.status(400).json({ message: "periodStart and periodEnd required" });
+      
+      const payouts = await storage.getServiceChargePayouts(periodStart, periodEnd);
+      const previews = payouts.filter(p => p.status === "PREVIEW");
+      
+      if (previews.length === 0) return res.status(400).json({ message: "No hay liquidaciones en PREVIEW para finalizar" });
+      
+      const finalized = [];
+      for (const p of previews) {
+        const updated = await storage.updateServiceChargePayoutStatus(p.id, "FINALIZED");
+        finalized.push(updated);
+      }
+      
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "SERVICE_PAYOUTS_FINALIZED",
+        entityType: "SERVICE_PAYOUT",
+        metadata: { periodStart, periodEnd, count: finalized.length },
+      });
+      
+      res.json(finalized);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- All active employees (for HR schedule management) --
+  app.get("/api/hr/employees", requirePermission("HR_VIEW_TEAM", "HR_MANAGE_SCHEDULES"), async (_req, res) => {
+    const allUsers = await storage.getAllUsers();
+    res.json(allUsers.filter(u => u.active).map(u => ({ id: u.id, displayName: u.displayName, role: u.role, username: u.username })));
+  });
+
+  // -- Open punches (for auto-process monitoring) --
+  app.get("/api/hr/open-punches", requirePermission("HR_VIEW_TEAM"), async (_req, res) => {
+    const openPunches = await storage.getAllOpenPunches();
+    res.json(openPunches);
   });
 
   // ==================== WEBSOCKET ====================

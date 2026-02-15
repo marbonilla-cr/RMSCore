@@ -30,6 +30,11 @@ import AdminPrintersPage from "@/pages/admin/printers";
 import AdminModifiersPage from "@/pages/admin/modifiers";
 import AdminDiscountsPage from "@/pages/admin/discounts";
 import AdminTaxCategoriesPage from "@/pages/admin/tax-categories";
+import HrMiTurnoPage from "@/pages/hr/mi-turno";
+import HrSchedulesPage from "@/pages/hr/schedules";
+import HrPunchesPage from "@/pages/hr/punches";
+import HrReportsPage from "@/pages/hr/reports";
+import HrSettingsPage from "@/pages/hr/settings";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRouteByPermissions(perms: string[]): string {
@@ -38,6 +43,7 @@ function getDefaultRouteByPermissions(perms: string[]): string {
   if (perms.includes("MODULE_KDS_VIEW")) return "/kds";
   if (perms.includes("MODULE_DASHBOARD_VIEW")) return "/dashboard";
   if (perms.includes("MODULE_ADMIN_VIEW")) return "/admin/employees";
+  if (perms.includes("MODULE_HR_VIEW")) return "/hr/mi-turno";
   if (perms.includes("MODULE_PRODUCTS_VIEW")) return "/admin/products";
   return "/tables";
 }
@@ -50,6 +56,7 @@ function canAccessRouteByPermissions(perms: string[], path: string): boolean {
   if (path === "/dashboard") return perms.includes("MODULE_DASHBOARD_VIEW");
   if (path === "/admin/products") return perms.includes("MODULE_PRODUCTS_VIEW");
   if (path.startsWith("/admin/")) return perms.includes("MODULE_ADMIN_VIEW");
+  if (path.startsWith("/hr/")) return perms.includes("MODULE_HR_VIEW");
   return false;
 }
 
@@ -113,6 +120,11 @@ function AuthenticatedRouter() {
       <Route path="/admin/modifiers" component={AdminModifiersPage} />
       <Route path="/admin/discounts" component={AdminDiscountsPage} />
       <Route path="/admin/tax-categories" component={AdminTaxCategoriesPage} />
+      <Route path="/hr/mi-turno" component={HrMiTurnoPage} />
+      <Route path="/hr/horarios" component={HrSchedulesPage} />
+      <Route path="/hr/marcas" component={HrPunchesPage} />
+      <Route path="/hr/reportes" component={HrReportsPage} />
+      <Route path="/hr/config" component={HrSettingsPage} />
       <Route component={NotFound} />
     </Switch>
   );

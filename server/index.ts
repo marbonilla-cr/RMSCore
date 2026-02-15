@@ -3,6 +3,7 @@ import compression from "compression";
 import { registerRoutes } from "./routes";
 import { createServer } from "http";
 import { ensureSystemPermissions } from "./storage";
+import { startHrBackgroundJobs } from "./hr-jobs";
 
 const app = express();
 const httpServer = createServer(app);
@@ -101,6 +102,7 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      startHrBackgroundJobs();
     },
   );
 })();

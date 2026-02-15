@@ -32,6 +32,11 @@ import {
   Percent,
   Receipt,
   Wine,
+  Clock,
+  CalendarDays,
+  ClipboardList,
+  BarChart3,
+  Wrench,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
@@ -67,6 +72,17 @@ const adminItems = [
 
 const productsItem = { title: "Productos", url: "/admin/products", icon: ShoppingBag };
 
+const hrSelfItems = [
+  { title: "Mi Turno", url: "/hr/mi-turno", icon: Clock },
+];
+
+const hrManagerItems = [
+  { title: "Horarios", url: "/hr/horarios", icon: CalendarDays },
+  { title: "Marcas", url: "/hr/marcas", icon: ClipboardList },
+  { title: "Reportes", url: "/hr/reportes", icon: BarChart3 },
+  { title: "Config HR", url: "/hr/config", icon: Wrench },
+];
+
 export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
@@ -78,6 +94,8 @@ export function AppSidebar() {
   const showDashboard = hasPermission("MODULE_DASHBOARD_VIEW");
   const showAdmin = hasPermission("MODULE_ADMIN_VIEW");
   const showProducts = hasPermission("MODULE_PRODUCTS_VIEW");
+  const showHR = hasPermission("MODULE_HR_VIEW");
+  const showHRManage = hasPermission("HR_MANAGE_SCHEDULES") || hasPermission("HR_VIEW_TEAM") || hasPermission("HR_MANAGE_SETTINGS");
 
   const initials = user?.displayName
     ? user.displayName
@@ -215,6 +233,39 @@ export function AppSidebar() {
                   </SidebarMenuItem>
                 )}
                 {adminItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={location === item.url}>
+                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                        <item.icon className="w-4 h-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {showHR && (
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              <Clock className="w-3 h-3 mr-1 inline" />
+              Recursos Humanos
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {hrSelfItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={location === item.url}>
+                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                        <item.icon className="w-4 h-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+                {showHRManage && hrManagerItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild isActive={location === item.url}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
