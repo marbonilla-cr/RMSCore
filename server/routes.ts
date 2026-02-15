@@ -4,6 +4,8 @@ import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
 import * as storage from "./storage";
+import { registerInventoryRoutes } from "./inventory-routes";
+import * as invStorage from "./inventory-storage";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema } from "@shared/schema";
 
 declare module "express-session" {
@@ -933,6 +935,8 @@ export async function registerRoutes(
             notes: fullNotes || null,
             status: "NEW",
           });
+
+          try { await invStorage.consumeForOrderItem(orderItem.id, product.id, item.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
         }
 
         if (item.modifiers && Array.isArray(item.modifiers)) {
@@ -1292,6 +1296,8 @@ export async function registerRoutes(
           status: "NEW",
         });
 
+        try { await invStorage.consumeForOrderItem(orderItem.id, product.id, item.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
+
         await storage.decrementPortions(product.id, item.qty);
 
         const waiterModDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDelta || 0) * (m.qty || 1), 0);
@@ -1416,6 +1422,8 @@ export async function registerRoutes(
             notes: item.notes,
             status: "NEW",
           });
+
+          try { await invStorage.consumeForOrderItem(item.id, item.productId, item.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
 
           await storage.decrementPortions(item.productId, item.qty);
 
@@ -1546,6 +1554,7 @@ export async function registerRoutes(
       }
       if (isFullVoid) {
         await storage.cancelPortionReservation(itemId);
+        try { await invStorage.reverseConsumptionForOrderItem(itemId, userId); } catch (e) { console.error("[inv] reversal error:", e); }
       }
 
       await storage.recalcOrderTotal(orderId);
@@ -3837,6 +3846,9 @@ export async function registerRoutes(
     const openPunches = await storage.getAllOpenPunches();
     res.json(openPunches);
   });
+
+  // ==================== INVENTORY MODULE ====================
+  registerInventoryRoutes(app, null);
 
   // ==================== WEBSOCKET ====================
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
