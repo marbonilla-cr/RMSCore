@@ -27,6 +27,21 @@ The system is built as a PWA, ensuring accessibility across various devices.
     - **Multi-Printer Support**: Configuration for different printer types (cash register, kitchen, bar) with auto-printing on POS payment.
 
 ## Recent Changes (Feb 15, 2026)
+
+### Inventory Module - Complete Implementation
+- **14 Database Tables**: `inv_items`, `inv_uom_conversions`, `inv_movements`, `inv_suppliers`, `inv_supplier_items`, `inv_purchase_orders`, `inv_po_lines`, `inv_receipts`, `inv_receipt_lines`, `inv_physical_counts`, `inv_count_lines`, `inv_recipes`, `inv_recipe_lines`, `inv_order_item_consumptions`
+- **Products Integration**: Added `inventoryControlEnabled`, `invItemId`, `portionQty` fields to products table for linking menu items to inventory
+- **WAC Costing**: Weighted Average Cost recalculated on every receipt via `updateWACOnReceipt()`. Formula: `newWAC = (oldQty * oldWAC + receiptQty * receiptCost) / (oldQty + receiptQty)`
+- **Consumption Hooks**: Automatic inventory consumption on send-to-kitchen (POS, waiter, QR flows). Uses recipe BOM with `wastePct` and `yieldQty` for accurate deductions. Wrapped in try-catch to prevent POS failures.
+- **Reversal Hooks**: Automatic reversal on item void. Idempotent via `inv_order_item_consumptions` tracking table. Only triggers for full voids.
+- **Purchase Orders**: Support partial receiving (multiple receipts per PO). Line status tracking (OPEN/PARTIAL/RECEIVED). PO status auto-updates (DRAFT/SENT/PARTIAL/RECEIVED/CANCELLED).
+- **Physical Counts**: DRAFT→FINALIZED workflow. Creates ADJUSTMENT movements on finalization. Adjustments update WAC and quantity.
+- **UOM Conversions**: `toBaseMultiplier` stored per item for consistent unit management.
+- **9 Permissions**: `MODULE_INV_VIEW`, `INV_ITEMS_CREATE`, `INV_ITEMS_EDIT`, `INV_SUPPLIERS_MANAGE`, `INV_PO_CREATE`, `INV_PO_RECEIVE`, `INV_COUNT_CREATE`, `INV_COUNT_FINALIZE`, `INV_RECIPES_MANAGE`
+- **7 Frontend Pages**: Items list/detail (with kardex), suppliers CRUD, purchase orders (create/receive), physical counts, recipes/BOM, reports (valuation + low stock)
+- **Stock Semaphore**: RED (qty ≤ 0), YELLOW (qty ≤ reorder point), GREEN (otherwise)
+- **Backend**: 40+ storage functions in `server/inventory-storage.ts`, 39 API routes in `server/inventory-routes.ts`
+
 ### Business Logic Fixes - 21 Issues Resolved
 - **Payment Integrity**: Void-payment now reverses cash session without changing item statuses. Reopen voids all payments first. Payment validation prevents overpayment (amount ≤ balance_due). Cash payments blocked without active session.
 - **Financial Tracking**: Orders now track `paidAmount` and `balanceDue` separately. Updated via `updateOrderPaymentTotals()` on every payment/void.
