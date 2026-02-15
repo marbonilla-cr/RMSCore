@@ -431,7 +431,7 @@ export default function TableDetailPage() {
   }
 
   return (
-    <div className="flex flex-col" style={{ minHeight: "100dvh" }}>
+    <div className="flex flex-col" style={{ minHeight: "100dvh", overscrollBehavior: "contain" }}>
       <div className="sticky top-0 z-[9] bg-background border-b px-3 py-2 flex items-center gap-2">
         <Button size="icon" variant="ghost" onClick={() => navigate("/tables")} data-testid="button-back">
           <ArrowLeft className="w-5 h-5" />
