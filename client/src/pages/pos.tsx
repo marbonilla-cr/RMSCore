@@ -1253,41 +1253,20 @@ export default function POSPage() {
                       <h3 className="font-bold text-lg">{t.tableName}</h3>
                       <Badge>{t.itemCount} items</Badge>
                     </CardHeader>
-                    <CardContent>
-                      <div className="space-y-1 mb-3 max-h-40 overflow-y-auto">
-                        {t.items.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between text-sm py-1">
-                            <span>{item.qty}x {item.productNameSnapshot}</span>
-                            <span className="text-muted-foreground">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="border-t pt-2 space-y-1 mb-3">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Subtotal</span>
-                          <span>₡{getOrderSubtotal(t).toLocaleString()}</span>
-                        </div>
-                        {t.taxBreakdown && t.taxBreakdown.length > 0 ? (
-                          t.taxBreakdown.map((tb, idx) => (
-                            <div key={idx} className="flex justify-between text-xs text-muted-foreground">
-                              <span>{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
-                              <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>Impuestos</span>
-                            <span>₡0</span>
-                          </div>
+                    <CardContent className="pt-0">
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <span className="font-bold text-lg">₡{Number(t.totalAmount).toLocaleString()}</span>
+                        {t.openedAt && (
+                          <span className="text-xs text-muted-foreground">
+                            {(() => {
+                              const diff = Date.now() - new Date(t.openedAt).getTime();
+                              const mins = Math.floor(diff / 60000);
+                              if (mins < 60) return `${mins}m`;
+                              const hrs = Math.floor(mins / 60);
+                              return `${hrs}h ${mins % 60}m`;
+                            })()}
+                          </span>
                         )}
-                        <div className={`flex justify-between text-xs ${Number(t.totalDiscounts || 0) > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
-                          <span>Descuentos</span>
-                          <span>{Number(t.totalDiscounts || 0) > 0 ? `-₡${Number(t.totalDiscounts).toLocaleString()}` : "₡0"}</span>
-                        </div>
-                        <div className="flex justify-between font-bold text-lg pt-1">
-                          <span>Total a pagar</span>
-                          <span>₡{Number(t.totalAmount).toLocaleString()}</span>
-                        </div>
                       </div>
                       <div className="flex items-center justify-end gap-1 flex-wrap">
                           {canPay && (
