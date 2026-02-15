@@ -42,6 +42,19 @@ The system is built as a PWA, ensuring accessibility across various devices.
 - **Stock Semaphore**: RED (qty ≤ 0), YELLOW (qty ≤ reorder point), GREEN (otherwise)
 - **Backend**: 40+ storage functions in `server/inventory-storage.ts`, 39 API routes in `server/inventory-routes.ts`
 
+### Shortages (Faltantes) Module - Complete Implementation
+- **3 Database Tables**: `shortages` (main tracking), `shortage_events` (audit log), `shortage_audit_alerts` (manager alerts)
+- **Shortage Lifecycle**: OPEN → ACKNOWLEDGED → RESOLVED → CLOSED with full event logging at each transition
+- **Severity Levels**: LOW_STOCK (poco stock) and OUT_OF_STOCK (stock inexistente) with visual priority badges
+- **Anti-Spam**: Duplicate detection prevents re-reporting same item within configurable window
+- **Snapshot Data**: Item name, current quantity, reorder point, and WAC captured at report time for audit integrity
+- **8 Permissions**: `SHORTAGES_VIEW`, `SHORTAGES_REPORT`, `SHORTAGES_ACK`, `SHORTAGES_RESOLVE`, `SHORTAGES_CLOSE`, `SHORTAGES_AUDIT`, `SHORTAGES_REPORT_AUDIT`, `MENU_TOGGLE_AVAILABILITY`
+- **3 Frontend Pages**: Report (search with auto-expand categories, tabs for Insumos/Productos), Active (status badges, ACK/RESOLVE/CLOSE actions, event history), Audit (manager-only audit alerts with notes)
+- **Product Availability Toggle**: "Marcar NO disponible" sets `products.active = false`, removing from QR menu and waiter ordering
+- **WebSocket Alerts**: Real-time shortage notifications with audio alerts via `useShortageAlerts` hook integrated into AuthenticatedLayout
+- **Dedicated API Endpoints**: `/api/shortages/products`, `/api/shortages/inv-items`, `/api/shortages/categories` with SHORTAGES_REPORT permission (separate from admin endpoints)
+- **Backend**: 13 storage functions in `server/shortage-storage.ts`, 11 API routes in `server/shortage-routes.ts`
+
 ### Business Logic Fixes - 21 Issues Resolved
 - **Payment Integrity**: Void-payment now reverses cash session without changing item statuses. Reopen voids all payments first. Payment validation prevents overpayment (amount ≤ balance_due). Cash payments blocked without active session.
 - **Financial Tracking**: Orders now track `paidAmount` and `balanceDue` separately. Updated via `updateOrderPaymentTotals()` on every payment/void.
