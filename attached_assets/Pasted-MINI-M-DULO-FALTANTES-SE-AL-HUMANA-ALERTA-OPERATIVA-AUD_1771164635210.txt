@@ -1,0 +1,317 @@
+MINI MÓDULO “FALTANTES” (SEÑAL HUMANA) + ALERTA OPERATIVA + AUDITORÍA CONTRA INVENTARIO (ANTI-ROBO/MERMA)
+
+Objetivo (CERRADO)
+
+Crear un mini-módulo Faltantes para que cualquier empleado pueda reportar de inmediato que algo “se acabó”, y que eso:
+	1.	Genere una alerta operativa para reponer/comprar.
+	2.	Genere una alerta de auditoría si el sistema de inventario indicaba que había stock (para detectar robo/merma/error de control).
+
+Este módulo NO reemplaza inventario. Es una señal humana + trazabilidad + auditoría.
+
+⸻
+
+Reglas “en piedra”
+	1.	Cualquier empleado puede: Reportar faltante.
+	2.	Reportar faltante NO ajusta el stock automáticamente.
+	3.	Si el faltante es de INSUMO (inventario):
+	•	Guardar snapshot del stock del sistema en el momento del reporte.
+	•	Si el sistema mostraba on_hand_qty_base > 0 (con tolerancia), crear alerta de auditoría para gerente.
+	4.	Si el faltante es de PRODUCTO DEL MENÚ:
+	•	Se reporta igual (alerta operativa), pero NO desactiva el producto automáticamente.
+	•	Solo roles autorizados pueden marcar el producto como “NO DISPONIBLE” (opcional).
+	5.	Debe existir un panel exclusivo de gerente: Auditoría de Faltantes (discrepancias).
+
+⸻
+
+Alcance (CERRADO)
+	•	Pantallas:
+	1.	Reportar faltante (todos, mobile-first)
+	2.	Faltantes activos (lectura todos; acciones según permisos)
+	3.	Auditoría de faltantes (solo gerente)
+	•	Datos:
+	•	Tablas nuevas: inv_shortages, inv_shortage_events, inv_audit_alerts
+	•	Integración:
+	•	Ligado a inventario (inv_items) y opcionalmente a menú (menu_products)
+	•	Notificaciones:
+	•	Banner/popup interno (pantallas staff) + sonido opcional (solo interno, no cliente QR)
+
+NO implementar órdenes de compra automáticas aquí (solo sugerencia de compra).
+
+⸻
+
+Modelo de Datos (TABLAS NUEVAS)
+
+1) inv_shortages (faltantes)
+	•	id
+	•	entity_type ENUM: INV_ITEM | MENU_PRODUCT
+	•	inv_item_id nullable
+	•	menu_product_id nullable
+	•	status ENUM: OPEN | ACKNOWLEDGED | RESOLVED | CLOSED
+	•	priority ENUM: LOW | MEDIUM | HIGH (default HIGH)
+
+Reportes
+	•	reported_by_employee_id
+	•	reported_at
+	•	notes text nullable
+	•	report_count int default 1
+	•	last_reported_at datetime
+
+Sugerencia compra (solo insumos)
+	•	suggested_purchase_qty_base decimal nullable
+
+Snapshot inventario (solo insumos)
+	•	system_on_hand_qty_base_snapshot decimal nullable
+	•	system_avg_cost_snapshot decimal nullable
+
+Auditoría (solo gerente)
+	•	audit_flag boolean default false
+	•	audit_reason ENUM nullable:
+	•	REPORTED_ZERO_BUT_SYSTEM_POSITIVE
+	•	REPORTED_NOT_IN_SYSTEM
+	•	MULTIPLE_REPORTS_SAME_DAY
+	•	audit_status ENUM NONE|OPEN|INVESTIGATING|RESOLVED default NONE
+	•	audit_owner_employee_id nullable
+	•	audit_notes text nullable
+
+Timestamps
+	•	acknowledged_by_employee_id nullable
+	•	acknowledged_at nullable
+	•	resolved_by_employee_id nullable
+	•	resolved_at nullable
+	•	closed_by_employee_id nullable
+	•	closed_at nullable
+	•	created_at, updated_at
+
+Índice único parcial recomendado: (entity_type, inv_item_id) donde status in (OPEN,ACKNOWLEDGED) y entity_type=INV_ITEM; idem para MENU_PRODUCT.
+O manejar en código: “si ya hay OPEN, no crear otro”.
+
+⸻
+
+2) inv_shortage_events (historial)
+	•	id
+	•	shortage_id
+	•	event_type ENUM: REPORTED|ACKNOWLEDGED|RESOLVED|CLOSED|COMMENT
+	•	employee_id
+	•	event_at
+	•	message text nullable
+	•	meta_json json nullable
+	•	created_at
+
+⸻
+
+3) inv_audit_alerts (alertas de auditoría, solo gerente)
+	•	id
+	•	alert_type ENUM: SHORTAGE_DISCREPANCY | NEGATIVE_STOCK (dejar NEGATIVE_STOCK para futuro)
+	•	severity ENUM LOW|MEDIUM|HIGH default HIGH
+	•	inv_item_id nullable
+	•	shortage_id nullable
+	•	message text
+	•	status ENUM OPEN|ACK|CLOSED default OPEN
+	•	created_at
+	•	created_by_employee_id nullable (si es sistema, null o “SYSTEM”)
+	•	ack_by_employee_id nullable
+	•	ack_at nullable
+	•	closed_by_employee_id nullable
+	•	closed_at nullable
+	•	notes text nullable
+
+⸻
+
+Permisos (RBAC existente — solo agregar keys)
+	•	SHORTAGES_VIEW (todos)
+	•	SHORTAGES_REPORT (todos)
+	•	SHORTAGES_ACK (cocina/gerente)
+	•	SHORTAGES_RESOLVE (cocina/gerente)
+	•	SHORTAGES_CLOSE (gerente)
+	•	AUDIT_VIEW (gerente)
+	•	AUDIT_MANAGE (gerente)
+	•	MENU_TOGGLE_AVAILABILITY (solo gerente/cocina) (opcional)
+
+⸻
+
+Lógica de negocio (CERRADA)
+
+A) Reportar faltante (INV_ITEM)
+
+Endpoint: POST /api/shortages/report
+Input:
+	•	entity_type=INV_ITEM
+	•	inv_item_id
+	•	notes opcional
+
+Proceso:
+	1.	Buscar si ya existe shortage con status OPEN o ACKNOWLEDGED para ese inv_item_id.
+	•	Si existe:
+	•	report_count += 1
+	•	last_reported_at = now
+	•	crear inv_shortage_events REPORTED
+	•	retornar shortage existente
+	•	Si NO existe:
+	•	leer inv_items.on_hand_qty_base y avg_cost_per_base_uom
+	•	calcular sugerido compra:
+	•	if par_level_qty_base > 0: suggested = max(0, par_level - on_hand)
+	•	else if reorder_point_qty_base > 0: suggested = max(0, reorder_point - on_hand)
+	•	else suggested = null
+	•	crear inv_shortages status=OPEN con:
+	•	snapshots: system_on_hand_qty_base_snapshot = on_hand
+	•	system_avg_cost_snapshot = avg_cost
+	•	suggested_purchase_qty_base = suggested
+	•	crear inv_shortage_events REPORTED
+	2.	Regla de auditoría (anti-robo/merma):
+	•	tolerancia: on_hand > 0.01 (hardcode MVP)
+	•	si snapshot system_on_hand_qty_base_snapshot > 0.01:
+	•	set shortage:
+	•	audit_flag=true
+	•	audit_reason=REPORTED_ZERO_BUT_SYSTEM_POSITIVE
+	•	audit_status=OPEN
+	•	crear inv_audit_alerts:
+	•	alert_type=SHORTAGE_DISCREPANCY
+	•	severity=HIGH
+	•	inv_item_id y shortage_id
+	•	message: “Faltante reportado pero el sistema indica stock positivo. Revisar posible merma/robo/receta/unidad.”
+	3.	Anti-spam extra:
+	•	si report_count >= 3 el mismo business_date:
+	•	audit_reason=MULTIPLE_REPORTS_SAME_DAY
+	•	crear alerta MEDIUM si no existe ya una abierta para ese shortage.
+
+IMPORTANTE: NO ajustar stock por este reporte humano.
+
+⸻
+
+B) Reportar faltante (MENU_PRODUCT)
+
+Input:
+	•	entity_type=MENU_PRODUCT
+	•	menu_product_id
+	•	notes opcional
+
+Proceso:
+	•	Igual: crear shortage OPEN si no existe; si existe, sumar contador.
+	•	NO modificar el producto automáticamente.
+	•	Si usuario tiene MENU_TOGGLE_AVAILABILITY:
+	•	permitir acción separada: “Marcar NO DISPONIBLE” que setea product.active=false o available=false según tu modelo actual y audita.
+
+⸻
+
+C) Gestión de estados del faltante
+
+Acciones:
+	•	ACKNOWLEDGE (cocina/gerente): PATCH /api/shortages/:id/ack
+	•	RESOLVE (cocina/gerente): PATCH /api/shortages/:id/resolve
+	•	CLOSE (gerente): PATCH /api/shortages/:id/close
+
+Cada acción:
+	•	cambia status
+	•	registra inv_shortage_events
+	•	requiere nota opcional (CLOSE: nota obligatoria)
+
+⸻
+
+D) Auditoría gerente (inv_audit_alerts)
+
+Endpoints:
+	•	Listar OPEN: GET /api/audit-alerts?status=OPEN
+	•	ACK: PATCH /api/audit-alerts/:id/ack (nota opcional)
+	•	CLOSE: PATCH /api/audit-alerts/:id/close (nota obligatoria)
+
+Al ACK:
+	•	opcional: set shortage.audit_status=INVESTIGATING y audit_owner=gerente.
+Al CLOSE:
+	•	set shortage.audit_status=RESOLVED (si corresponde) y guardar audit_notes.
+
+⸻
+
+UI / UX (Mobile-first, simple)
+
+1) Módulo “Faltantes” — Reportar (todos)
+	•	Search sticky (siempre visible)
+	•	Tabs: Insumos | Productos
+	•	Lista por categoría con acordeón colapsable
+	•	Cada item:
+	•	Nombre
+	•	(Solo insumos) pequeño texto: “Stock sistema: X” (solo lectura)
+	•	Botón grande: SE ACABÓ
+	•	Campo comentario opcional (icono lápiz)
+	•	Al reportar:
+	•	toast “Faltante reportado”
+	•	si generó auditoría (stock>0): mostrar toast “Se generó revisión para gerente”.
+
+2) “Faltantes Activos”
+	•	Ver OPEN y ACKNOWLEDGED primero
+	•	Mostrar: quién, cuándo, contador, notas
+	•	(Insumos) mostrar: stock snapshot, sugerido compra
+	•	Botones según permiso: ACK / RESUELTO / CERRAR
+
+3) “Auditoría de Faltantes” (solo gerente)
+	•	Lista de inv_audit_alerts OPEN
+	•	Muestra: item, shortage, stock snapshot, reportado por, fecha, severidad
+	•	Acciones: ACK / CERRAR (nota obligatoria al cerrar)
+	•	Atajos (solo navegación):
+	•	“Ver Kardex del insumo”
+	•	“Crear conteo físico prefiltrado con este insumo” (solo link/shortcut; no automatizar ajustes)
+
+⸻
+
+Notificación interna
+
+Cuando se crea shortage OPEN:
+	•	Emitir evento realtime (socket/notify) a pantallas internas:
+	•	gerente, cocina, mesas (si aplica)
+	•	Mostrar banner/popup.
+	•	Sonido opcional (configurable).
+
+⸻
+
+Historias de Usuario (CERRADAS)
+
+ÉPICA SH-1: Reporte humano rápido
+
+HU SH1.1 Reportar faltante de insumo con snapshot + sugerido
+
+CDA
+	•	Buscar insumo → SE ACABÓ
+	•	Crea shortage OPEN o incrementa contador
+	•	Guarda snapshot stock/costo y sugerido compra
+DoD
+	•	Aparece en faltantes activos con trazabilidad.
+
+HU SH1.2 Auditoría automática cuando sistema dice stock>0
+
+CDA
+	•	Si snapshot stock>0.01 → audit_flag y alerta HIGH
+DoD
+	•	Gerente lo ve en auditoría inmediatamente.
+
+HU SH1.3 Reportar faltante de producto del menú sin desactivar automáticamente
+
+DoD
+	•	Shortage creado, no cambia menú.
+
+ÉPICA SH-2: Gestión operativa
+
+HU SH2.1 ACK / RESUELTO / CERRAR con historial
+
+DoD
+	•	Estados correctos, eventos guardados.
+
+ÉPICA SH-3: Auditoría gerente
+
+HU SH3.1 Panel de auditoría con ACK/CLOSE y notas
+
+DoD
+	•	Discrepancias quedan documentadas y cerradas con nota.
+
+HU SH3.2 Atajos a kardex y conteo
+
+DoD
+	•	Gerente puede investigar rápido.
+
+⸻
+
+Definition of Done (global)
+	•	Reporte de faltantes disponible para todos.
+	•	Shortage OPEN único por item, con contador/eventos.
+	•	Discrepancia (stock>0) genera alerta de auditoría para gerente.
+	•	Gerente puede ACK/CLOSE con notas obligatorias.
+	•	Sin ajustes automáticos de stock por reporte humano.
+	•	Alertas internas en tiempo real

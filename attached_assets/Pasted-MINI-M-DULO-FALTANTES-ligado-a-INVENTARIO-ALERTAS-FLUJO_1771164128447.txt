@@ -1,0 +1,210 @@
+MINI MÓDULO “FALTANTES” (ligado a INVENTARIO) + ALERTAS + FLUJO DE REPOSICIÓN
+
+Objetivo (cerrado)
+
+Crear un mini-módulo Faltantes para que cualquier empleado (roles operativos) pueda:
+	1.	Buscar un insumo (inventario) o un producto del menú,
+	2.	Marcarlo como “SE ACABÓ / FALTANTE” en 2 toques,
+	3.	Generar una alerta inmediata visible para gerente y cocina,
+	4.	Opcional: que el sistema sugiera cantidad a comprar (par level - stock actual),
+	5.	Dejar trazabilidad: quién lo reportó, cuándo, comentario, y estado del faltante.
+
+NO construir un módulo complejo de compras aquí. Solo conexión simple:
+	•	Si el faltante es un insumo, enlazarlo a inventario (on_hand/reorder/par).
+	•	Si el faltante es un producto del menú, permitir marcarlo como no disponible (desactivar disponibilidad) solo si el usuario tiene permiso (gerente/cocina). El resto solo reporta.
+
+⸻
+
+Reglas “en piedra”
+	•	Todos los empleados pueden reportar faltantes.
+	•	Reportar faltante NO debe requerir saber inventario: buscar → marcar faltante → listo.
+	•	Debe existir:
+	•	lista de faltantes activos (prioridad alta)
+	•	notificación/alerta (banner + sonido opcional en pantallas internas)
+	•	estado: OPEN → ACKNOWLEDGED → RESOLVED → CLOSED
+	•	Debe haber anti-spam:
+	•	si un item ya está OPEN, no crear otro; solo incrementar “count” o agregar “evento” de confirmación.
+	•	Todo debe quedar auditado.
+
+⸻
+
+Datos: tablas nuevas (mínimas)
+
+1) inv_shortages (faltantes)
+	•	id
+	•	entity_type ENUM: INV_ITEM | MENU_PRODUCT
+	•	inv_item_id nullable
+	•	menu_product_id nullable
+	•	status ENUM: OPEN | ACKNOWLEDGED | RESOLVED | CLOSED
+	•	priority ENUM: LOW | MEDIUM | HIGH (default HIGH)
+	•	reported_by_employee_id
+	•	reported_at
+	•	acknowledged_by_employee_id nullable
+	•	acknowledged_at nullable
+	•	resolved_by_employee_id nullable
+	•	resolved_at nullable
+	•	closed_by_employee_id nullable
+	•	closed_at nullable
+	•	notes text nullable
+	•	report_count int default 1   // cuántas veces lo reportaron mientras estaba abierto
+	•	last_reported_at datetime
+	•	suggested_purchase_qty_base decimal nullable (si entity_type=INV_ITEM)
+	•	created_at, updated_at
+
+2) inv_shortage_events (historial / auditoría de reportes)
+	•	id
+	•	shortage_id
+	•	event_type ENUM: REPORTED | ACKNOWLEDGED | RESOLVED | CLOSED | COMMENT
+	•	employee_id
+	•	event_at
+	•	message text nullable
+
+Usar audit_events existente también, pero esta tabla te da historial dentro del módulo.
+
+⸻
+
+Permisos (reusar RBAC; solo agregar keys si faltan)
+	•	SHORTAGES_VIEW (todos)
+	•	SHORTAGES_REPORT (todos)
+	•	SHORTAGES_ACK (cocina/gerente)
+	•	SHORTAGES_RESOLVE (gerente/cocina)
+	•	SHORTAGES_CLOSE (gerente)
+	•	MENU_TOGGLE_AVAILABILITY (solo gerente/cocina)  // si entity_type=MENU_PRODUCT, opcional
+
+⸻
+
+Integración con Inventario (insumos)
+
+Cuando se crea un faltante de INV_ITEM:
+	•	Calcular suggested_purchase_qty_base:
+	•	si par_level_qty_base definido:
+	•	suggested = max(0, par_level_qty_base - on_hand_qty_base)
+	•	else si reorder_point:
+	•	suggested = max(0, reorder_point_qty_base - on_hand_qty_base) (o par)
+	•	Mostrar “Stock actual”, “Min”, “Par”, “Sugerido”.
+
+NO crear orden de compra automáticamente en este prompt (solo preparar).
+
+⸻
+
+Integración con Menú (productos del menú)
+
+Cuando se reporta faltante de MENU_PRODUCT:
+	•	No cambia disponibilidad automáticamente (para evitar abuso).
+	•	Si el usuario tiene MENU_TOGGLE_AVAILABILITY:
+	•	permitir botón “Marcar como NO DISPONIBLE” que setea product.is_active=false o available=false según tu modelo actual
+	•	Si no tiene permiso, solo queda el faltante como alerta.
+
+⸻
+
+UI / UX (mobile first, simple)
+
+Agregar en menú principal un módulo: Faltantes.
+
+Pantalla 1: “Reportar faltante” (para todos)
+	•	Search sticky (siempre visible)
+	•	Tabs: Insumos | Productos menú
+	•	Resultados agrupados por categoría (colapsables)
+	•	Cada fila tiene botón grande: “SE ACABÓ”
+	•	Opcional: campo comentario rápido (ej “quedan 0”, “solo 2 unidades”)
+
+Acción al tocar “SE ACABÓ”
+	•	Si NO existe shortage OPEN para ese item:
+	•	crear inv_shortages status=OPEN
+	•	crear inv_shortage_events REPORTED
+	•	Si YA existe shortage OPEN:
+	•	incrementar report_count
+	•	actualizar last_reported_at
+	•	agregar inv_shortage_events REPORTED (sin duplicar shortage)
+
+Mostrar toast: “Faltante reportado”.
+
+Pantalla 2: “Faltantes activos” (gerente/cocina; lectura para todos)
+	•	Lista de OPEN y ACKNOWLEDGED primero
+	•	Etiquetas: prioridad, cuándo, quién lo reportó, contador, sugerido compra (si insumo)
+	•	Botones:
+	•	“ACK” (cocina/gerente): status -> ACKNOWLEDGED
+	•	“RESUELTO” (cocina/gerente): status -> RESOLVED
+	•	“CERRAR” (gerente): status -> CLOSED
+	•	Comentarios/historial del faltante
+
+Alertas
+	•	Cuando se crea shortage OPEN:
+	•	Mostrar banner en dashboard/mesas/caja (donde aplique) para roles con permisos
+	•	Sonido opcional (igual que notificación de órdenes QR) — solo en pantallas internas (no en cliente QR)
+	•	Notificación persistente hasta ACK o RESUELTO.
+
+Extra (barato y útil)
+	•	Botón “Copiar lista para comprar” en gerente:
+	•	genera lista de faltantes OPEN/ACK con sugeridos.
+
+⸻
+
+Historias de Usuario (cerradas)
+
+ÉPICA SH-1: Reporte rápido por cualquier empleado
+
+HU SH1.1 — Reportar faltante de insumo
+
+CDA
+	•	Cualquier empleado con SHORTAGES_REPORT busca insumo y marca “SE ACABÓ”.
+	•	Se crea shortage OPEN si no existe; si existe, incrementa contador.
+	•	Guarda quién y cuándo.
+DoD
+	•	Faltante aparece en lista activa y queda auditado.
+
+HU SH1.2 — Reportar faltante de producto del menú
+
+CDA
+	•	Igual flujo, entity_type=MENU_PRODUCT.
+	•	No cambia disponibilidad automáticamente.
+DoD
+	•	Se ve como alerta para gerente/cocina.
+
+ÉPICA SH-2: Gestión de faltantes (ACK/RESUELTO/CERRAR)
+
+HU SH2.1 — Acknowledged (cocina/gerente)
+
+DoD
+	•	status cambia y queda evento.
+
+HU SH2.2 — Resuelto
+
+CDA
+	•	Al resolver, pedir comentario opcional (“se compró”, “se repuso de bodega”).
+DoD
+	•	status RESOLVED y evento.
+
+HU SH2.3 — Cerrar (solo gerente)
+
+DoD
+	•	status CLOSED, evento y desaparece de “activos”.
+
+ÉPICA SH-3: Sugerencia de compra (solo insumos)
+
+HU SH3.1 — Mostrar sugerido basado en par level
+
+CDA
+	•	suggested = max(0, par - on_hand)
+DoD
+	•	Lista muestra sugerido y “copiar lista”.
+
+ÉPICA SH-4: Toggle de disponibilidad de producto (controlado)
+
+HU SH4.1 — Botón “Marcar NO DISPONIBLE” (solo con permiso)
+
+CDA
+	•	Solo roles con MENU_TOGGLE_AVAILABILITY pueden desactivar.
+	•	Auditar cambio.
+DoD
+	•	Producto deja de mostrarse en menú cliente/salonero según tu lógica actual.
+
+⸻
+
+Definition of Done global
+	•	Cualquier empleado puede reportar faltantes (insumos y/o productos).
+	•	No hay duplicados: shortage OPEN único por item (con contador/eventos).
+	•	Gerente/cocina pueden ACK/RESOLVER; gerente puede CERRAR.
+	•	Alertas visibles al instante en pantallas internas.
+	•	Para insumos muestra stock actual + min/par + sugerido compra.
+	•	Todo auditable (tabla de eventos + audit_events).
