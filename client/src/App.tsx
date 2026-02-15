@@ -35,6 +35,13 @@ import HrSchedulesPage from "@/pages/hr/schedules";
 import HrPunchesPage from "@/pages/hr/punches";
 import HrReportsPage from "@/pages/hr/reports";
 import HrSettingsPage from "@/pages/hr/settings";
+import InvItemsPage from "@/pages/inventory/items";
+import InvItemDetailPage from "@/pages/inventory/item-detail";
+import InvSuppliersPage from "@/pages/inventory/suppliers";
+import InvPurchaseOrdersPage from "@/pages/inventory/purchase-orders";
+import InvPhysicalCountsPage from "@/pages/inventory/physical-counts";
+import InvRecipesPage from "@/pages/inventory/recipes";
+import InvReportsPage from "@/pages/inventory/reports";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRouteByPermissions(perms: string[]): string {
@@ -57,6 +64,7 @@ function canAccessRouteByPermissions(perms: string[], path: string): boolean {
   if (path === "/admin/products") return perms.includes("MODULE_PRODUCTS_VIEW");
   if (path.startsWith("/admin/")) return perms.includes("MODULE_ADMIN_VIEW");
   if (path.startsWith("/hr/")) return perms.includes("MODULE_HR_VIEW");
+  if (path.startsWith("/inventory/")) return perms.includes("MODULE_INV_VIEW");
   return false;
 }
 
@@ -125,6 +133,13 @@ function AuthenticatedRouter() {
       <Route path="/hr/marcas" component={HrPunchesPage} />
       <Route path="/hr/reportes" component={HrReportsPage} />
       <Route path="/hr/config" component={HrSettingsPage} />
+      <Route path="/inventory/items" component={InvItemsPage} />
+      <Route path="/inventory/items/:id" component={InvItemDetailPage} />
+      <Route path="/inventory/suppliers" component={InvSuppliersPage} />
+      <Route path="/inventory/purchase-orders" component={InvPurchaseOrdersPage} />
+      <Route path="/inventory/physical-counts" component={InvPhysicalCountsPage} />
+      <Route path="/inventory/recipes" component={InvRecipesPage} />
+      <Route path="/inventory/reports" component={InvReportsPage} />
       <Route component={NotFound} />
     </Switch>
   );
