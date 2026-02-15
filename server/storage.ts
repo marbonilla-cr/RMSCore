@@ -10,6 +10,7 @@ import {
   discounts, orderDiscounts,
   taxCategories, productTaxCategories, orderItemTaxes, orderItemDiscounts,
   portionReservations, qrRateLimits,
+  hrSettings, hrWeeklySchedules, hrScheduleDays, hrTimePunches, serviceChargeLedger, serviceChargePayouts,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -41,6 +42,12 @@ import {
   type InsertPortionReservation,
   type PortionReservation,
   type QrRateLimit,
+  type HrSettings, type InsertHrSettings,
+  type HrWeeklySchedule, type InsertHrWeeklySchedule,
+  type HrScheduleDay, type InsertHrScheduleDay,
+  type HrTimePunch, type InsertHrTimePunch,
+  type ServiceChargeLedgerEntry, type InsertServiceChargeLedgerEntry,
+  type ServiceChargePayout, type InsertServiceChargePayout,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -179,6 +186,16 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "QR_MANAGE", description: "Gestionar pedidos QR" },
   { key: "PAYMENT_CORRECT", description: "Anular pagos y reabrir órdenes" },
   { key: "ORDERITEM_VOID_POST_KDS", description: "Anular ítems ya enviados a cocina" },
+  { key: "MODULE_HR_VIEW", description: "Ver módulo de Recursos Humanos" },
+  { key: "HR_VIEW_SELF", description: "Ver su propio horario y marcas" },
+  { key: "HR_CLOCK_IN_OUT_ALLOW", description: "Permitir marcar entrada/salida" },
+  { key: "HR_VIEW_TEAM", description: "Ver horarios y marcas de todo el equipo" },
+  { key: "HR_MANAGE_SCHEDULES", description: "Crear y editar horarios semanales" },
+  { key: "HR_EDIT_PUNCHES", description: "Editar marcas de asistencia" },
+  { key: "HR_MANAGE_SETTINGS", description: "Configurar ajustes de HR" },
+  { key: "SERVICE_VIEW_REPORTS", description: "Ver reportes de cargo por servicio" },
+  { key: "SERVICE_GENERATE_PAYOUTS", description: "Generar liquidaciones de servicio" },
+  { key: "GEO_OVERRIDE", description: "Saltar validación de geofence" },
 ];
 
 export async function ensureSystemPermissions() {
@@ -1611,3 +1628,189 @@ export async function truncateTransactionalData() {
   await db.execute(sql`ALTER SEQUENCE IF EXISTS kitchen_tickets_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE IF EXISTS kitchen_ticket_items_id_seq RESTART WITH 1`);
 }
+
+// ==================== HR MODULE ====================
+
+// -- HR Settings (singleton like businessConfig) --
+export async function getHrSettings(): Promise<HrSettings | undefined> {
+  const [s] = await db.select().from(hrSettings).limit(1);
+  return s;
+}
+
+export async function upsertHrSettings(data: Partial<InsertHrSettings>): Promise<HrSettings> {
+  const existing = await getHrSettings();
+  if (existing) {
+    const [updated] = await db.update(hrSettings)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(hrSettings.id, existing.id))
+      .returning();
+    return updated;
+  }
+  const [created] = await db.insert(hrSettings).values(data as InsertHrSettings).returning();
+  return created;
+}
+
+// -- Weekly Schedules --
+export async function getWeeklySchedule(employeeId: number, weekStartDate: string): Promise<HrWeeklySchedule | undefined> {
+  const [s] = await db.select().from(hrWeeklySchedules)
+    .where(and(eq(hrWeeklySchedules.employeeId, employeeId), eq(hrWeeklySchedules.weekStartDate, weekStartDate)));
+  return s;
+}
+
+export async function getWeeklySchedulesByWeek(weekStartDate: string): Promise<HrWeeklySchedule[]> {
+  return db.select().from(hrWeeklySchedules)
+    .where(eq(hrWeeklySchedules.weekStartDate, weekStartDate));
+}
+
+export async function createWeeklySchedule(data: InsertHrWeeklySchedule): Promise<HrWeeklySchedule> {
+  const [s] = await db.insert(hrWeeklySchedules).values(data).returning();
+  return s;
+}
+
+export async function updateWeeklySchedule(id: number, data: Partial<InsertHrWeeklySchedule>): Promise<HrWeeklySchedule> {
+  const [s] = await db.update(hrWeeklySchedules)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(hrWeeklySchedules.id, id))
+    .returning();
+  return s;
+}
+
+export async function deleteWeeklySchedule(id: number): Promise<void> {
+  await db.delete(hrScheduleDays).where(eq(hrScheduleDays.scheduleId, id));
+  await db.delete(hrWeeklySchedules).where(eq(hrWeeklySchedules.id, id));
+}
+
+// -- Schedule Days --
+export async function getScheduleDays(scheduleId: number): Promise<HrScheduleDay[]> {
+  return db.select().from(hrScheduleDays)
+    .where(eq(hrScheduleDays.scheduleId, scheduleId))
+    .orderBy(asc(hrScheduleDays.dayOfWeek));
+}
+
+export async function upsertScheduleDays(scheduleId: number, days: InsertHrScheduleDay[]): Promise<HrScheduleDay[]> {
+  await db.delete(hrScheduleDays).where(eq(hrScheduleDays.scheduleId, scheduleId));
+  if (days.length === 0) return [];
+  const toInsert = days.map(d => ({ ...d, scheduleId }));
+  return db.insert(hrScheduleDays).values(toInsert).returning();
+}
+
+// -- Time Punches --
+export async function getTimePunch(id: number): Promise<HrTimePunch | undefined> {
+  const [p] = await db.select().from(hrTimePunches).where(eq(hrTimePunches.id, id));
+  return p;
+}
+
+export async function getOpenPunchForEmployee(employeeId: number): Promise<HrTimePunch | undefined> {
+  const [p] = await db.select().from(hrTimePunches)
+    .where(and(eq(hrTimePunches.employeeId, employeeId), isNull(hrTimePunches.clockOutAt)))
+    .orderBy(desc(hrTimePunches.clockInAt))
+    .limit(1);
+  return p;
+}
+
+export async function getTimePunchesByDate(businessDate: string): Promise<HrTimePunch[]> {
+  return db.select().from(hrTimePunches)
+    .where(eq(hrTimePunches.businessDate, businessDate))
+    .orderBy(asc(hrTimePunches.clockInAt));
+}
+
+export async function getTimePunchesByEmployee(employeeId: number, dateFrom?: string, dateTo?: string): Promise<HrTimePunch[]> {
+  const conditions = [eq(hrTimePunches.employeeId, employeeId)];
+  if (dateFrom) conditions.push(gte(hrTimePunches.businessDate, dateFrom));
+  if (dateTo) conditions.push(lte(hrTimePunches.businessDate, dateTo));
+  return db.select().from(hrTimePunches)
+    .where(and(...conditions))
+    .orderBy(asc(hrTimePunches.clockInAt));
+}
+
+export async function getTimePunchesByDateRange(dateFrom: string, dateTo: string): Promise<HrTimePunch[]> {
+  return db.select().from(hrTimePunches)
+    .where(and(gte(hrTimePunches.businessDate, dateFrom), lte(hrTimePunches.businessDate, dateTo)))
+    .orderBy(asc(hrTimePunches.employeeId), asc(hrTimePunches.clockInAt));
+}
+
+export async function getAllOpenPunches(): Promise<HrTimePunch[]> {
+  return db.select().from(hrTimePunches)
+    .where(isNull(hrTimePunches.clockOutAt));
+}
+
+export async function createTimePunch(data: InsertHrTimePunch): Promise<HrTimePunch> {
+  const [p] = await db.insert(hrTimePunches).values(data).returning();
+  return p;
+}
+
+export async function updateTimePunch(id: number, data: Partial<HrTimePunch>): Promise<HrTimePunch> {
+  const { id: _id, ...rest } = data as any;
+  const [p] = await db.update(hrTimePunches)
+    .set({ ...rest, updatedAt: new Date() })
+    .where(eq(hrTimePunches.id, id))
+    .returning();
+  return p;
+}
+
+// -- Service Charge Ledger --
+export async function getServiceChargeByOrder(orderId: number): Promise<ServiceChargeLedgerEntry[]> {
+  return db.select().from(serviceChargeLedger)
+    .where(eq(serviceChargeLedger.orderId, orderId));
+}
+
+export async function getServiceChargeLedgerByDateRange(dateFrom: string, dateTo: string): Promise<ServiceChargeLedgerEntry[]> {
+  return db.select().from(serviceChargeLedger)
+    .where(and(
+      gte(serviceChargeLedger.businessDate, dateFrom),
+      lte(serviceChargeLedger.businessDate, dateTo),
+      eq(serviceChargeLedger.status, "PAID")
+    ))
+    .orderBy(asc(serviceChargeLedger.businessDate));
+}
+
+export async function createServiceChargeLedgerEntry(data: InsertServiceChargeLedgerEntry): Promise<ServiceChargeLedgerEntry> {
+  const [e] = await db.insert(serviceChargeLedger).values(data).returning();
+  return e;
+}
+
+export async function voidServiceChargeByOrderItem(orderItemId: number): Promise<void> {
+  await db.update(serviceChargeLedger)
+    .set({ status: "VOIDED" })
+    .where(eq(serviceChargeLedger.orderItemId, orderItemId));
+}
+
+export async function voidServiceChargeByOrder(orderId: number): Promise<void> {
+  await db.update(serviceChargeLedger)
+    .set({ status: "VOIDED" })
+    .where(eq(serviceChargeLedger.orderId, orderId));
+}
+
+// -- Service Charge Payouts --
+export async function getServiceChargePayouts(periodStart: string, periodEnd: string): Promise<ServiceChargePayout[]> {
+  return db.select().from(serviceChargePayouts)
+    .where(and(
+      eq(serviceChargePayouts.periodStart, periodStart),
+      eq(serviceChargePayouts.periodEnd, periodEnd)
+    ))
+    .orderBy(asc(serviceChargePayouts.employeeId));
+}
+
+export async function createServiceChargePayout(data: InsertServiceChargePayout): Promise<ServiceChargePayout> {
+  const [p] = await db.insert(serviceChargePayouts).values(data).returning();
+  return p;
+}
+
+export async function updateServiceChargePayoutStatus(id: number, status: string): Promise<ServiceChargePayout> {
+  const [p] = await db.update(serviceChargePayouts)
+    .set({ status })
+    .where(eq(serviceChargePayouts.id, id))
+    .returning();
+  return p;
+}
+
+export async function deleteServiceChargePayoutsByPeriod(periodStart: string, periodEnd: string, status: string): Promise<void> {
+  await db.delete(serviceChargePayouts)
+    .where(and(
+      eq(serviceChargePayouts.periodStart, periodStart),
+      eq(serviceChargePayouts.periodEnd, periodEnd),
+      eq(serviceChargePayouts.status, status)
+    ));
+}
+
+export { getBusinessDate };

@@ -56,6 +56,7 @@ export const products = pgTable("products", {
   active: boolean("active").notNull().default(true),
   visibleQr: boolean("visible_qr").notNull().default(true),
   availablePortions: integer("available_portions"),
+  serviceTaxApplicable: boolean("service_tax_applicable").notNull().default(true),
 });
 
 export const paymentMethods = pgTable("payment_methods", {
@@ -365,7 +366,112 @@ export const orderItemDiscounts = pgTable("order_item_discounts", {
   appliedAt: timestamp("applied_at").defaultNow(),
 });
 
+// ==================== HR MODULE ====================
+
+export const hrSettings = pgTable("hr_settings", {
+  id: serial("id").primaryKey(),
+  latenessGraceMinutes: integer("lateness_grace_minutes").notNull().default(0),
+  weekStartDay: text("week_start_day").notNull().default("MONDAY"),
+  overtimeDailyThresholdHours: numeric("overtime_daily_threshold_hours", { precision: 5, scale: 2 }).notNull().default("8"),
+  overtimeWeeklyThresholdHours: numeric("overtime_weekly_threshold_hours", { precision: 5, scale: 2 }).notNull().default("48"),
+  overtimeMultiplier: numeric("overtime_multiplier", { precision: 4, scale: 2 }).notNull().default("1.5"),
+  autoLogoutAfterShiftHours: integer("auto_logout_after_shift_hours").notNull().default(4),
+  lateAlertEmailTo: text("late_alert_email_to").notNull().default("marbonilla@gmail.com"),
+  serviceChargeRate: numeric("service_charge_rate", { precision: 5, scale: 4 }).notNull().default("0.10"),
+  serviceRoundingMode: text("service_rounding_mode").notNull().default("HALF_UP"),
+  serviceDistributionMethod: text("service_distribution_method").notNull().default("BY_ITEM_RESPONSIBLE"),
+  geoEnforcementEnabled: boolean("geo_enforcement_enabled").notNull().default(true),
+  businessLat: numeric("business_lat", { precision: 10, scale: 7 }),
+  businessLng: numeric("business_lng", { precision: 10, scale: 7 }),
+  geoRadiusMeters: integer("geo_radius_meters").notNull().default(120),
+  geoAccuracyMaxMeters: integer("geo_accuracy_max_meters").notNull().default(100),
+  geoGraceAttempts: integer("geo_grace_attempts").notNull().default(2),
+  geoOverrideRoleCode: text("geo_override_role_code").notNull().default("GERENTE"),
+  geoRequiredForClockin: boolean("geo_required_for_clockin").notNull().default(true),
+  geoRequiredForClockout: boolean("geo_required_for_clockout").notNull().default(true),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const hrWeeklySchedules = pgTable("hr_weekly_schedules", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull(),
+  weekStartDate: text("week_start_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const hrScheduleDays = pgTable("hr_schedule_days", {
+  id: serial("id").primaryKey(),
+  scheduleId: integer("schedule_id").notNull(),
+  dayOfWeek: integer("day_of_week").notNull(),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
+  isDayOff: boolean("is_day_off").notNull().default(false),
+});
+
+export const hrTimePunches = pgTable("hr_time_punches", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull(),
+  businessDate: text("business_date").notNull(),
+  clockInAt: timestamp("clock_in_at").notNull(),
+  clockOutAt: timestamp("clock_out_at"),
+  clockOutType: text("clock_out_type"),
+  scheduledStartAt: timestamp("scheduled_start_at"),
+  scheduledEndAt: timestamp("scheduled_end_at"),
+  lateMinutes: integer("late_minutes").notNull().default(0),
+  workedMinutes: integer("worked_minutes").notNull().default(0),
+  overtimeMinutesDaily: integer("overtime_minutes_daily").notNull().default(0),
+  notes: text("notes"),
+  editedByEmployeeId: integer("edited_by_employee_id"),
+  editedAt: timestamp("edited_at"),
+  editReason: text("edit_reason"),
+  clockinGeoLat: numeric("clockin_geo_lat", { precision: 10, scale: 7 }),
+  clockinGeoLng: numeric("clockin_geo_lng", { precision: 10, scale: 7 }),
+  clockinGeoAccuracyM: numeric("clockin_geo_accuracy_m", { precision: 8, scale: 2 }),
+  clockinGeoVerified: boolean("clockin_geo_verified").notNull().default(false),
+  clockoutGeoLat: numeric("clockout_geo_lat", { precision: 10, scale: 7 }),
+  clockoutGeoLng: numeric("clockout_geo_lng", { precision: 10, scale: 7 }),
+  clockoutGeoAccuracyM: numeric("clockout_geo_accuracy_m", { precision: 8, scale: 2 }),
+  clockoutGeoVerified: boolean("clockout_geo_verified").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const serviceChargeLedger = pgTable("service_charge_ledger", {
+  id: serial("id").primaryKey(),
+  businessDate: text("business_date").notNull(),
+  orderId: integer("order_id").notNull(),
+  orderItemId: integer("order_item_id").notNull(),
+  tableId: integer("table_id"),
+  tableNameSnapshot: text("table_name_snapshot"),
+  responsibleWaiterEmployeeId: integer("responsible_waiter_employee_id"),
+  rateSnapshot: numeric("rate_snapshot", { precision: 5, scale: 4 }).notNull(),
+  baseAmountSnapshot: numeric("base_amount_snapshot", { precision: 10, scale: 2 }).notNull(),
+  serviceAmount: numeric("service_amount", { precision: 10, scale: 2 }).notNull(),
+  status: text("status").notNull().default("PAID"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const serviceChargePayouts = pgTable("service_charge_payouts", {
+  id: serial("id").primaryKey(),
+  periodStart: text("period_start").notNull(),
+  periodEnd: text("period_end").notNull(),
+  employeeId: integer("employee_id").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  generatedByEmployeeId: integer("generated_by_employee_id").notNull(),
+  status: text("status").notNull().default("PREVIEW"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
+export const insertHrSettingsSchema = createInsertSchema(hrSettings).omit({ id: true, updatedAt: true });
+export const insertHrWeeklyScheduleSchema = createInsertSchema(hrWeeklySchedules).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertHrScheduleDaySchema = createInsertSchema(hrScheduleDays).omit({ id: true });
+export const insertHrTimePunchSchema = createInsertSchema(hrTimePunches).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertServiceChargeLedgerSchema = createInsertSchema(serviceChargeLedger).omit({ id: true, createdAt: true });
+export const insertServiceChargePayoutSchema = createInsertSchema(serviceChargePayouts).omit({ id: true, createdAt: true });
+
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
 export const insertCategorySchema = createInsertSchema(categories).omit({ id: true });
@@ -530,3 +636,17 @@ export const enrollPinSchema = z.object({
   pin: z.string().length(4).regex(/^\d{4}$/).refine(val => !TRIVIAL_PINS.includes(val), { message: "PIN demasiado simple" }),
 });
 export type EnrollPinInput = z.infer<typeof enrollPinSchema>;
+
+// HR Module types
+export type HrSettings = typeof hrSettings.$inferSelect;
+export type InsertHrSettings = z.infer<typeof insertHrSettingsSchema>;
+export type HrWeeklySchedule = typeof hrWeeklySchedules.$inferSelect;
+export type InsertHrWeeklySchedule = z.infer<typeof insertHrWeeklyScheduleSchema>;
+export type HrScheduleDay = typeof hrScheduleDays.$inferSelect;
+export type InsertHrScheduleDay = z.infer<typeof insertHrScheduleDaySchema>;
+export type HrTimePunch = typeof hrTimePunches.$inferSelect;
+export type InsertHrTimePunch = z.infer<typeof insertHrTimePunchSchema>;
+export type ServiceChargeLedgerEntry = typeof serviceChargeLedger.$inferSelect;
+export type InsertServiceChargeLedgerEntry = z.infer<typeof insertServiceChargeLedgerSchema>;
+export type ServiceChargePayout = typeof serviceChargePayouts.$inferSelect;
+export type InsertServiceChargePayout = z.infer<typeof insertServiceChargePayoutSchema>;
