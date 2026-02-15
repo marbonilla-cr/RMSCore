@@ -1,0 +1,409 @@
+MÓDULO INVENTARIO (MVP) + COMPRAS + OC + PROVEEDORES + VALOR INVENTARIO + RECETAS (BOM) + CONSUMO AUTOMÁTICO AL ENVIAR A COCINA
+
+Contexto y decisiones ya tomadas (NO cambiar)
+	•	Rebajar inventario al enviar a cocina (Opción A).
+	•	Costo de inventario: promedio ponderado (Weighted Average Cost).
+	•	UoM: se compra en unidad grande (kg/l/caja) y se consume en unidad pequeña (g/ml/unidad) mediante conversiones.
+	•	Debe existir switch activo/inactivo para que un producto del menú se controle bajo inventario o no (inventario opcional por producto).
+	•	El módulo debe trabajar contra los pedidos ya existentes (orders/order_items) y sumar un nuevo tipo: insumos/items (inventario).
+
+Alcance (cerrado)
+
+Implementar un módulo de inventario simple y usable con:
+	1.	Catálogo de Insumos (inventory items) con unidades base y conversiones.
+	2.	Proveedores.
+	3.	Órdenes de compra (OC) con recepción parcial y generación de movimientos.
+	4.	Kardex/Movimientos (única forma de afectar stock; NO editar stock directo salvo ajuste controlado).
+	5.	Conteo físico con ajuste auditable.
+	6.	Valor inventario con promedio ponderado.
+	7.	Recetas/BOM por producto del menú, para consumo automático al enviar a cocina.
+	8.	Integración: al enviar items a cocina -> generar consumo de insumos según BOM, solo si el producto está marcado como “controla inventario”.
+	9.	Reversos: si un ítem se anula/void y ya había ido a cocina -> devolver consumo al stock (movimiento reverso).
+
+NO implementar lotes/vencimientos ni multi-bodega en esta entrega.
+
+⸻
+
+Modelo de Datos (tablas nuevas + cambios mínimos)
+
+A) Cambios mínimos a menu_products (o tabla equivalente de productos del menú)
+
+Agregar campos:
+	•	inventory_control_enabled boolean default false   ✅ (switch activo/inactivo “controla inventario”)
+	•	recipe_yield decimal nullable (porciones producidas por receta; opcional)
+	•	recipe_version int default 1 (para trazabilidad, opcional)
+
+IMPORTANTE: inventory_control_enabled=false significa que ese producto NO genera consumos de insumos al enviarse a cocina.
+
+⸻
+
+B) Insumos (inventario)
+
+1) inv_items
+	•	id
+	•	sku (string, unique)
+	•	name
+	•	category (string)
+	•	base_uom ENUM (G, KG, ML, L, UNIT)  // unidad base de control
+	•	on_hand_qty_base decimal default 0   // stock actual en unidad base
+	•	reorder_point_qty_base decimal default 0
+	•	par_level_qty_base decimal default 0
+	•	is_active boolean default true
+	•	is_perishable boolean default false
+	•	notes text nullable
+	•	Costeo:
+	•	avg_cost_per_base_uom decimal default 0   // costo promedio ponderado por unidad base
+	•	last_cost_per_base_uom decimal default 0
+	•	auditoría: created_at, updated_at
+
+2) inv_uom_conversions (conversiones compra→base y otras)
+	•	id
+	•	inv_item_id
+	•	from_uom string (ej: “KG”, “CASE_12”, “BAG_25KG”, “L”)
+	•	to_base_multiplier decimal  // cuántas unidades base contiene 1 from_uom
+	•	ejemplos:
+	•	KG -> base G => 1000
+	•	L -> base ML => 1000
+	•	CASE_12 (12 unidades) -> base UNIT => 12
+	•	is_default_purchase_uom boolean default false
+	•	created_at
+
+Regla: siempre convertir a unidad base para stock y costeo.
+
+⸻
+
+C) Movimientos (Kardex)
+
+3) inv_movements
+	•	id
+	•	business_date
+	•	movement_type ENUM:
+	•	RECEIPT (recepción compra)
+	•	CONSUMPTION (consumo por receta al enviar a cocina)
+	•	REVERSAL (reverso de consumo por anulación)
+	•	ADJUSTMENT (ajuste por conteo/merma/robo/error)
+	•	RETURN (devolución a proveedor - opcional, puede quedar para después)
+	•	inv_item_id
+	•	qty_delta_base decimal  // + entra, - sale (siempre en base uom)
+	•	unit_cost_per_base_uom decimal nullable  // requerido en RECEIPT, opcional en otros
+	•	value_delta decimal nullable  // qty_delta_base * unit_cost (para trazabilidad)
+	•	reference_type ENUM:
+	•	PURCHASE_ORDER
+	•	ORDER_ITEM
+	•	PHYSICAL_COUNT
+	•	MANUAL
+	•	reference_id string/int nullable
+	•	note text nullable
+	•	created_by_employee_id
+	•	created_at
+
+Regla “en piedra”: el stock on_hand_qty_base solo cambia mediante inv_movements (más abajo detallo la lógica).
+
+⸻
+
+D) Proveedores y compras
+
+4) inv_suppliers
+	•	id
+	•	name
+	•	contact_name nullable
+	•	phone nullable
+	•	email nullable
+	•	lead_time_days int default 0
+	•	is_active boolean default true
+	•	notes nullable
+	•	created_at
+
+5) inv_supplier_items (catálogo proveedor opcional)
+	•	id
+	•	supplier_id
+	•	inv_item_id
+	•	purchase_uom string  // debe existir conversión para ese uom
+	•	last_price_per_purchase_uom decimal
+	•	is_preferred boolean default false
+	•	created_at
+
+6) inv_purchase_orders
+	•	id
+	•	supplier_id
+	•	status ENUM DRAFT|SENT|PARTIAL_RECEIVED|RECEIVED|CANCELED|CLOSED
+	•	created_by_employee_id
+	•	sent_at nullable
+	•	expected_delivery_date nullable
+	•	notes nullable
+	•	created_at, updated_at
+
+7) inv_purchase_order_lines
+	•	id
+	•	purchase_order_id
+	•	inv_item_id
+	•	qty_purchase_uom decimal
+	•	purchase_uom string
+	•	unit_price_per_purchase_uom decimal
+	•	to_base_multiplier_snapshot decimal  // snapshot de conversión al momento de la OC
+	•	qty_base_expected decimal  // qty_purchase_uom * multiplier snapshot
+	•	qty_base_received decimal default 0
+	•	line_status ENUM OPEN|PARTIAL|RECEIVED|CANCELED
+	•	created_at
+
+8) inv_po_receipts (recepciones parciales)
+	•	id
+	•	purchase_order_id
+	•	received_at
+	•	received_by_employee_id
+	•	note nullable
+
+9) inv_po_receipt_lines
+	•	id
+	•	receipt_id
+	•	po_line_id
+	•	qty_purchase_uom_received decimal
+	•	qty_base_received decimal
+	•	unit_price_per_purchase_uom decimal  // snapshot
+	•	unit_cost_per_base_uom decimal  // unit_price / multiplier
+	•	created_at
+
+⸻
+
+E) Conteos físicos
+
+10) inv_physical_counts
+	•	id
+	•	status ENUM DRAFT|IN_PROGRESS|FINALIZED|CANCELED
+	•	scope ENUM ALL|CATEGORY|ITEM_LIST
+	•	category_filter nullable
+	•	created_by_employee_id
+	•	finalized_by_employee_id nullable
+	•	created_at, finalized_at nullable
+	•	note nullable
+
+11) inv_physical_count_lines
+	•	id
+	•	physical_count_id
+	•	inv_item_id
+	•	system_qty_base decimal  // snapshot al inicio o al finalizar (definir al crear)
+	•	counted_qty_base decimal nullable
+	•	delta_qty_base decimal nullable (counted - system)
+	•	adjustment_reason nullable
+	•	created_at
+
+⸻
+
+F) Recetas (BOM)
+
+12) inv_recipes
+	•	id
+	•	menu_product_id
+	•	version int default 1
+	•	is_active boolean default true
+	•	yield_qty decimal default 1  // número de “porciones” que produce la receta (si aplica)
+	•	note nullable
+	•	created_at
+
+13) inv_recipe_lines
+	•	id
+	•	recipe_id
+	•	inv_item_id
+	•	qty_base_per_menu_unit decimal
+	•	Ej: si plato consume 180g de carne: qty_base_per_menu_unit=180 (base G)
+	•	waste_pct decimal default 0  // opcional
+	•	created_at
+
+Regla: cuando se envía 1 unidad del producto del menú a cocina, se consumen los insumos según qty_base_per_menu_unit * qty.
+
+⸻
+
+Integraciones con pedidos existentes (NO refactor, solo hooks)
+
+Evento 1: “Enviar a cocina”
+
+Cuando un order_item pasa a estado enviado a cocina (o se crea el ticket KDS), ejecutar:
+
+SI menu_product.inventory_control_enabled=true Y existe receta activa:
+	•	Para cada inv_recipe_line:
+	•	consume_qty_base = qty_base_per_menu_unit * order_item.qty
+	•	Aplicar waste opcional: consume_qty_base *= (1 + waste_pct)
+	•	Insertar inv_movements:
+	•	type = CONSUMPTION
+	•	qty_delta_base = -consume_qty_base
+	•	reference_type = ORDER_ITEM
+	•	reference_id = order_item.id
+	•	created_by_employee_id = usuario que envía a cocina
+	•	Actualizar stock y costo promedio (ver algoritmo más abajo)
+
+Si no hay receta o inventory_control_enabled=false: no hacer nada.
+
+Evento 2: “Anulación/void de ítem ya enviado a cocina”
+
+Si un order_item se anula y ya generó consumo:
+	•	Insertar movimientos REVERSAL por cada línea consumida:
+	•	qty_delta_base = +consume_qty_base (mismo cálculo que el consumo original)
+	•	reference_type = ORDER_ITEM
+	•	reference_id = order_item.id
+	•	nota: “Reversal por anulación”
+	•	No recalcular costo promedio por reverso (mantener avg_cost actual) o usar el avg_cost actual para value_delta. (MVP: usar avg_cost actual, auditable.)
+
+Importante: debe haber idempotencia para no reversar dos veces. Usar una marca:
+
+	•	O tabla inv_order_item_consumptions (recommended)
+o
+	•	verificar si ya existe movimiento type CONSUMPTION para ese order_item y si ya existe REVERSAL.
+
+Tabla recomendada inv_order_item_consumptions (para trazabilidad/idempotencia)
+	•	id
+	•	order_item_id
+	•	recipe_id
+	•	status ENUM CONSUMED|REVERSED
+	•	created_at, reversed_at nullable
+
+⸻
+
+Costeo: promedio ponderado (WAC) — regla “en piedra”
+
+Aplicar solo en movimientos RECEIPT (compra recibida). Para cada RECEIPT:
+	•	old_qty = inv_items.on_hand_qty_base
+	•	old_avg = inv_items.avg_cost_per_base_uom
+	•	receipt_qty = qty_delta_base (positivo)
+	•	receipt_unit_cost = unit_cost_per_base_uom (obligatorio)
+	•	new_qty = old_qty + receipt_qty
+	•	new_avg = if new_qty==0 then 0 else ((old_qty*old_avg) + (receipt_qty*receipt_unit_cost)) / new_qty
+
+Actualizar:
+	•	inv_items.on_hand_qty_base = new_qty
+	•	inv_items.avg_cost_per_base_uom = new_avg
+	•	inv_items.last_cost_per_base_uom = receipt_unit_cost
+
+Para CONSUMPTION y ADJUSTMENT:
+	•	Solo cambia on_hand_qty_base sumando qty_delta_base
+	•	avg_cost_per_base_uom no cambia (MVP)
+	•	value_delta usar avg_cost_per_base_uom actual para registrar costo teórico
+
+⸻
+
+Validaciones mínimas (MVP)
+	•	No permitir inv_item.is_active=false en nuevas OCs/recetas.
+	•	Al consumir, si stock quedaría negativo:
+	•	permitir igual pero registrar alerta “stock negativo” (MVP)
+	•	(opcional) bloquear si strict_stock=true (dejarlo parametrizable para después)
+
+⸻
+
+Pantallas (UX simple, mobile first, 6 pantallas)
+	1.	Inventario (Insumos): lista con search sticky, filtro categoría, muestra on_hand y semáforo (min/par).
+	2.	Insumo detalle: editar campos + ver últimos movimientos.
+	3.	Proveedores: CRUD simple.
+	4.	Órdenes de compra: lista + crear OC + recibir parcial (genera RECEIPT).
+	5.	Conteo físico: crear conteo + capturar + finalizar (genera ADJUSTMENT).
+	6.	Recetas (BOM): por producto menú (solo si inventory_control_enabled=true): editar receta y líneas.
+
+⸻
+
+Switch de control de inventario por producto (requerimiento nuevo)
+
+En admin de menú (producto):
+	•	Agregar toggle: “Controlar inventario” (inventory_control_enabled)
+	•	Si se activa:
+	•	exigir receta activa (permitir guardar ON pero mostrar warning hasta crear receta)
+	•	Si se desactiva:
+	•	no generar consumos aunque haya receta.
+
+⸻
+
+Roles/Permisos (usar RBAC existente; solo agregar keys si faltan)
+	•	INV_VIEW
+	•	INV_MANAGE_ITEMS
+	•	INV_MANAGE_SUPPLIERS
+	•	INV_MANAGE_PO
+	•	INV_RECEIVE_PO
+	•	INV_PHYSICAL_COUNT
+	•	INV_MANAGE_RECIPES
+	•	INV_VIEW_REPORTS
+
+Gerente: todo.
+Cocina: puede ver recetas (opcional) y consultar stock (opcional).
+Salonero: no necesita inventario.
+
+⸻
+
+Historias de Usuario (cerradas)
+
+ÉPICA INV-1: Insumos + Kardex
+
+HU INV1.1 — CRUD Insumos con unidad base
+
+CDA: crear/editar insumo, base_uom, stock min/par, activo.
+DoD: insumo aparece en inventario y puede usarse en recetas/OC.
+
+HU INV1.2 — Movimientos (kardex) obligatorio
+
+CDA: toda variación de stock se registra como inv_movement, no edición directa.
+DoD: página detalle muestra movimientos.
+
+ÉPICA INV-2: Proveedores + OC + Recepción
+
+HU INV2.1 — CRUD Proveedores
+
+DoD: proveedor usable en OC.
+
+HU INV2.2 — Crear OC + líneas con conversión
+
+CDA: OC en DRAFT, convertir qty purchase_uom a qty base usando snapshot.
+DoD: OC lista y editable.
+
+HU INV2.3 — Recepción parcial genera RECEIPT y actualiza WAC
+
+CDA: recibir parcial, crear receipt + movements RECEIPT, actualizar avg_cost.
+DoD: stock aumenta y costo promedio se recalcula.
+
+ÉPICA INV-3: Conteo físico
+
+HU INV3.1 — Crear conteo y capturar cantidades
+
+DoD: diferencias visibles.
+
+HU INV3.2 — Finalizar conteo genera ADJUSTMENT auditable
+
+DoD: stock ajustado y movimientos creados.
+
+ÉPICA INV-4: Recetas (BOM) + consumo por ventas
+
+HU INV4.1 — Crear receta por producto del menú
+
+CDA: solo si product.inventory_control_enabled=true.
+DoD: receta activa guardada.
+
+HU INV4.2 — Consumo automático al enviar a cocina
+
+CDA: al enviar a cocina -> CONSUMPTION por receta, referencia order_item.
+DoD: stock baja, kardex registra.
+
+HU INV4.3 — Reverso por anulación de ítem enviado a cocina
+
+CDA: al anular -> REVERSAL idempotente.
+DoD: stock regresa, kardex registra.
+
+ÉPICA INV-5: Reportes
+
+HU INV5.1 — Valor inventario (WAC)
+
+CDA: total y por categoría: on_hand * avg_cost.
+DoD: reporte usable.
+
+HU INV5.2 — Desviación teórico vs real (MVP simple)
+
+CDA:
+	•	Teórico: sum(CONSU) por periodo * avg_cost
+	•	Real: compras - (stock_final - stock_inicial)
+	•	Mostrar top insumos con discrepancia
+DoD: reporte básico de merma/descuadre.
+
+⸻
+
+Definition of Done global
+	•	Insumos + conversiones + kardex funcionando.
+	•	OC con recepción parcial actualiza stock y WAC.
+	•	Conteo físico genera ajustes auditable.
+	•	Toggle “Controlar inventario” por producto menú.
+	•	Recetas/BOM por producto y consumo automático al enviar a cocina, con reverso por anulación.
+	•	Reporte valor inventario WAC.
+	•	Todo con auditoría básica (usar audit_events existente) y sin refactor fuera de alcance.
