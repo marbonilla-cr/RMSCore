@@ -654,11 +654,15 @@ export async function voidKitchenTicketItemsByOrderItem(orderItemId: number, qty
       .where(eq(kitchenTicketItems.orderItemId, orderItemId));
   } else {
     const items = await db.select().from(kitchenTicketItems)
-      .where(eq(kitchenTicketItems.orderItemId, orderItemId));
+      .where(and(eq(kitchenTicketItems.orderItemId, orderItemId), ne(kitchenTicketItems.status, "VOIDED")));
+    let remaining = qtyToVoid;
     for (const kti of items) {
-      const newQty = Math.max(0, kti.qty - qtyToVoid);
-      if (newQty === 0) {
-        await db.update(kitchenTicketItems).set({ status: "VOIDED" }).where(eq(kitchenTicketItems.id, kti.id));
+      if (remaining <= 0) break;
+      const deduct = Math.min(kti.qty, remaining);
+      remaining -= deduct;
+      const newQty = kti.qty - deduct;
+      if (newQty <= 0) {
+        await db.update(kitchenTicketItems).set({ status: "VOIDED", qty: 0 }).where(eq(kitchenTicketItems.id, kti.id));
       } else {
         await db.update(kitchenTicketItems).set({ qty: newQty }).where(eq(kitchenTicketItems.id, kti.id));
       }
