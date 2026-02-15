@@ -932,20 +932,27 @@ export default function TableDetailPage() {
               </span>
               <Button
                 variant="outline"
-                className="min-h-[44px] text-base"
+                size="icon"
+                onClick={() => { setCart([]); localStorage.removeItem(`cart_table_${tableId}`); }}
+                data-testid="button-clear-cart"
+              >
+                <Trash2 className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
                 onClick={() => setViewMode("cart")}
                 data-testid="button-view-order-detail"
               >
-                <Eye className="w-5 h-5 mr-1" /> Ver pedido
+                <Eye className="w-5 h-5" />
               </Button>
               <Button
-                className="min-h-[44px] text-base"
+                size="icon"
                 onClick={() => sendRoundMutation.mutate()}
                 disabled={sendRoundMutation.isPending}
                 data-testid="button-send-round"
               >
-                {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin mr-1" /> : <Send className="w-5 h-5 mr-1" />}
-                Enviar
+                {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
               </Button>
             </div>
           </div>

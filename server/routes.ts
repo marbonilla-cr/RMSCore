@@ -219,6 +219,156 @@ export async function registerRoutes(
     }
   });
 
+  // PIN-based Clock-In/Out (no session required)
+  app.post("/api/auth/pin-clock", async (req, res) => {
+    try {
+      const { pin, action, lat, lng, accuracy } = req.body;
+      if (!pin || !action) return res.status(400).json({ message: "PIN y acción requeridos" });
+      if (action !== "clock_in" && action !== "clock_out") return res.status(400).json({ message: "Acción inválida" });
+
+      const allUsers = await storage.getAllUsersWithPin();
+      const usersWithPin = allUsers.filter(u => u.pin && u.active);
+
+      let matchedUser: any = null;
+      for (const u of usersWithPin) {
+        if (u.pinLockedUntil && new Date(u.pinLockedUntil) > new Date()) continue;
+        const match = await storage.verifyPin(pin, u.pin!);
+        if (match) {
+          matchedUser = u;
+          break;
+        }
+      }
+
+      if (!matchedUser) return res.status(401).json({ message: "PIN incorrecto" });
+
+      await storage.clearPinLock(matchedUser.id);
+      const employeeId = matchedUser.id;
+      const perms = await storage.getPermissionKeysForRole(matchedUser.role);
+      if (!perms.includes("HR_CLOCK_IN_OUT_ALLOW")) {
+        return res.status(403).json({ message: "No tiene permiso para marcar entrada/salida" });
+      }
+
+      const settings = await storage.getHrSettings();
+      const now = new Date();
+      const businessDate = getBusinessDate();
+
+      if (action === "clock_in") {
+        const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+        if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta. Marque salida primero." });
+
+        let geoVerified = false;
+        if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockin && settings.businessLat && settings.businessLng) {
+          if (!lat || !lng) return res.status(400).json({ message: "Ubicación requerida para marcar entrada" });
+          if (accuracy && Number(accuracy) > (settings.geoAccuracyMaxMeters || 100)) {
+            return res.status(400).json({ message: `Precisión GPS insuficiente` });
+          }
+          const distance = haversineDistance(Number(settings.businessLat), Number(settings.businessLng), Number(lat), Number(lng));
+          if (distance > (settings.geoRadiusMeters || 120)) {
+            return res.status(403).json({ message: `Fuera del rango permitido (${Math.round(distance)}m)` });
+          }
+          geoVerified = true;
+        }
+
+        const weekDay = now.getDay();
+        let lateMinutes = 0;
+        let scheduledStartAt: Date | undefined;
+        let scheduledEndAt: Date | undefined;
+        const dayOffset = weekDay === 0 ? 6 : weekDay - 1;
+        const mondayDate = new Date(now);
+        mondayDate.setDate(mondayDate.getDate() - dayOffset);
+        const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
+        if (schedule) {
+          const days = await storage.getScheduleDays(schedule.id);
+          const todaySchedule = days.find(d => d.dayOfWeek === weekDay);
+          if (todaySchedule && !todaySchedule.isDayOff && todaySchedule.startTime) {
+            const [h, m] = todaySchedule.startTime.split(":").map(Number);
+            scheduledStartAt = new Date(now);
+            scheduledStartAt.setHours(h, m, 0, 0);
+            if (todaySchedule.endTime) {
+              const [eh, em] = todaySchedule.endTime.split(":").map(Number);
+              scheduledEndAt = new Date(now);
+              scheduledEndAt.setHours(eh, em, 0, 0);
+            }
+            const graceMinutes = settings?.latenessGraceMinutes || 0;
+            const diffMs = now.getTime() - scheduledStartAt.getTime();
+            const diffMinutes = Math.floor(diffMs / 60000);
+            if (diffMinutes > graceMinutes) lateMinutes = diffMinutes - graceMinutes;
+          }
+        }
+
+        const punch = await storage.createTimePunch({
+          employeeId,
+          businessDate,
+          clockInAt: now,
+          scheduledStartAt: scheduledStartAt || null,
+          scheduledEndAt: scheduledEndAt || null,
+          lateMinutes,
+          clockinGeoLat: lat ? String(lat) : null,
+          clockinGeoLng: lng ? String(lng) : null,
+          clockinGeoAccuracyM: accuracy ? String(accuracy) : null,
+          clockinGeoVerified: geoVerified,
+        });
+
+        await storage.createAuditEvent({
+          actorType: "USER", actorUserId: employeeId,
+          action: "CLOCK_IN", entityType: "HR_PUNCH", entityId: punch.id,
+          metadata: { lateMinutes, geoVerified, viaPin: true },
+        });
+
+        broadcast("hr_punch_update", { employeeId, type: "clock_in" });
+        const user = await storage.getUser(employeeId);
+        return res.json({ punch, displayName: user?.displayName || "Empleado", action: "clock_in" });
+      }
+
+      if (action === "clock_out") {
+        const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+        if (!openPunch) return res.status(404).json({ message: "No hay entrada abierta para marcar salida" });
+
+        let geoVerified = false;
+        if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockout && settings.businessLat && settings.businessLng) {
+          if (!lat || !lng) return res.status(400).json({ message: "Ubicación requerida para marcar salida" });
+          if (accuracy && Number(accuracy) > (settings.geoAccuracyMaxMeters || 100)) {
+            return res.status(400).json({ message: `Precisión GPS insuficiente (${Math.round(Number(accuracy))}m)` });
+          }
+          const distance = haversineDistance(Number(settings.businessLat), Number(settings.businessLng), Number(lat), Number(lng));
+          if (distance > (settings.geoRadiusMeters || 120)) {
+            return res.status(403).json({ message: `Fuera del rango permitido (${Math.round(distance)}m)` });
+          }
+          geoVerified = true;
+        }
+
+        const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
+        const workedMinutes = Math.floor(workedMs / 60000);
+        const dailyThresholdMinutes = settings ? Number(settings.overtimeDailyThresholdHours) * 60 : 480;
+        const overtimeMinutesDaily = Math.max(0, workedMinutes - dailyThresholdMinutes);
+
+        const updatedPunch = await storage.updateTimePunch(openPunch.id, {
+          clockOutAt: now,
+          clockOutType: "MANUAL",
+          workedMinutes,
+          overtimeMinutesDaily,
+          clockoutGeoLat: lat ? String(lat) : null,
+          clockoutGeoLng: lng ? String(lng) : null,
+          clockoutGeoAccuracyM: accuracy ? String(accuracy) : null,
+          clockoutGeoVerified: geoVerified,
+        });
+
+        await storage.createAuditEvent({
+          actorType: "USER", actorUserId: employeeId,
+          action: "CLOCK_OUT", entityType: "HR_PUNCH", entityId: openPunch.id,
+          metadata: { workedMinutes, overtimeMinutesDaily, geoVerified, viaPin: true },
+        });
+
+        broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+        const user = await storage.getUser(employeeId);
+        return res.json({ punch: updatedPunch, displayName: user?.displayName || "Empleado", action: "clock_out", workedMinutes });
+      }
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   // PIN Enrollment
   app.post("/api/auth/enroll-pin", requireAuth, async (req, res) => {
     try {
