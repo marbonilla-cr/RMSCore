@@ -196,6 +196,15 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "SERVICE_VIEW_REPORTS", description: "Ver reportes de cargo por servicio" },
   { key: "SERVICE_GENERATE_PAYOUTS", description: "Generar liquidaciones de servicio" },
   { key: "GEO_OVERRIDE", description: "Saltar validación de geofence" },
+  { key: "MODULE_INV_VIEW", description: "Ver módulo de Inventario" },
+  { key: "INV_VIEW", description: "Ver inventario" },
+  { key: "INV_MANAGE_ITEMS", description: "Gestionar insumos de inventario" },
+  { key: "INV_MANAGE_SUPPLIERS", description: "Gestionar proveedores" },
+  { key: "INV_MANAGE_PO", description: "Gestionar órdenes de compra" },
+  { key: "INV_RECEIVE_PO", description: "Recibir órdenes de compra" },
+  { key: "INV_PHYSICAL_COUNT", description: "Realizar conteos físicos" },
+  { key: "INV_MANAGE_RECIPES", description: "Gestionar recetas/BOM" },
+  { key: "INV_VIEW_REPORTS", description: "Ver reportes de inventario" },
 ];
 
 export async function ensureSystemPermissions() {
