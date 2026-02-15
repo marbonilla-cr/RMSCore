@@ -629,6 +629,66 @@ export const invOrderItemConsumptions = pgTable("inv_order_item_consumptions", {
   reversedAt: timestamp("reversed_at"),
 });
 
+// Shortages Module
+export const invShortages = pgTable("inv_shortages", {
+  id: serial("id").primaryKey(),
+  entityType: text("entity_type").notNull(),
+  invItemId: integer("inv_item_id"),
+  menuProductId: integer("menu_product_id"),
+  status: text("status").notNull().default("OPEN"),
+  priority: text("priority").notNull().default("HIGH"),
+  severityReport: text("severity_report").notNull().default("NO_STOCK"),
+  reportedByEmployeeId: integer("reported_by_employee_id").notNull(),
+  reportedAt: timestamp("reported_at").defaultNow(),
+  notes: text("notes"),
+  reportCount: integer("report_count").notNull().default(1),
+  lastReportedAt: timestamp("last_reported_at").defaultNow(),
+  suggestedPurchaseQtyBase: numeric("suggested_purchase_qty_base", { precision: 12, scale: 4 }),
+  systemOnHandQtyBaseSnapshot: numeric("system_on_hand_qty_base_snapshot", { precision: 12, scale: 4 }),
+  systemAvgCostSnapshot: numeric("system_avg_cost_snapshot", { precision: 12, scale: 6 }),
+  auditFlag: boolean("audit_flag").notNull().default(false),
+  auditReason: text("audit_reason"),
+  auditStatus: text("audit_status").notNull().default("NONE"),
+  auditOwnerEmployeeId: integer("audit_owner_employee_id"),
+  auditNotes: text("audit_notes"),
+  acknowledgedByEmployeeId: integer("acknowledged_by_employee_id"),
+  acknowledgedAt: timestamp("acknowledged_at"),
+  resolvedByEmployeeId: integer("resolved_by_employee_id"),
+  resolvedAt: timestamp("resolved_at"),
+  closedByEmployeeId: integer("closed_by_employee_id"),
+  closedAt: timestamp("closed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const invShortageEvents = pgTable("inv_shortage_events", {
+  id: serial("id").primaryKey(),
+  shortageId: integer("shortage_id").notNull(),
+  eventType: text("event_type").notNull(),
+  employeeId: integer("employee_id").notNull(),
+  eventAt: timestamp("event_at").defaultNow(),
+  message: text("message"),
+  metaJson: jsonb("meta_json"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invAuditAlerts = pgTable("inv_audit_alerts", {
+  id: serial("id").primaryKey(),
+  alertType: text("alert_type").notNull(),
+  severity: text("severity").notNull().default("HIGH"),
+  invItemId: integer("inv_item_id"),
+  shortageId: integer("shortage_id"),
+  message: text("message").notNull(),
+  status: text("status").notNull().default("OPEN"),
+  createdAt: timestamp("created_at").defaultNow(),
+  createdByEmployeeId: integer("created_by_employee_id"),
+  ackByEmployeeId: integer("ack_by_employee_id"),
+  ackAt: timestamp("ack_at"),
+  closedByEmployeeId: integer("closed_by_employee_id"),
+  closedAt: timestamp("closed_at"),
+  notes: text("notes"),
+});
+
 // Insert schemas
 export const insertHrSettingsSchema = createInsertSchema(hrSettings).omit({ id: true, updatedAt: true });
 export const insertHrWeeklyScheduleSchema = createInsertSchema(hrWeeklySchedules).omit({ id: true, createdAt: true, updatedAt: true });
@@ -860,3 +920,15 @@ export type InvRecipeLine = typeof invRecipeLines.$inferSelect;
 export type InsertInvRecipeLine = z.infer<typeof insertInvRecipeLineSchema>;
 export type InvOrderItemConsumption = typeof invOrderItemConsumptions.$inferSelect;
 export type InsertInvOrderItemConsumption = z.infer<typeof insertInvOrderItemConsumptionSchema>;
+
+// Shortages Module types
+export const insertInvShortageSchema = createInsertSchema(invShortages).omit({ id: true, createdAt: true, updatedAt: true, reportedAt: true, lastReportedAt: true, acknowledgedAt: true, resolvedAt: true, closedAt: true });
+export const insertInvShortageEventSchema = createInsertSchema(invShortageEvents).omit({ id: true, createdAt: true, eventAt: true });
+export const insertInvAuditAlertSchema = createInsertSchema(invAuditAlerts).omit({ id: true, createdAt: true, ackAt: true, closedAt: true });
+
+export type InvShortage = typeof invShortages.$inferSelect;
+export type InsertInvShortage = z.infer<typeof insertInvShortageSchema>;
+export type InvShortageEvent = typeof invShortageEvents.$inferSelect;
+export type InsertInvShortageEvent = z.infer<typeof insertInvShortageEventSchema>;
+export type InvAuditAlert = typeof invAuditAlerts.$inferSelect;
+export type InsertInvAuditAlert = z.infer<typeof insertInvAuditAlertSchema>;

@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useShortageAlerts } from "@/hooks/use-shortage-alerts";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Loader2, LogOut, RefreshCw } from "lucide-react";
@@ -42,6 +43,9 @@ import InvPurchaseOrdersPage from "@/pages/inventory/purchase-orders";
 import InvPhysicalCountsPage from "@/pages/inventory/physical-counts";
 import InvRecipesPage from "@/pages/inventory/recipes";
 import InvReportsPage from "@/pages/inventory/reports";
+import ShortagesReportPage from "@/pages/shortages/report";
+import ShortagesActivePage from "@/pages/shortages/active";
+import ShortagesAuditPage from "@/pages/shortages/audit";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRouteByPermissions(perms: string[]): string {
@@ -65,6 +69,7 @@ function canAccessRouteByPermissions(perms: string[], path: string): boolean {
   if (path.startsWith("/admin/")) return perms.includes("MODULE_ADMIN_VIEW");
   if (path.startsWith("/hr/")) return perms.includes("MODULE_HR_VIEW");
   if (path.startsWith("/inventory/")) return perms.includes("MODULE_INV_VIEW");
+  if (path.startsWith("/shortages/")) return perms.includes("SHORTAGES_VIEW");
   return false;
 }
 
@@ -140,6 +145,9 @@ function AuthenticatedRouter() {
       <Route path="/inventory/physical-counts" component={InvPhysicalCountsPage} />
       <Route path="/inventory/recipes" component={InvRecipesPage} />
       <Route path="/inventory/reports" component={InvReportsPage} />
+      <Route path="/shortages/report" component={ShortagesReportPage} />
+      <Route path="/shortages/active" component={ShortagesActivePage} />
+      <Route path="/shortages/audit" component={ShortagesAuditPage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -147,6 +155,7 @@ function AuthenticatedRouter() {
 
 function AuthenticatedLayout() {
   const { user, logout } = useAuth();
+  useShortageAlerts();
   const style = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",

@@ -43,6 +43,8 @@ import {
   ClipboardCheck,
   BookOpen,
   TrendingUp,
+  AlertTriangle,
+  List,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
@@ -91,6 +93,12 @@ const invItems = [
   { title: "Reportes", url: "/inventory/reports", icon: TrendingUp },
 ];
 
+const shortageItems = [
+  { title: "Reportar Faltante", url: "/shortages/report", icon: AlertTriangle },
+  { title: "Faltantes Activos", url: "/shortages/active", icon: List },
+  { title: "Auditoría", url: "/shortages/audit", icon: Shield },
+];
+
 const hrManagerItems = [
   { title: "Horarios", url: "/hr/horarios", icon: CalendarDays },
   { title: "Marcas", url: "/hr/marcas", icon: ClipboardList },
@@ -112,6 +120,7 @@ export function AppSidebar() {
   const showHR = hasPermission("MODULE_HR_VIEW");
   const showHRManage = hasPermission("HR_MANAGE_SCHEDULES") || hasPermission("HR_VIEW_TEAM") || hasPermission("HR_MANAGE_SETTINGS");
   const showINV = hasPermission("MODULE_INV_VIEW");
+  const showShortages = hasPermission("SHORTAGES_VIEW");
 
   const initials = user?.displayName
     ? user.displayName
@@ -272,6 +281,29 @@ export function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {invItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={location === item.url || location.startsWith(item.url + "/")}>
+                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                        <item.icon className="w-4 h-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {showShortages && (
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              <AlertTriangle className="w-3 h-3 mr-1 inline" />
+              Faltantes
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {shortageItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild isActive={location === item.url || location.startsWith(item.url + "/")}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>

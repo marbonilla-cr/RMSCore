@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
 import * as storage from "./storage";
 import { registerInventoryRoutes } from "./inventory-routes";
+import { registerShortageRoutes } from "./shortage-routes";
 import * as invStorage from "./inventory-storage";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema } from "@shared/schema";
 
@@ -3849,6 +3850,9 @@ export async function registerRoutes(
 
   // ==================== INVENTORY MODULE ====================
   registerInventoryRoutes(app, null);
+
+  // ==================== SHORTAGES MODULE ====================
+  registerShortageRoutes(app, broadcast);
 
   // ==================== WEBSOCKET ====================
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });

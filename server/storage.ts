@@ -205,6 +205,14 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "INV_PHYSICAL_COUNT", description: "Realizar conteos físicos" },
   { key: "INV_MANAGE_RECIPES", description: "Gestionar recetas/BOM" },
   { key: "INV_VIEW_REPORTS", description: "Ver reportes de inventario" },
+  { key: "SHORTAGES_VIEW", description: "Ver faltantes" },
+  { key: "SHORTAGES_REPORT", description: "Reportar faltantes" },
+  { key: "SHORTAGES_ACK", description: "Reconocer faltantes" },
+  { key: "SHORTAGES_RESOLVE", description: "Resolver faltantes" },
+  { key: "SHORTAGES_CLOSE", description: "Cerrar faltantes" },
+  { key: "AUDIT_VIEW", description: "Ver auditoría de faltantes" },
+  { key: "AUDIT_MANAGE", description: "Gestionar alertas de auditoría" },
+  { key: "MENU_TOGGLE_AVAILABILITY", description: "Cambiar disponibilidad de productos" },
 ];
 
 export async function ensureSystemPermissions() {
