@@ -1,0 +1,384 @@
+Alcance (cerrado)
+	•	REUSAR lo ya construido: PIN 4 dígitos, sesión, roles y permisos (RBAC), middleware de autorización, UI base de módulos.
+	•	AGREGAR únicamente:
+	1.	Horario semanal por empleado (entrada/salida) editable por gerente con auditoría.
+	2.	Clock-in / clock-out con:
+	•	verificación de ubicación (geofence) obligatoria en ambos clock-in y clock-out
+	•	tardía (email a marbonilla@gmail.com)
+	•	auto clock-out solo si no marcó salida, registrando clock_out_at = hora programada del horario
+	•	auto logout de sesión 4 horas después de la hora programada (no altera marcas)
+	•	mantenimiento de marcas por gerente (editar in/out) con auditoría
+	3.	Control de horas extra (reportes/alertas para evitarlas).
+	4.	10% servicio: ledger por ítem elegible pagado + reportes + liquidación por periodo (gerente).
+	•	NO tocar POS/KDS/Órdenes salvo enganchar el evento “ítem pagado/void” para service ledger.
+
+⸻
+
+Reglas “en piedra” del negocio
+	•	Clock-in/out se hace usando el empleado autenticado por PIN (ya existe).
+	•	GEOFENCE obligatorio para:
+	•	Clock-in
+	•	Clock-out
+	•	AutoClockOut:
+	•	Solo si clock_out_at IS NULL.
+	•	Si existe horario del día (scheduled_end_at): registrar clock_out_at = scheduled_end_at y clock_out_type=AUTO.
+	•	El “+4h” NO es salida: es solo para auto logout (si dejó sesión abierta).
+	•	Tardía: si clock_in > scheduled_start + tolerancia → email a marbonilla@gmail.com (1 por turno).
+	•	Horarios y ajustes: editables por gerente y auditables.
+	•	Control de extras: objetivo es prevenir horas extra por descuido (alertas/reportes).
+	•	Servicio: 10% por ítem vendido, pero algunos ítems NO aplican (se venden en caja) con snapshot service_tax_applicable=false.
+
+⸻
+
+Configuración parametrizable (DB + UI simple)
+
+Tabla hr_settings (single row)
+	•	lateness_grace_minutes int default 0
+	•	week_start_day ENUM MONDAY|SUNDAY default MONDAY
+	•	overtime_daily_threshold_hours decimal default 8
+	•	overtime_weekly_threshold_hours decimal default 48
+	•	overtime_multiplier decimal default 1.5 (solo estimado)
+	•	auto_logout_after_shift_hours int default 4
+	•	Email:
+	•	late_alert_email_to default marbonilla@gmail.com
+	•	Servicio:
+	•	service_charge_rate decimal default 0.10
+	•	service_rounding_mode ENUM HALF_UP|FLOOR|CEIL default HALF_UP
+	•	service_distribution_method ENUM BY_ITEM_RESPONSIBLE default BY_ITEM_RESPONSIBLE
+	•	Geo (OBLIGATORIO clock-in/out):
+	•	geo_enforcement_enabled boolean default true
+	•	business_lat decimal NOT NULL
+	•	business_lng decimal NOT NULL
+	•	geo_radius_meters int default 120
+	•	geo_accuracy_max_meters int default 100
+	•	geo_grace_attempts int default 2
+	•	geo_override_role_code default GERENTE
+	•	geo_required_for_clockin boolean default true
+	•	geo_required_for_clockout boolean default true
+
+Auditar cualquier cambio a settings (before/after) en audit_events.
+
+⸻
+
+Tablas nuevas (no refactor; solo agregar)
+
+hr_weekly_schedules
+	•	id
+	•	employee_id
+	•	week_start_date
+	•	created_at, updated_at
+
+hr_schedule_days (normalizado)
+	•	id
+	•	schedule_id
+	•	day_of_week 0-6
+	•	start_time (HH:MM) nullable
+	•	end_time (HH:MM) nullable
+	•	is_day_off boolean default false
+
+hr_time_punches
+	•	id
+	•	employee_id
+	•	business_date
+	•	clock_in_at
+	•	clock_out_at nullable
+	•	clock_out_type ENUM MANUAL|AUTO
+	•	scheduled_start_at datetime nullable (snapshot)
+	•	scheduled_end_at datetime nullable (snapshot)
+	•	late_minutes int default 0
+	•	worked_minutes int default 0
+	•	overtime_minutes_daily int default 0
+	•	notes text nullable
+	•	edición gerente:
+	•	edited_by_employee_id nullable
+	•	edited_at nullable
+	•	edit_reason text nullable
+	•	geo snapshot (para trazabilidad):
+	•	clockin_geo_lat nullable
+	•	clockin_geo_lng nullable
+	•	clockin_geo_accuracy_m nullable
+	•	clockin_geo_verified boolean default false
+	•	clockout_geo_lat nullable
+	•	clockout_geo_lng nullable
+	•	clockout_geo_accuracy_m nullable
+	•	clockout_geo_verified boolean default false
+	•	created_at, updated_at
+
+Servicio
+
+service_charge_ledger
+	•	id, business_date, order_id, order_item_id
+	•	table_id, table_name_snapshot
+	•	responsible_waiter_employee_id
+	•	rate_snapshot
+	•	base_amount_snapshot
+	•	service_amount
+	•	status ENUM PAID|VOIDED
+	•	created_at
+
+service_charge_payouts
+	•	id, period_start, period_end, employee_id, amount
+	•	generated_by_employee_id
+	•	status ENUM PREVIEW|FINALIZED
+	•	notes
+	•	created_at
+
+⸻
+
+Permisos (usar RBAC existente, solo agregar keys)
+	•	HR_VIEW_SELF
+	•	HR_CLOCK_IN_OUT_ALLOW
+	•	HR_VIEW_TEAM
+	•	HR_MANAGE_SCHEDULES
+	•	HR_EDIT_PUNCHES
+	•	HR_MANAGE_SETTINGS
+	•	SERVICE_VIEW_REPORTS
+	•	SERVICE_GENERATE_PAYOUTS
+	•	GEO_OVERRIDE (solo gerente)
+
+⸻
+
+Auditoría (usar audit_events existente)
+
+Eventos mínimos:
+	•	SCHEDULE_CREATED/UPDATED
+	•	CLOCK_IN, CLOCK_OUT, AUTO_CLOCK_OUT
+	•	AUTO_LOGOUT_AFTER_SHIFT
+	•	LATE_ARRIVAL_EMAIL_SENT
+	•	PUNCH_EDITED
+	•	GEO_CHECK_PASSED, GEO_CHECK_FAILED, GEO_OVERRIDE_USED
+	•	SERVICE_CHARGE_LEDGER_CREATED/VOIDED
+	•	SERVICE_PAYOUT_PREVIEW_CREATED, SERVICE_PAYOUT_FINALIZED
+
+⸻
+
+Historias de Usuario (HU)
+
+ÉPICA HR-1: Horarios semanales editables (gerente) + audit
+
+HU HR1.1 — Crear/editar horario semanal por empleado (entrada y salida)
+
+CDA
+	•	Gerente (permiso HR_MANAGE_SCHEDULES) puede crear/editar:
+	•	start_time y end_time por día
+	•	día libre
+	•	Copiar semana anterior.
+	•	Audit SCHEDULE_UPDATED con before/after.
+DoD
+	•	Horarios persistidos y auditados, listos para tardía/autocierre.
+
+HU HR1.2 — Vista empleado: su horario semanal
+
+CDA
+	•	Empleado con HR_VIEW_SELF ve solo su horario.
+DoD
+	•	Vista self operativa.
+
+HU HR1.3 — Gerente: tabla semanal programado vs real
+
+CDA
+	•	Tabla por empleado y día:
+	•	scheduled in/out
+	•	real in/out
+	•	late_minutes
+	•	worked_minutes
+	•	overtime_daily
+	•	Filtro por semana.
+DoD
+	•	Gerente identifica tardías y horas extra.
+
+⸻
+
+ÉPICA HR-2: Geofence obligatorio para clock-in/out
+
+HU HR2.0 — Componente GeoCheck reutilizable
+
+CDA
+	•	Implementar función backend validateGeoOrThrow({lat,lng,accuracy}):
+	•	si geo_enforcement_enabled=false → pasa.
+	•	validar accuracy <= geo_accuracy_max_meters
+	•	calcular distancia Haversine a (business_lat/lng)
+	•	si distancia <= geo_radius_meters → pasa
+	•	si no → falla con mensaje claro.
+	•	En frontend:
+	•	solicitar ubicación con navigator.geolocation.getCurrentPosition
+	•	permitir geo_grace_attempts reintentos si falla accuracy.
+DoD
+	•	GeoCheck se usa en clock-in y clock-out y produce auditoría.
+
+⸻
+
+ÉPICA HR-3: Clock-in/out con reglas (tardía + email) y geo obligatorio
+
+HU HR3.1 — Clock-in (geo obligatorio)
+
+CDA
+	•	Requiere HR_CLOCK_IN_OUT_ALLOW.
+	•	Front obtiene geo (lat/lng/accuracy) y lo envía al backend.
+	•	Backend ejecuta GeoCheck:
+	•	si pasa: guardar clockin_geo_* y clockin_geo_verified=true
+	•	auditar GEO_CHECK_PASSED
+	•	si falla: auditar GEO_CHECK_FAILED y bloquear.
+	•	Si ya existe punch abierto hoy → no duplicar.
+	•	Snapshot del horario del día:
+	•	scheduled_start_at, scheduled_end_at (si existe)
+	•	Tardía:
+	•	si clock_in_at > scheduled_start_at + lateness_grace_minutes:
+	•	late_minutes calculado
+	•	enviar email a late_alert_email_to (1 por turno)
+	•	audit LATE_ARRIVAL_EMAIL_SENT
+	•	Audit CLOCK_IN.
+
+Override gerente
+	•	Si GeoCheck falla, gerente con permiso GEO_OVERRIDE puede registrar clock-in desde panel HR:
+	•	razón obligatoria
+	•	guardar geo como null + clockin_geo_verified=false
+	•	auditar GEO_OVERRIDE_USED
+
+DoD
+	•	Nadie puede clock-in fuera de ubicación salvo override gerente auditado.
+
+HU HR3.2 — Clock-out (geo obligatorio)
+
+CDA
+	•	Requiere HR_CLOCK_IN_OUT_ALLOW.
+	•	Front obtiene geo y envía al backend.
+	•	Backend GeoCheck:
+	•	si pasa: guardar clockout_geo_* y verified=true
+	•	si falla: bloquear y auditar.
+	•	Cierra punch abierto:
+	•	clock_out_at=now
+	•	clock_out_type=MANUAL
+	•	Calcular:
+	•	worked_minutes
+	•	overtime_minutes_daily = max(0, worked - threshold_daily)
+	•	Audit CLOCK_OUT.
+
+Override gerente
+	•	Si GeoCheck falla, gerente puede registrar clock-out manual con razón obligatoria y audit.
+
+DoD
+	•	Clock-out solo se registra dentro del geofence salvo override gerente.
+
+⸻
+
+ÉPICA HR-4: AutoClockOut (salida programada) + AutoLogout (+4h)
+
+HU HR4.1 — AutoClockOut registra salida a la hora del horario (solo si no marcó salida)
+
+CDA
+	•	Job cada 5–10 min:
+	•	seleccionar hr_time_punches con clock_out_at IS NULL
+	•	si scheduled_end_at existe:
+	•	set clock_out_at = scheduled_end_at
+	•	set clock_out_type = AUTO
+	•	calcular worked/overtime diario
+	•	audit AUTO_CLOCK_OUT
+	•	si no existe scheduled_end_at:
+	•	NO inventar salida
+	•	crear alerta interna para gerente “turno sin horario requiere revisión”
+	•	audit AUTO_CLOCK_OUT_SKIPPED_NO_SCHEDULE
+	•	Idempotente.
+
+DoD
+	•	Salida automática siempre coincide con la hora programada; nunca usa +4h como salida.
+
+HU HR4.2 — AutoLogout 4h después de salida programada (solo sesión)
+
+CDA
+	•	Proceso separado:
+	•	si sesión activa y ya pasaron scheduled_end_at + auto_logout_after_shift_hours:
+	•	invalidar sesión/token
+	•	audit AUTO_LOGOUT_AFTER_SHIFT
+	•	No altera clock_out_at.
+
+DoD
+	•	No quedan sesiones abiertas sin afectar horas.
+
+⸻
+
+ÉPICA HR-5: Mantenimiento de marcas (gerente)
+
+HU HR5.1 — Editar clock-in/clock-out con razón y auditoría
+
+CDA
+	•	Permiso HR_EDIT_PUNCHES.
+	•	Gerente puede ajustar clock_in_at y clock_out_at.
+	•	Razón obligatoria.
+	•	Validaciones: out>=in, duración <= hard max (settings).
+	•	Guardar edited_by_employee_id, edited_at, edit_reason.
+	•	Audit PUNCH_EDITED with before/after.
+
+DoD
+	•	Ajustes seguros y trazables.
+
+⸻
+
+ÉPICA HR-6: Control de horas extra (prevención)
+
+HU HR6.1 — Reporte semanal de horas y overtime + alertas
+
+CDA
+	•	overtime weekly = max(0, sum(worked week) - threshold_weekly).
+	•	Dashboard HR:
+	•	alertas por día > threshold_daily
+	•	alertas por semana > threshold_weekly
+	•	No bloquea operación.
+
+DoD
+	•	Gerente puede prevenir overtime.
+
+⸻
+
+ÉPICA SRV-1: 10% Servicio (ledger + liquidación)
+
+HU SRV1.1 — Crear ledger al pagar ítems elegibles
+
+CDA
+	•	Al marcar ítem financieramente PAID:
+	•	si service_tax_applicable=true snapshot:
+	•	base = (precio snapshot + modifiers snapshot - descuentos snapshot aplicables)
+	•	service_amount = round(base * service_charge_rate) con rounding_mode
+	•	insert service_charge_ledger con responsible_waiter snapshot
+	•	Si ítem/payment se void/anula:
+	•	ledger pasa a VOIDED
+	•	Auditar creación/void.
+
+DoD
+	•	Servicio se registra solo cuando se paga y es reversible.
+
+HU SRV1.2 — Reporte servicio por periodo y por empleado
+
+CDA
+	•	Totales por empleado + total general + detalle opcional.
+DoD
+	•	Reporte usable.
+
+HU SRV1.3 — Liquidación (payout) por periodo (gerente)
+
+CDA
+	•	PREVIEW y FINALIZED, idempotente por periodo.
+	•	Audit SERVICE_PAYOUT_FINALIZED.
+
+DoD
+	•	Liquidación sin duplicados.
+
+⸻
+
+UI mínima (módulo HR)
+	•	Mi turno: Clock-in/out + estado.
+	•	Mi horario.
+	•	Gerencia HR: Horarios, Marcas semana, Alertas, Settings.
+	•	Servicio: Reporte + Liquidación.
+Todo condicionado por permisos existentes.
+
+⸻
+
+Definition of Done global
+	•	Geofence obligatorio en clock-in y clock-out con validación de precisión + auditoría + override gerente.
+	•	Horarios editables/auditables.
+	•	Clock-in/out + tardía email operativo.
+	•	AutoClockOut registra salida con hora programada, AutoLogout separado (+4h).
+	•	Reportes/alertas para overtime.
+	•	Servicio 10% ledger + reporte + liquidación.
+	•	Todo auditado y sin refactors fuera del alcance.
