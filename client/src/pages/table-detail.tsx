@@ -96,7 +96,7 @@ export default function TableDetailPage() {
   const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
     queryKey: ["/api/tables", tableId, "current"],
     enabled: !!tableId,
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   const { data: products = [] } = useQuery<Product[]>({
@@ -113,17 +113,28 @@ export default function TableDetailPage() {
 
   useEffect(() => {
     wsManager.connect();
+    const invalidate = () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+    };
     const unsubs = [
       wsManager.on("order_updated", (p: any) => {
-        if (p.tableId === tableId) {
-          queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
-        }
+        if (!p.tableId || p.tableId === tableId) invalidate();
       }),
       wsManager.on("qr_submission_created", (p: any) => {
         if (p.tableId === tableId) {
-          queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+          invalidate();
           toast({ title: "Nuevo pedido QR", description: p.tableName ? `Pedido recibido en ${p.tableName}` : "Un cliente ha enviado un pedido desde QR" });
         }
+      }),
+      wsManager.on("kitchen_item_status_changed", invalidate),
+      wsManager.on("payment_completed", (p: any) => {
+        invalidate();
+      }),
+      wsManager.on("payment_voided", (p: any) => {
+        invalidate();
+      }),
+      wsManager.on("table_status_changed", (p: any) => {
+        if (!p.tableId || p.tableId === tableId) invalidate();
       }),
     ];
     return () => unsubs.forEach((u) => u());

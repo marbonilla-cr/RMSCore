@@ -151,32 +151,35 @@ export default function POSPage() {
 
   useEffect(() => {
     wsManager.connect();
-    const unsub1 = wsManager.on("order_updated", () => {
+    const invalidateTables = () => {
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+    };
+    const invalidateOrderDetail = () => {
       if (selectedTable?.orderId) {
         queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "splits"] });
         queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "payments"] });
       }
-    });
-    const unsub2 = wsManager.on("table_status_changed", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
-    });
-    const unsub3 = wsManager.on("payment_completed", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+    };
+    const invalidatePaymentData = () => {
+      invalidateTables();
+      invalidateOrderDetail();
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/paid-orders"] });
-    });
-    const unsub4 = wsManager.on("payment_voided", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/paid-orders"] });
-    });
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+    };
+    const unsubs = [
+      wsManager.on("order_updated", () => { invalidateTables(); invalidateOrderDetail(); }),
+      wsManager.on("table_status_changed", invalidateTables),
+      wsManager.on("payment_completed", invalidatePaymentData),
+      wsManager.on("payment_voided", invalidatePaymentData),
+      wsManager.on("kitchen_item_status_changed", () => { invalidateTables(); invalidateOrderDetail(); }),
+      wsManager.on("qr_submission_created", invalidateTables),
+    ];
+    return () => unsubs.forEach(u => u());
   }, [selectedTable?.orderId]);
 
   const { data: posTables = [], isLoading } = useQuery<POSTable[]>({
     queryKey: ["/api/pos/tables"],
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   useEffect(() => {

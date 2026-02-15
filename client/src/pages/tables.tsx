@@ -59,17 +59,18 @@ export default function TablesPage() {
 
   const { data: tables = [], isLoading } = useQuery<TableView[]>({
     queryKey: ["/api/waiter/tables"],
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   useEffect(() => {
     wsManager.connect();
+    const invalidate = () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+    };
     const unsubs = [
-      wsManager.on("table_status_changed", () => {
-        queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
-      }),
+      wsManager.on("table_status_changed", invalidate),
       wsManager.on("qr_submission_created", (p: any) => {
-        queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+        invalidate();
         toast({
           title: "Nueva orden QR",
           description: p?.tableName ? `Nueva orden QR en ${p.tableName}` : "Un cliente ha enviado un pedido QR",
@@ -88,9 +89,10 @@ export default function TablesPage() {
           osc.stop(ctx.currentTime + 0.5);
         } catch {}
       }),
-      wsManager.on("order_updated", () => {
-        queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
-      }),
+      wsManager.on("order_updated", invalidate),
+      wsManager.on("payment_completed", invalidate),
+      wsManager.on("payment_voided", invalidate),
+      wsManager.on("kitchen_item_status_changed", invalidate),
     ];
     return () => unsubs.forEach((u) => u());
   }, [toast]);

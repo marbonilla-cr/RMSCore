@@ -3173,6 +3173,16 @@ export async function registerRoutes(
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
   wss.on("connection", (ws) => {
     wsClients.add(ws);
+    ws.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === "ping") {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "pong" }));
+          }
+        }
+      } catch {}
+    });
     ws.on("close", () => wsClients.delete(ws));
     ws.on("error", () => wsClients.delete(ws));
   });

@@ -521,7 +521,7 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error("Error cargando datos");
       return res.json();
     },
-    refetchInterval: historicalMode ? false : 30000,
+    refetchInterval: historicalMode ? false : 10000,
   });
 
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
