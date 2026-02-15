@@ -409,6 +409,18 @@ export async function registerRoutes(
     res.set("Content-Type", "text/html").send(html);
   });
 
+  app.get("/api/admin/tables/:id/qr.png", requireRole("MANAGER"), async (req, res) => {
+    const table = await storage.getTable(parseInt(req.params.id as string));
+    if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+    const host = req.headers.host || "localhost:5000";
+    const protocol = req.headers["x-forwarded-proto"] || "http";
+    const url = `${protocol}://${host}/qr/${table.tableCode}`;
+    const pngBuffer = await QRCode.toBuffer(url, { type: "png", margin: 2, width: 600, color: { dark: "#000000", light: "#FFFFFF" } });
+    res.set("Content-Type", "image/png");
+    res.set("Content-Disposition", `attachment; filename="QR-${table.tableName.replace(/[^a-zA-Z0-9_-]/g, "_")}.png"`);
+    res.send(pngBuffer);
+  });
+
   // ==================== ADMIN: CATEGORIES ====================
   app.get("/api/admin/categories", requireRole("MANAGER"), async (_req, res) => {
     res.json(await storage.getAllCategories());

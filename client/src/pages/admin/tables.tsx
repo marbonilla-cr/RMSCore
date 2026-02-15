@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, QrCode, Grid3x3, Loader2, ExternalLink } from "lucide-react";
+import { Plus, Pencil, QrCode, Grid3x3, Loader2, ExternalLink, Download } from "lucide-react";
 import type { Table as RestTable } from "@shared/schema";
 
 export default function AdminTablesPage() {
@@ -168,6 +168,14 @@ export default function AdminTablesPage() {
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => window.open(`/api/admin/tables/${table.id}/qr`, '_blank')} data-testid={`button-qr-${table.id}`} title="Ver QR">
                     <QrCode className="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={() => {
+                    const a = document.createElement("a");
+                    a.href = `/api/admin/tables/${table.id}/qr.png`;
+                    a.download = `QR-${table.tableName}.png`;
+                    a.click();
+                  }} data-testid={`button-download-qr-${table.id}`} title="Descargar QR PNG">
+                    <Download className="w-4 h-4" />
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => openEdit(table)} data-testid={`button-edit-table-${table.id}`} title="Editar">
                     <Pencil className="w-4 h-4" />
