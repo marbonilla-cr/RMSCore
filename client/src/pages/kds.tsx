@@ -109,6 +109,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
   const [, forceUpdate] = useState(0);
   const [pendingAlertCount, setPendingAlertCount] = useState(0);
   const knownTicketIdsRef = useRef<Set<number> | null>(null);
+  const alertDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeQueryKey = ["/api/kds/tickets", "active", destination];
   const historyQueryKey = ["/api/kds/tickets", "history", destination];
@@ -160,7 +161,11 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
     const newTicketIds = Array.from(currentIds).filter(id => !knownTicketIdsRef.current!.has(id));
     if (newTicketIds.length > 0) {
       setPendingAlertCount(prev => prev + newTicketIds.length);
-      playAlertSound();
+      if (alertDebounceRef.current) clearTimeout(alertDebounceRef.current);
+      alertDebounceRef.current = setTimeout(() => {
+        playAlertSound();
+        alertDebounceRef.current = null;
+      }, 500);
     }
 
     knownTicketIdsRef.current = currentIds;

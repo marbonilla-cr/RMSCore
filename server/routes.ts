@@ -995,8 +995,8 @@ export async function registerRoutes(
       }
       await storage.recalcOrderTotal(order.id);
 
-      for (const ticketId of createdTicketIds) {
-        broadcast("kitchen_ticket_created", { ticketId, tableId, tableName });
+      if (createdTicketIds.length > 0) {
+        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId, tableName });
       }
       broadcast("order_updated", { tableId, orderId: order.id });
       broadcast("table_status_changed", { tableId });
@@ -1340,8 +1340,8 @@ export async function registerRoutes(
       await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
       await storage.recalcOrderTotal(order.id);
 
-      for (const ticketId of createdTicketIds) {
-        broadcast("kitchen_ticket_created", { ticketId, tableId, tableName: table.tableName });
+      if (createdTicketIds.length > 0) {
+        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId, tableName: table.tableName });
       }
       broadcast("order_updated", { tableId, orderId: order.id });
       broadcast("table_status_changed", { tableId });
@@ -1448,8 +1448,8 @@ export async function registerRoutes(
         metadata: { itemCount: subItems.length, submissionId: subId },
       });
 
-      for (const ticketId of createdTicketIds) {
-        broadcast("kitchen_ticket_created", { ticketId, tableId: sub.tableId, tableName: table.tableName });
+      if (createdTicketIds.length > 0) {
+        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: sub.tableId, tableName: table.tableName });
       }
       broadcast("order_updated", { tableId: sub.tableId, orderId: order.id });
       broadcast("table_status_changed", { tableId: sub.tableId });
