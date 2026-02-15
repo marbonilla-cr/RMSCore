@@ -267,7 +267,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/employees/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       const { displayName, role, active, email, username } = req.body;
       const updates: any = {};
       if (displayName !== undefined) updates.displayName = displayName;
@@ -293,7 +293,7 @@ export async function registerRoutes(
 
   app.post("/api/admin/employees/:id/reset-password", requireRole("MANAGER"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       const { password } = req.body;
       if (!password) return res.status(400).json({ message: "Password requerido" });
       await storage.updateUser(id, { password });
@@ -307,7 +307,7 @@ export async function registerRoutes(
 
   app.post("/api/admin/employees/:id/reset-pin", requireRole("MANAGER"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       await storage.resetPin(id);
       const actor = (req as any).user;
       await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PIN_RESET", entityType: "USER", entityId: id, metadata: {} });
@@ -319,7 +319,7 @@ export async function registerRoutes(
 
   app.post("/api/admin/employees/:id/generate-pin", requireRole("MANAGER"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       const pin = await storage.generateAndSetPin(id);
       const actor = (req as any).user;
       await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PIN_GENERATED", entityType: "USER", entityId: id, metadata: {} });
@@ -346,7 +346,7 @@ export async function registerRoutes(
 
   app.put("/api/admin/role-permissions/:role", requireRole("MANAGER"), async (req, res) => {
     try {
-      const role = req.params.role;
+      const role = req.params.role as string;
       const { permissions } = req.body;
       if (!Array.isArray(permissions)) return res.status(400).json({ message: "permissions debe ser un array" });
       await storage.setRolePermissions(role, permissions);
@@ -396,7 +396,7 @@ export async function registerRoutes(
       if (req.body.tableName !== undefined) updates.tableName = String(req.body.tableName).trim();
       if (req.body.active !== undefined) updates.active = Boolean(req.body.active);
       if (req.body.sortOrder !== undefined) updates.sortOrder = typeof req.body.sortOrder === "number" ? req.body.sortOrder : parseInt(String(req.body.sortOrder)) || 0;
-      const table = await storage.updateTable(parseInt(req.params.id), updates);
+      const table = await storage.updateTable(parseInt(req.params.id as string), updates);
       res.json(table);
     } catch (err: any) {
       const msg = err.message || "Error al actualizar mesa";
@@ -408,7 +408,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/tables/:id/qr", requireRole("MANAGER"), async (req, res) => {
-    const table = await storage.getTable(parseInt(req.params.id));
+    const table = await storage.getTable(parseInt(req.params.id as string));
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     const host = req.headers.host || "localhost:5000";
     const protocol = req.headers["x-forwarded-proto"] || "http";
@@ -449,7 +449,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/categories/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const cat = await storage.updateCategory(parseInt(req.params.id), req.body);
+      const cat = await storage.updateCategory(parseInt(req.params.id as string), req.body);
       res.json(cat);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -478,7 +478,7 @@ export async function registerRoutes(
       if (req.body.description !== undefined && req.body.description.trim() === "") {
         return res.status(400).json({ message: "La descripción es obligatoria" });
       }
-      const product = await storage.updateProduct(parseInt(req.params.id), req.body);
+      const product = await storage.updateProduct(parseInt(req.params.id as string), req.body);
       res.json(product);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -501,7 +501,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/payment-methods/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const pm = await storage.updatePaymentMethod(parseInt(req.params.id), req.body);
+      const pm = await storage.updatePaymentMethod(parseInt(req.params.id as string), req.body);
       res.json(pm);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -555,7 +555,7 @@ export async function registerRoutes(
       const data = { ...req.body };
       if (data.port !== undefined) data.port = Number(data.port) || 9100;
       if (data.paperWidth !== undefined) data.paperWidth = Number(data.paperWidth) || 80;
-      const printer = await storage.updatePrinter(parseInt(req.params.id), data);
+      const printer = await storage.updatePrinter(parseInt(req.params.id as string), data);
       if (!printer) return res.status(404).json({ message: "Impresora no encontrada" });
       res.json(printer);
     } catch (err: any) {
@@ -565,7 +565,7 @@ export async function registerRoutes(
 
   app.delete("/api/admin/printers/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      await storage.deletePrinter(parseInt(req.params.id));
+      await storage.deletePrinter(parseInt(req.params.id as string));
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -595,7 +595,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/modifier-groups/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const group = await storage.updateModifierGroup(parseInt(req.params.id), req.body);
+      const group = await storage.updateModifierGroup(parseInt(req.params.id as string), req.body);
       res.json(group);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -606,7 +606,7 @@ export async function registerRoutes(
     try {
       const parsed = insertModifierOptionSchema.parse({
         ...req.body,
-        groupId: parseInt(req.params.id),
+        groupId: parseInt(req.params.id as string),
       });
       const option = await storage.createModifierOption(parsed);
       res.json(option);
@@ -617,7 +617,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/modifier-options/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const option = await storage.updateModifierOption(parseInt(req.params.id), req.body);
+      const option = await storage.updateModifierOption(parseInt(req.params.id as string), req.body);
       res.json(option);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -626,7 +626,7 @@ export async function registerRoutes(
 
   app.delete("/api/admin/modifier-options/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      await storage.deleteModifierOption(parseInt(req.params.id));
+      await storage.deleteModifierOption(parseInt(req.params.id as string));
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -650,7 +650,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/discounts/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const discount = await storage.updateDiscount(parseInt(req.params.id), req.body);
+      const discount = await storage.updateDiscount(parseInt(req.params.id as string), req.body);
       res.json(discount);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -674,7 +674,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/tax-categories/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const tc = await storage.updateTaxCategory(parseInt(req.params.id), req.body);
+      const tc = await storage.updateTaxCategory(parseInt(req.params.id as string), req.body);
       res.json(tc);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -697,7 +697,7 @@ export async function registerRoutes(
 
   app.post("/api/admin/tax-categories/:id/apply-all", requireRole("MANAGER"), async (req, res) => {
     try {
-      const taxCategoryId = parseInt(req.params.id);
+      const taxCategoryId = parseInt(req.params.id as string);
       const tc = await storage.getTaxCategory(taxCategoryId);
       if (!tc) return res.status(404).json({ message: "Impuesto no encontrado" });
       const result = await storage.applyTaxToAllProducts(taxCategoryId);
@@ -715,7 +715,7 @@ export async function registerRoutes(
 
   // Product tax assignment
   app.get("/api/admin/products/:id/taxes", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
-    const ptcs = await storage.getProductTaxCategories(parseInt(req.params.id));
+    const ptcs = await storage.getProductTaxCategories(parseInt(req.params.id as string));
     res.json(ptcs.map(p => p.taxCategoryId));
   });
 
@@ -723,7 +723,7 @@ export async function registerRoutes(
     try {
       const { taxCategoryIds } = req.body;
       if (!Array.isArray(taxCategoryIds)) return res.status(400).json({ message: "taxCategoryIds debe ser un array" });
-      await storage.setProductTaxCategories(parseInt(req.params.id), taxCategoryIds);
+      await storage.setProductTaxCategories(parseInt(req.params.id as string), taxCategoryIds);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -739,7 +739,7 @@ export async function registerRoutes(
   // ==================== POS: BULK APPLY DISCOUNT TO ALL ITEMS ====================
   app.post("/api/pos/orders/:orderId/discount-all", requirePermission("POS_PAY"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const { discountName, discountType, discountValue } = req.body;
       const userId = req.session.userId!;
 
@@ -791,7 +791,7 @@ export async function registerRoutes(
   // ==================== POS: ITEM DISCOUNTS ====================
   app.post("/api/pos/order-items/:id/discount", requirePermission("POS_PAY"), async (req, res) => {
     try {
-      const orderItemId = parseInt(req.params.id);
+      const orderItemId = parseInt(req.params.id as string);
       const { discountName, discountType, discountValue } = req.body;
       const userId = req.session.userId!;
 
@@ -832,7 +832,7 @@ export async function registerRoutes(
 
   app.delete("/api/pos/order-items/:id/discount", requirePermission("POS_PAY"), async (req, res) => {
     try {
-      const orderItemId = parseInt(req.params.id);
+      const orderItemId = parseInt(req.params.id as string);
       const orderItem = await storage.getOrderItem(orderItemId);
       if (!orderItem) return res.status(404).json({ message: "Item no encontrado" });
 
@@ -849,7 +849,7 @@ export async function registerRoutes(
   // ==================== POS: ADD ITEMS TO ORDER ====================
   app.post("/api/pos/orders/:orderId/add-items", requirePermission("MODULE_POS_VIEW"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const userId = req.session.userId!;
       const { items, sendToKds } = req.body;
       if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
@@ -1082,14 +1082,14 @@ export async function registerRoutes(
   });
 
   app.get("/api/waiter/tables/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
-    const table = await storage.getTable(parseInt(req.params.id));
+    const table = await storage.getTable(parseInt(req.params.id as string));
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     res.json(table);
   });
 
   app.get("/api/tables/:id/current", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
-      const tableId = parseInt(req.params.id);
+      const tableId = parseInt(req.params.id as string);
       const table = await storage.getTable(tableId);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
@@ -1120,7 +1120,7 @@ export async function registerRoutes(
       }
 
       const voidedItemsList = await storage.getVoidedItemsForOrder(order.id);
-      const voidedUserIds = [...new Set(voidedItemsList.map(i => i.voidedByUserId))];
+      const voidedUserIds = Array.from(new Set(voidedItemsList.map(i => i.voidedByUserId)));
       const voidedUsersMap = new Map<number, string>();
       for (const uid of voidedUserIds) {
         const u = await storage.getUser(uid);
@@ -1139,7 +1139,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/waiter/tables/:id/order", requireRole("WAITER", "MANAGER"), async (req, res) => {
-    const tableId = parseInt(req.params.id);
+    const tableId = parseInt(req.params.id as string);
     const order = await storage.getOpenOrderForTable(tableId);
     if (!order) return res.json({ order: null, items: [], pendingSubmissions: [] });
 
@@ -1166,7 +1166,7 @@ export async function registerRoutes(
 
   app.get("/api/products/:id/modifiers", async (req, res) => {
     try {
-      const productId = parseInt(req.params.id);
+      const productId = parseInt(req.params.id as string);
       const links = await storage.getItemModifierGroups(productId);
       const groupIds = links.map(l => l.modifierGroupId);
       const [groups, allOptions] = await Promise.all([
@@ -1191,7 +1191,7 @@ export async function registerRoutes(
   // Waiter: Send round to kitchen
   app.post("/api/waiter/tables/:id/send-round", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
-      const tableId = parseInt(req.params.id);
+      const tableId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
       const { items } = req.body;
       if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
@@ -1355,7 +1355,7 @@ export async function registerRoutes(
   // ==================== WAITER: QR SUBMISSION ACCEPT ====================
   app.post("/api/waiter/qr-submissions/:id/accept", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
-      const subId = parseInt(req.params.id);
+      const subId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
       const sub = await storage.getSubmission(subId);
       if (!sub || sub.status !== "PENDING") return res.status(400).json({ message: "Submission no válida" });
@@ -1466,7 +1466,7 @@ export async function registerRoutes(
 
       res.json({
         ok: true,
-        ticketId,
+        ticketIds: createdTicketIds,
         table,
         activeOrder: updatedOrder,
         orderItems: updatedItems,
@@ -1480,8 +1480,8 @@ export async function registerRoutes(
   // ==================== WAITER: VOID ORDER ITEM (full or partial) ====================
   app.post("/api/waiter/orders/:orderId/items/:itemId/void", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
-      const itemId = parseInt(req.params.itemId);
+      const orderId = parseInt(req.params.orderId as string);
+      const itemId = parseInt(req.params.itemId as string);
       const userId = req.session.userId!;
       const user = (req as any).user;
       const { reason, qtyToVoid } = req.body;
@@ -1593,8 +1593,8 @@ export async function registerRoutes(
   // ==================== MANAGER: HARD DELETE ORDER ITEM ====================
   app.delete("/api/waiter/orders/:orderId/items/:itemId", requireRole("MANAGER"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
-      const itemId = parseInt(req.params.itemId);
+      const orderId = parseInt(req.params.orderId as string);
+      const itemId = parseInt(req.params.itemId as string);
       const userId = req.session.userId!;
 
       const order = await storage.getOrder(orderId);
@@ -1640,9 +1640,9 @@ export async function registerRoutes(
   // ==================== WAITER: GET VOIDED ITEMS ====================
   app.get("/api/waiter/orders/:orderId/voided-items", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const items = await storage.getVoidedItemsForOrder(orderId);
-      const userIds = [...new Set(items.map(i => i.voidedByUserId))];
+      const userIds = Array.from(new Set(items.map(i => i.voidedByUserId)));
       const usersMap = new Map<number, string>();
       for (const uid of userIds) {
         const u = await storage.getUser(uid);
@@ -1924,7 +1924,7 @@ export async function registerRoutes(
 
   app.patch("/api/kds/items/:id", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     try {
-      const itemId = parseInt(req.params.id);
+      const itemId = parseInt(req.params.id as string);
       const { status } = req.body;
       const data: any = { status };
       if (status === "PREPARING") data.prepStartedAt = new Date();
@@ -1954,7 +1954,7 @@ export async function registerRoutes(
 
   app.patch("/api/kds/tickets/:id", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     try {
-      const ticketId = parseInt(req.params.id);
+      const ticketId = parseInt(req.params.id as string);
       const { status } = req.body;
       const ticket = await storage.updateKitchenTicket(ticketId, { status });
 
@@ -2144,7 +2144,7 @@ export async function registerRoutes(
               if (item.status === "VOIDED") continue;
               const prod = item.productId ? productMap.get(item.productId) : null;
               if (prod && !prod.serviceTaxApplicable) continue;
-              const baseAmount = Number(item.unitPrice) * item.quantity;
+              const baseAmount = Number(item.productPriceSnapshot) * item.qty;
               const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
               if (serviceAmount > 0) {
                 await storage.createServiceChargeLedgerEntry({
@@ -2308,7 +2308,7 @@ export async function registerRoutes(
   // ==================== POS: NORMALIZE FOR SPLIT ====================
   app.post("/api/pos/orders/:orderId/normalize-split", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const result = await storage.normalizeOrderItemsForSplit(orderId);
       if (result.normalized) {
         await storage.recalcOrderTotal(orderId);
@@ -2323,7 +2323,7 @@ export async function registerRoutes(
   // ==================== POS: SPLIT ACCOUNTS ====================
   app.get("/api/pos/orders/:orderId/splits", requirePermission("POS_VIEW"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const splits = await storage.getSplitAccountsForOrder(orderId);
       const result = [];
       for (const split of splits) {
@@ -2338,7 +2338,7 @@ export async function registerRoutes(
 
   app.post("/api/pos/orders/:orderId/splits", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const { label, orderItemIds } = req.body;
       if (!label || !orderItemIds || !orderItemIds.length) {
         return res.status(400).json({ message: "Label y orderItemIds son requeridos" });
@@ -2360,7 +2360,7 @@ export async function registerRoutes(
 
   app.delete("/api/pos/splits/:id", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       await storage.deleteSplitAccount(id);
       broadcast("order_updated", {});
       res.json({ ok: true });
@@ -2544,7 +2544,7 @@ export async function registerRoutes(
             if (!oi || oi.status === "VOIDED") continue;
             const prod = oi.productId ? productMap.get(oi.productId) : null;
             if (prod && !prod.serviceTaxApplicable) continue;
-            const baseAmount = Number(oi.unitPrice) * oi.quantity;
+            const baseAmount = Number(oi.productPriceSnapshot) * oi.qty;
             const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
             if (serviceAmount > 0) {
               await storage.createServiceChargeLedgerEntry({
@@ -2812,7 +2812,7 @@ export async function registerRoutes(
   // ==================== POS: VOID ORDER (entire table) ====================
   app.post("/api/pos/void-order/:orderId", requirePermission("POS_VOID_ORDER"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const userId = req.session.userId!;
       const { reason } = req.body || {};
 
@@ -2916,7 +2916,7 @@ export async function registerRoutes(
   // ==================== POS: VOID PAYMENT ====================
   app.post("/api/pos/void-payment/:id", requirePermission("PAYMENT_CORRECT"), async (req, res) => {
     try {
-      const paymentId = parseInt(req.params.id);
+      const paymentId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
 
       const payment = await storage.getPayment(paymentId);
@@ -2965,7 +2965,7 @@ export async function registerRoutes(
   // ==================== POS: RECEIPT DATA (for screen print) ====================
   app.get("/api/pos/receipt-data/:orderId", requirePermission("POS_PRINT"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
@@ -3106,7 +3106,7 @@ export async function registerRoutes(
   // ==================== POS: REOPEN TABLE ====================
   app.post("/api/pos/reopen/:orderId", requirePermission("PAYMENT_CORRECT"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const userId = req.session.userId!;
 
       const order = await storage.getOrder(orderId);
@@ -3248,7 +3248,7 @@ export async function registerRoutes(
 
   app.get("/api/dashboard/orders/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const orderId = parseInt(req.params.id);
+      const orderId = parseInt(req.params.id as string);
       const detail = await storage.getOrderDetail(orderId);
       if (!detail) return res.status(404).json({ message: "Orden no encontrada" });
       res.json(detail);
