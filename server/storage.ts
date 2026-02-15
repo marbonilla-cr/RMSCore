@@ -596,6 +596,11 @@ export async function getKitchenTicketItems(ticketId: number) {
     .where(eq(kitchenTicketItems.kitchenTicketId, ticketId));
 }
 
+export async function getKitchenTicketItemsByTicketIds(ticketIds: number[]) {
+  if (ticketIds.length === 0) return [];
+  return db.select().from(kitchenTicketItems).where(inArray(kitchenTicketItems.kitchenTicketId, ticketIds));
+}
+
 export async function updateKitchenTicketItem(id: number, data: any) {
   const [item] = await db.update(kitchenTicketItems).set(data).where(eq(kitchenTicketItems.id, id)).returning();
   return item;

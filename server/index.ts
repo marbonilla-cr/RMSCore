@@ -1,10 +1,13 @@
 import express, { type Request, Response, NextFunction } from "express";
+import compression from "compression";
 import { registerRoutes } from "./routes";
 import { createServer } from "http";
 import { ensureSystemPermissions } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
+
+app.use(compression());
 
 declare module "http" {
   interface IncomingMessage {
@@ -48,8 +51,8 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      if (capturedJsonResponse && duration > 200) {
+        logLine += ` :: ${JSON.stringify(capturedJsonResponse).slice(0, 200)}`;
       }
 
       log(logLine);

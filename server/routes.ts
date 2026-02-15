@@ -1085,11 +1085,17 @@ export async function registerRoutes(
       }
 
       const items = await storage.getOrderItems(order.id);
-      const itemsWithMods = [];
-      for (const item of items) {
-        const mods = await storage.getOrderItemModifiers(item.id);
-        itemsWithMods.push({ ...item, modifiers: mods });
+      const itemIds = items.map(i => i.id);
+      const allMods = itemIds.length > 0 ? await storage.getOrderItemModifiersByItemIds(itemIds) : [];
+      const modsByItem = new Map<number, typeof allMods>();
+      for (const m of allMods) {
+        if (!modsByItem.has(m.orderItemId)) modsByItem.set(m.orderItemId, []);
+        modsByItem.get(m.orderItemId)!.push(m);
       }
+      const itemsWithMods = items.map(item => ({
+        ...item,
+        modifiers: modsByItem.get(item.id) || [],
+      }));
 
       const pendingSubs = await storage.getPendingSubmissions(order.id);
 
@@ -1148,14 +1154,18 @@ export async function registerRoutes(
     try {
       const productId = parseInt(req.params.id);
       const links = await storage.getItemModifierGroups(productId);
+      const groupIds = links.map(l => l.modifierGroupId);
+      const [groups, allOptions] = await Promise.all([
+        Promise.all(groupIds.map(id => storage.getModifierGroup(id))),
+        Promise.all(groupIds.map(id => storage.getModifierOptionsByGroup(id))),
+      ]);
       const result = [];
-      for (const link of links) {
-        const group = await storage.getModifierGroup(link.modifierGroupId);
+      for (let i = 0; i < links.length; i++) {
+        const group = groups[i];
         if (!group || !group.active) continue;
-        const options = await storage.getModifierOptionsByGroup(group.id);
         result.push({
           ...group,
-          options: options.filter(o => o.active),
+          options: (allOptions[i] || []).filter((o: any) => o.active),
         });
       }
       res.json(result);
@@ -1638,11 +1648,13 @@ export async function registerRoutes(
   });
 
   app.get("/api/qr/:tableCode/menu", async (req, res) => {
-    const table = await storage.getTableByCode(req.params.tableCode);
+    const [table, prods, cats] = await Promise.all([
+      storage.getTableByCode(req.params.tableCode as string),
+      storage.getQRProducts(),
+      storage.getAllCategories(),
+    ]);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
 
-    const prods = await storage.getQRProducts();
-    const cats = await storage.getAllCategories();
     const catMap = new Map(cats.map(c => [c.id, c.name]));
 
     const result = prods
@@ -1820,21 +1832,28 @@ export async function registerRoutes(
       tickets = await storage.getHistoryKitchenTickets(destination);
     }
 
+    const ticketIds = tickets.map(t => t.id);
+    const allTicketItems = ticketIds.length > 0 ? await storage.getKitchenTicketItemsByTicketIds(ticketIds) : [];
+
+    const allOrderItemIds = allTicketItems.map(i => i.orderItemId);
+    const allMods = allOrderItemIds.length > 0 ? await storage.getOrderItemModifiersByItemIds(allOrderItemIds) : [];
+    const modsByItem = new Map<number, typeof allMods>();
+    for (const m of allMods) {
+      if (!modsByItem.has(m.orderItemId)) modsByItem.set(m.orderItemId, []);
+      modsByItem.get(m.orderItemId)!.push(m);
+    }
+
     const result = [];
     for (const t of tickets) {
-      const items = await storage.getKitchenTicketItems(t.id);
+      const items = allTicketItems.filter(i => i.kitchenTicketId === t.id);
       const nonVoided = items.filter(i => i.status !== "VOIDED");
       if (type === "active" && nonVoided.length === 0) continue;
-      const itemsWithMods = [];
-      for (const i of nonVoided) {
-        const mods = await storage.getOrderItemModifiers(i.orderItemId);
-        itemsWithMods.push({
-          ...i,
-          prepStartedAt: i.prepStartedAt?.toISOString() || null,
-          readyAt: i.readyAt?.toISOString() || null,
-          modifiers: mods,
-        });
-      }
+      const itemsWithMods = nonVoided.map(i => ({
+        ...i,
+        prepStartedAt: i.prepStartedAt?.toISOString() || null,
+        readyAt: i.readyAt?.toISOString() || null,
+        modifiers: modsByItem.get(i.orderItemId) || [],
+      }));
       result.push({
         ...t,
         createdAt: t.createdAt?.toISOString() || new Date().toISOString(),
