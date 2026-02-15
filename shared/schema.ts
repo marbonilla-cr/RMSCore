@@ -57,6 +57,9 @@ export const products = pgTable("products", {
   visibleQr: boolean("visible_qr").notNull().default(true),
   availablePortions: integer("available_portions"),
   serviceTaxApplicable: boolean("service_tax_applicable").notNull().default(true),
+  inventoryControlEnabled: boolean("inventory_control_enabled").notNull().default(false),
+  recipeYield: numeric("recipe_yield", { precision: 10, scale: 2 }),
+  recipeVersion: integer("recipe_version").notNull().default(1),
 });
 
 export const paymentMethods = pgTable("payment_methods", {
@@ -464,6 +467,168 @@ export const serviceChargePayouts = pgTable("service_charge_payouts", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ==================== INVENTORY MODULE ====================
+
+export const invItems = pgTable("inv_items", {
+  id: serial("id").primaryKey(),
+  sku: text("sku").notNull().unique(),
+  name: text("name").notNull(),
+  category: text("category").notNull().default("General"),
+  baseUom: text("base_uom").notNull().default("UNIT"),
+  onHandQtyBase: numeric("on_hand_qty_base", { precision: 12, scale: 4 }).notNull().default("0"),
+  reorderPointQtyBase: numeric("reorder_point_qty_base", { precision: 12, scale: 4 }).notNull().default("0"),
+  parLevelQtyBase: numeric("par_level_qty_base", { precision: 12, scale: 4 }).notNull().default("0"),
+  isActive: boolean("is_active").notNull().default(true),
+  isPerishable: boolean("is_perishable").notNull().default(false),
+  notes: text("notes"),
+  avgCostPerBaseUom: numeric("avg_cost_per_base_uom", { precision: 12, scale: 6 }).notNull().default("0"),
+  lastCostPerBaseUom: numeric("last_cost_per_base_uom", { precision: 12, scale: 6 }).notNull().default("0"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const invUomConversions = pgTable("inv_uom_conversions", {
+  id: serial("id").primaryKey(),
+  invItemId: integer("inv_item_id").notNull(),
+  fromUom: text("from_uom").notNull(),
+  toBaseMultiplier: numeric("to_base_multiplier", { precision: 12, scale: 4 }).notNull(),
+  isDefaultPurchaseUom: boolean("is_default_purchase_uom").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invMovements = pgTable("inv_movements", {
+  id: serial("id").primaryKey(),
+  businessDate: text("business_date").notNull(),
+  movementType: text("movement_type").notNull(),
+  invItemId: integer("inv_item_id").notNull(),
+  qtyDeltaBase: numeric("qty_delta_base", { precision: 12, scale: 4 }).notNull(),
+  unitCostPerBaseUom: numeric("unit_cost_per_base_uom", { precision: 12, scale: 6 }),
+  valueDelta: numeric("value_delta", { precision: 12, scale: 2 }),
+  referenceType: text("reference_type"),
+  referenceId: text("reference_id"),
+  note: text("note"),
+  createdByEmployeeId: integer("created_by_employee_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invSuppliers = pgTable("inv_suppliers", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  contactName: text("contact_name"),
+  phone: text("phone"),
+  email: text("email"),
+  leadTimeDays: integer("lead_time_days").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invSupplierItems = pgTable("inv_supplier_items", {
+  id: serial("id").primaryKey(),
+  supplierId: integer("supplier_id").notNull(),
+  invItemId: integer("inv_item_id").notNull(),
+  purchaseUom: text("purchase_uom").notNull(),
+  lastPricePerPurchaseUom: numeric("last_price_per_purchase_uom", { precision: 12, scale: 2 }).notNull().default("0"),
+  isPreferred: boolean("is_preferred").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invPurchaseOrders = pgTable("inv_purchase_orders", {
+  id: serial("id").primaryKey(),
+  supplierId: integer("supplier_id").notNull(),
+  status: text("status").notNull().default("DRAFT"),
+  createdByEmployeeId: integer("created_by_employee_id").notNull(),
+  sentAt: timestamp("sent_at"),
+  expectedDeliveryDate: text("expected_delivery_date"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const invPurchaseOrderLines = pgTable("inv_purchase_order_lines", {
+  id: serial("id").primaryKey(),
+  purchaseOrderId: integer("purchase_order_id").notNull(),
+  invItemId: integer("inv_item_id").notNull(),
+  qtyPurchaseUom: numeric("qty_purchase_uom", { precision: 12, scale: 4 }).notNull(),
+  purchaseUom: text("purchase_uom").notNull(),
+  unitPricePerPurchaseUom: numeric("unit_price_per_purchase_uom", { precision: 12, scale: 2 }).notNull(),
+  toBaseMultiplierSnapshot: numeric("to_base_multiplier_snapshot", { precision: 12, scale: 4 }).notNull(),
+  qtyBaseExpected: numeric("qty_base_expected", { precision: 12, scale: 4 }).notNull(),
+  qtyBaseReceived: numeric("qty_base_received", { precision: 12, scale: 4 }).notNull().default("0"),
+  lineStatus: text("line_status").notNull().default("OPEN"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invPoReceipts = pgTable("inv_po_receipts", {
+  id: serial("id").primaryKey(),
+  purchaseOrderId: integer("purchase_order_id").notNull(),
+  receivedAt: timestamp("received_at").defaultNow(),
+  receivedByEmployeeId: integer("received_by_employee_id").notNull(),
+  note: text("note"),
+});
+
+export const invPoReceiptLines = pgTable("inv_po_receipt_lines", {
+  id: serial("id").primaryKey(),
+  receiptId: integer("receipt_id").notNull(),
+  poLineId: integer("po_line_id").notNull(),
+  qtyPurchaseUomReceived: numeric("qty_purchase_uom_received", { precision: 12, scale: 4 }).notNull(),
+  qtyBaseReceived: numeric("qty_base_received", { precision: 12, scale: 4 }).notNull(),
+  unitPricePerPurchaseUom: numeric("unit_price_per_purchase_uom", { precision: 12, scale: 2 }).notNull(),
+  unitCostPerBaseUom: numeric("unit_cost_per_base_uom", { precision: 12, scale: 6 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invPhysicalCounts = pgTable("inv_physical_counts", {
+  id: serial("id").primaryKey(),
+  status: text("status").notNull().default("DRAFT"),
+  scope: text("scope").notNull().default("ALL"),
+  categoryFilter: text("category_filter"),
+  createdByEmployeeId: integer("created_by_employee_id").notNull(),
+  finalizedByEmployeeId: integer("finalized_by_employee_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  finalizedAt: timestamp("finalized_at"),
+  note: text("note"),
+});
+
+export const invPhysicalCountLines = pgTable("inv_physical_count_lines", {
+  id: serial("id").primaryKey(),
+  physicalCountId: integer("physical_count_id").notNull(),
+  invItemId: integer("inv_item_id").notNull(),
+  systemQtyBase: numeric("system_qty_base", { precision: 12, scale: 4 }).notNull().default("0"),
+  countedQtyBase: numeric("counted_qty_base", { precision: 12, scale: 4 }),
+  deltaQtyBase: numeric("delta_qty_base", { precision: 12, scale: 4 }),
+  adjustmentReason: text("adjustment_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invRecipes = pgTable("inv_recipes", {
+  id: serial("id").primaryKey(),
+  menuProductId: integer("menu_product_id").notNull(),
+  version: integer("version").notNull().default(1),
+  isActive: boolean("is_active").notNull().default(true),
+  yieldQty: numeric("yield_qty", { precision: 10, scale: 2 }).notNull().default("1"),
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invRecipeLines = pgTable("inv_recipe_lines", {
+  id: serial("id").primaryKey(),
+  recipeId: integer("recipe_id").notNull(),
+  invItemId: integer("inv_item_id").notNull(),
+  qtyBasePerMenuUnit: numeric("qty_base_per_menu_unit", { precision: 12, scale: 4 }).notNull(),
+  wastePct: numeric("waste_pct", { precision: 5, scale: 2 }).notNull().default("0"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invOrderItemConsumptions = pgTable("inv_order_item_consumptions", {
+  id: serial("id").primaryKey(),
+  orderItemId: integer("order_item_id").notNull(),
+  recipeId: integer("recipe_id").notNull(),
+  status: text("status").notNull().default("CONSUMED"),
+  createdAt: timestamp("created_at").defaultNow(),
+  reversedAt: timestamp("reversed_at"),
+});
+
 // Insert schemas
 export const insertHrSettingsSchema = createInsertSchema(hrSettings).omit({ id: true, updatedAt: true });
 export const insertHrWeeklyScheduleSchema = createInsertSchema(hrWeeklySchedules).omit({ id: true, createdAt: true, updatedAt: true });
@@ -650,3 +815,48 @@ export type ServiceChargeLedgerEntry = typeof serviceChargeLedger.$inferSelect;
 export type InsertServiceChargeLedgerEntry = z.infer<typeof insertServiceChargeLedgerSchema>;
 export type ServiceChargePayout = typeof serviceChargePayouts.$inferSelect;
 export type InsertServiceChargePayout = z.infer<typeof insertServiceChargePayoutSchema>;
+
+// Inventory Module types
+export const insertInvItemSchema = createInsertSchema(invItems).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertInvUomConversionSchema = createInsertSchema(invUomConversions).omit({ id: true, createdAt: true });
+export const insertInvMovementSchema = createInsertSchema(invMovements).omit({ id: true, createdAt: true });
+export const insertInvSupplierSchema = createInsertSchema(invSuppliers).omit({ id: true, createdAt: true });
+export const insertInvSupplierItemSchema = createInsertSchema(invSupplierItems).omit({ id: true, createdAt: true });
+export const insertInvPurchaseOrderSchema = createInsertSchema(invPurchaseOrders).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertInvPurchaseOrderLineSchema = createInsertSchema(invPurchaseOrderLines).omit({ id: true, createdAt: true });
+export const insertInvPoReceiptSchema = createInsertSchema(invPoReceipts).omit({ id: true, receivedAt: true });
+export const insertInvPoReceiptLineSchema = createInsertSchema(invPoReceiptLines).omit({ id: true, createdAt: true });
+export const insertInvPhysicalCountSchema = createInsertSchema(invPhysicalCounts).omit({ id: true, createdAt: true, finalizedAt: true });
+export const insertInvPhysicalCountLineSchema = createInsertSchema(invPhysicalCountLines).omit({ id: true, createdAt: true });
+export const insertInvRecipeSchema = createInsertSchema(invRecipes).omit({ id: true, createdAt: true });
+export const insertInvRecipeLineSchema = createInsertSchema(invRecipeLines).omit({ id: true, createdAt: true });
+export const insertInvOrderItemConsumptionSchema = createInsertSchema(invOrderItemConsumptions).omit({ id: true, createdAt: true, reversedAt: true });
+
+export type InvItem = typeof invItems.$inferSelect;
+export type InsertInvItem = z.infer<typeof insertInvItemSchema>;
+export type InvUomConversion = typeof invUomConversions.$inferSelect;
+export type InsertInvUomConversion = z.infer<typeof insertInvUomConversionSchema>;
+export type InvMovement = typeof invMovements.$inferSelect;
+export type InsertInvMovement = z.infer<typeof insertInvMovementSchema>;
+export type InvSupplier = typeof invSuppliers.$inferSelect;
+export type InsertInvSupplier = z.infer<typeof insertInvSupplierSchema>;
+export type InvSupplierItem = typeof invSupplierItems.$inferSelect;
+export type InsertInvSupplierItem = z.infer<typeof insertInvSupplierItemSchema>;
+export type InvPurchaseOrder = typeof invPurchaseOrders.$inferSelect;
+export type InsertInvPurchaseOrder = z.infer<typeof insertInvPurchaseOrderSchema>;
+export type InvPurchaseOrderLine = typeof invPurchaseOrderLines.$inferSelect;
+export type InsertInvPurchaseOrderLine = z.infer<typeof insertInvPurchaseOrderLineSchema>;
+export type InvPoReceipt = typeof invPoReceipts.$inferSelect;
+export type InsertInvPoReceipt = z.infer<typeof insertInvPoReceiptSchema>;
+export type InvPoReceiptLine = typeof invPoReceiptLines.$inferSelect;
+export type InsertInvPoReceiptLine = z.infer<typeof insertInvPoReceiptLineSchema>;
+export type InvPhysicalCount = typeof invPhysicalCounts.$inferSelect;
+export type InsertInvPhysicalCount = z.infer<typeof insertInvPhysicalCountSchema>;
+export type InvPhysicalCountLine = typeof invPhysicalCountLines.$inferSelect;
+export type InsertInvPhysicalCountLine = z.infer<typeof insertInvPhysicalCountLineSchema>;
+export type InvRecipe = typeof invRecipes.$inferSelect;
+export type InsertInvRecipe = z.infer<typeof insertInvRecipeSchema>;
+export type InvRecipeLine = typeof invRecipeLines.$inferSelect;
+export type InsertInvRecipeLine = z.infer<typeof insertInvRecipeLineSchema>;
+export type InvOrderItemConsumption = typeof invOrderItemConsumptions.$inferSelect;
+export type InsertInvOrderItemConsumption = z.infer<typeof insertInvOrderItemConsumptionSchema>;
