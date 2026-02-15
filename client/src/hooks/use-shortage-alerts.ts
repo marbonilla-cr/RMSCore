@@ -49,7 +49,7 @@ export function useShortageAlerts() {
 
     const unsubAvail = wsManager.on("product_availability_changed", () => {
       if (!mounted.current) return;
-      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/shortages/products"] });
     });
 
     return () => {

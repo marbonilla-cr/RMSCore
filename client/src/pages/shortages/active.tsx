@@ -180,11 +180,11 @@ export default function ActiveShortages() {
   });
 
   const { data: invItems } = useQuery<InvItem[]>({
-    queryKey: ["/api/inv/items"],
+    queryKey: ["/api/shortages/inv-items"],
   });
 
   const { data: products } = useQuery<Product[]>({
-    queryKey: ["/api/products"],
+    queryKey: ["/api/shortages/products"],
   });
 
   const invItemMap = useMemo(() => {
@@ -282,7 +282,7 @@ export default function ActiveShortages() {
     },
     onSuccess: () => {
       invalidateShortages();
-      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/shortages/products"] });
       toast({ title: "Producto marcado como no disponible" });
     },
     onError: (err: Error) => {

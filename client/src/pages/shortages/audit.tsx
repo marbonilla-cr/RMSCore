@@ -83,7 +83,7 @@ export default function AuditPage() {
   });
 
   const { data: items } = useQuery<InvItem[]>({
-    queryKey: ["/api/inv/items"],
+    queryKey: ["/api/shortages/inv-items"],
   });
 
   const itemMap = useMemo(() => {
