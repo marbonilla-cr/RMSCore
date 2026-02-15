@@ -141,7 +141,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
     try {
       const user = (req as any).user;
       const id = parseInt(req.params.id as string);
-      const shortage = await shortageStorage.acknowledgeShortage(id, user.id, req.body.message);
+      const shortage = await shortageStorage.acknowledgeShortage(id, user.id, req.body?.message);
       broadcast("shortage_updated", { shortage });
       res.json(shortage);
     } catch (e: any) {
@@ -153,7 +153,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
     try {
       const user = (req as any).user;
       const id = parseInt(req.params.id as string);
-      const shortage = await shortageStorage.resolveShortage(id, user.id, req.body.message);
+      const shortage = await shortageStorage.resolveShortage(id, user.id, req.body?.message);
       broadcast("shortage_updated", { shortage });
       res.json(shortage);
     } catch (e: any) {
@@ -164,7 +164,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
   app.patch("/api/shortages/:id/close", requirePermission("SHORTAGES_CLOSE"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).user;
-      if (!req.body.message) return res.status(400).json({ message: "Nota obligatoria al cerrar" });
+      if (!req.body?.message) return res.status(400).json({ message: "Nota obligatoria al cerrar" });
       const id = parseInt(req.params.id as string);
       const shortage = await shortageStorage.closeShortage(id, user.id, req.body.message);
       broadcast("shortage_updated", { shortage });
@@ -188,7 +188,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
     try {
       const user = (req as any).user;
       const id = parseInt(req.params.id as string);
-      const alert = await shortageStorage.ackAuditAlert(id, user.id, req.body.notes);
+      const alert = await shortageStorage.ackAuditAlert(id, user.id, req.body?.notes);
       res.json(alert);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -198,7 +198,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
   app.patch("/api/audit-alerts/:id/close", requirePermission("AUDIT_MANAGE"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).user;
-      if (!req.body.notes) return res.status(400).json({ message: "Nota obligatoria al cerrar alerta" });
+      if (!req.body?.notes) return res.status(400).json({ message: "Nota obligatoria al cerrar alerta" });
       const id = parseInt(req.params.id as string);
       const alert = await shortageStorage.closeAuditAlert(id, user.id, req.body.notes);
       res.json(alert);
