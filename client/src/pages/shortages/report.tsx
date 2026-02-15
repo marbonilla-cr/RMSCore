@@ -137,6 +137,8 @@ export default function ShortageReport() {
     [notesValues, reportMutation]
   );
 
+  const hasSearch = search.trim().length > 0;
+
   const filteredInvItems = useMemo(() => {
     if (!invItems) return [];
     const q = search.toLowerCase().trim();
@@ -240,7 +242,7 @@ export default function ShortageReport() {
                 </p>
               )}
               {invGrouped.map(([cat, items]) => {
-                const isOpen = expandedCategories.has(`inv-${cat}`);
+                const isOpen = hasSearch || expandedCategories.has(`inv-${cat}`);
                 return (
                   <div key={cat} className="border rounded-md" data-testid={`group-inv-${cat}`}>
                     <button
@@ -335,7 +337,7 @@ export default function ShortageReport() {
                 </p>
               )}
               {prodGrouped.map(([cat, prods]) => {
-                const isOpen = expandedCategories.has(`prod-${cat}`);
+                const isOpen = hasSearch || expandedCategories.has(`prod-${cat}`);
                 return (
                   <div key={cat} className="border rounded-md" data-testid={`group-prod-${cat}`}>
                     <button
