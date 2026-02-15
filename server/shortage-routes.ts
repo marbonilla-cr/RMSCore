@@ -27,6 +27,34 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 export function registerShortageRoutes(app: Express, broadcast: (type: string, payload: any) => void) {
 
+  app.get("/api/shortages/inv-items", requirePermission("SHORTAGES_REPORT"), async (_req: Request, res: Response) => {
+    try {
+      const { getAllInvItems } = await import("./inventory-storage");
+      const items = await getAllInvItems();
+      res.json(items);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/shortages/products", requirePermission("SHORTAGES_REPORT"), async (_req: Request, res: Response) => {
+    try {
+      const products = await storage.getAllProducts();
+      res.json(products);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/shortages/categories", requirePermission("SHORTAGES_REPORT"), async (_req: Request, res: Response) => {
+    try {
+      const categories = await storage.getAllCategories();
+      res.json(categories);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/shortages/report", requirePermission("SHORTAGES_REPORT"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).user;

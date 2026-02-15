@@ -59,15 +59,15 @@ export default function ShortageReport() {
   const [notesValues, setNotesValues] = useState<Record<string, string>>({});
 
   const { data: invItems, isLoading: loadingInv } = useQuery<InvItem[]>({
-    queryKey: ["/api/inv/items"],
+    queryKey: ["/api/shortages/inv-items"],
   });
 
   const { data: products, isLoading: loadingProducts } = useQuery<Product[]>({
-    queryKey: ["/api/products"],
+    queryKey: ["/api/shortages/products"],
   });
 
   const { data: categories, isLoading: loadingCategories } = useQuery<Category[]>({
-    queryKey: ["/api/categories"],
+    queryKey: ["/api/shortages/categories"],
   });
 
   const reportMutation = useMutation({
