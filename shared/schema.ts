@@ -75,6 +75,8 @@ export const orders = pgTable("orders", {
   closedAt: timestamp("closed_at"),
   businessDate: text("business_date").notNull(),
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).default("0"),
+  paidAmount: numeric("paid_amount", { precision: 10, scale: 2 }).default("0"),
+  balanceDue: numeric("balance_due", { precision: 10, scale: 2 }).default("0"),
   dailyNumber: integer("daily_number"),
   globalNumber: integer("global_number"),
   parentOrderId: integer("parent_order_id"),
@@ -99,6 +101,7 @@ export const orderItems = pgTable("order_items", {
   createdAt: timestamp("created_at").defaultNow(),
   voidedAt: timestamp("voided_at"),
   voidedByUserId: integer("voided_by_user_id"),
+  taxSnapshotJson: jsonb("tax_snapshot_json"),
 });
 
 export const qrSubmissions = pgTable("qr_submissions", {
@@ -146,6 +149,9 @@ export const payments = pgTable("payments", {
   clientNameSnapshot: text("client_name_snapshot"),
   clientEmailSnapshot: text("client_email_snapshot"),
   businessDate: text("business_date").notNull(),
+  voidedByUserId: integer("voided_by_user_id"),
+  voidedAt: timestamp("voided_at"),
+  voidReason: text("void_reason"),
 });
 
 export const cashSessions = pgTable("cash_sessions", {
@@ -241,6 +247,24 @@ export const qboExportJobs = pgTable("qbo_export_jobs", {
   errorMessage: text("error_message"),
   qboRefs: jsonb("qbo_refs"),
   retryCount: integer("retry_count").notNull().default(0),
+});
+
+// Portion Reservations (for QR orders)
+export const portionReservations = pgTable("portion_reservations", {
+  id: serial("id").primaryKey(),
+  orderItemId: integer("order_item_id").notNull(),
+  productId: integer("product_id").notNull(),
+  qty: integer("qty").notNull(),
+  status: text("status").notNull().default("RESERVED"),
+  createdAt: timestamp("created_at").defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+});
+
+// QR Rate Limits (persistent)
+export const qrRateLimits = pgTable("qr_rate_limits", {
+  id: serial("id").primaryKey(),
+  tableCode: text("table_code").notNull().unique(),
+  lastSubmissionAt: timestamp("last_submission_at").notNull(),
 });
 
 // Modifier Groups
@@ -347,12 +371,12 @@ export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
 export const insertCategorySchema = createInsertSchema(categories).omit({ id: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
 export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({ id: true });
-export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, openedAt: true, closedAt: true, totalAmount: true });
-export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, createdAt: true, sentToKitchenAt: true, voidedAt: true, voidedByUserId: true });
+export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, openedAt: true, closedAt: true, totalAmount: true, paidAmount: true, balanceDue: true });
+export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, createdAt: true, sentToKitchenAt: true, voidedAt: true, voidedByUserId: true, taxSnapshotJson: true });
 export const insertQrSubmissionSchema = createInsertSchema(qrSubmissions).omit({ id: true, createdAt: true, acceptedAt: true });
 export const insertKitchenTicketSchema = createInsertSchema(kitchenTickets).omit({ id: true, createdAt: true, clearedAt: true });
 export const insertKitchenTicketItemSchema = createInsertSchema(kitchenTicketItems).omit({ id: true, prepStartedAt: true, readyAt: true });
-export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true, paidAt: true });
+export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true, paidAt: true, voidedByUserId: true, voidedAt: true, voidReason: true });
 export const insertCashSessionSchema = createInsertSchema(cashSessions).omit({ id: true, openedAt: true, closedAt: true });
 export const insertSplitAccountSchema = createInsertSchema(splitAccounts).omit({ id: true });
 export const insertSplitItemSchema = createInsertSchema(splitItems).omit({ id: true });
@@ -369,6 +393,8 @@ export const insertTaxCategorySchema = createInsertSchema(taxCategories).omit({ 
 export const insertProductTaxCategorySchema = createInsertSchema(productTaxCategories).omit({ id: true });
 export const insertOrderItemTaxSchema = createInsertSchema(orderItemTaxes).omit({ id: true });
 export const insertOrderItemDiscountSchema = createInsertSchema(orderItemDiscounts).omit({ id: true, appliedAt: true });
+export const insertPortionReservationSchema = createInsertSchema(portionReservations).omit({ id: true, createdAt: true });
+export const insertQrRateLimitSchema = createInsertSchema(qrRateLimits).omit({ id: true });
 
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -427,6 +453,10 @@ export type OrderItemTax = typeof orderItemTaxes.$inferSelect;
 export type InsertOrderItemTax = z.infer<typeof insertOrderItemTaxSchema>;
 export type OrderItemDiscount = typeof orderItemDiscounts.$inferSelect;
 export type InsertOrderItemDiscount = z.infer<typeof insertOrderItemDiscountSchema>;
+export type PortionReservation = typeof portionReservations.$inferSelect;
+export type InsertPortionReservation = z.infer<typeof insertPortionReservationSchema>;
+export type QrRateLimit = typeof qrRateLimits.$inferSelect;
+export type InsertQrRateLimit = z.infer<typeof insertQrRateLimitSchema>;
 
 // Business config (singleton row)
 export const businessConfig = pgTable("business_config", {

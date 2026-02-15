@@ -26,6 +26,21 @@ The system is built as a PWA, ensuring accessibility across various devices.
     - **Order Consecutives**: Daily and global order numbering for traceability.
     - **Multi-Printer Support**: Configuration for different printer types (cash register, kitchen, bar) with auto-printing on POS payment.
 
+## Recent Changes (Feb 15, 2026)
+### Business Logic Fixes - 21 Issues Resolved
+- **Payment Integrity**: Void-payment now reverses cash session without changing item statuses. Reopen voids all payments first. Payment validation prevents overpayment (amount ≤ balance_due). Cash payments blocked without active session.
+- **Financial Tracking**: Orders now track `paidAmount` and `balanceDue` separately. Updated via `updateOrderPaymentTotals()` on every payment/void.
+- **Tax Snapshots**: Taxes are snapshotted on order items at creation (`taxSnapshotJson`). `recalcOrderTotal` uses snapshots instead of live product tax lookups. Removed fragile tax fallback by product name.
+- **Split Payments**: `pay-split` now includes modifiers, taxes, and discounts in total. `normalizeOrderItemsForSplit` copies taxes/discounts per-unit. `moveOrderItem` also updates `salesLedgerItems.orderId`.
+- **Ledger Accuracy**: `lineSubtotal` now includes modifier price deltas for all origins (POS/WAITER/QR).
+- **Permissions**: `PAYMENT_CORRECT` required for void-payment and reopen. `ORDERITEM_VOID_POST_KDS` required for voiding items already sent to kitchen.
+- **Portion Reservations**: `portion_reservations` table with TTL for QR atomic inventory. Cancelled on void.
+- **Status Regression Prevention**: `recalcOrderStatusFromItems` uses rank-based ordering to prevent status going backwards.
+- **Parent Order Recalc**: Parent order status recalculates when child orders are voided or paid.
+- **QR Rate Limiting**: Moved from in-memory Map to database (`qr_rate_limits` table) for persistence across restarts.
+- **Hard Delete Cleanup**: `deleteOrderItem` now cleans all dependent records (modifiers, taxes, discounts, ledger, split items, kitchen ticket items).
+- **QR Audio Alert**: Waiter tables page plays audio notification on new QR submissions.
+
 ## Critical Business Logic Rules
 - **Timezone**: All business date calculations use `America/Costa_Rica` (UTC-6) via `getBusinessDate()` in `server/storage.ts`. This function uses `toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" })` to ensure orders and payments after 6pm local time are correctly assigned to the current day.
 - **Payment business_date**: Payments use `getBusinessDate()` at the moment of payment (not the order's business_date). This correctly handles orders that span midnight (opened one day, paid the next).

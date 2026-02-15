@@ -9,6 +9,7 @@ import {
   modifierGroups, modifierOptions, itemModifierGroups, orderItemModifiers,
   discounts, orderDiscounts,
   taxCategories, productTaxCategories, orderItemTaxes, orderItemDiscounts,
+  portionReservations, qrRateLimits,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -37,6 +38,9 @@ import {
   type InsertProductTaxCategory,
   type InsertOrderItemTax,
   type InsertOrderItemDiscount,
+  type InsertPortionReservation,
+  type PortionReservation,
+  type QrRateLimit,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -173,6 +177,8 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "ORDER_CREATE", description: "Crear órdenes" },
   { key: "ORDER_EDIT", description: "Editar órdenes" },
   { key: "QR_MANAGE", description: "Gestionar pedidos QR" },
+  { key: "PAYMENT_CORRECT", description: "Anular pagos y reabrir órdenes" },
+  { key: "ORDERITEM_VOID_POST_KDS", description: "Anular ítems ya enviados a cocina" },
 ];
 
 export async function ensureSystemPermissions() {
@@ -211,6 +217,12 @@ export async function userHasPermission(userId: number, permissionKey: string): 
   if (!user) return false;
   const keys = await getPermissionKeysForRole(user.role);
   return keys.includes(permissionKey);
+}
+
+export async function getEffectivePermissions(userId: number): Promise<string[]> {
+  const user = await getUser(userId);
+  if (!user) return [];
+  return getPermissionKeysForRole(user.role);
 }
 
 // Tables
@@ -352,6 +364,9 @@ export async function moveOrderItem(itemId: number, newOrderId: number) {
     .set({ orderId: newOrderId })
     .where(eq(orderItems.id, itemId))
     .returning();
+  await db.update(salesLedgerItems)
+    .set({ orderId: newOrderId })
+    .where(eq(salesLedgerItems.orderItemId, itemId));
   return item;
 }
 
@@ -421,25 +436,14 @@ export async function recalcOrderTotal(orderId: number) {
 
     const discountedSubtotal = lineSubtotal - discountAmount;
 
-    let taxesForItem = await getProductTaxCategories(item.productId);
-    if (taxesForItem.length === 0) {
-      const productByName = await db.select().from(products)
-        .where(eq(products.name, item.productNameSnapshot))
-        .limit(1);
-      if (productByName.length > 0) {
-        taxesForItem = await getProductTaxCategories(productByName[0].id);
-      }
-    }
-    const allTaxCats = await getAllTaxCategories();
-
     await deleteOrderItemTaxesByItem(item.id);
 
-    for (const ptc of taxesForItem) {
-      const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
-      if (tc) {
-        const rate = Number(tc.rate);
+    if (item.taxSnapshotJson && Array.isArray(item.taxSnapshotJson) && (item.taxSnapshotJson as any[]).length > 0) {
+      const snapTaxes = item.taxSnapshotJson as { taxCategoryId: number; name: string; rate: number | string; inclusive: boolean }[];
+      for (const st of snapTaxes) {
+        const rate = Number(st.rate);
         let taxAmount: number;
-        if (tc.inclusive) {
+        if (st.inclusive) {
           taxAmount = Math.round(discountedSubtotal * rate / (100 + rate) * 100) / 100;
           totalInclusiveTaxes += taxAmount;
         } else {
@@ -448,19 +452,64 @@ export async function recalcOrderTotal(orderId: number) {
         }
         await createOrderItemTax({
           orderItemId: item.id,
-          taxCategoryId: tc.id,
-          taxNameSnapshot: tc.name,
-          taxRateSnapshot: tc.rate,
-          inclusiveSnapshot: tc.inclusive,
+          taxCategoryId: st.taxCategoryId,
+          taxNameSnapshot: st.name,
+          taxRateSnapshot: String(st.rate),
+          inclusiveSnapshot: st.inclusive,
           taxAmount: taxAmount.toFixed(2),
         });
+      }
+    } else {
+      const taxesForItem = await getProductTaxCategories(item.productId);
+      const allTaxCats = await getAllTaxCategories();
+      for (const ptc of taxesForItem) {
+        const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
+        if (tc) {
+          const rate = Number(tc.rate);
+          let taxAmount: number;
+          if (tc.inclusive) {
+            taxAmount = Math.round(discountedSubtotal * rate / (100 + rate) * 100) / 100;
+            totalInclusiveTaxes += taxAmount;
+          } else {
+            taxAmount = Math.round(discountedSubtotal * rate / 100 * 100) / 100;
+            totalTaxes += taxAmount;
+          }
+          await createOrderItemTax({
+            orderItemId: item.id,
+            taxCategoryId: tc.id,
+            taxNameSnapshot: tc.name,
+            taxRateSnapshot: tc.rate,
+            inclusiveSnapshot: tc.inclusive,
+            taxAmount: taxAmount.toFixed(2),
+          });
+        }
       }
     }
   }
 
   const total = subtotal - totalDiscounts + totalTaxes;
-  await db.update(orders).set({ totalAmount: total.toFixed(2) }).where(eq(orders.id, orderId));
+  const order = await getOrder(orderId);
+  const paidAmount = Number(order?.paidAmount || 0);
+  const balanceDue = total - paidAmount;
+  await db.update(orders).set({
+    totalAmount: total.toFixed(2),
+    balanceDue: balanceDue.toFixed(2),
+  }).where(eq(orders.id, orderId));
   return total;
+}
+
+export async function updateOrderPaymentTotals(orderId: number) {
+  const orderPayments = await db.select().from(payments)
+    .where(and(eq(payments.orderId, orderId), eq(payments.status, "PAID")));
+  const paidAmount = orderPayments.reduce((s, p) => s + Number(p.amount), 0);
+  const order = await getOrder(orderId);
+  const totalAmount = Number(order?.totalAmount || 0);
+  const balanceDue = Math.max(0, totalAmount - paidAmount);
+  await db.update(orders).set({
+    paidAmount: paidAmount.toFixed(2),
+    balanceDue: balanceDue.toFixed(2),
+  }).where(eq(orders.id, orderId));
+  return { paidAmount, balanceDue, totalAmount };
 }
 
 // Order Items
@@ -679,8 +728,13 @@ export async function getPaymentsForOrder(orderId: number) {
   return db.select().from(payments).where(eq(payments.orderId, orderId));
 }
 
-export async function voidPayment(id: number) {
-  const [payment] = await db.update(payments).set({ status: "VOIDED" }).where(eq(payments.id, id)).returning();
+export async function voidPayment(id: number, voidedByUserId: number, voidReason?: string) {
+  const [payment] = await db.update(payments).set({
+    status: "VOIDED",
+    voidedByUserId,
+    voidedAt: new Date(),
+    voidReason,
+  }).where(eq(payments.id, id)).returning();
   return payment;
 }
 
@@ -714,6 +768,12 @@ export async function getVoidedItemsForOrder(orderId: number) {
 }
 
 export async function deleteOrderItem(id: number) {
+  await db.delete(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, id));
+  await db.delete(orderItemTaxes).where(eq(orderItemTaxes.orderItemId, id));
+  await db.delete(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, id));
+  await db.delete(salesLedgerItems).where(eq(salesLedgerItems.orderItemId, id));
+  await db.delete(splitItems).where(eq(splitItems.orderItemId, id));
+  await db.delete(kitchenTicketItems).where(eq(kitchenTicketItems.orderItemId, id));
   await db.delete(voidedItems).where(eq(voidedItems.orderItemId, id));
   await db.delete(orderItems).where(eq(orderItems.id, id));
 }
@@ -1247,6 +1307,35 @@ export async function normalizeOrderItemsForSplit(orderId: number) {
         });
       }
 
+      const existingTaxes = await db.select().from(orderItemTaxes)
+        .where(eq(orderItemTaxes.orderItemId, item.id));
+      for (const tax of existingTaxes) {
+        const perUnitTax = Number(tax.taxAmount) / originalQty;
+        await db.insert(orderItemTaxes).values({
+          orderItemId: newItem.id,
+          taxCategoryId: tax.taxCategoryId,
+          taxNameSnapshot: tax.taxNameSnapshot,
+          taxRateSnapshot: tax.taxRateSnapshot,
+          inclusiveSnapshot: tax.inclusiveSnapshot,
+          taxAmount: perUnitTax.toFixed(2),
+        });
+      }
+
+      const existingItemDiscounts = await db.select().from(orderItemDiscounts)
+        .where(eq(orderItemDiscounts.orderItemId, item.id));
+      for (const disc of existingItemDiscounts) {
+        const perUnitDiscount = Number(disc.amountApplied) / originalQty;
+        await db.insert(orderItemDiscounts).values({
+          orderItemId: newItem.id,
+          orderId: disc.orderId,
+          discountName: disc.discountName,
+          discountType: disc.discountType,
+          discountValue: disc.discountValue,
+          amountApplied: perUnitDiscount.toFixed(2),
+          appliedByUserId: disc.appliedByUserId,
+        });
+      }
+
       newCount++;
     }
   }
@@ -1405,6 +1494,57 @@ export async function getPaymentsByOrderIds(orderIds: number[]) {
   return db.select().from(payments).where(inArray(payments.orderId, orderIds));
 }
 
+export async function createPortionReservation(data: InsertPortionReservation) {
+  const [row] = await db.insert(portionReservations).values(data).returning();
+  return row;
+}
+
+export async function expirePortionReservations() {
+  const now = new Date();
+  const expired = await db.select().from(portionReservations)
+    .where(and(eq(portionReservations.status, "RESERVED"), lte(portionReservations.expiresAt, now)));
+  for (const res of expired) {
+    await db.update(portionReservations)
+      .set({ status: "EXPIRED" })
+      .where(eq(portionReservations.id, res.id));
+    await incrementPortions(res.productId, res.qty);
+  }
+  return expired.length;
+}
+
+export async function consumePortionReservation(orderItemId: number) {
+  await db.update(portionReservations)
+    .set({ status: "CONSUMED" })
+    .where(and(eq(portionReservations.orderItemId, orderItemId), eq(portionReservations.status, "RESERVED")));
+}
+
+export async function cancelPortionReservation(orderItemId: number) {
+  const reservations = await db.select().from(portionReservations)
+    .where(and(eq(portionReservations.orderItemId, orderItemId), eq(portionReservations.status, "RESERVED")));
+  for (const res of reservations) {
+    await db.update(portionReservations)
+      .set({ status: "CANCELLED" })
+      .where(eq(portionReservations.id, res.id));
+    await incrementPortions(res.productId, res.qty);
+  }
+}
+
+export async function getQrRateLimit(tableCode: string) {
+  const [row] = await db.select().from(qrRateLimits).where(eq(qrRateLimits.tableCode, tableCode));
+  return row;
+}
+
+export async function upsertQrRateLimit(tableCode: string) {
+  const existing = await getQrRateLimit(tableCode);
+  if (existing) {
+    await db.update(qrRateLimits)
+      .set({ lastSubmissionAt: new Date() })
+      .where(eq(qrRateLimits.id, existing.id));
+  } else {
+    await db.insert(qrRateLimits).values({ tableCode, lastSubmissionAt: new Date() });
+  }
+}
+
 export async function truncateTransactionalData() {
   await db.delete(splitItems);
   await db.delete(splitAccounts);
@@ -1418,6 +1558,7 @@ export async function truncateTransactionalData() {
   await db.delete(kitchenTickets);
   await db.delete(payments);
   await db.delete(qrSubmissions);
+  await db.delete(portionReservations);
   await db.delete(orderItems);
   await db.delete(orders);
   await db.delete(cashSessions);
