@@ -105,7 +105,7 @@ export default function TablesPage() {
       } else {
         next.add(key);
       }
-      localStorage.setItem("tables_visible_columns", JSON.stringify([...next]));
+      localStorage.setItem("tables_visible_columns", JSON.stringify(Array.from(next)));
       return next;
     });
   };
@@ -184,82 +184,113 @@ export default function TablesPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
-          {tables.filter(t => t.active).map((table) => (
-            <Link key={table.id} href={`/tables/${table.id}`}>
-              <Card
-                className={`hover-elevate cursor-pointer transition-colors min-h-[48px] ${getStatusColor(table)}`}
-                data-testid={`card-table-${table.id}`}
-              >
-                <CardContent className="p-2.5 md:p-4">
-                  <div className="flex items-start justify-between gap-1 mb-1.5 md:mb-3">
-                    <h3 className="font-bold text-sm md:text-lg truncate" data-testid={`text-table-name-${table.id}`}>
-                      {table.tableName}
-                    </h3>
-                    <Badge variant={getStatusVariant(table)} className="text-[10px] md:text-xs shrink-0" data-testid={`badge-status-${table.id}`}>
-                      {table.pendingQrCount > 0 && <AlertCircle className="w-2.5 h-2.5 mr-0.5" />}
-                      {getStatusLabel(table)}
-                    </Badge>
-                  </div>
+        <>
+          {(() => {
+            const activeTables = tables.filter(t => t.active);
+            const withOrder = activeTables.filter(t => t.hasOpenOrder);
+            const withoutOrder = activeTables.filter(t => !t.hasOpenOrder);
+            
+            const renderTable = (table: TableView) => (
+              <Link key={table.id} href={`/tables/${table.id}`}>
+                <Card
+                  className={`hover-elevate cursor-pointer transition-colors min-h-[48px] ${getStatusColor(table)}`}
+                  data-testid={`card-table-${table.id}`}
+                >
+                  <CardContent className="p-2.5 md:p-4">
+                    <div className="flex items-start justify-between gap-1 mb-1.5 md:mb-3">
+                      <h3 className="font-bold text-sm md:text-lg truncate" data-testid={`text-table-name-${table.id}`}>
+                        {table.tableName}
+                      </h3>
+                      <Badge variant={getStatusVariant(table)} className="text-[10px] md:text-xs shrink-0" data-testid={`badge-status-${table.id}`}>
+                        {table.pendingQrCount > 0 && <AlertCircle className="w-2.5 h-2.5 mr-0.5" />}
+                        {getStatusLabel(table)}
+                      </Badge>
+                    </div>
 
-                  {table.hasOpenOrder ? (
-                    <div className="space-y-1 md:space-y-2">
-                      {visibleColumns.has("waiter") && table.responsibleWaiterName && (
-                        <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-waiter-${table.id}`}>
-                          <span className="text-muted-foreground flex items-center gap-1">
-                            <Users className="w-3 h-3" />
-                            <span className="hidden sm:inline">Salonero</span>
-                          </span>
-                          <span className="font-medium truncate ml-1">{table.responsibleWaiterName}</span>
-                        </div>
-                      )}
-
-                      {visibleColumns.has("items") && (
-                        <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-items-${table.id}`}>
-                          <span className="text-muted-foreground flex items-center gap-1">
-                            <ChefHat className="w-3 h-3" />
-                            <span className="hidden sm:inline">Items</span>
-                          </span>
-                          <span className="font-medium">{table.itemCount}</span>
-                        </div>
-                      )}
-
-                      {visibleColumns.has("time") && (
-                        <>
-                          <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-time-open-${table.id}`}>
+                    {table.hasOpenOrder ? (
+                      <div className="space-y-1 md:space-y-2">
+                        {visibleColumns.has("waiter") && table.responsibleWaiterName && (
+                          <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-waiter-${table.id}`}>
                             <span className="text-muted-foreground flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              <span className="hidden sm:inline">T. abierta</span>
+                              <Users className="w-3 h-3" />
+                              <span className="hidden sm:inline">Salonero</span>
                             </span>
-                            <span className="font-medium">{formatElapsed(table.openedAt)}</span>
+                            <span className="font-medium truncate ml-1">{table.responsibleWaiterName}</span>
                           </div>
-                          <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-time-kitchen-${table.id}`}>
-                            <span className="text-muted-foreground flex items-center gap-1">
-                              <Timer className="w-3 h-3" />
-                              <span className="hidden sm:inline">T. cocina</span>
-                            </span>
-                            <span className="font-medium">{formatElapsed(table.lastSentToKitchenAt)}</span>
-                          </div>
-                        </>
-                      )}
+                        )}
 
-                      {visibleColumns.has("amount") && table.totalAmount && (
-                        <div className="pt-1 md:pt-2 border-t">
-                          <div className="flex items-center justify-between" data-testid={`text-amount-${table.id}`}>
-                            <span className="text-xs text-muted-foreground">Total</span>
-                            <span className="font-bold text-xs md:text-sm">₡{Number(table.totalAmount).toLocaleString()}</span>
+                        {visibleColumns.has("items") && (
+                          <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-items-${table.id}`}>
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              <ChefHat className="w-3 h-3" />
+                              <span className="hidden sm:inline">Items</span>
+                            </span>
+                            <span className="font-medium">{table.itemCount}</span>
                           </div>
-                        </div>
-                      )}
+                        )}
+
+                        {visibleColumns.has("time") && (
+                          <>
+                            <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-time-open-${table.id}`}>
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                <span className="hidden sm:inline">T. abierta</span>
+                              </span>
+                              <span className="font-medium">{formatElapsed(table.openedAt)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-time-kitchen-${table.id}`}>
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                <Timer className="w-3 h-3" />
+                                <span className="hidden sm:inline">T. cocina</span>
+                              </span>
+                              <span className="font-medium">{formatElapsed(table.lastSentToKitchenAt)}</span>
+                            </div>
+                          </>
+                        )}
+
+                        {visibleColumns.has("amount") && table.totalAmount && (
+                          <div className="pt-1 md:pt-2 border-t">
+                            <div className="flex items-center justify-between" data-testid={`text-amount-${table.id}`}>
+                              <span className="text-xs text-muted-foreground">Total</span>
+                              <span className="font-bold text-xs md:text-sm">₡{Number(table.totalAmount).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs md:text-sm text-muted-foreground">Disponible</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+
+            return (
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="flex-1">
+                  <h2 className="text-sm font-semibold text-muted-foreground mb-2">Con cuenta abierta ({withOrder.length})</h2>
+                  {withOrder.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 md:gap-3">
+                      {withOrder.map(renderTable)}
                     </div>
                   ) : (
-                    <p className="text-xs md:text-sm text-muted-foreground">Disponible</p>
+                    <p className="text-sm text-muted-foreground py-4 text-center">Ninguna mesa con cuenta</p>
                   )}
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
+                </div>
+                <div className="flex-1">
+                  <h2 className="text-sm font-semibold text-muted-foreground mb-2">Libres ({withoutOrder.length})</h2>
+                  {withoutOrder.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 md:gap-3">
+                      {withoutOrder.map(renderTable)}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground py-4 text-center">Ninguna mesa libre</p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </>
       )}
     </div>
   );

@@ -1238,17 +1238,15 @@ export default function POSPage() {
                 <p className="text-muted-foreground">No hay mesas con consumos pendientes de pago</p>
               </CardContent></Card>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-3 max-w-2xl">
                 {[...posTables].sort((a, b) => {
-                  const aDaily = a.dailyNumber || 0;
-                  const bDaily = b.dailyNumber || 0;
-                  if (aDaily !== bDaily) return aDaily - bDaily;
+                  if (a.id !== b.id) return a.id - b.id;
+                  const aIsParent = !a.parentOrderId ? 0 : 1;
+                  const bIsParent = !b.parentOrderId ? 0 : 1;
+                  if (aIsParent !== bIsParent) return aIsParent - bIsParent;
                   const aSplit = a.splitIndex || 0;
                   const bSplit = b.splitIndex || 0;
-                  if (aSplit !== bSplit) return aSplit - bSplit;
-                  const aTime = a.openedAt ? new Date(a.openedAt).getTime() : 0;
-                  const bTime = b.openedAt ? new Date(b.openedAt).getTime() : 0;
-                  return aTime - bTime;
+                  return aSplit - bSplit;
                 }).map((t) => (
                   <Card key={`${t.id}-${t.orderId}`} className={`hover-elevate cursor-pointer transition-all duration-700 ${highlightedOrderIds.includes(t.orderId) ? "ring-2 ring-primary bg-primary/10" : ""}`} onClick={() => { setSelectedTable(t); setDetailView(true); }} data-testid={`card-pos-table-${t.id}-order-${t.orderId}`}>
                     <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
@@ -1337,7 +1335,7 @@ export default function POSPage() {
                               <Split className="w-4 h-4 mr-1" /> Dividir
                             </Button>
                           )}
-                          {canVoidOrder && !t.parentOrderId && (
+                          {canVoidOrder && (
                             <Button
                               size="sm"
                               variant="destructive"

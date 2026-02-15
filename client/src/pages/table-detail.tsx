@@ -93,6 +93,28 @@ export default function TableDetailPage() {
   const badgeRef = useRef<HTMLSpanElement>(null);
   const isManager = user?.role === "MANAGER";
 
+  useEffect(() => {
+    if (!tableId) return;
+    try {
+      const saved = localStorage.getItem(`cart_table_${tableId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved) as CartItem[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setCart(parsed);
+        }
+      }
+    } catch {}
+  }, [tableId]);
+
+  useEffect(() => {
+    if (!tableId) return;
+    if (cart.length > 0) {
+      localStorage.setItem(`cart_table_${tableId}`, JSON.stringify(cart));
+    } else {
+      localStorage.removeItem(`cart_table_${tableId}`);
+    }
+  }, [cart, tableId]);
+
   const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
     queryKey: ["/api/tables", tableId, "current"],
     enabled: !!tableId,
@@ -152,6 +174,7 @@ export default function TableDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      localStorage.removeItem(`cart_table_${tableId}`);
       setCart([]);
       setViewMode("order");
       toast({ title: "Ronda enviada a cocina" });
@@ -532,6 +555,18 @@ export default function TableDetailPage() {
               <span>₡{cartTotal.toLocaleString()}</span>
             </div>
             <div className="flex gap-2 pb-4">
+              <Button
+                variant="ghost"
+                className="min-h-[48px]"
+                onClick={() => {
+                  setCart([]);
+                  localStorage.removeItem(`cart_table_${tableId}`);
+                  setViewMode("menu");
+                }}
+                data-testid="button-clear-cart"
+              >
+                <Trash2 className="w-5 h-5" />
+              </Button>
               <Button
                 variant="outline"
                 className="flex-1 min-h-[48px] text-base"
