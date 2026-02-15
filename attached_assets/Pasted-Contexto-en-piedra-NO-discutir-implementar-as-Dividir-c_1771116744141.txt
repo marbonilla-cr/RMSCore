@@ -1,0 +1,235 @@
+Contexto “en piedra” (NO discutir, implementar así)
+	•	Dividir cuenta = crear subcuentas (child orders) tipo Mesa 1-1, Mesa 1-2… moviendo ítems.
+	•	Dividir pagos = múltiples pagos en la misma cuenta (mismo ticket) por método (cash/card/SINPE). No aplica a ítems.
+	•	El estado de los ítems manda y nunca retrocede (no se devuelve READY/PREPARING/etc.).
+	•	Corregir/void/cambiar método de pago: solo GERENTE, solo antes del cierre de caja.
+	•	Anular ítem devuelve porciones (availablePortions) y deja auditoría; post-KDS solo con permiso alto.
+	•	QR: reservar porciones 10 min; Mesas debe hacer popup+sonido al entrar QR.
+
+⸻
+
+CRITICAL ISSUES (incorrect financial data)
+
+HU C1 — Void de pago debe revertir caja (cash_session) y no “reabrir orden”
+
+CDA
+	•	En /api/pos/void-payment/:id:
+	•	Requiere permiso PAYMENT_CORRECT (solo gerente).
+	•	Validar cash_session.status=OPEN y business_date vigente.
+	•	Cambiar payment.status a VOIDED, guardar voided_by, voided_at, reason.
+	•	Si payment.method=cash: decrementar cash_session.expectedCash (y totals por método) por payment.amount_applied.
+	•	NO cambiar order_item.status (cocina) ni “reabrir” ítems.
+	•	Recalcular order.paid_amount y balance_due.
+	•	Auditoría: PAYMENT_VOIDED con before/after.
+DoD
+	•	Voidear un pago cash baja expectedCash y la orden queda con saldo pendiente si corresponde.
+
+HU C2 — División de pagos (pay-split) debe usar totales reales (incluye modifiers/discount/taxes)
+
+CDA
+	•	En /api/pos/pay-split (y cualquier ruta de pago parcial):
+	•	El pago se aplica al saldo del ticket, no a ítems.
+	•	Calcular balance_due = total_amount - sum(payments PAID) usando recalcOrderTotal(orderId) (función única).
+	•	Validar amount <= balance_due (tarjeta/SINPE) o permitir vuelto (cash).
+	•	Prohibido calcular con productPriceSnapshot * qty.
+DoD
+	•	Orden con modifiers + descuento + impuesto servicio: saldo y pagos parciales cuadran.
+
+HU C3 — Normalize-split debe recalcular con recalcOrderTotal()
+
+CDA
+	•	En normalización de ítems para dividir cuenta: eliminar sumas simples.
+	•	Llamar siempre recalcOrderTotal(orderId) para parent/child después de mover/normalizar.
+DoD
+	•	Normalizar no altera totales y ticket final coincide.
+
+HU C4 — Void payment NO debe afectar ítems de pagos válidos (multi payments)
+
+CDA
+	•	Si una orden tiene múltiples payments, void de uno:
+	•	Solo ajusta paid_amount/balance_due y cash_session si aplica.
+	•	NO toca estados de cocina.
+	•	No reabre “todo” ni marca items OPEN.
+DoD
+	•	Orden pagada con 3 tarjetas: void 1 → saldo pendiente correcto, sin alterar cocina.
+
+HU C5 — Reopen order debe estar bloqueado o ser seguro (sin desalinear pagos)
+
+CDA
+	•	Endpoint /api/pos/reopen/:orderId:
+	•	Requiere PAYMENT_CORRECT (solo gerente).
+	•	Solo permitido si no hay pagos PAID o si se van a void (en la misma transacción).
+	•	NO cambia estados de cocina; solo estados financieros del ticket (paid/balance).
+	•	Si se usa, debe dejar pagos y estados financieros consistentes.
+DoD
+	•	No se pueden crear “pagos PAID con items OPEN”; la orden no queda inconsistente.
+
+⸻
+
+HIGH SEVERITY (logic errors / edge cases)
+
+HU H1 — QR orders deben reservar porciones al crear items (con concurrencia)
+
+CDA
+	•	Al crear QR items:
+	•	Update atómico availablePortions -= qty si alcanza, si no rechazar ítem.
+	•	Crear portion_reservations con TTL 10 min asociado al order_item.
+	•	Al aceptar por salonero:
+	•	confirmar reserva (CONSUMED).
+	•	Si expira o se cancela:
+	•	liberar reserva (RESTORE).
+DoD
+	•	availablePortions=1 y 2 QR simultáneos: solo uno pasa.
+
+HU H2 — Order status no debe “regresar” a IN_KITCHEN al enviar a cocina
+
+CDA
+	•	No setear order.status=IN_KITCHEN incondicionalmente.
+	•	order.status debe ser derivado del estado de sus items (resumen).
+	•	Prohibido cualquier transición hacia atrás.
+DoD
+	•	Orden con items READY nunca vuelve a IN_KITCHEN.
+
+HU H3 — Sales ledger lineSubtotal debe incluir modifiers
+
+CDA
+	•	Al crear ledger line:
+	•	lineSubtotal = (basePrice + sum(modifier.price_delta)) * qty
+	•	Guardar snapshot del total modifiers o listado.
+DoD
+	•	Michelada, extras de carne, etc. se reflejan en reportes.
+
+HU H4 — recalcOrderTotal debe usar snapshot de taxes, no el producto actual
+
+CDA
+	•	Guardar en order_item snapshot de impuestos aplicables (service_tax_applicable, otros taxes).
+	•	recalc usa snapshot.
+	•	Eliminar fallback por nombre de producto para taxes (ver Medium).
+DoD
+	•	Cambios futuros a impuestos/productos no alteran órdenes existentes.
+
+⸻
+
+MEDIUM SEVERITY (data consistency concerns)
+
+HU M1 — Parent split status debe actualizarse cuando child se void/cierra
+
+CDA
+	•	Cuando un child order cambia a PAID/VOIDED:
+	•	Recalcular estado del parent: si todos los child están resueltos → parent “RESOLVED/CLOSED”.
+	•	Debe correr en eventos de pago y de void.
+DoD
+	•	Parent no queda en SPLIT si ya no hay child activos.
+
+HU M2 — moveOrderItem debe actualizar sales ledger orderId
+
+CDA
+	•	Al mover items parent→child:
+	•	actualizar sales_ledger_items.order_id al nuevo child order_id.
+	•	mantener trazabilidad por mesa y timestamps.
+DoD
+	•	Reportes no atribuyen ventas al parent equivocado.
+
+HU M3 — Eliminar fallback de taxes por product name (frágil)
+
+CDA
+	•	Si falta tax snapshot en legacy:
+	•	usar tax config actual por product_id solamente
+	•	si product_id no tiene taxes: aplicar 0 y registrar warning.
+	•	Prohibido buscar por nombre.
+DoD
+	•	No hay taxes aplicados a productos por coincidencia de nombre.
+
+HU M4 — Hard delete debe limpiar dependencias o deshabilitarse
+
+CDA
+	•	Si se mantiene hard delete (solo gerente):
+	•	borrar también ledger, modifiers, discounts, taxes, void records, split references.
+	•	Preferido: reemplazar hard delete por VOIDED + audit.
+DoD
+	•	Sin registros huérfanos.
+
+HU M5 — Validación: pago debe cuadrar con balance_due (no aceptar cualquier amount)
+
+CDA
+	•	/api/pos/pay y pagos parciales:
+	•	amount debe ser <= balance_due (salvo cash con vuelto).
+	•	balance_due se calcula con recalcOrderTotal y pagos existentes.
+DoD
+	•	No se registran pagos que exceden total.
+
+⸻
+
+LOW SEVERITY (improvements)
+
+HU L1 — No permitir pagos cash sin cash session abierta
+
+CDA
+	•	Bloquear cash payment si no hay cash_session OPEN.
+	•	Mensaje claro al usuario.
+DoD
+	•	No hay pagos cash “sin caja”.
+
+HU L2 — QR rate limiting persistente (opcional)
+
+CDA
+	•	Mover rate limit de memoria a DB o a tabla simple por mesa con TTL.
+DoD
+	•	Reinicios no eliminan rate limit.
+
+HU L3 — Garantía de 1 open order por mesa (diagnóstico)
+
+CDA
+	•	Mantener índice único en DB.
+	•	Si aparece más de una, registrar error y proveer herramienta admin para resolver.
+DoD
+	•	No quedan órdenes huérfanas invisibles.
+
+⸻
+
+Reglas adicionales solicitadas (conectar con lo anterior)
+
+HU X1 — Autoridad: solo gerente puede corregir pagos
+
+CDA
+	•	En UI y API: PAYMENT_CORRECT requerido para void/cambiar método/reopen.
+DoD
+	•	Salonero/cajero no puede ejecutar.
+
+HU X2 — Autoridad: anular post-KDS requiere permiso alto
+
+CDA
+	•	Si item ya fue enviado a cocina (sent_to_kitchen_at != null):
+	•	solo ORDERITEM_VOID_POST_KDS puede anularlo.
+	•	Anular devuelve porciones (HU X3).
+DoD
+	•	Salonero no puede anular post-KDS.
+
+HU X3 — Anulación devuelve porciones (idempotente)
+
+CDA
+	•	Al anular item (pre o post KDS):
+	•	availablePortions += qty
+	•	idempotente (no duplicar).
+	•	Si venía de reserva QR: liberar reserva correctamente sin sumar doble.
+	•	Audit event PORTIONS_RESTORED.
+DoD
+	•	Producto vuelve a estar disponible tras anulación.
+
+HU X4 — Popup + sonido al entrar QR order en Mesas
+
+CDA
+	•	Mesas recibe evento y muestra toast/popup + sonido corto.
+DoD
+	•	Siempre se notifica.
+
+⸻
+
+Definition of Done global (para aceptar el paquete)
+	•	Caja cuadra: expectedCash correcto tras void/cambio método.
+	•	Pagos parciales funcionan sin crear subcuentas.
+	•	Dividir cuenta crea child orders Mesa X-1, X-2… y mueve ítems por unidad.
+	•	Ledger incluye modifiers y refleja anulaciones.
+	•	Taxes/servicio se calculan por snapshot y no cambian retroactivamente.
+	•	No se retroceden estados de ítems.
+	•	QR no sobrevende porciones y alerta en Mesas.
