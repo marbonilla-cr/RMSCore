@@ -28,7 +28,7 @@ import {
 import {
   LayoutDashboard, ShoppingBag, DollarSign,
   TrendingUp, XCircle, Clock, ChevronDown, ChevronRight,
-  FileText, Loader2, CreditCard, Eye, History, CalendarDays, ArrowLeft, Percent, Calculator,
+  FileText, Loader2, CreditCard, Eye, History, CalendarDays, ArrowLeft, Percent, Calculator, Receipt,
 } from "lucide-react";
 
 interface LedgerDetail {
@@ -101,11 +101,20 @@ interface OrderDetail {
   payments: OrderDetailPayment[];
 }
 
+interface TaxBreakdownItem {
+  taxName: string;
+  taxRate: number;
+  inclusive: boolean;
+  totalAmount: number;
+}
+
 interface DashboardData {
   openOrders: { count: number; amount: number; orders: OrderSummary[] };
   paidOrders: { count: number; amount: number; orders: OrderSummary[] };
   cancelledOrders: { count: number; amount: number; orders: OrderSummary[] };
   totalDiscounts: number;
+  totalTaxes: number;
+  taxBreakdown: TaxBreakdownItem[];
   voidedItemsSummary: { count: number; amount: number; items: VoidedItemSummary[] };
   topProducts: { name: string; qty: number; amount: number }[];
   topCategories: { name: string; qty: number; amount: number }[];
@@ -798,16 +807,37 @@ export default function DashboardPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2 mb-2">
               <span className="text-sm text-muted-foreground">
-                Total Proyectado
+                Venta Neta Proyectada
               </span>
               <Calculator className="w-4 h-4 text-blue-500" />
             </div>
             <p className="text-2xl font-bold text-blue-600">
-              ₡{((data?.openOrders.amount || 0) + (data?.paidOrders.amount || 0) - (data?.totalDiscounts || 0)).toLocaleString()}
+              ₡{((data?.openOrders.amount || 0) + (data?.paidOrders.amount || 0) - (data?.totalDiscounts || 0) - (data?.totalTaxes || 0)).toLocaleString()}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              Abiertas + Pagadas - Descuentos
+              Abiertas + Pagadas - Descuentos - Impuestos
             </p>
+          </CardContent>
+        </Card>
+
+        <Card
+          data-testid="card-taxes"
+          className="cursor-pointer hover-elevate"
+          onClick={() => toggleCard("taxes")}
+        >
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-sm text-muted-foreground">
+                Impuestos
+              </span>
+              <Receipt className="w-4 h-4 text-purple-500" />
+            </div>
+            <p className="text-2xl font-bold text-purple-600">
+              ₡{(data?.totalTaxes || 0).toLocaleString()}
+            </p>
+            {expandedCard === "taxes" && (
+              <ChevronDown className="w-4 h-4 text-muted-foreground mx-auto mt-1" />
+            )}
           </CardContent>
         </Card>
 
@@ -833,7 +863,7 @@ export default function DashboardPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2 mb-2">
               <span className="text-sm text-muted-foreground">
-                Ítems Anulados
+                Items Anulados
               </span>
               <XCircle className="w-4 h-4 text-destructive" />
             </div>
@@ -874,11 +904,55 @@ export default function DashboardPage() {
         </Card>
       )}
 
+      {expandedCard === "taxes" && (
+        <Card className="mb-6" data-testid="card-taxes-detail">
+          <CardHeader className="pb-2 flex flex-row items-center gap-2">
+            <Receipt className="w-5 h-5" />
+            <h3 className="font-bold">Desglose de Impuestos</h3>
+          </CardHeader>
+          <CardContent>
+            {(!data?.taxBreakdown || data.taxBreakdown.length === 0) ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                Sin impuestos registrados en este período
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {data.taxBreakdown.map((tax, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between"
+                    data-testid={`tax-breakdown-${i}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Badge variant="secondary" className="text-xs">
+                        {tax.taxName} ({tax.taxRate}%)
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {tax.inclusive ? "Incluido" : "Aditivo"}
+                      </span>
+                    </div>
+                    <span className="text-sm font-medium flex-shrink-0">
+                      ₡{tax.totalAmount.toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+                <div className="border-t pt-2 flex items-center justify-between">
+                  <span className="text-sm font-bold">Total Impuestos</span>
+                  <span className="text-sm font-bold" data-testid="text-tax-grand-total">
+                    ₡{(data?.totalTaxes || 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {expandedCard === "voided" && (
         <Card className="mb-6" data-testid="card-voided-items-detail">
           <CardHeader className="pb-2 flex flex-row items-center gap-2">
             <XCircle className="w-5 h-5" />
-            <h3 className="font-bold">Ítems Anulados</h3>
+            <h3 className="font-bold">Items Anulados</h3>
           </CardHeader>
           <CardContent>
             <VoidedItemsListSection items={data?.voidedItemsSummary?.items || []} />

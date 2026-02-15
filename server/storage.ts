@@ -967,11 +967,45 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
 
   const allRelevantOrderIds = [...openOrders, ...paidOrders].map(o => o.id);
   let totalDiscounts = 0;
+  let totalTaxes = 0;
+  const taxBreakdown: { taxName: string; taxRate: number; inclusive: boolean; totalAmount: number }[] = [];
   if (allRelevantOrderIds.length > 0) {
     const discountRows = await db.select({ amountApplied: orderItemDiscounts.amountApplied })
       .from(orderItemDiscounts)
       .where(inArray(orderItemDiscounts.orderId, allRelevantOrderIds));
     totalDiscounts = discountRows.reduce((s, d) => s + Number(d.amountApplied || 0), 0);
+
+    const taxRows = await db.select({
+      taxNameSnapshot: orderItemTaxes.taxNameSnapshot,
+      taxRateSnapshot: orderItemTaxes.taxRateSnapshot,
+      inclusiveSnapshot: orderItemTaxes.inclusiveSnapshot,
+      taxAmount: orderItemTaxes.taxAmount,
+    })
+      .from(orderItemTaxes)
+      .innerJoin(orderItems, eq(orderItemTaxes.orderItemId, orderItems.id))
+      .where(inArray(orderItems.orderId, allRelevantOrderIds));
+
+    const taxMap = new Map<string, { taxName: string; taxRate: number; inclusive: boolean; totalAmount: number }>();
+    for (const row of taxRows) {
+      const key = `${row.taxNameSnapshot}|${row.taxRateSnapshot}|${row.inclusiveSnapshot}`;
+      const existing = taxMap.get(key);
+      if (existing) {
+        existing.totalAmount += Number(row.taxAmount);
+      } else {
+        taxMap.set(key, {
+          taxName: row.taxNameSnapshot,
+          taxRate: Number(row.taxRateSnapshot),
+          inclusive: row.inclusiveSnapshot,
+          totalAmount: Number(row.taxAmount),
+        });
+      }
+    }
+    Array.from(taxMap.values()).forEach(v => {
+      v.totalAmount = Number(v.totalAmount.toFixed(2));
+      taxBreakdown.push(v);
+      totalTaxes += v.totalAmount;
+    });
+    totalTaxes = Number(totalTaxes.toFixed(2));
   }
 
   return {
@@ -979,6 +1013,8 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
     paidOrders: { count: paidOrders.length, amount: sumAmount(paidOrders), orders: mapOrders(paidOrders) },
     cancelledOrders: { count: cancelledOrders.length, amount: sumAmount(cancelledOrders), orders: mapOrders(cancelledOrders) },
     totalDiscounts,
+    totalTaxes,
+    taxBreakdown,
     voidedItemsSummary: await (async () => {
       const voidedUserIds = Array.from(new Set(todayVoidedItems.map(v => v.voidedByUserId).filter(Boolean))) as number[];
       const voidedUsersMap = new Map<number, string>();
