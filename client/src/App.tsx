@@ -46,6 +46,7 @@ import InvReportsPage from "@/pages/inventory/reports";
 import ShortagesReportPage from "@/pages/shortages/report";
 import ShortagesActivePage from "@/pages/shortages/active";
 import ShortagesAuditPage from "@/pages/shortages/audit";
+import SalesCubePage from "@/pages/sales-cube";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRouteByPermissions(perms: string[]): string {
@@ -70,6 +71,7 @@ function canAccessRouteByPermissions(perms: string[], path: string): boolean {
   if (path.startsWith("/hr/")) return perms.includes("MODULE_HR_VIEW");
   if (path.startsWith("/inventory/")) return perms.includes("MODULE_INV_VIEW");
   if (path.startsWith("/shortages/")) return perms.includes("SHORTAGES_VIEW");
+  if (path.startsWith("/reports/")) return perms.includes("MODULE_DASHBOARD_VIEW");
   return false;
 }
 
@@ -148,6 +150,7 @@ function AuthenticatedRouter() {
       <Route path="/shortages/report" component={ShortagesReportPage} />
       <Route path="/shortages/active" component={ShortagesActivePage} />
       <Route path="/shortages/audit" component={ShortagesAuditPage} />
+      <Route path="/reports/sales-cube" component={SalesCubePage} />
       <Route component={NotFound} />
     </Switch>
   );
