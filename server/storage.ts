@@ -326,6 +326,11 @@ export async function getProduct(id: number) {
   return product;
 }
 
+export async function getProductsByIds(ids: number[]) {
+  if (ids.length === 0) return [];
+  return db.select().from(products).where(inArray(products.id, ids));
+}
+
 export async function createProduct(data: InsertProduct) {
   const [product] = await db.insert(products).values(data).returning();
   return product;
@@ -452,25 +457,55 @@ export async function recalcOrderTotal(orderId: number) {
   const items = await db.select().from(orderItems)
     .where(and(eq(orderItems.orderId, orderId), ne(orderItems.status, "VOIDED")));
 
-  let subtotal = 0;
-  let totalDiscounts = 0;
-  let totalTaxes = 0;
+  if (items.length === 0) {
+    const order = await getOrder(orderId);
+    const paidAmount = Number(order?.paidAmount || 0);
+    const balanceDue = Math.max(0, 0 - paidAmount);
+    await db.update(orders).set({ totalAmount: "0.00", balanceDue: balanceDue.toFixed(2) }).where(eq(orders.id, orderId));
+    return 0;
+  }
 
+  const itemIds = items.map(i => i.id);
+
+  const [allMods, allDiscounts] = await Promise.all([
+    getOrderItemModifiersByItemIds(itemIds),
+    getOrderItemDiscountsByItemIds(itemIds),
+  ]);
+
+  const modsMap = new Map<number, typeof allMods>();
+  for (const m of allMods) {
+    if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []);
+    modsMap.get(m.orderItemId)!.push(m);
+  }
+  const discountsMap = new Map<number, typeof allDiscounts>();
+  for (const d of allDiscounts) {
+    if (!discountsMap.has(d.orderItemId)) discountsMap.set(d.orderItemId, []);
+    discountsMap.get(d.orderItemId)!.push(d);
+  }
+
+  await db.delete(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, itemIds));
+
+  let allTaxCatsCache: any[] | null = null;
+  const productTaxCache = new Map<number, any[]>();
+
+  let subtotal = 0;
+  let totalDiscountsAmt = 0;
+  let totalTaxes = 0;
   let totalInclusiveTaxes = 0;
 
+  const taxInserts: any[] = [];
+
   for (const item of items) {
-    const mods = await db.select().from(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, item.id));
+    const mods = modsMap.get(item.id) || [];
     const modTotal = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
     const lineSubtotal = (Number(item.productPriceSnapshot) + modTotal) * item.qty;
     subtotal += lineSubtotal;
 
-    const discountsForItem = await db.select().from(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, item.id));
-    const discountAmount = discountsForItem.reduce((s, d) => s + Number(d.amountApplied), 0);
-    totalDiscounts += discountAmount;
+    const itemDiscounts = discountsMap.get(item.id) || [];
+    const discountAmount = itemDiscounts.reduce((s, d) => s + Number(d.amountApplied), 0);
+    totalDiscountsAmt += discountAmount;
 
     const discountedSubtotal = lineSubtotal - discountAmount;
-
-    await deleteOrderItemTaxesByItem(item.id);
 
     if (item.taxSnapshotJson && Array.isArray(item.taxSnapshotJson) && (item.taxSnapshotJson as any[]).length > 0) {
       const snapTaxes = item.taxSnapshotJson as { taxCategoryId: number; name: string; rate: number | string; inclusive: boolean }[];
@@ -484,7 +519,7 @@ export async function recalcOrderTotal(orderId: number) {
           taxAmount = Math.round(discountedSubtotal * rate / 100 * 100) / 100;
           totalTaxes += taxAmount;
         }
-        await createOrderItemTax({
+        taxInserts.push({
           orderItemId: item.id,
           taxCategoryId: st.taxCategoryId,
           taxNameSnapshot: st.name,
@@ -494,10 +529,13 @@ export async function recalcOrderTotal(orderId: number) {
         });
       }
     } else {
-      const taxesForItem = await getProductTaxCategories(item.productId);
-      const allTaxCats = await getAllTaxCategories();
+      if (!allTaxCatsCache) allTaxCatsCache = await getAllTaxCategories();
+      if (!productTaxCache.has(item.productId)) {
+        productTaxCache.set(item.productId, await getProductTaxCategories(item.productId));
+      }
+      const taxesForItem = productTaxCache.get(item.productId)!;
       for (const ptc of taxesForItem) {
-        const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
+        const tc = allTaxCatsCache.find(t => t.id === ptc.taxCategoryId && t.active);
         if (tc) {
           const rate = Number(tc.rate);
           let taxAmount: number;
@@ -508,7 +546,7 @@ export async function recalcOrderTotal(orderId: number) {
             taxAmount = Math.round(discountedSubtotal * rate / 100 * 100) / 100;
             totalTaxes += taxAmount;
           }
-          await createOrderItemTax({
+          taxInserts.push({
             orderItemId: item.id,
             taxCategoryId: tc.id,
             taxNameSnapshot: tc.name,
@@ -521,7 +559,11 @@ export async function recalcOrderTotal(orderId: number) {
     }
   }
 
-  const total = subtotal - totalDiscounts + totalTaxes;
+  if (taxInserts.length > 0) {
+    await db.insert(orderItemTaxes).values(taxInserts);
+  }
+
+  const total = subtotal - totalDiscountsAmt + totalTaxes;
   const order = await getOrder(orderId);
   const paidAmount = Number(order?.paidAmount || 0);
   const balanceDue = total - paidAmount;

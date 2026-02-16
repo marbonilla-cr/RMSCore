@@ -1346,34 +1346,52 @@ export async function registerRoutes(
       const { items } = req.body;
       if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
 
-      const table = await storage.getTable(tableId);
+      const productIds = [...new Set(items.map((i: any) => i.productId))];
+
+      const [table, allProducts, allCategories, allTaxCats, allProdTaxLinks] = await Promise.all([
+        storage.getTable(tableId),
+        storage.getProductsByIds(productIds),
+        storage.getAllCategories(),
+        storage.getAllTaxCategories(),
+        Promise.all(productIds.map(pid => storage.getProductTaxCategories(pid).then(links => ({ pid, links })))),
+      ]);
+
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
-      // Get or create order (defensive: prevents duplicates via race condition)
+      const productMap = new Map(allProducts.map(p => [p.id, p]));
+      const taxLinksMap = new Map(allProdTaxLinks.map(r => [r.pid, r.links]));
+
       let order = await getOrCreateOrderForTable(tableId, userId);
 
-      // Assign waiter if not assigned
-      if (!order.responsibleWaiterId) {
-        order = await storage.updateOrder(order.id, { responsibleWaiterId: userId });
-      }
+      const [existingItems] = await Promise.all([
+        storage.getOrderItems(order.id),
+        !order.responsibleWaiterId ? storage.updateOrder(order.id, { responsibleWaiterId: userId }).then(o => { order = o; }) : Promise.resolve(),
+      ]);
 
-      // Get max round number
-      const existingItems = await storage.getOrderItems(order.id);
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
       const roundNumber = maxRound + 1;
 
-      // Create items and group by KDS destination
-      const allCategories = await storage.getAllCategories();
-      const kdsTickets: Map<string, number> = new Map();
-      const createdTicketIds: number[] = [];
-
+      const qtyByProduct = new Map<number, number>();
       for (const item of items) {
-        const product = await storage.getProduct(item.productId);
+        const product = productMap.get(item.productId);
         if (!product || !product.active) continue;
-
-        if (product.availablePortions !== null && product.availablePortions < item.qty) {
+        qtyByProduct.set(product.id, (qtyByProduct.get(product.id) || 0) + item.qty);
+      }
+      for (const [pid, totalQty] of qtyByProduct) {
+        const product = productMap.get(pid)!;
+        if (product.availablePortions !== null && product.availablePortions < totalQty) {
           return res.status(400).json({ message: `${product.name}: solo ${product.availablePortions} porciones disponibles` });
         }
+      }
+
+      const kdsTickets: Map<string, number> = new Map();
+      const createdTicketIds: number[] = [];
+      const businessDate = getBusinessDate();
+      const now = new Date();
+
+      for (const item of items) {
+        const product = productMap.get(item.productId);
+        if (!product || !product.active) continue;
 
         const category = allCategories.find(c => c.id === product.categoryId);
         const kdsDestination = category?.kdsDestination || "cocina";
@@ -1392,6 +1410,16 @@ export async function registerRoutes(
 
         const ticketId = kdsTickets.get(kdsDestination)!;
 
+        const waiterTaxLinks = taxLinksMap.get(product.id) || [];
+        let taxSnapshot: any[] | null = null;
+        if (waiterTaxLinks.length > 0) {
+          taxSnapshot = waiterTaxLinks.map(ptc => {
+            const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
+            return tc ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
+          }).filter(Boolean);
+          if (taxSnapshot.length === 0) taxSnapshot = null;
+        }
+
         const orderItem = await storage.createOrderItem({
           orderId: order.id,
           productId: product.id,
@@ -1407,84 +1435,73 @@ export async function registerRoutes(
           qrSubmissionId: null,
         });
 
-        await storage.updateOrderItem(orderItem.id, { sentToKitchenAt: new Date() });
+        const modNotes = item.modifiers && item.modifiers.length > 0
+          ? item.modifiers.map((m: any) => m.name).join(", ")
+          : "";
+        const fullNotes = [item.notes, modNotes].filter(Boolean).join(" | ");
+        const waiterModDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDelta || 0) * (m.qty || 1), 0);
+        const waiterUnitWithMods = Number(product.price) + waiterModDelta;
 
-        const waiterTaxLinks = await storage.getProductTaxCategories(product.id);
-        if (waiterTaxLinks.length > 0) {
-          const allTaxCats = await storage.getAllTaxCategories();
-          const taxSnapshot = waiterTaxLinks.map(ptc => {
-            const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
-            return tc ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
-          }).filter(Boolean);
-          if (taxSnapshot.length > 0) {
-            await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot });
-          }
-        }
+        const parallelOps: Promise<any>[] = [
+          storage.updateOrderItem(orderItem.id, { sentToKitchenAt: now, ...(taxSnapshot ? { taxSnapshotJson: taxSnapshot } : {}) }),
+          storage.createKitchenTicketItem({
+            kitchenTicketId: ticketId,
+            orderItemId: orderItem.id,
+            productNameSnapshot: product.name,
+            qty: item.qty,
+            notes: fullNotes || null,
+            status: "NEW",
+          }),
+          storage.createSalesLedgerItem({
+            businessDate,
+            tableId,
+            tableNameSnapshot: table.tableName,
+            orderId: order.id,
+            orderItemId: orderItem.id,
+            productId: product.id,
+            productCodeSnapshot: product.productCode,
+            productNameSnapshot: product.name,
+            categoryId: product.categoryId,
+            categoryCodeSnapshot: category?.categoryCode || null,
+            categoryNameSnapshot: category?.name || null,
+            qty: item.qty,
+            unitPrice: waiterUnitWithMods.toFixed(2),
+            lineSubtotal: (waiterUnitWithMods * item.qty).toFixed(2),
+            origin: "WAITER",
+            createdByUserId: userId,
+            responsibleWaiterId: userId,
+            status: "OPEN",
+            sentToKitchenAt: now,
+          }),
+          storage.createAuditEvent({
+            actorType: "USER",
+            actorUserId: userId,
+            action: "ORDER_ITEM_CREATED",
+            entityType: "order_item",
+            entityId: orderItem.id,
+            tableId,
+            metadata: { productName: product.name, qty: item.qty },
+          }),
+          invStorage.consumeForOrderItem(orderItem.id, product.id, item.qty, userId).catch(e => console.error("[inv] consumption error:", e)),
+        ];
 
-        if (item.modifiers && Array.isArray(item.modifiers)) {
+        if (item.modifiers && Array.isArray(item.modifiers) && item.modifiers.length > 0) {
           for (const mod of item.modifiers) {
-            await storage.createOrderItemModifier({
+            parallelOps.push(storage.createOrderItemModifier({
               orderItemId: orderItem.id,
               modifierOptionId: mod.optionId,
               nameSnapshot: mod.name,
               priceDeltaSnapshot: mod.priceDelta || "0",
               qty: mod.qty || 1,
-            });
+            }));
           }
         }
 
-        const modNotes = item.modifiers && item.modifiers.length > 0
-          ? item.modifiers.map((m: any) => m.name).join(", ")
-          : "";
-        const fullNotes = [item.notes, modNotes].filter(Boolean).join(" | ");
+        await Promise.all(parallelOps);
+      }
 
-        await storage.createKitchenTicketItem({
-          kitchenTicketId: ticketId,
-          orderItemId: orderItem.id,
-          productNameSnapshot: product.name,
-          qty: item.qty,
-          notes: fullNotes || null,
-          status: "NEW",
-        });
-
-        try { await invStorage.consumeForOrderItem(orderItem.id, product.id, item.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
-
-        await storage.decrementPortions(product.id, item.qty);
-
-        const waiterModDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDelta || 0) * (m.qty || 1), 0);
-        const waiterUnitWithMods = Number(product.price) + waiterModDelta;
-
-        await storage.createSalesLedgerItem({
-          businessDate: getBusinessDate(),
-          tableId,
-          tableNameSnapshot: table.tableName,
-          orderId: order.id,
-          orderItemId: orderItem.id,
-          productId: product.id,
-          productCodeSnapshot: product.productCode,
-          productNameSnapshot: product.name,
-          categoryId: product.categoryId,
-          categoryCodeSnapshot: category?.categoryCode || null,
-          categoryNameSnapshot: category?.name || null,
-          qty: item.qty,
-          unitPrice: waiterUnitWithMods.toFixed(2),
-          lineSubtotal: (waiterUnitWithMods * item.qty).toFixed(2),
-          origin: "WAITER",
-          createdByUserId: userId,
-          responsibleWaiterId: userId,
-          status: "OPEN",
-          sentToKitchenAt: new Date(),
-        });
-
-        await storage.createAuditEvent({
-          actorType: "USER",
-          actorUserId: userId,
-          action: "ORDER_ITEM_CREATED",
-          entityType: "order_item",
-          entityId: orderItem.id,
-          tableId,
-          metadata: { productName: product.name, qty: item.qty },
-        });
+      for (const [pid, totalQty] of qtyByProduct) {
+        await storage.decrementPortions(pid, totalQty);
       }
 
       await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
