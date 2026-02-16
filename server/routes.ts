@@ -1346,7 +1346,7 @@ export async function registerRoutes(
       const { items } = req.body;
       if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
 
-      const productIds = [...new Set(items.map((i: any) => i.productId))];
+      const productIds = Array.from(new Set(items.map((i: any) => i.productId))) as number[];
 
       const [table, allProducts, allCategories, allTaxCats, allProdTaxLinks] = await Promise.all([
         storage.getTable(tableId),
@@ -1377,7 +1377,8 @@ export async function registerRoutes(
         if (!product || !product.active) continue;
         qtyByProduct.set(product.id, (qtyByProduct.get(product.id) || 0) + item.qty);
       }
-      for (const [pid, totalQty] of qtyByProduct) {
+      for (const entry of Array.from(qtyByProduct.entries())) {
+        const [pid, totalQty] = entry;
         const product = productMap.get(pid)!;
         if (product.availablePortions !== null && product.availablePortions < totalQty) {
           return res.status(400).json({ message: `${product.name}: solo ${product.availablePortions} porciones disponibles` });
@@ -1500,8 +1501,8 @@ export async function registerRoutes(
         await Promise.all(parallelOps);
       }
 
-      for (const [pid, totalQty] of qtyByProduct) {
-        await storage.decrementPortions(pid, totalQty);
+      for (const entry of Array.from(qtyByProduct.entries())) {
+        await storage.decrementPortions(entry[0], entry[1]);
       }
 
       await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
