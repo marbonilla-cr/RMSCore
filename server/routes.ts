@@ -2292,31 +2292,39 @@ export async function registerRoutes(
       const { balanceDue } = await storage.updateOrderPaymentTotals(orderId);
 
       if (balanceDue <= 0) {
-        await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() });
-        const items = await storage.getOrderItems(orderId);
-        for (const item of items) {
-          if (item.status !== "VOIDED") {
-            await storage.updateOrderItem(item.id, { status: "PAID" });
-            await storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: new Date() });
-          }
-        }
+        const [, items] = await Promise.all([
+          storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() }),
+          storage.getOrderItems(orderId),
+        ]);
+
+        const now = new Date();
+        const activeItems = items.filter(i => i.status !== "VOIDED");
+
+        const itemUpdateOps = activeItems.flatMap(item => [
+          storage.updateOrderItem(item.id, { status: "PAID" }),
+          storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: now }),
+        ]);
+        await Promise.all(itemUpdateOps);
 
         try {
-          const hrSettings = await storage.getHrSettings();
+          const [hrSettings, allProducts] = await Promise.all([
+            storage.getHrSettings(),
+            storage.getAllProducts(),
+          ]);
           const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
           if (scRate > 0) {
-            const allProducts = await storage.getAllProducts();
             const productMap = new Map(allProducts.map(p => [p.id, p]));
             const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
-            for (const item of items) {
-              if (item.status === "VOIDED") continue;
+            const scOps: Promise<any>[] = [];
+            const bd = getBusinessDate();
+            for (const item of activeItems) {
               const prod = item.productId ? productMap.get(item.productId) : null;
               if (prod && !prod.serviceTaxApplicable) continue;
               const baseAmount = Number(item.productPriceSnapshot) * item.qty;
               const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
               if (serviceAmount > 0) {
-                await storage.createServiceChargeLedgerEntry({
-                  businessDate: getBusinessDate(),
+                scOps.push(storage.createServiceChargeLedgerEntry({
+                  businessDate: bd,
                   orderId,
                   orderItemId: item.id,
                   tableId: order.tableId || null,
@@ -2326,9 +2334,10 @@ export async function registerRoutes(
                   baseAmountSnapshot: baseAmount.toFixed(2),
                   serviceAmount: serviceAmount.toFixed(2),
                   status: "PAID",
-                });
+                }));
               }
             }
+            if (scOps.length > 0) await Promise.all(scOps);
           }
         } catch (scErr) {
           console.error("[ServiceCharge] Error creating ledger entries:", scErr);

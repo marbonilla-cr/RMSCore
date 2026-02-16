@@ -1141,6 +1141,8 @@ export async function getOrderDetail(orderId: number) {
     tableName: tblMap.get(order.tableId) || `Mesa ${order.tableId}`,
     status: order.status,
     totalAmount: Number(order.totalAmount || 0),
+    paidAmount: Number(order.paidAmount || 0),
+    balanceDue: Number(order.balanceDue || 0),
     openedAt: order.openedAt?.toISOString() || null,
     closedAt: order.closedAt?.toISOString() || null,
     items: items.map(i => ({
