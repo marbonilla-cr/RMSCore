@@ -15,7 +15,7 @@ import {
   ArrowLeft, Plus, Send, Check, Trash2, Loader2,
   ShoppingBag, AlertCircle, ChefHat, Minus, Search, X,
   ClipboardList, Ban, ChevronDown, ChevronRight, Clock, Eye,
-  Settings2, Receipt,
+  Settings2, Receipt, Split, ArrowRight,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Product, Category } from "@shared/schema";
@@ -65,7 +65,14 @@ interface TableCurrentView {
   voidedItems?: any[];
 }
 
-type ViewMode = "order" | "menu" | "cart";
+type ViewMode = "order" | "menu" | "cart" | "split";
+
+interface SplitAccount {
+  id: number;
+  orderId: number;
+  label: string;
+  items: { id: number; splitId: number; orderItemId: number }[];
+}
 
 export default function TableDetailPage() {
   const [, params] = useRoute("/tables/:id");
@@ -89,6 +96,10 @@ export default function TableDetailPage() {
   const [selectedModifiers, setSelectedModifiers] = useState<Record<number, number[]>>({});
   const [loadingModifiers, setLoadingModifiers] = useState(false);
   const [pendingClickEvent, setPendingClickEvent] = useState<HTMLElement | null>(null);
+  const [splitSelectedItems, setSplitSelectedItems] = useState<Set<number>>(new Set());
+  const [splitAccounts, setSplitAccounts] = useState<SplitAccount[]>([]);
+  const [activeSplitId, setActiveSplitId] = useState<number | null>(null);
+  const [splitLoading, setSplitLoading] = useState(false);
   const bottomBarRef = useRef<HTMLDivElement>(null);
   const badgeRef = useRef<HTMLSpanElement>(null);
   const isManager = user?.role === "MANAGER";
@@ -434,6 +445,125 @@ export default function TableDetailPage() {
     }
   };
 
+  const loadSplits = async () => {
+    if (!activeOrder) return;
+    setSplitLoading(true);
+    try {
+      const res = await fetch(`/api/pos/orders/${activeOrder.id}/splits`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setSplitAccounts(data);
+      }
+    } catch {} finally {
+      setSplitLoading(false);
+    }
+  };
+
+  const enterSplitMode = () => {
+    setViewMode("split");
+    setSplitSelectedItems(new Set());
+    setActiveSplitId(null);
+    loadSplits();
+  };
+
+  const createSplitAccount = async () => {
+    if (!activeOrder) return;
+    setSplitLoading(true);
+    try {
+      const label = `Subcuenta ${splitAccounts.length + 1}`;
+      const res = await apiRequest("POST", `/api/pos/orders/${activeOrder.id}/splits`, { label, orderItemIds: [] });
+      const newSplit = await res.json();
+      setSplitAccounts([...splitAccounts, newSplit]);
+      setActiveSplitId(newSplit.id);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSplitLoading(false);
+    }
+  };
+
+  const toggleSplitItem = (itemId: number) => {
+    const next = new Set(splitSelectedItems);
+    if (next.has(itemId)) next.delete(itemId);
+    else next.add(itemId);
+    setSplitSelectedItems(next);
+  };
+
+  const moveItemsToSplit = async () => {
+    if (!activeSplitId || splitSelectedItems.size === 0) return;
+    setSplitLoading(true);
+    try {
+      await apiRequest("POST", "/api/pos/split-items/move-bulk", {
+        orderItemIds: Array.from(splitSelectedItems),
+        fromSplitId: null,
+        toSplitId: activeSplitId,
+      });
+      await loadSplits();
+      setSplitSelectedItems(new Set());
+      toast({ title: "Items movidos a subcuenta" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSplitLoading(false);
+    }
+  };
+
+  const executeSplit = async () => {
+    if (!activeOrder) return;
+    const nonEmpty = splitAccounts.filter(s => s.items.length > 0);
+    if (nonEmpty.length === 0) {
+      toast({ title: "No hay subcuentas con items", variant: "destructive" });
+      return;
+    }
+    setSplitLoading(true);
+    try {
+      await apiRequest("POST", "/api/pos/split-order", { orderId: activeOrder.id });
+      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      toast({ title: "Cuenta dividida exitosamente" });
+      setViewMode("order");
+      setSplitAccounts([]);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSplitLoading(false);
+    }
+  };
+
+  const returnItemToUnassigned = async (orderItemId: number, fromSplitId: number) => {
+    setSplitLoading(true);
+    try {
+      await apiRequest("POST", "/api/pos/split-items/move-bulk", {
+        orderItemIds: [orderItemId],
+        fromSplitId,
+        toSplitId: null,
+      });
+      await loadSplits();
+      toast({ title: "Item devuelto" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSplitLoading(false);
+    }
+  };
+
+  const removeSplitAccount = async (splitId: number) => {
+    setSplitLoading(true);
+    try {
+      await apiRequest("DELETE", `/api/pos/splits/${splitId}`);
+      setSplitAccounts(splitAccounts.filter(s => s.id !== splitId));
+      if (activeSplitId === splitId) setActiveSplitId(null);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSplitLoading(false);
+    }
+  };
+
+  const assignedItemIds = splitAccounts.flatMap(s => s.items.map(si => si.orderItemId));
+  const activeItems = orderItems.filter((i: any) => i.status !== "VOIDED");
+  const unassignedItems = activeItems.filter((i: any) => !assignedItemIds.includes(i.id));
+
   if (isLoadingCurrent) {
     return (
       <div className="p-4 max-w-lg mx-auto">
@@ -486,6 +616,17 @@ export default function TableDetailPage() {
             <Plus className="w-4 h-4 mr-1" />
             <span className="hidden sm:inline">Menu</span>
           </Button>
+          {activeOrder && activeItems.length > 0 && (
+            <Button
+              size="sm"
+              variant={viewMode === "split" ? "default" : "ghost"}
+              onClick={enterSplitMode}
+              data-testid="button-view-split"
+            >
+              <Split className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Dividir</span>
+            </Button>
+          )}
           {cart.length > 0 && (
             <Button
               size="sm"
@@ -502,8 +643,150 @@ export default function TableDetailPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto" style={{ paddingBottom: cart.length > 0 && viewMode !== "cart" ? "140px" : "16px" }}>
-        {viewMode === "cart" ? (
+      <div className="flex-1 overflow-y-auto" style={{ paddingBottom: cart.length > 0 && viewMode !== "cart" && viewMode !== "split" ? "140px" : "16px" }}>
+        {viewMode === "split" ? (
+          <div className="p-3 max-w-lg mx-auto">
+            <h2 className="font-bold text-lg flex items-center gap-2 mb-3">
+              <Split className="w-5 h-5" /> Dividir Cuenta
+            </h2>
+
+            <div className="flex gap-2 mb-3 flex-wrap">
+              {splitAccounts.map((sa) => (
+                <Button
+                  key={sa.id}
+                  size="sm"
+                  variant={activeSplitId === sa.id ? "default" : "outline"}
+                  onClick={() => setActiveSplitId(sa.id)}
+                  data-testid={`button-split-tab-${sa.id}`}
+                >
+                  {sa.label} ({sa.items.length})
+                </Button>
+              ))}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={createSplitAccount}
+                disabled={splitLoading}
+                data-testid="button-create-split"
+              >
+                <Plus className="w-4 h-4 mr-1" /> Nueva
+              </Button>
+            </div>
+
+            <Card className="mb-3">
+              <CardHeader className="pb-2">
+                <h3 className="font-semibold text-sm text-muted-foreground">Items sin asignar ({unassignedItems.length})</h3>
+              </CardHeader>
+              <CardContent className="space-y-1">
+                {unassignedItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-2">Todos los items asignados</p>
+                ) : (
+                  unassignedItems.map((item: any) => {
+                    const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
+                    const unitPrice = Number(item.productPriceSnapshot) + modDelta;
+                    return (
+                      <div
+                        key={item.id}
+                        className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${splitSelectedItems.has(item.id) ? "bg-primary/10 ring-1 ring-primary" : "hover-elevate"}`}
+                        onClick={() => toggleSplitItem(item.id)}
+                        data-testid={`split-item-${item.id}`}
+                      >
+                        <Checkbox checked={splitSelectedItems.has(item.id)} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">{item.qty}x {item.productNameSnapshot}</p>
+                          {item.modifiers && item.modifiers.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-sm font-medium">₡{(unitPrice * item.qty).toLocaleString()}</span>
+                      </div>
+                    );
+                  })
+                )}
+                {splitSelectedItems.size > 0 && activeSplitId && (
+                  <Button
+                    className="w-full mt-2"
+                    onClick={moveItemsToSplit}
+                    disabled={splitLoading}
+                    data-testid="button-move-to-split"
+                  >
+                    {splitLoading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <ArrowRight className="w-4 h-4 mr-1" />}
+                    Mover {splitSelectedItems.size} items a {splitAccounts.find(s => s.id === activeSplitId)?.label}
+                  </Button>
+                )}
+                {splitSelectedItems.size > 0 && !activeSplitId && (
+                  <p className="text-xs text-muted-foreground text-center mt-2">Seleccione o cree una subcuenta primero</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {splitAccounts.map((sa) => {
+              const splitItems = sa.items.map(si => activeItems.find((i: any) => i.id === si.orderItemId)).filter(Boolean);
+              const splitTotal = splitItems.reduce((sum: number, item: any) => {
+                const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
+                return sum + (Number(item.productPriceSnapshot) + modDelta) * item.qty;
+              }, 0);
+              return (
+                <Card key={sa.id} className={`mb-2 ${activeSplitId === sa.id ? "ring-1 ring-primary" : ""}`} data-testid={`split-account-${sa.id}`}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <h3 className="font-semibold text-sm">{sa.label}</h3>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold">₡{splitTotal.toLocaleString()}</span>
+                        <Button size="icon" variant="ghost" onClick={() => removeSplitAccount(sa.id)} data-testid={`button-remove-split-${sa.id}`}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {splitItems.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-1">Sin items</p>
+                    ) : (
+                      splitItems.map((item: any) => {
+                        const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
+                        const unitPrice = Number(item.productPriceSnapshot) + modDelta;
+                        return (
+                          <div key={item.id} className="flex items-center justify-between py-1 text-sm gap-1" data-testid={`split-assigned-item-${item.id}`}>
+                            <span className="flex-1 min-w-0 truncate">{item.qty}x {item.productNameSnapshot}</span>
+                            <span className="flex-shrink-0">₡{(unitPrice * item.qty).toLocaleString()}</span>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="flex-shrink-0"
+                              onClick={() => returnItemToUnassigned(item.id, sa.id)}
+                              disabled={splitLoading}
+                              data-testid={`button-return-item-${item.id}`}
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+
+            <div className="flex gap-2 mt-4 pb-4">
+              <Button variant="outline" className="flex-1" onClick={() => setViewMode("order")} data-testid="button-cancel-split">
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={executeSplit}
+                disabled={splitLoading || splitAccounts.filter(s => s.items.length > 0).length === 0}
+                data-testid="button-execute-split"
+              >
+                {splitLoading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Check className="w-4 h-4 mr-1" />}
+                Confirmar División
+              </Button>
+            </div>
+          </div>
+        ) : viewMode === "cart" ? (
           <div className="p-3 max-w-lg mx-auto">
             <h2 className="font-bold text-lg flex items-center gap-2 mb-3">
               <ShoppingBag className="w-5 h-5" /> Nueva Ronda ({cartCount} items)

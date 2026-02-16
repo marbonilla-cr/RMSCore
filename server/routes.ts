@@ -2490,14 +2490,16 @@ export async function registerRoutes(
     try {
       const orderId = parseInt(req.params.orderId as string);
       const { label, orderItemIds } = req.body;
-      if (!label || !orderItemIds || !orderItemIds.length) {
-        return res.status(400).json({ message: "Label y orderItemIds son requeridos" });
+      if (!label) {
+        return res.status(400).json({ message: "Label es requerido" });
       }
 
       const split = await storage.createSplitAccount({ orderId, label });
 
-      for (const orderItemId of orderItemIds) {
-        await storage.createSplitItem({ splitId: split.id, orderItemId });
+      if (orderItemIds && Array.isArray(orderItemIds)) {
+        for (const orderItemId of orderItemIds) {
+          await storage.createSplitItem({ splitId: split.id, orderItemId });
+        }
       }
 
       const items = await storage.getSplitItemsForSplit(split.id);
