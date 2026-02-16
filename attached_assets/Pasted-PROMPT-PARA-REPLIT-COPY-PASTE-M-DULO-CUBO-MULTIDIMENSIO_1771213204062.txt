@@ -1,0 +1,268 @@
+PROMPT PARA REPLIT (COPY/PASTE) — MÓDULO “CUBO MULTIDIMENSIONAL DE VENTAS POR PRODUCTO” (PIVOT) + FILTROS AVANZADOS + TOP HORAS + HEATMAP + EXPORT CSV
+==================================================================================================================
+
+OBJETIVO (CERRADO)
+Construir un módulo de reportes de ventas por producto basado en sales_ledger_items que permita análisis por:
+- Día, rango de días, mes, hora, día de semana, horas entre días de semana (heatmap 7x24)
+- Selección de días específicos y rangos de fechas
+- Rangos de horas (incluyendo rangos que cruzan medianoche)
+- “Horas más vendidas” (top N)
+- “Detalles totales por producto” (totales acumulados del período filtrado)
+- Vista tipo cubo/pivot (MVP: máximo 2 dimensiones simultáneas para performance)
+- Exportar resultados a CSV en todas las vistas
+
+FUENTE DE DATOS / REGLAS “EN PIEDRA”
+1) Fuente principal: sales_ledger_items (rápido y consistente).
+2) Filtro base: incluir SOLO items con status='PAID' (excluir VOIDED).
+3) “Hora de venta” por defecto: paid_at (si existe); si no existe, fallback a created_at.
+4) Producto: usar product_id si existe; si no, usar product_name_snapshot como clave.
+5) Categoría: category_snapshot.
+6) Métricas mínimas: SUM(qty), SUM(lineSubtotal), COUNT(DISTINCT order_id).
+7) Impuestos/descuentos: SOLO si están disponibles como snapshots en ledger; si NO, no forzar joins en MVP (se agrega después como fase 2).
+
+DIMENSIONES DISPONIBLES (CUBO)
+Tiempo:
+- business_date (día)
+- month (YYYY-MM)
+- weekday (0-6) definido fijo (lunes=0..domingo=6)
+- hour (0-23) extraída de paid_at (o fallback)
+
+Producto:
+- product_key (product_id o product_name_snapshot)
+- category_snapshot
+
+Operación (opcionales en groupBy):
+- origin (POS/WAITER/QR)
+- responsible_waiter_id (o snapshot)
+- table_name/table_id
+
+FILTROS REQUERIDOS (API + UI)
+- dateFrom (business_date inclusive)
+- dateTo (business_date inclusive)
+- dates[] (lista de fechas específicas; si viene, se intersecta con dateFrom/dateTo)
+- weekdays[] (0-6)
+- hourFrom (0-23)
+- hourTo (0-23) (debe soportar rango circular si hourFrom > hourTo)
+- origins[] (POS/WAITER/QR)
+- categories[] (category_snapshot)
+- products[] (product_id[] o product_name_snapshot[] o ambos)
+- waiterIds[] (opcional)
+- includeVoided: false fijo en MVP
+
+SALIDAS / VISTAS (PRESETS) REQUERIDAS
+A) Totales por Producto (acumulado)
+- groupBy: product, category (opcional)
+- output: product, category, qty_total, subtotal_total, orders_count
+- sort: subtotal desc o qty desc
+
+B) Producto por Día
+- groupBy: business_date, product
+- output: date, product, qty_total, subtotal_total, orders_count
+
+C) Producto por Mes
+- groupBy: month, product
+- output: month, product, qty_total, subtotal_total, orders_count
+
+D) Producto por Hora
+- groupBy: hour, product
+- output: hour, product, qty_total, subtotal_total, orders_count
+
+E) Horas más vendidas (Top N)
+- groupBy: hour
+- output: hour, subtotal_total, qty_total, orders_count, share_pct
+- topN configurable (default 10)
+
+F) Heatmap Hora x Día de Semana (7x24)
+- groupBy: weekday, hour
+- output: weekday, hour, metric_value (subtotal o qty)
+- UI debe pintar matriz 7x24 (sin gráficos complejos)
+
+G) Cubo/Pivot dinámico (MVP limitado)
+- user selecciona:
+  - rowsDimension (1 dimensión)
+  - colsDimension (1 dimensión)
+  - metric (subtotal|qty|orders_count)
+- Restricción MVP: max 2 dimensiones (1 row + 1 col). No permitir 3+ dims.
+
+EPICS + HISTORIAS DE USUARIO (HU), CRITERIOS DE ACEPTACIÓN (CA) Y DEFINITION OF DONE (DoD)
+================================================================================================
+
+EPIC 1 — Motor de Query “Sales Cube” (API)
+------------------------------------------
+HU 1.1 — Endpoint genérico de consulta con groupBy dinámico
+Descripción:
+- Crear POST /api/reports/sales-cube/query que reciba filtros + groupBy[] + metric + sort + topN
+- Ejecutar query sobre sales_ledger_items aplicando filtros y agrupando por groupBy.
+
+CA:
+1) Acepta dateFrom/dateTo y retorna resultados agregados correctos.
+2) Aplica status='PAID' siempre.
+3) Aplica filtros opcionales: weekdays, hours (incluye rango circular), origins, categories, products, waiterIds.
+4) Permite groupBy con estas llaves (validar whitelist):
+   - business_date, month, weekday, hour, product, category, origin, waiter, table
+5) Retorna:
+   - rows[] con keys y métricas
+   - meta.totalSubtotal, meta.totalQty, meta.totalOrders
+6) Seguridad: usar parámetros, no concatenación SQL.
+7) Manejo de límites: si topN se envía, limitar resultados.
+
+DoD:
+- Endpoint funcionando y cubierto con pruebas básicas (inputs válidos/invalidos).
+- Validación de groupBy/metric/sort.
+- Rango circular de horas probado.
+
+HU 1.2 — Presets listados desde API
+Descripción:
+- Crear GET /api/reports/sales-cube/presets que devuelva configuraciones listas para UI:
+  - Totales por producto
+  - Producto por día
+  - Producto por mes
+  - Producto por hora
+  - Top horas
+  - Heatmap hour x weekday
+
+CA:
+- Retorna json con presets nombrados y su groupBy/metric/sort/defaults.
+
+DoD:
+- Presets disponibles y usados por UI.
+
+EPIC 2 — Queries robustos (tiempo / weekday / horas)
+----------------------------------------------------
+HU 2.1 — Cálculo weekday fijo y month en query
+Descripción:
+- Implementar weekday y month consistentes en SQL:
+  - weekday: lunes=0..domingo=6 (definir y mantener)
+  - month: to_char(business_date, 'YYYY-MM') o equivalente
+
+CA:
+- Weekday consistente en todos los reportes.
+- Month correcto y ordenable cronológicamente.
+
+DoD:
+- Tests para weekday y month.
+
+HU 2.2 — Filtro por horas con soporte de rango circular
+Descripción:
+- Si hourFrom <= hourTo: hour between
+- Si hourFrom > hourTo: (hour >= hourFrom OR hour <= hourTo)
+
+CA:
+- Funciona para (22->2) y (10->16).
+
+DoD:
+- Test unitario para ambos casos.
+
+EPIC 3 — UI del Cubo + Presets + Drilldown
+------------------------------------------
+HU 3.1 — Pantalla “Reportes > Ventas > Cubo”
+Descripción:
+- UI con filtros sticky arriba.
+- Selector de preset (A-F) y opción “Cubo dinámico” (G).
+- Tabla de resultados con sort por columnas.
+- Botón export CSV.
+
+CA:
+1) Filtros:
+   - rango fechas (dateFrom/dateTo)
+   - selección días específicos (multi-select / calendario)
+   - weekdays (chips)
+   - hours (from/to)
+   - categoría, producto, origen
+2) Cambiar filtros refresca resultados.
+3) Tabla muestra totales y conteos correctos.
+4) Mobile-first y usable.
+
+DoD:
+- Pantalla funcional con presets A-F.
+- Cubo dinámico MVP con 2 dims.
+
+HU 3.2 — Heatmap Hora x Día de Semana
+Descripción:
+- UI que renderiza 7x24 (weekday x hour) con valores.
+- Toggle de métrica (subtotal/qty).
+
+CA:
+- Renderiza matriz correctamente para el rango filtrado.
+- Permite elegir métrica.
+- No usar librerías pesadas; render simple.
+
+DoD:
+- Heatmap funcional y rápido.
+
+HU 3.3 — Drilldown “detalle de producto”
+Descripción:
+- Al tocar un producto en Totales por Producto:
+  - abrir vista detalle con tabs: por día, por hora, por origen (usando el mismo endpoint).
+
+CA:
+- Drilldown conserva filtros base y agrega filtro por producto seleccionado.
+- Muestra al menos: por día y por hora.
+
+DoD:
+- Drilldown implementado.
+
+EPIC 4 — Exportación CSV
+------------------------
+HU 4.1 — Export CSV para cualquier vista
+Descripción:
+- Botón “Export CSV” descarga los rows actuales con columnas visibles.
+- Export respeta filtros y preset.
+
+CA:
+- CSV incluye encabezados y filas correctas.
+- Respeta sort y topN si aplica.
+
+DoD:
+- CSV funciona para A-F y cubo dinámico.
+
+EPIC 5 — Performance e índices
+------------------------------
+HU 5.1 — Índices recomendados en sales_ledger_items
+Descripción:
+- Agregar índices para acelerar filtros típicos:
+  - (business_date, status)
+  - (business_date, status, category_snapshot)
+  - (business_date, status, origin)
+  - (business_date, status, product_id) si existe
+  - (business_date, status, product_name_snapshot) si no hay product_id
+  - (paid_at) si se usa para hour
+
+CA:
+- Queries típicos retornan en <2s con dataset del negocio.
+
+DoD:
+- Migración de índices aplicada.
+
+HU 5.2 — Respuesta meta y totales consistentes
+Descripción:
+- El endpoint debe retornar meta con totals del mismo filtro (sin groupBy), para UI.
+
+CA:
+- meta.totalSubtotal = suma real del período filtrado.
+- meta.totalQty y meta.totalOrders correctos.
+
+DoD:
+- Meta implementada y verificada.
+
+RESTRICCIONES MVP (para evitar sobrecarga)
+- No calcular impuestos/descuentos si no están en sales_ledger_items (se agrega fase 2).
+- Cubo dinámico: máximo 2 dimensiones simultáneas (1 row + 1 col).
+- TopN y paginación (si se necesita) para tablas grandes.
+
+DEFINITION OF DONE GLOBAL
+- Endpoint /api/reports/sales-cube/query listo con filtros completos + groupBy whitelist + rango circular de horas.
+- Presets A-F funcionando en UI.
+- Cubo dinámico MVP (G) funcionando con 2 dims.
+- Heatmap 7x24 implementado.
+- Drilldown por producto implementado.
+- Export CSV funcionando.
+- Índices agregados.
+- Todo usando sales_ledger_items PAID como verdad para este reporte.
+
+NOTA FINAL (DEFAULTS)
+- Hora de venta: paid_at por defecto. Fallback a created_at si paid_at null.
+- Weekday: lunes=0..domingo=6.
+- includeVoided = false fijo.
+
+FIN DEL PROMPT
