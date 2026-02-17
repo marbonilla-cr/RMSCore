@@ -1,0 +1,130 @@
+QA Checklist — Cliente QR “Modo Fácil” (Mobile-First)
+
+0) Preparación
+	•	Probar en:
+	•	iPhone (Safari) y Android (Chrome) mínimo.
+	•	Limpiar caché / abrir en incógnito (para evitar tokens viejos).
+	•	Tener una mesa real (ej: Mesa 10) con QR funcionando.
+
+⸻
+
+A. Acceso y navegación básica
+
+A1. Carga inicial
+	•	El QR abre en menos de 3–5 segundos en red normal.
+	•	No hay pantalla en blanco ni errores en consola visibles.
+
+A2. Pantalla bienvenida
+	•	Se ve sin zoom y sin scroll en iPhone pequeño.
+	•	Botones grandes (altura aprox 56px o más) y separados.
+	•	“Modo fácil” y “Modo estándar” visibles siempre.
+
+A3. Back/forward
+	•	Botón “Atrás” funciona sin perder el estado.
+	•	Si cierro y vuelvo a abrir, no se rompe el flujo.
+
+⸻
+
+B. Flujo Modo Fácil (diálogo)
+
+B1. Selección de subcuenta (grupo)
+	•	Veo botones grandes para subcuentas existentes.
+	•	“Crear cuenta nueva” solo aparece si hay cupo.
+	•	Si ya llegó al máximo, se bloquea crear y muestra mensaje claro.
+
+B2. Nombre
+	•	El input es grande y fácil de tocar.
+	•	Si dejo vacío y le doy continuar, aparece mensaje amistoso.
+	•	El nombre queda visible en resumen final.
+
+B3. Selección de plato
+	•	No hay lista infinita pesada.
+	•	Navego platos en páginas cortas (máx 4 visibles por “pantalla” o paginación).
+	•	Botón “Elegir” es grande o toda la tarjeta es clickeable.
+	•	Al elegir plato, aparece confirmación (toast “Apuntado ✅” o similar).
+
+B4. Modificadores (si el plato tiene)
+	•	Se muestran como botones grandes.
+	•	Si es requerido, no deja avanzar sin elegir.
+	•	Si no es requerido, existe “No gracias”.
+	•	Lo elegido se ve en el resumen.
+
+B5. Selección de bebida
+	•	Igual que platos: paginado / simple / botones grandes.
+	•	Existe “No quiero bebida”.
+	•	Se registra correctamente.
+
+B6. Resumen y envío
+	•	Se ve: subcuenta, nombre, plato, bebida, modificadores.
+	•	Botón “Confirmar y enviar pedido” grande y claro.
+	•	Al enviar aparece pantalla éxito.
+	•	Al refrescar la página después de enviar, no duplica el pedido.
+
+⸻
+
+C. Reglas y límites (lo que evita caos)
+
+C1. Límite de subcuentas
+	•	Crear subcuentas hasta el límite configurado (ej 6).
+	•	Al llegar al límite:
+	•	“Crear cuenta nueva” desaparece o queda deshabilitado
+	•	Mensaje claro al usuario
+
+C2. Límite de pendientes (si está implementado)
+	•	Si hay muchas solicitudes pendientes, el sistema bloquea el “enviar” y avisa.
+
+C3. Productos agotados / inactivos
+	•	Un producto inactivo no aparece en el QR.
+	•	Si el producto se agota mientras navego, al intentar elegir/confirmar lo bloquea y avisa.
+
+⸻
+
+D. Integración con Salonero (crítico)
+
+D1. Notificación
+	•	Al enviar pedido QR, el salonero recibe notificación (banner/sonido).
+
+D2. Persistencia
+	•	En Mesas/Salonero, al abrir la mesa, la solicitud QR no desaparece.
+	•	La solicitud muestra: hora, nombre, plato, bebida, subcuenta.
+
+D3. Aceptación
+	•	Al aceptar, los ítems aparecen en la orden real y entran al KDS.
+	•	La solicitud queda marcada como aceptada (no queda “pendiente” eternamente).
+
+⸻
+
+E. Mobile-first (medible)
+	•	No hay elementos “mini” (texto ilegible).
+	•	Botones no quedan pegados (mín 12px separación).
+	•	No hay menús laterales que tapen la pantalla en móvil.
+	•	El usuario puede completar todo con una mano (botón principal sticky abajo).
+
+⸻
+
+F. Casos de estrés (rápidos)
+
+F1. 3 teléfonos al mismo tiempo
+	•	3 personas abren el QR de la misma mesa.
+	•	3 envían 1 pedido cada uno.
+	•	No se pierde ninguno.
+	•	El salonero ve los 3 en lista.
+
+F2. Mesa grande
+	•	Crear subcuentas hasta el límite.
+	•	Intentar crear una más: se bloquea.
+
+⸻
+
+G. Criterio de “PASÓ/NO PASÓ”
+
+✅ PASÓ si:
+	•	Se completa el flujo sin ayuda, sin zoom, sin scroll infinito pesado.
+	•	Se crean solicitudes QR consistentes.
+	•	Salonero las ve, las acepta y llegan al KDS.
+
+❌ NO PASÓ si:
+	•	Botones pequeños / texto pequeño.
+	•	El usuario se pierde (no hay pasos claros).
+	•	Se crean órdenes duplicadas o se pierden solicitudes.
+	•	No llega la notificación o la solicitud “se borra”.

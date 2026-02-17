@@ -1,0 +1,107 @@
+Pantallas EXACTAS a implementar (Modo Fácil QR)
+
+Pantalla 1: Bienvenida / Selección de modo
+
+Título: “Mesa {N}”
+Texto: “¡Bienvenido! Pedimos fácil y sin carrera.”
+Botones grandes (stack vertical):
+	1.	“Modo fácil (entrevista)”
+	2.	“Modo estándar (yo me la juego)”
+
+DoD: En móvil se ve todo sin zoom y sin scroll.
+
+⸻
+
+Pantalla 2: Selección de subcuenta (grupo)
+
+Título: “¿A cuál cuenta lo cargamos?”
+Texto: “Si vienen en grupos, así en caja sale ordenadito.”
+Lista de subcuentas como botones grandes.
+Botón grande al final:
+	•	“Crear cuenta nueva” (si hay cupo)
+
+DoD: Cada subcuenta se ve como botón grande, NO como fila pequeña.
+
+⸻
+
+Pantalla 3: Nombre
+
+Título: “¿Cómo te llamás?”
+Input grande 1 línea.
+Botón principal sticky: “Continuar”
+
+Validación con mensaje grande:
+“Poné tu nombre para que no se nos enrede la cuenta 😊”
+
+⸻
+
+Pantalla 4: Selección de plato (catálogo paginado)
+
+Título: “¿Qué se te antoja para comer?”
+Reglas UI:
+	•	Mostrar máximo 4 items por pantalla (2x2 grid o lista de 4 tarjetas grandes).
+	•	Botones: “Atrás” / “Siguiente”
+	•	Cada tarjeta debe tener:
+	•	nombre (grande)
+	•	descripción corta (si existe)
+	•	botón “Elegir” (o tap en toda la tarjeta)
+	•	Barra sticky arriba con:
+	•	buscador (input)
+	•	chip de categoría opcional
+NO scroll infinito.
+
+DoD: En móvil, el usuario puede recorrer el menú tocando “Siguiente” sin scroll infinito.
+
+⸻
+
+Pantalla 5: Selección de bebida
+
+Exactamente igual a platos:
+	•	4 por pantalla
+	•	Botón grande “No quiero bebida”
+
+⸻
+
+Pantalla 6: Resumen y Confirmar
+
+Mostrar en cards grandes:
+	•	Cuenta: Mesa N-X
+	•	Nombre
+	•	Plato + bebida + modificadores
+Botones grandes:
+	•	“Agregar algo más”
+	•	“Confirmar y enviar pedido” (principal sticky)
+
+Pantalla success:
+	•	Título: “¡Listo! Ya lo avisamos ✅”
+	•	Texto: “En un momentito llega el salonero a confirmarlo.”
+
+⸻
+
+Componentes (implementación)
+
+Crear componentes reutilizables:
+	•	EasyStepLayout (título, subtítulo, progreso, contenido, sticky button)
+	•	BigButton
+	•	BigCardSelect (card seleccionable)
+	•	PagedMenuGrid (4 items por página + navegación)
+	•	StickySearchBar (buscador siempre visible)
+
+⸻
+
+Accesibilidad / performance
+	•	Contraste alto
+	•	Animaciones mínimas (solo transición simple entre pasos)
+	•	Sin librerías pesadas nuevas
+	•	Compatible con Safari iOS / Chrome Android.
+
+⸻
+
+Definition of Done (verificable)
+	1.	En iPhone SE / Android pequeño:
+	•	Títulos legibles sin zoom
+	•	Botones tocables sin precisión
+	•	No hay scroll infinito en platos/bebidas
+	2.	Platos/bebidas se navegan con paginación (4 por página).
+	3.	Flujo es diálogo: 1 pregunta por pantalla, Paso X de Y visible.
+	4.	Confirmación final clara y pantalla de éxito.
