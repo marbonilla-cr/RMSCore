@@ -241,7 +241,7 @@ export default function QRClientPage() {
 
   const { data: subaccounts = [], refetch: refetchSubaccounts } = useQuery<Subaccount[]>({
     queryKey: ["/api/qr", tableCode, "subaccounts"],
-    enabled: !!tableCode && step === "subaccount",
+    enabled: !!tableCode,
   });
 
   const activeSubaccounts = subaccounts.filter(s => s.isActive);
@@ -334,7 +334,16 @@ export default function QRClientPage() {
 
   const handleSubaccountSelect = (sub: Subaccount) => {
     setSelectedSubaccount({ id: sub.id, code: sub.code, slotNumber: sub.slotNumber });
-    setStep("name");
+    if (sub.label) {
+      setCustomerName(sub.label);
+      if (mode === "easy") {
+        setStep("easy_food_cats");
+      } else {
+        setStep("std_menu");
+      }
+    } else {
+      setStep("name");
+    }
   };
 
   const handleNameContinue = () => {
@@ -577,6 +586,64 @@ export default function QRClientPage() {
   // ═══════════════════════════════════════════════════════════════
   if (step === "subaccount") {
     const maxSlots = tableInfo?.maxSubaccounts ?? MAX_SUBACCOUNTS;
+    const namedSubaccounts = activeSubaccounts.filter(s => s.label);
+    const hasNamedSubs = namedSubaccounts.length > 0;
+    const canAddMore = activeSubaccounts.length < maxSlots;
+
+    const handleAddComensal = () => {
+      const usedSlots = new Set(activeSubaccounts.map(s => s.slotNumber));
+      let nextSlot = 1;
+      for (let i = 1; i <= maxSlots; i++) {
+        if (!usedSlots.has(i)) { nextSlot = i; break; }
+      }
+      createSubaccountMutation.mutate(nextSlot);
+    };
+
+    if (hasNamedSubs) {
+      return (
+        <EasyStepLayout
+          step={1}
+          totalSteps={mode === "easy" ? EASY_TOTAL_STEPS : 5}
+          title="¿Quién sos?"
+          subtitle="Escogé tu nombre o agregá un comensal nuevo."
+          onBack={() => setStep("welcome")}
+        >
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3">
+              {namedSubaccounts.map(sub => (
+                <Button
+                  key={sub.id}
+                  variant="default"
+                  className="min-h-[72px] text-xl font-bold flex items-center gap-3 justify-start px-6"
+                  onClick={() => handleSubaccountSelect(sub)}
+                  data-testid={`button-sub-name-${sub.id}`}
+                >
+                  <User className="w-6 h-6 shrink-0" />
+                  <span>{sub.label}</span>
+                </Button>
+              ))}
+            </div>
+            {canAddMore && (
+              <Button
+                variant="outline"
+                className="w-full min-h-[72px] text-xl font-bold flex items-center gap-3 justify-center"
+                onClick={handleAddComensal}
+                disabled={createSubaccountMutation.isPending}
+                data-testid="button-add-comensal"
+              >
+                {createSubaccountMutation.isPending ? (
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                ) : (
+                  <Plus className="w-6 h-6" />
+                )}
+                <span>Agregar comensal</span>
+              </Button>
+            )}
+          </div>
+        </EasyStepLayout>
+      );
+    }
+
     const slotNumbers = Array.from({ length: maxSlots }, (_, i) => i + 1);
     const existingSlots = new Map(activeSubaccounts.map(s => [s.slotNumber, s]));
 

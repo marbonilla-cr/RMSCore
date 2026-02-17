@@ -613,7 +613,7 @@ export async function createQrSubmission(data: any) {
 
 export async function getPendingSubmissions(orderId: number) {
   return db.select().from(qrSubmissions)
-    .where(and(eq(qrSubmissions.orderId, orderId), eq(qrSubmissions.status, "PENDING")));
+    .where(and(eq(qrSubmissions.orderId, orderId), eq(qrSubmissions.status, "SUBMITTED")));
 }
 
 export async function getSubmission(id: number) {
@@ -1604,7 +1604,7 @@ export async function getOrderItemTaxesByItemIds(itemIds: number[]) {
 export async function getPendingSubmissionsByOrderIds(orderIds: number[]) {
   if (orderIds.length === 0) return [];
   return db.select().from(qrSubmissions)
-    .where(and(inArray(qrSubmissions.orderId, orderIds), eq(qrSubmissions.status, "PENDING")));
+    .where(and(inArray(qrSubmissions.orderId, orderIds), eq(qrSubmissions.status, "SUBMITTED")));
 }
 
 export async function getUsersByIds(userIds: number[]) {

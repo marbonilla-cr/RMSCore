@@ -229,6 +229,15 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         payloadSnapshot: { subaccountId, items },
       } as any).where(eq(qrSubmissions.id, sub.id));
 
+      if (subaccountId && items.length > 0 && items[0].customerName) {
+        const currentSub = await db.select().from(orderSubaccounts).where(eq(orderSubaccounts.id, subaccountId));
+        if (currentSub.length > 0 && !currentSub[0].label) {
+          await db.update(orderSubaccounts)
+            .set({ label: items[0].customerName })
+            .where(eq(orderSubaccounts.id, subaccountId));
+        }
+      }
+
       broadcast("qr_submission", { tableId: table.id, submissionId: sub.id });
 
       res.json({ submissionId: sub.id, message: "Pedido enviado" });
