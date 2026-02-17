@@ -10,15 +10,17 @@ import { useToast } from "@/hooks/use-toast";
 import {
   UtensilsCrossed, Plus, Loader2, Check, ChevronLeft, ChevronRight,
   Search, X, Users, User, ArrowRight, Coffee, ChefHat,
-  Utensils, Send, CheckCircle2, Minus,
+  Utensils, Send, CheckCircle2, ShoppingBag,
 } from "lucide-react";
 
 type Step =
   | "welcome"
   | "subaccount"
   | "name"
-  | "easy_food"
-  | "easy_drink"
+  | "easy_food_cats"
+  | "easy_food_products"
+  | "easy_drink_cats"
+  | "easy_drink_products"
   | "easy_modifiers"
   | "easy_review"
   | "std_food"
@@ -109,7 +111,7 @@ function EasyStepLayout({
               <h1 className="text-lg font-bold truncate" data-testid="text-step-title">{title}</h1>
             </div>
           </div>
-          {subtitle && <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>}
+          {subtitle && <p className="text-sm text-muted-foreground mt-1" data-testid="text-step-subtitle">{subtitle}</p>}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-4">
@@ -128,112 +130,78 @@ function EasyStepLayout({
   );
 }
 
-function PagedMenuGrid({
-  products, onSelect, cart, loading, searchTerm, onSearchChange, categoryLabel,
+function BigCategoryButton({
+  label, icon, count, onClick, testId,
 }: {
-  products: QRProduct[];
-  onSelect: (p: QRProduct) => void;
-  cart: CartItem[];
-  loading: boolean;
-  searchTerm: string;
-  onSearchChange: (v: string) => void;
-  categoryLabel?: string;
+  label: string;
+  icon: React.ReactNode;
+  count: number;
+  onClick: () => void;
+  testId: string;
 }) {
-  const [page, setPage] = useState(0);
-
-  const filtered = useMemo(() => {
-    if (!searchTerm.trim()) return products;
-    const lower = searchTerm.toLowerCase();
-    return products.filter(p => p.name.toLowerCase().includes(lower) || (p.description || "").toLowerCase().includes(lower));
-  }, [products, searchTerm]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
-  const safePage = Math.min(page, totalPages - 1);
-  const pageItems = filtered.slice(safePage * ITEMS_PER_PAGE, (safePage + 1) * ITEMS_PER_PAGE);
-
   return (
-    <div className="space-y-4">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-        <Input
-          placeholder="Buscar..."
-          value={searchTerm}
-          onChange={(e) => { onSearchChange(e.target.value); setPage(0); }}
-          className="pl-9 pr-9 min-h-[48px] text-base"
-          data-testid="input-menu-search"
-        />
-        {searchTerm && (
-          <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => { onSearchChange(""); setPage(0); }} data-testid="button-clear-search">
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
-        )}
-      </div>
-      {categoryLabel && <Badge variant="secondary" className="text-xs">{categoryLabel}</Badge>}
+    <Button
+      variant="outline"
+      className="w-full min-h-[72px] text-lg font-semibold justify-between gap-3 px-5"
+      onClick={onClick}
+      data-testid={testId}
+    >
+      <span className="flex items-center gap-3">
+        {icon}
+        <span>{label}</span>
+      </span>
+      <span className="flex items-center gap-2">
+        <span className="text-sm font-normal text-muted-foreground">{count} opciones</span>
+        <ChevronRight className="w-5 h-5 text-muted-foreground" />
+      </span>
+    </Button>
+  );
+}
 
-      {filtered.length === 0 ? (
-        <p className="text-center text-muted-foreground py-8" data-testid="text-no-results">Sin resultados</p>
-      ) : (
-        <div className="space-y-3">
-          {pageItems.map((product) => {
-            const inCart = cart.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
-            const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
-            return (
-              <Card key={product.id} className={outOfStock ? "opacity-50" : ""} data-testid={`card-product-${product.id}`}>
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-base">{product.name}</p>
-                      {product.description && (
-                        <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
-                      )}
-                      <p className="font-bold text-base mt-1">₡{Number(product.price).toLocaleString()}</p>
-                    </div>
-                    <div className="flex-shrink-0 flex items-center gap-2">
-                      {inCart > 0 && <Badge variant="secondary">{inCart}</Badge>}
-                      <Button
-                        className="min-h-[44px] min-w-[80px]"
-                        variant={outOfStock ? "secondary" : "default"}
-                        onClick={() => onSelect(product)}
-                        disabled={loading || outOfStock}
-                        data-testid={`button-add-${product.id}`}
-                      >
-                        {outOfStock ? "Agotado" : "Elegir"}
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+function ProductCard({
+  product, inCart, outOfStock, loading, onSelect,
+}: {
+  product: QRProduct;
+  inCart: number;
+  outOfStock: boolean;
+  loading: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <Card className={outOfStock ? "opacity-50" : ""} data-testid={`card-product-${product.id}`}>
+      <CardContent className="p-4">
+        <div className="space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-lg">{product.name}</p>
+              {product.description && (
+                <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
+              )}
+            </div>
+            {inCart > 0 && (
+              <Badge variant="secondary" className="text-sm">{inCart} en pedido</Badge>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <p className="font-bold text-lg">₡{Number(product.price).toLocaleString()}</p>
+            <Button
+              className="min-h-[52px] min-w-[100px] text-base"
+              variant={outOfStock ? "secondary" : "default"}
+              onClick={onSelect}
+              disabled={loading || outOfStock}
+              data-testid={`button-add-${product.id}`}
+            >
+              {outOfStock ? "Agotado" : (
+                <>
+                  <Plus className="w-5 h-5 mr-1" />
+                  Agregar
+                </>
+              )}
+            </Button>
+          </div>
         </div>
-      )}
-
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between pt-2 gap-3">
-          <Button
-            variant="outline"
-            className="flex-1 min-h-[48px]"
-            onClick={() => setPage(p => Math.max(0, p - 1))}
-            disabled={safePage === 0}
-            data-testid="button-page-prev"
-          >
-            <ChevronLeft className="w-4 h-4 mr-1" /> Atrás
-          </Button>
-          <span className="text-sm text-muted-foreground whitespace-nowrap" data-testid="text-page-indicator">
-            {safePage + 1} / {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            className="flex-1 min-h-[48px]"
-            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-            disabled={safePage >= totalPages - 1}
-            data-testid="button-page-next"
-          >
-            Siguiente <ChevronRight className="w-4 h-4 ml-1" />
-          </Button>
-        </div>
-      )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -249,12 +217,14 @@ export default function QRClientPage() {
   const [nameError, setNameError] = useState("");
 
   const [easyItems, setEasyItems] = useState<CartItem[]>([]);
-  const [easyFoodSearch, setEasyFoodSearch] = useState("");
-  const [easyDrinkSearch, setEasyDrinkSearch] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [categoryPage, setCategoryPage] = useState(0);
   const [pendingProduct, setPendingProduct] = useState<QRProduct | null>(null);
   const [modGroups, setModGroups] = useState<QRModifierGroup[]>([]);
   const [selectedMods, setSelectedMods] = useState<Record<number, number[]>>({});
   const [loadingMods, setLoadingMods] = useState(false);
+  const [modReturnStep, setModReturnStep] = useState<Step>("easy_food_cats");
+  const [stdModReturnStep, setStdModReturnStep] = useState<Step>("std_food");
 
   const [diners, setDiners] = useState<DinerData[]>([]);
   const [currentDinerIndex, setCurrentDinerIndex] = useState(0);
@@ -280,6 +250,33 @@ export default function QRClientPage() {
   });
 
   const activeSubaccounts = subaccounts.filter(s => s.isActive);
+
+  const foodProducts = useMemo(() => menu.filter(p => !isBeverage(p.categoryName)), [menu]);
+  const drinkProducts = useMemo(() => menu.filter(p => isBeverage(p.categoryName)), [menu]);
+
+  const foodCategories = useMemo(() => {
+    const cats = new Map<string, number>();
+    foodProducts.forEach(p => {
+      const c = p.categoryName || "Otros";
+      cats.set(c, (cats.get(c) || 0) + 1);
+    });
+    return Array.from(cats.entries()).map(([name, count]) => ({ name, count }));
+  }, [foodProducts]);
+
+  const drinkCategories = useMemo(() => {
+    const cats = new Map<string, number>();
+    drinkProducts.forEach(p => {
+      const c = p.categoryName || "Otros";
+      cats.set(c, (cats.get(c) || 0) + 1);
+    });
+    return Array.from(cats.entries()).map(([name, count]) => ({ name, count }));
+  }, [drinkProducts]);
+
+  const selectedCategoryProducts = useMemo(() => {
+    const isDrinkStep = step === "easy_drink_products" || step === "easy_drink_cats";
+    const pool = isDrinkStep ? drinkProducts : foodProducts;
+    return pool.filter(p => (p.categoryName || "Otros") === selectedCategory);
+  }, [step, foodProducts, drinkProducts, selectedCategory]);
 
   const createSubaccountMutation = useMutation({
     mutationFn: async () => {
@@ -342,9 +339,6 @@ export default function QRClientPage() {
     },
   });
 
-  const foodProducts = useMemo(() => menu.filter(p => !isBeverage(p.categoryName)), [menu]);
-  const drinkProducts = useMemo(() => menu.filter(p => isBeverage(p.categoryName)), [menu]);
-
   const handleModeSelect = (m: "easy" | "standard") => {
     setMode(m);
     setStep("subaccount");
@@ -368,7 +362,7 @@ export default function QRClientPage() {
     }
     setNameError("");
     if (mode === "easy") {
-      setStep("easy_food");
+      setStep("easy_food_cats");
     } else {
       setDiners([{ name: trimmed, items: [] }]);
       setCurrentDinerIndex(0);
@@ -390,7 +384,13 @@ export default function QRClientPage() {
         setPendingProduct(product);
         setModGroups(groups);
         setSelectedMods({});
-        setStep(returnStep === "std_food" || returnStep === "std_drink" ? "std_modifiers" : "easy_modifiers");
+        if (returnStep === "std_food" || returnStep === "std_drink") {
+          setStdModReturnStep(returnStep);
+          setStep("std_modifiers");
+        } else {
+          setModReturnStep(returnStep);
+          setStep("easy_modifiers");
+        }
       } else {
         addItemToCart(product, [], returnStep);
       }
@@ -399,7 +399,7 @@ export default function QRClientPage() {
     } finally {
       setLoadingMods(false);
     }
-  }, [customerName, toast, mode, currentDinerIndex, diners]);
+  }, [customerName, toast]);
 
   const addItemToCart = (product: QRProduct, mods: { modGroupId: number; optionId: number }[], context: Step) => {
     const name = customerName.trim();
@@ -412,7 +412,7 @@ export default function QRClientPage() {
       categoryName: product.categoryName || "Otros",
     };
 
-    if (context === "std_food" || context === "std_drink" || context === "std_modifiers") {
+    if (context === "std_food" || context === "std_drink") {
       setStdSelectedItems(prev => {
         const existing = prev.find(it => it.productId === product.id && JSON.stringify(it.modifiers) === JSON.stringify(item.modifiers));
         if (existing) return prev.map(it => it === existing ? { ...it, qty: it.qty + 1 } : it);
@@ -444,18 +444,13 @@ export default function QRClientPage() {
       }
     }
 
-    const isStd = returnStep === "std_food" || returnStep === "std_drink" || returnStep === "std_modifiers";
-    addItemToCart(pendingProduct, mods, isStd ? stdModReturnStep : modReturnStep);
+    addItemToCart(pendingProduct, mods, returnStep);
 
-    const goBack = isStd ? stdModReturnStep : modReturnStep;
     setPendingProduct(null);
     setModGroups([]);
     setSelectedMods({});
-    setStep(goBack as Step);
+    setStep(returnStep);
   };
-
-  const [modReturnStep, setModReturnStep] = useState<Step>("easy_food");
-  const [stdModReturnStep, setStdModReturnStep] = useState<Step>("std_food");
 
   const toggleModOption = (groupId: number, optionId: number, multi: boolean) => {
     setSelectedMods(prev => {
@@ -515,8 +510,8 @@ export default function QRClientPage() {
     setCustomerName("");
     setNameError("");
     setEasyItems([]);
-    setEasyFoodSearch("");
-    setEasyDrinkSearch("");
+    setSelectedCategory("");
+    setCategoryPage(0);
     setPendingProduct(null);
     setModGroups([]);
     setSelectedMods({});
@@ -528,6 +523,12 @@ export default function QRClientPage() {
   const easyItemCount = easyItems.reduce((s, it) => s + it.qty, 0);
   const EASY_TOTAL_STEPS = 5;
 
+  // Pagination for products within a category
+  const totalProductPages = Math.max(1, Math.ceil(selectedCategoryProducts.length / ITEMS_PER_PAGE));
+  const safeProductPage = Math.min(categoryPage, totalProductPages - 1);
+  const pageProducts = selectedCategoryProducts.slice(safeProductPage * ITEMS_PER_PAGE, (safeProductPage + 1) * ITEMS_PER_PAGE);
+
+  // ─── Loading ────────────────────────────────────────────────
   if (tableLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background" data-testid="loading-spinner">
@@ -550,7 +551,9 @@ export default function QRClientPage() {
     );
   }
 
-  // ─── Pantalla 1: Bienvenida ─────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  PANTALLA 1: BIENVENIDA
+  // ═══════════════════════════════════════════════════════════════
   if (step === "welcome") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -558,25 +561,25 @@ export default function QRClientPage() {
           <div className="text-center space-y-2">
             <UtensilsCrossed className="w-12 h-12 mx-auto text-primary" />
             <h1 className="text-2xl font-bold" data-testid="text-table-name">{tableInfo.tableName}</h1>
-            <p className="text-muted-foreground text-base">Bienvenido! Pedimos fácil y sin carrera.</p>
+            <p className="text-muted-foreground text-base" data-testid="text-welcome-message">Bienvenido! Pedí fácil y sin carrera.</p>
           </div>
           <div className="space-y-4">
             <Button
-              className="w-full min-h-[56px] text-base"
+              className="w-full min-h-[64px] text-lg"
               onClick={() => handleModeSelect("easy")}
               data-testid="button-mode-easy"
             >
-              <ChefHat className="w-5 h-5 mr-2" />
-              Modo fácil (entrevista)
+              <ChefHat className="w-6 h-6 mr-3" />
+              Modo fácil
             </Button>
             <Button
               variant="outline"
-              className="w-full min-h-[56px] text-base"
+              className="w-full min-h-[64px] text-lg"
               onClick={() => handleModeSelect("standard")}
               data-testid="button-mode-standard"
             >
-              <Utensils className="w-5 h-5 mr-2" />
-              Modo estándar (yo me la juego)
+              <Utensils className="w-6 h-6 mr-3" />
+              Modo estándar
             </Button>
           </div>
           <p className="text-xs text-center text-muted-foreground" data-testid="text-welcome-note">
@@ -587,7 +590,9 @@ export default function QRClientPage() {
     );
   }
 
-  // ─── Pantalla 2: Subcuenta / Grupo ──────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  PANTALLA 2: SUBCUENTA / GRUPO
+  // ═══════════════════════════════════════════════════════════════
   if (step === "subaccount") {
     const hasExisting = activeSubaccounts.length > 0;
     const canCreateMore = activeSubaccounts.length < MAX_SUBACCOUNTS;
@@ -597,25 +602,24 @@ export default function QRClientPage() {
         step={1}
         totalSteps={mode === "easy" ? EASY_TOTAL_STEPS : 5}
         title="¿A cuál cuenta lo cargamos?"
-        subtitle="Si vienen en grupos, así en caja sale ordenadito."
+        subtitle="Si vienen en grupo, así en caja sale ordenadito."
         onBack={() => setStep("welcome")}
       >
         <div className="space-y-6">
-          {/* Quick-select: Somos N */}
           {!hasExisting && (
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-muted-foreground text-center">¿Cuántos son?</p>
+            <div className="space-y-4">
+              <p className="text-base font-medium text-center" data-testid="text-group-question">¿Cuántos son?</p>
               <div className="grid grid-cols-3 gap-3">
                 {[1, 2, 3, 4, 5, 6].filter(n => n <= MAX_SUBACCOUNTS).map(n => (
                   <Button
                     key={n}
                     variant="outline"
-                    className="min-h-[64px] text-lg font-bold flex flex-col gap-1"
+                    className="min-h-[72px] text-lg font-bold flex flex-col gap-1"
                     onClick={() => handleGroupSelect(n)}
                     disabled={batchSubaccountMutation.isPending}
                     data-testid={`button-group-${n}`}
                   >
-                    <Users className="w-5 h-5" />
+                    <Users className="w-6 h-6" />
                     {n === 1 ? "Solo yo" : `Somos ${n}`}
                   </Button>
                 ))}
@@ -629,36 +633,35 @@ export default function QRClientPage() {
             </div>
           )}
 
-          {/* Existing subaccounts - pick one */}
           {hasExisting && (
             <div className="space-y-3">
-              <p className="text-sm font-medium text-muted-foreground text-center">Elegí tu cuenta:</p>
+              <p className="text-base font-medium text-center" data-testid="text-pick-account">Elegí tu cuenta:</p>
               {activeSubaccounts.map(sub => (
                 <Button
                   key={sub.id}
                   variant="outline"
-                  className="w-full min-h-[56px] text-base justify-start gap-3"
+                  className="w-full min-h-[64px] text-lg justify-start gap-3"
                   onClick={() => handleSubaccountSelect(sub)}
                   data-testid={`button-subaccount-${sub.id}`}
                 >
-                  <User className="w-5 h-5 flex-shrink-0" />
-                  <span>{sub.label || `Cuenta ${sub.slotNumber}`}</span>
-                  <Badge variant="secondary" className="ml-auto">{sub.code}</Badge>
+                  <User className="w-6 h-6 flex-shrink-0" />
+                  <span className="flex-1 text-left">{sub.label || `Cuenta ${sub.slotNumber}`}</span>
+                  <Badge variant="secondary" className="text-sm">{sub.code}</Badge>
                 </Button>
               ))}
 
               {canCreateMore && (
                 <Button
                   variant="default"
-                  className="w-full min-h-[56px] text-base"
+                  className="w-full min-h-[64px] text-lg"
                   onClick={() => createSubaccountMutation.mutate()}
                   disabled={createSubaccountMutation.isPending}
                   data-testid="button-create-subaccount"
                 >
                   {createSubaccountMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
                   ) : (
-                    <Plus className="w-5 h-5 mr-2" />
+                    <Plus className="w-6 h-6 mr-2" />
                   )}
                   Crear cuenta nueva
                 </Button>
@@ -676,7 +679,9 @@ export default function QRClientPage() {
     );
   }
 
-  // ─── Pantalla 3: Nombre ─────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  PANTALLA 3: NOMBRE
+  // ═══════════════════════════════════════════════════════════════
   if (step === "name") {
     return (
       <EasyStepLayout
@@ -687,95 +692,187 @@ export default function QRClientPage() {
         onBack={() => setStep("subaccount")}
         stickyButton={
           <Button
-            className="w-full min-h-[56px] text-base"
+            className="w-full min-h-[64px] text-lg"
             onClick={handleNameContinue}
             data-testid="button-name-continue"
           >
             Continuar
-            <ArrowRight className="w-5 h-5 ml-2" />
+            <ArrowRight className="w-6 h-6 ml-2" />
           </Button>
         }
       >
-        <div className="space-y-4 pt-4">
-          <User className="w-12 h-12 mx-auto text-primary" />
+        <div className="space-y-6 pt-6">
+          <User className="w-16 h-16 mx-auto text-primary" />
           <Input
             value={customerName}
             onChange={(e) => { setCustomerName(e.target.value); setNameError(""); }}
             placeholder="Tu nombre"
-            className="text-lg min-h-[56px] text-center"
+            className="text-xl min-h-[64px] text-center"
             autoFocus
             data-testid="input-customer-name"
           />
           {nameError && (
-            <p className="text-sm text-destructive text-center" data-testid="text-name-error">{nameError}</p>
+            <p className="text-base text-destructive text-center" data-testid="text-name-error">{nameError}</p>
           )}
         </div>
       </EasyStepLayout>
     );
   }
 
-  // ─── Easy: Pantalla 4 — Platos (paginado) ───────────────────
-  if (step === "easy_food") {
+  // ═══════════════════════════════════════════════════════════════
+  //  EASY — PASO 3A: CATEGORÍAS DE COMIDA (drill-down)
+  // ═══════════════════════════════════════════════════════════════
+  if (step === "easy_food_cats") {
     return (
       <EasyStepLayout
         step={3}
         totalSteps={EASY_TOTAL_STEPS}
-        title="¿Qué se te antoja para comer?"
+        title="¿Qué se te antoja?"
+        subtitle="Elegí una categoría para ver las opciones."
         onBack={() => setStep("name")}
         stickyButton={
           <div className="space-y-2">
             {easyItemCount > 0 && (
-              <p className="text-sm text-muted-foreground text-center">
-                {easyItemCount} item{easyItemCount !== 1 ? "s" : ""} en tu pedido
-              </p>
+              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" data-testid="text-easy-cart-count">
+                <ShoppingBag className="w-4 h-4" />
+                <span>{easyItemCount} item{easyItemCount !== 1 ? "s" : ""} en tu pedido</span>
+              </div>
             )}
             <Button
-              className="w-full min-h-[56px] text-base"
-              onClick={() => setStep("easy_drink")}
+              className="w-full min-h-[64px] text-lg"
+              onClick={() => setStep("easy_drink_cats")}
               data-testid="button-easy-next-to-drinks"
             >
               Siguiente: Bebidas
-              <ArrowRight className="w-5 h-5 ml-2" />
+              <ArrowRight className="w-6 h-6 ml-2" />
             </Button>
           </div>
         }
       >
-        <PagedMenuGrid
-          products={foodProducts}
-          onSelect={(p) => {
-            setModReturnStep("easy_food");
-            handleProductClick(p, "easy_food");
-          }}
-          cart={easyItems}
-          loading={loadingMods}
-          searchTerm={easyFoodSearch}
-          onSearchChange={setEasyFoodSearch}
-        />
+        <div className="space-y-3">
+          {foodCategories.length === 0 ? (
+            <div className="text-center py-8">
+              <ChefHat className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+              <p className="text-lg text-muted-foreground">No hay comida disponible.</p>
+            </div>
+          ) : (
+            foodCategories.map(cat => (
+              <BigCategoryButton
+                key={cat.name}
+                label={cat.name}
+                icon={<ChefHat className="w-6 h-6" />}
+                count={cat.count}
+                onClick={() => { setSelectedCategory(cat.name); setCategoryPage(0); setStep("easy_food_products"); }}
+                testId={`button-food-cat-${cat.name.toLowerCase().replace(/\s+/g, "-")}`}
+              />
+            ))
+          )}
+        </div>
       </EasyStepLayout>
     );
   }
 
-  // ─── Easy: Pantalla 5 — Bebidas (paginado) ──────────────────
-  if (step === "easy_drink") {
+  // ═══════════════════════════════════════════════════════════════
+  //  EASY — PASO 3B: PRODUCTOS DE COMIDA (dentro de categoría)
+  // ═══════════════════════════════════════════════════════════════
+  if (step === "easy_food_products") {
+    return (
+      <EasyStepLayout
+        step={3}
+        totalSteps={EASY_TOTAL_STEPS}
+        title={selectedCategory}
+        subtitle="Agregá lo que te guste."
+        onBack={() => setStep("easy_food_cats")}
+        stickyButton={
+          <div className="space-y-2">
+            {easyItemCount > 0 && (
+              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" data-testid="text-easy-cart-count-products">
+                <ShoppingBag className="w-4 h-4" />
+                <span>{easyItemCount} item{easyItemCount !== 1 ? "s" : ""} en tu pedido</span>
+              </div>
+            )}
+            <Button
+              variant="outline"
+              className="w-full min-h-[64px] text-lg"
+              onClick={() => setStep("easy_food_cats")}
+              data-testid="button-back-to-food-cats"
+            >
+              <ChevronLeft className="w-5 h-5 mr-2" />
+              Volver a categorías
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          {pageProducts.map(product => {
+            const inCart = easyItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
+            const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+            return (
+              <ProductCard
+                key={product.id}
+                product={product}
+                inCart={inCart}
+                outOfStock={outOfStock}
+                loading={loadingMods}
+                onSelect={() => handleProductClick(product, "easy_food_products")}
+              />
+            );
+          })}
+        </div>
+
+        {totalProductPages > 1 && (
+          <div className="flex items-center justify-between pt-4 gap-3">
+            <Button
+              variant="outline"
+              className="flex-1 min-h-[56px] text-base"
+              onClick={() => setCategoryPage(p => Math.max(0, p - 1))}
+              disabled={safeProductPage === 0}
+              data-testid="button-page-prev"
+            >
+              <ChevronLeft className="w-5 h-5 mr-1" /> Atrás
+            </Button>
+            <span className="text-base text-muted-foreground whitespace-nowrap font-medium" data-testid="text-page-indicator">
+              {safeProductPage + 1} / {totalProductPages}
+            </span>
+            <Button
+              variant="outline"
+              className="flex-1 min-h-[56px] text-base"
+              onClick={() => setCategoryPage(p => Math.min(totalProductPages - 1, p + 1))}
+              disabled={safeProductPage >= totalProductPages - 1}
+              data-testid="button-page-next"
+            >
+              Siguiente <ChevronRight className="w-5 h-5 ml-1" />
+            </Button>
+          </div>
+        )}
+      </EasyStepLayout>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  EASY — PASO 4A: CATEGORÍAS DE BEBIDAS (drill-down)
+  // ═══════════════════════════════════════════════════════════════
+  if (step === "easy_drink_cats") {
     return (
       <EasyStepLayout
         step={4}
         totalSteps={EASY_TOTAL_STEPS}
         title="¿Algo para beber?"
-        onBack={() => setStep("easy_food")}
+        subtitle="Elegí una categoría o pasá directo a revisar."
+        onBack={() => setStep("easy_food_cats")}
         stickyButton={
           <div className="space-y-2">
             <Button
-              className="w-full min-h-[56px] text-base"
+              className="w-full min-h-[64px] text-lg"
               onClick={() => setStep("easy_review")}
               data-testid="button-easy-next-to-review"
             >
               Siguiente: Revisar pedido
-              <ArrowRight className="w-5 h-5 ml-2" />
+              <ArrowRight className="w-6 h-6 ml-2" />
             </Button>
             <Button
               variant="ghost"
-              className="w-full min-h-[48px] text-base text-muted-foreground"
+              className="w-full min-h-[56px] text-base text-muted-foreground"
               onClick={() => setStep("easy_review")}
               data-testid="button-easy-skip-drinks"
             >
@@ -784,45 +881,125 @@ export default function QRClientPage() {
           </div>
         }
       >
-        {drinkProducts.length === 0 ? (
-          <div className="text-center py-8">
-            <Coffee className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-            <p className="text-muted-foreground">No hay bebidas disponibles por ahora.</p>
+        <div className="space-y-3">
+          {drinkCategories.length === 0 ? (
+            <div className="text-center py-8">
+              <Coffee className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+              <p className="text-lg text-muted-foreground">No hay bebidas disponibles.</p>
+            </div>
+          ) : (
+            drinkCategories.map(cat => (
+              <BigCategoryButton
+                key={cat.name}
+                label={cat.name}
+                icon={<Coffee className="w-6 h-6" />}
+                count={cat.count}
+                onClick={() => { setSelectedCategory(cat.name); setCategoryPage(0); setStep("easy_drink_products"); }}
+                testId={`button-drink-cat-${cat.name.toLowerCase().replace(/\s+/g, "-")}`}
+              />
+            ))
+          )}
+        </div>
+      </EasyStepLayout>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  EASY — PASO 4B: PRODUCTOS DE BEBIDA (dentro de categoría)
+  // ═══════════════════════════════════════════════════════════════
+  if (step === "easy_drink_products") {
+    return (
+      <EasyStepLayout
+        step={4}
+        totalSteps={EASY_TOTAL_STEPS}
+        title={selectedCategory}
+        subtitle="Agregá lo que te guste."
+        onBack={() => setStep("easy_drink_cats")}
+        stickyButton={
+          <div className="space-y-2">
+            {easyItemCount > 0 && (
+              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" data-testid="text-easy-cart-count-drinks">
+                <ShoppingBag className="w-4 h-4" />
+                <span>{easyItemCount} item{easyItemCount !== 1 ? "s" : ""} en tu pedido</span>
+              </div>
+            )}
+            <Button
+              variant="outline"
+              className="w-full min-h-[64px] text-lg"
+              onClick={() => setStep("easy_drink_cats")}
+              data-testid="button-back-to-drink-cats"
+            >
+              <ChevronLeft className="w-5 h-5 mr-2" />
+              Volver a categorías
+            </Button>
           </div>
-        ) : (
-          <PagedMenuGrid
-            products={drinkProducts}
-            onSelect={(p) => {
-              setModReturnStep("easy_drink");
-              handleProductClick(p, "easy_drink");
-            }}
-            cart={easyItems}
-            loading={loadingMods}
-            searchTerm={easyDrinkSearch}
-            onSearchChange={setEasyDrinkSearch}
-          />
+        }
+      >
+        <div className="space-y-3">
+          {pageProducts.map(product => {
+            const inCart = easyItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
+            const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+            return (
+              <ProductCard
+                key={product.id}
+                product={product}
+                inCart={inCart}
+                outOfStock={outOfStock}
+                loading={loadingMods}
+                onSelect={() => handleProductClick(product, "easy_drink_products")}
+              />
+            );
+          })}
+        </div>
+
+        {totalProductPages > 1 && (
+          <div className="flex items-center justify-between pt-4 gap-3">
+            <Button
+              variant="outline"
+              className="flex-1 min-h-[56px] text-base"
+              onClick={() => setCategoryPage(p => Math.max(0, p - 1))}
+              disabled={safeProductPage === 0}
+              data-testid="button-page-prev"
+            >
+              <ChevronLeft className="w-5 h-5 mr-1" /> Atrás
+            </Button>
+            <span className="text-base text-muted-foreground whitespace-nowrap font-medium" data-testid="text-page-indicator">
+              {safeProductPage + 1} / {totalProductPages}
+            </span>
+            <Button
+              variant="outline"
+              className="flex-1 min-h-[56px] text-base"
+              onClick={() => setCategoryPage(p => Math.min(totalProductPages - 1, p + 1))}
+              disabled={safeProductPage >= totalProductPages - 1}
+              data-testid="button-page-next"
+            >
+              Siguiente <ChevronRight className="w-5 h-5 ml-1" />
+            </Button>
+          </div>
         )}
       </EasyStepLayout>
     );
   }
 
-  // ─── Easy/Std: Modificadores ────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  EASY/STD: MODIFICADORES
+  // ═══════════════════════════════════════════════════════════════
   if (step === "easy_modifiers" || step === "std_modifiers") {
     const returnStep = step === "easy_modifiers" ? modReturnStep : stdModReturnStep;
     return (
       <EasyStepLayout
-        step={step === "easy_modifiers" ? 3 : 3}
+        step={mode === "easy" ? 3 : 3}
         totalSteps={mode === "easy" ? EASY_TOTAL_STEPS : 5}
         title={`¿Cómo preferís tu ${pendingProduct?.name}?`}
         onBack={() => { setPendingProduct(null); setModGroups([]); setSelectedMods({}); setStep(returnStep); }}
         stickyButton={
           <Button
-            className="w-full min-h-[56px] text-base"
+            className="w-full min-h-[64px] text-lg"
             onClick={() => confirmModifiers(returnStep)}
             data-testid="button-confirm-modifiers"
           >
             Confirmar
-            <ArrowRight className="w-5 h-5 ml-2" />
+            <ArrowRight className="w-6 h-6 ml-2" />
           </Button>
         }
       >
@@ -830,9 +1007,9 @@ export default function QRClientPage() {
           {modGroups.map(group => (
             <div key={group.id} className="space-y-2" data-testid={`modifier-group-${group.id}`}>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-base">{group.name}</span>
+                <span className="font-semibold text-lg">{group.name}</span>
                 {group.required && <Badge variant="secondary">Requerido</Badge>}
-                {group.multiSelect && <span className="text-xs text-muted-foreground">(varias opciones)</span>}
+                {group.multiSelect && <span className="text-sm text-muted-foreground">(varias opciones)</span>}
               </div>
               <div className="space-y-2">
                 {group.options.map(opt => {
@@ -841,14 +1018,14 @@ export default function QRClientPage() {
                     <Button
                       key={opt.id}
                       variant={isSelected ? "default" : "outline"}
-                      className="w-full min-h-[56px] justify-start text-left text-base"
+                      className="w-full min-h-[64px] justify-start text-left text-lg"
                       onClick={() => toggleModOption(group.id, opt.id, group.multiSelect)}
                       data-testid={`button-modifier-${opt.id}`}
                     >
-                      {isSelected && <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0" />}
+                      {isSelected && <CheckCircle2 className="w-6 h-6 mr-2 flex-shrink-0" />}
                       <span className="flex-1">{opt.name}</span>
                       {Number(opt.priceDelta) !== 0 && (
-                        <span className="text-sm ml-2">+₡{Number(opt.priceDelta).toLocaleString()}</span>
+                        <span className="text-base ml-2">+₡{Number(opt.priceDelta).toLocaleString()}</span>
                       )}
                     </Button>
                   );
@@ -856,7 +1033,7 @@ export default function QRClientPage() {
                 {!group.required && (
                   <Button
                     variant={(selectedMods[group.id] || []).length === 0 ? "secondary" : "ghost"}
-                    className="w-full min-h-[56px] text-base"
+                    className="w-full min-h-[64px] text-lg"
                     onClick={() => setSelectedMods(prev => ({ ...prev, [group.id]: [] }))}
                     data-testid={`button-modifier-skip-${group.id}`}
                   >
@@ -871,7 +1048,9 @@ export default function QRClientPage() {
     );
   }
 
-  // ─── Easy: Pantalla 6 — Resumen ─────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  EASY — PASO 5: RESUMEN
+  // ═══════════════════════════════════════════════════════════════
   if (step === "easy_review") {
     const foodItems = easyItems.filter(it => !isBeverage(it.categoryName));
     const drinkItems = easyItems.filter(it => isBeverage(it.categoryName));
@@ -881,18 +1060,18 @@ export default function QRClientPage() {
         step={5}
         totalSteps={EASY_TOTAL_STEPS}
         title="Revisá tu pedido"
-        onBack={() => setStep("easy_drink")}
+        onBack={() => setStep("easy_drink_cats")}
         stickyButton={
           <Button
-            className="w-full min-h-[56px] text-base"
+            className="w-full min-h-[64px] text-lg"
             onClick={handleSubmitEasy}
             disabled={submitMutation.isPending || easyItems.length === 0}
             data-testid="button-easy-confirm"
           >
             {submitMutation.isPending ? (
-              <Loader2 className="w-5 h-5 animate-spin mr-2" />
+              <Loader2 className="w-6 h-6 animate-spin mr-2" />
             ) : (
-              <Send className="w-5 h-5 mr-2" />
+              <Send className="w-6 h-6 mr-2" />
             )}
             Confirmar y enviar pedido
           </Button>
@@ -901,37 +1080,36 @@ export default function QRClientPage() {
         <div className="space-y-4">
           <Card>
             <CardContent className="p-4 space-y-1">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Users className="w-4 h-4" />
+              <div className="flex items-center gap-2 text-base text-muted-foreground" data-testid="text-review-account">
+                <Users className="w-5 h-5" />
                 <span>Cuenta: {tableInfo.tableName}-{selectedSubaccount?.slotNumber}</span>
               </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <User className="w-4 h-4" />
-                <span>Nombre: <strong className="text-foreground">{customerName.trim()}</strong></span>
+              <div className="flex items-center gap-2 text-base" data-testid="text-review-name">
+                <User className="w-5 h-5 text-muted-foreground" />
+                <span className="text-muted-foreground">Nombre:</span>
+                <strong>{customerName.trim()}</strong>
               </div>
             </CardContent>
           </Card>
 
           {foodItems.length > 0 && (
             <div className="space-y-2">
-              <p className="text-sm font-medium text-muted-foreground flex items-center gap-1">
-                <ChefHat className="w-4 h-4" /> Comida
+              <p className="text-base font-medium text-muted-foreground flex items-center gap-2" data-testid="text-review-food-header">
+                <ChefHat className="w-5 h-5" /> Comida
               </p>
-              {foodItems.map((item, idx) => {
+              {foodItems.map((item) => {
                 const globalIdx = easyItems.indexOf(item);
                 return (
                   <Card key={globalIdx} data-testid={`review-food-item-${globalIdx}`}>
-                    <CardContent className="p-3 flex items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium">{item.qty}x {item.productName}</p>
-                      </div>
+                    <CardContent className="p-4 flex items-center justify-between gap-3">
+                      <p className="font-medium text-lg">{item.qty}x {item.productName}</p>
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => removeEasyItem(globalIdx)}
                         data-testid={`button-remove-item-${globalIdx}`}
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-5 h-5" />
                       </Button>
                     </CardContent>
                   </Card>
@@ -942,24 +1120,22 @@ export default function QRClientPage() {
 
           {drinkItems.length > 0 && (
             <div className="space-y-2">
-              <p className="text-sm font-medium text-muted-foreground flex items-center gap-1">
-                <Coffee className="w-4 h-4" /> Bebidas
+              <p className="text-base font-medium text-muted-foreground flex items-center gap-2" data-testid="text-review-drink-header">
+                <Coffee className="w-5 h-5" /> Bebidas
               </p>
               {drinkItems.map((item) => {
                 const globalIdx = easyItems.indexOf(item);
                 return (
                   <Card key={globalIdx} data-testid={`review-drink-item-${globalIdx}`}>
-                    <CardContent className="p-3 flex items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium">{item.qty}x {item.productName}</p>
-                      </div>
+                    <CardContent className="p-4 flex items-center justify-between gap-3">
+                      <p className="font-medium text-lg">{item.qty}x {item.productName}</p>
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => removeEasyItem(globalIdx)}
                         data-testid={`button-remove-drink-${globalIdx}`}
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-5 h-5" />
                       </Button>
                     </CardContent>
                   </Card>
@@ -969,16 +1145,16 @@ export default function QRClientPage() {
           )}
 
           {easyItems.length === 0 && (
-            <p className="text-center text-muted-foreground text-sm py-4">No hay items en tu pedido.</p>
+            <p className="text-center text-muted-foreground text-base py-6" data-testid="text-empty-order">No hay items en tu pedido.</p>
           )}
 
           <Button
             variant="outline"
-            className="w-full min-h-[56px] text-base"
-            onClick={() => setStep("easy_food")}
+            className="w-full min-h-[64px] text-lg"
+            onClick={() => setStep("easy_food_cats")}
             data-testid="button-easy-add-more"
           >
-            <Plus className="w-5 h-5 mr-2" />
+            <Plus className="w-6 h-6 mr-2" />
             Agregar algo más
           </Button>
         </div>
@@ -986,7 +1162,9 @@ export default function QRClientPage() {
     );
   }
 
-  // ─── Standard: Food ─────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  STANDARD: FOOD
+  // ═══════════════════════════════════════════════════════════════
   if (step === "std_food") {
     const dinerNum = currentDinerIndex + 1;
     const totalDiners = diners.length;
@@ -1057,7 +1235,9 @@ export default function QRClientPage() {
     );
   }
 
-  // ─── Standard: Drink ────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  STANDARD: DRINK
+  // ═══════════════════════════════════════════════════════════════
   if (step === "std_drink") {
     const dinerNum = currentDinerIndex + 1;
     const totalDiners = diners.length;
@@ -1120,7 +1300,7 @@ export default function QRClientPage() {
               </p>
             )}
             <div className="flex gap-3">
-              <Button variant="outline" className="flex-1" onClick={() => handleStdNextFromDrink()} data-testid="button-std-skip-drinks">
+              <Button variant="outline" className="flex-1" onClick={handleStdNextFromDrink} data-testid="button-std-skip-drinks">
                 No quiero bebida
               </Button>
               <Button className="flex-1" onClick={handleStdNextFromDrink} data-testid="button-std-next-drink">
@@ -1133,7 +1313,9 @@ export default function QRClientPage() {
     );
   }
 
-  // ─── Standard: Review ───────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  STANDARD: REVIEW
+  // ═══════════════════════════════════════════════════════════════
   if (step === "std_review") {
     return (
       <div className="min-h-screen bg-background p-4">
@@ -1194,7 +1376,9 @@ export default function QRClientPage() {
     );
   }
 
-  // ─── Pantalla Éxito ─────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  ÉXITO
+  // ═══════════════════════════════════════════════════════════════
   if (step === "sent") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -1203,12 +1387,12 @@ export default function QRClientPage() {
             <Check className="w-10 h-10 text-green-600" />
           </div>
           <h1 className="text-2xl font-bold" data-testid="text-order-sent">Listo! Ya lo avisamos</h1>
-          <p className="text-muted-foreground text-base" data-testid="text-order-sent-message">
+          <p className="text-muted-foreground text-lg" data-testid="text-order-sent-message">
             En un momentito llega el salonero a confirmarlo.
           </p>
-          <p className="text-sm text-muted-foreground">Gracias, y buen provecho!</p>
-          <Button className="min-h-[56px] text-base" onClick={resetAll} data-testid="button-new-order">
-            <Plus className="w-5 h-5 mr-2" />
+          <p className="text-base text-muted-foreground">Gracias, y buen provecho!</p>
+          <Button className="min-h-[64px] text-lg" onClick={resetAll} data-testid="button-new-order">
+            <Plus className="w-6 h-6 mr-2" />
             Hacer otro pedido
           </Button>
         </div>
