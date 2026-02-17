@@ -45,6 +45,7 @@ export const categories = pgTable("categories", {
   sortOrder: integer("sort_order").notNull().default(0),
   kdsDestination: text("kds_destination").notNull().default("cocina"),
   easyMode: boolean("easy_mode").notNull().default(false),
+  foodType: text("food_type").notNull().default("comidas"),
 });
 
 export const products = pgTable("products", {

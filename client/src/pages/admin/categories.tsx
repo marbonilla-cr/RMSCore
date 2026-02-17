@@ -17,7 +17,7 @@ export default function AdminCategoriesPage() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
-  const [form, setForm] = useState({ categoryCode: "", name: "", parentCategoryCode: "", active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false });
+  const [form, setForm] = useState({ categoryCode: "", name: "", parentCategoryCode: "", active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false, foodType: "comidas" });
 
   const { data: categories = [], isLoading } = useQuery<Category[]>({
     queryKey: ["/api/admin/categories"],
@@ -43,7 +43,7 @@ export default function AdminCategoriesPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ categoryCode: "", name: "", parentCategoryCode: "", active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false });
+    setForm({ categoryCode: "", name: "", parentCategoryCode: "", active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false, foodType: "comidas" });
     setOpen(true);
   };
 
@@ -57,6 +57,7 @@ export default function AdminCategoriesPage() {
       sortOrder: cat.sortOrder,
       kdsDestination: cat.kdsDestination || "cocina",
       easyMode: cat.easyMode,
+      foodType: cat.foodType || "comidas",
     });
     setOpen(true);
   };
@@ -141,6 +142,19 @@ export default function AdminCategoriesPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label>Tipo de Alimento</Label>
+                <Select value={form.foodType} onValueChange={(v) => setForm({ ...form, foodType: v })}>
+                  <SelectTrigger data-testid="select-food-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bebidas">Bebidas</SelectItem>
+                    <SelectItem value="comidas">Comidas</SelectItem>
+                    <SelectItem value="extras">Extras</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="flex items-center gap-2">
                 <Switch checked={form.active} onCheckedChange={(c) => setForm({ ...form, active: c })} />
                 <Label>Activa</Label>
@@ -185,6 +199,9 @@ export default function AdminCategoriesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  <Badge variant="outline" className="text-xs">
+                    {cat.foodType === "bebidas" ? "Bebidas" : cat.foodType === "extras" ? "Extras" : "Comidas"}
+                  </Badge>
                   <Badge variant="outline" className="text-xs">
                     {cat.kdsDestination === "bar" ? <Wine className="w-3 h-3 mr-1" /> : <ChefHat className="w-3 h-3 mr-1" />}
                     {cat.kdsDestination === "bar" ? "Bar" : "Cocina"}

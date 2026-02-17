@@ -1059,11 +1059,12 @@ export default function POSPage() {
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Card>
-                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+                <CardHeader className="pb-2 space-y-3">
                   <h3 className="font-bold">Items de la Orden</h3>
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="grid grid-cols-2 gap-2">
                     <Button
                       variant="outline"
+                      className="w-full"
                       onClick={() => { setPosCart([]); setAddItemsOpen(true); }}
                       data-testid="button-add-items"
                     >
@@ -1072,6 +1073,7 @@ export default function POSPage() {
                     {canSplit && (
                       <Button
                         variant="outline"
+                        className="w-full"
                         onClick={enterSplitMode}
                         disabled={normalizing}
                         data-testid="button-enter-split"
@@ -1083,6 +1085,7 @@ export default function POSPage() {
                     {canSplit && (
                       <Button
                         variant="outline"
+                        className="w-full"
                         onClick={() => splitBySubaccountMutation.mutate()}
                         disabled={splitBySubaccountMutation.isPending}
                         data-testid="button-split-by-subaccount"
@@ -1093,6 +1096,7 @@ export default function POSPage() {
                     )}
                     {canPay && (
                       <Button
+                        className="w-full"
                         onClick={openPaymentForFull}
                         disabled={!cashSession?.id || !!cashSession.closedAt}
                         data-testid="button-pay-full"

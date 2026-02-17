@@ -1851,19 +1851,23 @@ export async function registerRoutes(
       ? new Set(cats.filter(c => c.easyMode && c.active).map(c => c.id))
       : null;
 
-    const catMap = new Map(cats.map(c => [c.id, c.name]));
+    const catMap = new Map(cats.map(c => [c.id, c]));
 
     const result = prods
       .filter(p => p.availablePortions === null || p.availablePortions > 0)
       .filter(p => !isEasyMode || (p.easyMode && p.categoryId && easyCatIds!.has(p.categoryId)))
-      .map(p => ({
-        id: p.id,
-        name: p.name,
-        description: p.description,
-        price: p.price,
-        categoryName: p.categoryId ? catMap.get(p.categoryId) || null : null,
-        availablePortions: p.availablePortions,
-      }));
+      .map(p => {
+        const cat = p.categoryId ? catMap.get(p.categoryId) : null;
+        return {
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          price: p.price,
+          categoryName: cat?.name || null,
+          categoryFoodType: cat?.foodType || "comidas",
+          availablePortions: p.availablePortions,
+        };
+      });
 
     res.json(result);
   });
