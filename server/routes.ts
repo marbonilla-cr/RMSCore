@@ -1833,10 +1833,13 @@ export async function registerRoutes(
   app.get("/api/qr/:tableCode/info", async (req, res) => {
     const table = await storage.getTableByCode(req.params.tableCode);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
-    res.json({ tableName: table.tableName, tableCode: table.tableCode });
+    const config = await storage.getBusinessConfig();
+    const maxSubaccounts = (config as any)?.maxSubaccounts ?? 6;
+    res.json({ tableName: table.tableName, tableCode: table.tableCode, maxSubaccounts });
   });
 
   app.get("/api/qr/:tableCode/menu", async (req, res) => {
+    const isEasyMode = req.query.mode === "easy";
     const [table, prods, cats] = await Promise.all([
       storage.getTableByCode(req.params.tableCode as string),
       storage.getQRProducts(),
@@ -1844,10 +1847,15 @@ export async function registerRoutes(
     ]);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
 
+    const easyCatIds = isEasyMode
+      ? new Set(cats.filter(c => c.easyMode && c.active).map(c => c.id))
+      : null;
+
     const catMap = new Map(cats.map(c => [c.id, c.name]));
 
     const result = prods
       .filter(p => p.availablePortions === null || p.availablePortions > 0)
+      .filter(p => !isEasyMode || (p.easyMode && p.categoryId && easyCatIds!.has(p.categoryId)))
       .map(p => ({
         id: p.id,
         name: p.name,

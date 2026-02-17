@@ -93,7 +93,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
   app.post("/api/qr/:tableCode/subaccounts", async (req, res) => {
     try {
       const tableCode = req.params.tableCode as string;
-      const { label } = req.body || {};
+      const { label, slotNumber: requestedSlot } = req.body || {};
 
       const table = await storage.getTableByCode(tableCode);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
@@ -104,13 +104,27 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const existing = await db.select().from(orderSubaccounts)
         .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)));
 
+      const usedSlots = new Set(existing.map(s => s.slotNumber));
+
+      if (requestedSlot) {
+        const slot = Number(requestedSlot);
+        if (slot < 1 || slot > maxSubs) {
+          return res.status(400).json({ message: `Subcuenta ${slot} no es válida. Máximo: ${maxSubs}` });
+        }
+        if (usedSlots.has(slot)) {
+          const found = existing.find(s => s.slotNumber === slot);
+          if (found) return res.json(found);
+        }
+      }
+
       if (existing.length >= maxSubs) {
         return res.status(400).json({ message: `Máximo ${maxSubs} subcuentas permitidas` });
       }
 
-      const usedSlots = new Set(existing.map(s => s.slotNumber));
-      let slotNumber = 1;
-      while (usedSlots.has(slotNumber) && slotNumber <= maxSubs) slotNumber++;
+      let slotNumber = requestedSlot ? Number(requestedSlot) : 1;
+      if (!requestedSlot) {
+        while (usedSlots.has(slotNumber) && slotNumber <= maxSubs) slotNumber++;
+      }
 
       const tableNumber = extractTableNumber(table.tableName);
       const code = `${tableNumber}-${slotNumber}`;

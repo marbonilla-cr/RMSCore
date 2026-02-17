@@ -44,6 +44,7 @@ export const categories = pgTable("categories", {
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
   kdsDestination: text("kds_destination").notNull().default("cocina"),
+  easyMode: boolean("easy_mode").notNull().default(false),
 });
 
 export const products = pgTable("products", {
@@ -55,6 +56,7 @@ export const products = pgTable("products", {
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
   active: boolean("active").notNull().default(true),
   visibleQr: boolean("visible_qr").notNull().default(true),
+  easyMode: boolean("easy_mode").notNull().default(false),
   availablePortions: integer("available_portions"),
   serviceTaxApplicable: boolean("service_tax_applicable").notNull().default(true),
   inventoryControlEnabled: boolean("inventory_control_enabled").notNull().default(false),

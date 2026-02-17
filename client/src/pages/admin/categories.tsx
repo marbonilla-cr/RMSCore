@@ -10,14 +10,14 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Tag, Loader2, ChefHat, Wine } from "lucide-react";
+import { Plus, Pencil, Tag, Loader2, ChefHat, Wine, Zap } from "lucide-react";
 import type { Category } from "@shared/schema";
 
 export default function AdminCategoriesPage() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
-  const [form, setForm] = useState({ categoryCode: "", name: "", parentCategoryCode: "", active: true, sortOrder: 0, kdsDestination: "cocina" });
+  const [form, setForm] = useState({ categoryCode: "", name: "", parentCategoryCode: "", active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false });
 
   const { data: categories = [], isLoading } = useQuery<Category[]>({
     queryKey: ["/api/admin/categories"],
@@ -43,7 +43,7 @@ export default function AdminCategoriesPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ categoryCode: "", name: "", parentCategoryCode: "", active: true, sortOrder: 0, kdsDestination: "cocina" });
+    setForm({ categoryCode: "", name: "", parentCategoryCode: "", active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false });
     setOpen(true);
   };
 
@@ -56,6 +56,7 @@ export default function AdminCategoriesPage() {
       active: cat.active,
       sortOrder: cat.sortOrder,
       kdsDestination: cat.kdsDestination || "cocina",
+      easyMode: cat.easyMode,
     });
     setOpen(true);
   };
@@ -144,6 +145,10 @@ export default function AdminCategoriesPage() {
                 <Switch checked={form.active} onCheckedChange={(c) => setForm({ ...form, active: c })} />
                 <Label>Activa</Label>
               </div>
+              <div className="flex items-center gap-2">
+                <Switch data-testid="switch-category-easymode" checked={form.easyMode} onCheckedChange={(c) => setForm({ ...form, easyMode: c })} />
+                <Label>Modo Fácil (Easy Mode)</Label>
+              </div>
               <Button type="submit" className="w-full" disabled={saveMutation.isPending} data-testid="button-save-category">
                 {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
                 {editing ? "Guardar Cambios" : "Crear Categoría"}
@@ -184,6 +189,11 @@ export default function AdminCategoriesPage() {
                     {cat.kdsDestination === "bar" ? <Wine className="w-3 h-3 mr-1" /> : <ChefHat className="w-3 h-3 mr-1" />}
                     {cat.kdsDestination === "bar" ? "Bar" : "Cocina"}
                   </Badge>
+                  {cat.easyMode && (
+                    <Badge variant="outline" className="text-xs" data-testid="badge-easy-mode">
+                      <Zap className="w-3 h-3 mr-1" />Easy
+                    </Badge>
+                  )}
                   <Badge variant={cat.active ? "default" : "secondary"}>
                     {cat.active ? "Activa" : "Inactiva"}
                   </Badge>

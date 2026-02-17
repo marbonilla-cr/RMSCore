@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   UtensilsCrossed, Plus, Loader2, Check, ChevronLeft, ChevronRight,
-  Search, X, Users, User, ArrowRight, Coffee, ChefHat,
+  X, Users, User, ArrowRight, Coffee, ChefHat,
   Utensils, Send, CheckCircle2, ShoppingBag,
 } from "lucide-react";
 
@@ -71,7 +71,7 @@ interface DinerData {
 }
 
 const MAX_SUBACCOUNTS = 6;
-const ITEMS_PER_PAGE = 4;
+const ITEMS_PER_PAGE = 6;
 
 function isBeverage(categoryName: string | null): boolean {
   if (!categoryName) return false;
@@ -142,18 +142,13 @@ function BigCategoryButton({
   return (
     <Button
       variant="outline"
-      className="w-full min-h-[72px] text-lg font-semibold justify-between gap-3 px-5"
+      className="min-h-[80px] text-base font-semibold flex flex-col gap-1 w-full"
       onClick={onClick}
       data-testid={testId}
     >
-      <span className="flex items-center gap-3">
-        {icon}
-        <span>{label}</span>
-      </span>
-      <span className="flex items-center gap-2">
-        <span className="text-sm font-normal text-muted-foreground">{count} opciones</span>
-        <ChevronRight className="w-5 h-5 text-muted-foreground" />
-      </span>
+      {icon}
+      <span className="truncate w-full text-center">{label}</span>
+      <span className="text-xs font-normal text-muted-foreground">{count} opciones</span>
     </Button>
   );
 }
@@ -169,36 +164,27 @@ function ProductCard({
 }) {
   return (
     <Card className={outOfStock ? "opacity-50" : ""} data-testid={`card-product-${product.id}`}>
-      <CardContent className="p-4">
-        <div className="space-y-2">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-lg">{product.name}</p>
-              {product.description && (
-                <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
-              )}
-            </div>
-            {inCart > 0 && (
-              <Badge variant="secondary" className="text-sm">{inCart} en pedido</Badge>
+      <CardContent className="p-3 flex flex-col h-full">
+        <p className="font-semibold text-base line-clamp-2">{product.name}</p>
+        <p className="font-bold text-base mt-1">₡{Number(product.price).toLocaleString()}</p>
+        {inCart > 0 && (
+          <Badge variant="secondary" className="text-xs mt-1 w-fit">{inCart}x</Badge>
+        )}
+        <div className="mt-auto pt-2">
+          <Button
+            className="w-full min-h-[48px] text-base"
+            variant={outOfStock ? "secondary" : "default"}
+            onClick={onSelect}
+            disabled={loading || outOfStock}
+            data-testid={`button-add-${product.id}`}
+          >
+            {outOfStock ? "Agotado" : (
+              <>
+                <Plus className="w-5 h-5 mr-1" />
+                Agregar
+              </>
             )}
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <p className="font-bold text-lg">₡{Number(product.price).toLocaleString()}</p>
-            <Button
-              className="min-h-[52px] min-w-[100px] text-base"
-              variant={outOfStock ? "secondary" : "default"}
-              onClick={onSelect}
-              disabled={loading || outOfStock}
-              data-testid={`button-add-${product.id}`}
-            >
-              {outOfStock ? "Agotado" : (
-                <>
-                  <Plus className="w-5 h-5 mr-1" />
-                  Agregar
-                </>
-              )}
-            </Button>
-          </div>
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -234,14 +220,23 @@ export default function QRClientPage() {
     tableId: number;
     tableName: string;
     tableCode: string;
+    maxSubaccounts: number;
   }>({
     queryKey: ["/api/qr", tableCode, "info"],
     enabled: !!tableCode,
   });
 
+  const menuUrl = mode === "easy"
+    ? `/api/qr/${tableCode}/menu?mode=easy`
+    : `/api/qr/${tableCode}/menu`;
   const { data: menu = [] } = useQuery<QRProduct[]>({
-    queryKey: ["/api/qr", tableCode, "menu"],
-    enabled: !!tableCode,
+    queryKey: ["/api/qr", tableCode, "menu", mode],
+    queryFn: async () => {
+      const res = await fetch(menuUrl, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load menu");
+      return res.json();
+    },
+    enabled: !!tableCode && mode !== null,
   });
 
   const { data: subaccounts = [], refetch: refetchSubaccounts } = useQuery<Subaccount[]>({
@@ -279,8 +274,8 @@ export default function QRClientPage() {
   }, [step, foodProducts, drinkProducts, selectedCategory]);
 
   const createSubaccountMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/qr/${tableCode}/subaccounts`, {});
+    mutationFn: async (slotNum?: number) => {
+      const res = await apiRequest("POST", `/api/qr/${tableCode}/subaccounts`, slotNum ? { slotNumber: slotNum } : {});
       return res.json();
     },
     onSuccess: (data: Subaccount) => {
@@ -297,24 +292,6 @@ export default function QRClientPage() {
     },
   });
 
-  const batchSubaccountMutation = useMutation({
-    mutationFn: async (count: number) => {
-      const res = await apiRequest("POST", `/api/qr/${tableCode}/subaccounts-batch`, { count });
-      return res.json() as Promise<Subaccount[]>;
-    },
-    onSuccess: (data: Subaccount[]) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/qr", tableCode, "subaccounts"] });
-      if (data.length === 1) {
-        setSelectedSubaccount({ id: data[0].id, code: data[0].code, slotNumber: data[0].slotNumber });
-        setStep("name");
-      } else {
-        refetchSubaccounts();
-      }
-    },
-    onError: () => {
-      toast({ title: "Error", description: "No se pudieron crear las cuentas. Probá de nuevo.", variant: "destructive" });
-    },
-  });
 
   const submitMutation = useMutation({
     mutationFn: async (payload: { subaccountId: number; items: CartItem[] }) => {
@@ -348,10 +325,6 @@ export default function QRClientPage() {
   const handleSubaccountSelect = (sub: Subaccount) => {
     setSelectedSubaccount({ id: sub.id, code: sub.code, slotNumber: sub.slotNumber });
     setStep("name");
-  };
-
-  const handleGroupSelect = async (count: number) => {
-    batchSubaccountMutation.mutate(count);
   };
 
   const handleNameContinue = () => {
@@ -594,84 +567,52 @@ export default function QRClientPage() {
   //  PANTALLA 2: SUBCUENTA / GRUPO
   // ═══════════════════════════════════════════════════════════════
   if (step === "subaccount") {
-    const hasExisting = activeSubaccounts.length > 0;
-    const canCreateMore = activeSubaccounts.length < MAX_SUBACCOUNTS;
+    const maxSlots = tableInfo?.maxSubaccounts ?? MAX_SUBACCOUNTS;
+    const slotNumbers = Array.from({ length: maxSlots }, (_, i) => i + 1);
+    const existingSlots = new Map(activeSubaccounts.map(s => [s.slotNumber, s]));
+
+    const handleSlotClick = async (slotNum: number) => {
+      const existing = existingSlots.get(slotNum);
+      if (existing) {
+        handleSubaccountSelect(existing);
+      } else {
+        createSubaccountMutation.mutate(slotNum);
+      }
+    };
 
     return (
       <EasyStepLayout
         step={1}
         totalSteps={mode === "easy" ? EASY_TOTAL_STEPS : 5}
-        title="¿A cuál cuenta lo cargamos?"
-        subtitle="Si vienen en grupo, así en caja sale ordenadito."
+        title="Escogé tu subcuenta"
+        subtitle="Después ordená lo que querás."
         onBack={() => setStep("welcome")}
       >
         <div className="space-y-6">
-          {!hasExisting && (
-            <div className="space-y-4">
-              <p className="text-base font-medium text-center" data-testid="text-group-question">¿Cuántos son?</p>
-              <div className="grid grid-cols-3 gap-3">
-                {[1, 2, 3, 4, 5, 6].filter(n => n <= MAX_SUBACCOUNTS).map(n => (
-                  <Button
-                    key={n}
-                    variant="outline"
-                    className="min-h-[72px] text-lg font-bold flex flex-col gap-1"
-                    onClick={() => handleGroupSelect(n)}
-                    disabled={batchSubaccountMutation.isPending}
-                    data-testid={`button-group-${n}`}
-                  >
-                    <Users className="w-6 h-6" />
-                    {n === 1 ? "Solo yo" : `Somos ${n}`}
-                  </Button>
-                ))}
-              </div>
-              {batchSubaccountMutation.isPending && (
-                <div className="flex items-center justify-center gap-2 py-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-sm text-muted-foreground">Creando cuentas...</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {hasExisting && (
-            <div className="space-y-3">
-              <p className="text-base font-medium text-center" data-testid="text-pick-account">Elegí tu cuenta:</p>
-              {activeSubaccounts.map(sub => (
+          <div className="grid grid-cols-2 gap-3">
+            {slotNumbers.map(n => {
+              const exists = existingSlots.has(n);
+              return (
                 <Button
-                  key={sub.id}
-                  variant="outline"
-                  className="w-full min-h-[64px] text-lg justify-start gap-3"
-                  onClick={() => handleSubaccountSelect(sub)}
-                  data-testid={`button-subaccount-${sub.id}`}
-                >
-                  <User className="w-6 h-6 flex-shrink-0" />
-                  <span className="flex-1 text-left">{sub.label || `Cuenta ${sub.slotNumber}`}</span>
-                  <Badge variant="secondary" className="text-sm">{sub.code}</Badge>
-                </Button>
-              ))}
-
-              {canCreateMore && (
-                <Button
-                  variant="default"
-                  className="w-full min-h-[64px] text-lg"
-                  onClick={() => createSubaccountMutation.mutate()}
+                  key={n}
+                  variant={exists ? "default" : "outline"}
+                  className="min-h-[80px] text-2xl font-bold flex flex-col gap-1"
+                  onClick={() => handleSlotClick(n)}
                   disabled={createSubaccountMutation.isPending}
-                  data-testid="button-create-subaccount"
+                  data-testid={`button-slot-${n}`}
                 >
-                  {createSubaccountMutation.isPending ? (
-                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                  ) : (
-                    <Plus className="w-6 h-6 mr-2" />
-                  )}
-                  Crear cuenta nueva
+                  <span className="text-3xl">{n}</span>
+                  <span className="text-xs font-normal text-inherit opacity-70">
+                    {exists ? "Cuenta activa" : "Cuenta nueva"}
+                  </span>
                 </Button>
-              )}
-
-              {!canCreateMore && (
-                <p className="text-sm text-center text-muted-foreground p-3" data-testid="text-max-subaccounts">
-                  Ya hay {MAX_SUBACCOUNTS} cuentas en esta mesa. Usá una existente o pedile al salonero.
-                </p>
-              )}
+              );
+            })}
+          </div>
+          {createSubaccountMutation.isPending && (
+            <div className="flex items-center justify-center gap-2 py-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm text-muted-foreground">Creando cuenta...</span>
             </div>
           )}
         </div>
@@ -749,14 +690,14 @@ export default function QRClientPage() {
           </div>
         }
       >
-        <div className="space-y-3">
-          {foodCategories.length === 0 ? (
-            <div className="text-center py-8">
-              <ChefHat className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-              <p className="text-lg text-muted-foreground">No hay comida disponible.</p>
-            </div>
-          ) : (
-            foodCategories.map(cat => (
+        {foodCategories.length === 0 ? (
+          <div className="text-center py-8">
+            <ChefHat className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+            <p className="text-lg text-muted-foreground">No hay comida disponible.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {foodCategories.map(cat => (
               <BigCategoryButton
                 key={cat.name}
                 label={cat.name}
@@ -765,9 +706,9 @@ export default function QRClientPage() {
                 onClick={() => { setSelectedCategory(cat.name); setCategoryPage(0); setStep("easy_food_products"); }}
                 testId={`button-food-cat-${cat.name.toLowerCase().replace(/\s+/g, "-")}`}
               />
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </EasyStepLayout>
     );
   }
@@ -803,7 +744,7 @@ export default function QRClientPage() {
           </div>
         }
       >
-        <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
           {pageProducts.map(product => {
             const inCart = easyItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
             const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
@@ -824,7 +765,7 @@ export default function QRClientPage() {
           <div className="flex items-center justify-between pt-4 gap-3">
             <Button
               variant="outline"
-              className="flex-1 min-h-[56px] text-base"
+              className="flex-1 min-h-[52px] text-base"
               onClick={() => setCategoryPage(p => Math.max(0, p - 1))}
               disabled={safeProductPage === 0}
               data-testid="button-page-prev"
@@ -836,7 +777,7 @@ export default function QRClientPage() {
             </span>
             <Button
               variant="outline"
-              className="flex-1 min-h-[56px] text-base"
+              className="flex-1 min-h-[52px] text-base"
               onClick={() => setCategoryPage(p => Math.min(totalProductPages - 1, p + 1))}
               disabled={safeProductPage >= totalProductPages - 1}
               data-testid="button-page-next"
@@ -881,14 +822,14 @@ export default function QRClientPage() {
           </div>
         }
       >
-        <div className="space-y-3">
-          {drinkCategories.length === 0 ? (
-            <div className="text-center py-8">
-              <Coffee className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-              <p className="text-lg text-muted-foreground">No hay bebidas disponibles.</p>
-            </div>
-          ) : (
-            drinkCategories.map(cat => (
+        {drinkCategories.length === 0 ? (
+          <div className="text-center py-8">
+            <Coffee className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+            <p className="text-lg text-muted-foreground">No hay bebidas disponibles.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {drinkCategories.map(cat => (
               <BigCategoryButton
                 key={cat.name}
                 label={cat.name}
@@ -897,9 +838,9 @@ export default function QRClientPage() {
                 onClick={() => { setSelectedCategory(cat.name); setCategoryPage(0); setStep("easy_drink_products"); }}
                 testId={`button-drink-cat-${cat.name.toLowerCase().replace(/\s+/g, "-")}`}
               />
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </EasyStepLayout>
     );
   }
@@ -935,7 +876,7 @@ export default function QRClientPage() {
           </div>
         }
       >
-        <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
           {pageProducts.map(product => {
             const inCart = easyItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
             const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
@@ -956,7 +897,7 @@ export default function QRClientPage() {
           <div className="flex items-center justify-between pt-4 gap-3">
             <Button
               variant="outline"
-              className="flex-1 min-h-[56px] text-base"
+              className="flex-1 min-h-[52px] text-base"
               onClick={() => setCategoryPage(p => Math.max(0, p - 1))}
               disabled={safeProductPage === 0}
               data-testid="button-page-prev"
@@ -968,7 +909,7 @@ export default function QRClientPage() {
             </span>
             <Button
               variant="outline"
-              className="flex-1 min-h-[56px] text-base"
+              className="flex-1 min-h-[52px] text-base"
               onClick={() => setCategoryPage(p => Math.min(totalProductPages - 1, p + 1))}
               disabled={safeProductPage >= totalProductPages - 1}
               data-testid="button-page-next"

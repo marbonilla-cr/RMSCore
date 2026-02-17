@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, ShoppingBag, Loader2, Search, X, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Pencil, ShoppingBag, Loader2, Search, X, ChevronDown, ChevronRight, Zap } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Product, Category, TaxCategory } from "@shared/schema";
 
@@ -20,7 +20,7 @@ export default function AdminProductsPage() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm] = useState({
     productCode: "", name: "", description: "", categoryId: "" as string,
-    price: "", active: true, visibleQr: true, availablePortions: "" as string,
+    price: "", active: true, visibleQr: true, easyMode: false, availablePortions: "" as string,
   });
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -88,7 +88,7 @@ export default function AdminProductsPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ productCode: "", name: "", description: "", categoryId: "", price: "", active: true, visibleQr: true, availablePortions: "" });
+    setForm({ productCode: "", name: "", description: "", categoryId: "", price: "", active: true, visibleQr: true, easyMode: false, availablePortions: "" });
     setSelectedTaxIds([]);
     setOpen(true);
   };
@@ -103,6 +103,7 @@ export default function AdminProductsPage() {
       price: p.price,
       active: p.active,
       visibleQr: p.visibleQr,
+      easyMode: p.easyMode,
       availablePortions: p.availablePortions?.toString() || "",
     });
     try {
@@ -248,6 +249,10 @@ export default function AdminProductsPage() {
                 <Switch checked={form.visibleQr} onCheckedChange={(c) => setForm({ ...form, visibleQr: c })} />
                 <Label>Visible QR</Label>
               </div>
+              <div className="flex items-center gap-2">
+                <Switch data-testid="switch-product-easymode" checked={form.easyMode} onCheckedChange={(c) => setForm({ ...form, easyMode: c })} />
+                <Label>Modo Fácil (Easy Mode)</Label>
+              </div>
               <Button type="submit" className="w-full" disabled={saveMutation.isPending} data-testid="button-save-product">
                 {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
                 {editing ? "Guardar Cambios" : "Crear Producto"}
@@ -336,6 +341,11 @@ export default function AdminProductsPage() {
                           )}
                           {!p.visibleQr && p.active && (
                             <Badge variant="outline" className="text-xs">No QR</Badge>
+                          )}
+                          {p.easyMode && (
+                            <Badge variant="outline" className="text-xs" data-testid="badge-easy-mode">
+                              <Zap className="w-3 h-3 mr-1" />Easy
+                            </Badge>
                           )}
                           <Switch
                             data-testid={`switch-product-active-${p.id}`}
