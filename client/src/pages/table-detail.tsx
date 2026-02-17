@@ -107,7 +107,10 @@ export default function TableDetailPage() {
   const [subaccountFilter, setSubaccountFilter] = useState<string>("all");
   const [expandedSubaccounts, setExpandedSubaccounts] = useState<Set<string>>(new Set());
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedTopCode, setSelectedTopCode] = useState<string | null>(null);
+  const [showAllSubcats, setShowAllSubcats] = useState(false);
   const [searchExpanded, setSearchExpanded] = useState(false);
+  const [searchSheetOpen, setSearchSheetOpen] = useState(false);
   const [noteDialogItem, setNoteDialogItem] = useState<CartItem | null>(null);
   const [noteText, setNoteText] = useState("");
   const [rondaSheetOpen, setRondaSheetOpen] = useState(false);
@@ -430,6 +433,13 @@ export default function TableDetailPage() {
         (p.description && p.description.toLowerCase().includes(searchLower)))
   );
 
+  const topCategories = categories.filter(c => c.categoryCode.startsWith("TOP-") && c.active).sort((a, b) => a.sortOrder - b.sortOrder);
+  const hasTopSystem = topCategories.length > 0;
+
+  const subcategoriesForTop = hasTopSystem && selectedTopCode
+    ? categories.filter(c => c.parentCategoryCode === selectedTopCode && c.active && !c.categoryCode.startsWith("TOP-")).sort((a, b) => a.sortOrder - b.sortOrder)
+    : [];
+
   const productsByCategory = filteredProducts.reduce((acc: Record<number | string, Product[]>, p) => {
     const catId = p.categoryId ?? "sin-categoria";
     if (!acc[catId]) acc[catId] = [];
@@ -437,19 +447,36 @@ export default function TableDetailPage() {
     return acc;
   }, {});
 
-  const sortedCategoryIds = Object.keys(productsByCategory).sort((a, b) => {
-    if (a === "sin-categoria") return 1;
-    if (b === "sin-categoria") return -1;
-    const catA = categories.find((c) => c.id === Number(a));
-    const catB = categories.find((c) => c.id === Number(b));
-    return (catA?.sortOrder ?? 999) - (catB?.sortOrder ?? 999);
-  });
+  const sortedCategoryIds = hasTopSystem
+    ? subcategoriesForTop.map(sc => String(sc.id))
+    : Object.keys(productsByCategory).sort((a, b) => {
+        if (a === "sin-categoria") return 1;
+        if (b === "sin-categoria") return -1;
+        const catA = categories.find((c) => c.id === Number(a));
+        const catB = categories.find((c) => c.id === Number(b));
+        return (catA?.sortOrder ?? 999) - (catB?.sortOrder ?? 999);
+      });
 
   useEffect(() => {
-    if (sortedCategoryIds.length > 0 && !selectedCategoryId) {
+    if (hasTopSystem && topCategories.length > 0 && !selectedTopCode) {
+      setSelectedTopCode(topCategories[0].categoryCode);
+    }
+  }, [hasTopSystem, topCategories.length]);
+
+  useEffect(() => {
+    if (hasTopSystem && subcategoriesForTop.length > 0) {
+      setSelectedCategoryId(String(subcategoriesForTop[0].id));
+      setShowAllSubcats(false);
+    } else if (hasTopSystem) {
+      setSelectedCategoryId(null);
+    }
+  }, [selectedTopCode]);
+
+  useEffect(() => {
+    if (!hasTopSystem && sortedCategoryIds.length > 0 && !selectedCategoryId) {
       setSelectedCategoryId(sortedCategoryIds[0]);
     }
-  }, [sortedCategoryIds]);
+  }, [sortedCategoryIds, hasTopSystem]);
 
   const orderItems = currentView?.orderItems || [];
   const pendingSubmissions = currentView?.pendingQrSubmissions || [];
@@ -1160,68 +1187,81 @@ export default function TableDetailPage() {
           </div>
         ) : (
           <div className="flex flex-col h-full">
-            <div className="sticky top-0 z-[9] bg-background px-3 py-2 border-b">
-              {searchExpanded ? (
-                <div className="relative">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar ítems..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-9 pr-9"
-                    data-testid="input-search-menu"
-                    aria-label="Buscar ítems en el menú"
-                  />
-                  {searchTerm ? (
+            <div className="sticky top-0 z-[9] bg-background px-3 py-2 border-b space-y-2">
+              {hasTopSystem && !isSearching && (
+                <div className="flex items-center gap-1">
+                  <div className="flex flex-1 rounded-md overflow-hidden border">
+                    {topCategories.map((top) => {
+                      const isActive = selectedTopCode === top.categoryCode;
+                      const colorMap: Record<string, string> = {
+                        "TOP-COMIDAS": isActive ? "bg-emerald-600 text-white dark:bg-emerald-500" : "bg-background",
+                        "TOP-BEBIDAS": isActive ? "bg-blue-600 text-white dark:bg-blue-500" : "bg-background",
+                        "TOP-ALCOHOL": isActive ? "bg-purple-600 text-white dark:bg-purple-500" : "bg-background",
+                        "TOP-POSTRES": isActive ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-background",
+                      };
+                      return (
+                        <button
+                          key={top.categoryCode}
+                          className={`flex-1 text-center py-2.5 text-sm font-semibold transition-colors min-h-[44px] ${colorMap[top.categoryCode] || (isActive ? "bg-primary text-primary-foreground" : "bg-background")}`}
+                          onClick={() => setSelectedTopCode(top.categoryCode)}
+                          data-testid={`button-top-${top.categoryCode}`}
+                        >
+                          {top.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search">
+                    <Search className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
+
+              {!hasTopSystem && (
+                <div className="flex items-center gap-1">
+                  <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search-flat">
+                    <Search className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
+
+              {!isSearching && sortedCategoryIds.length > 0 && (
+                <div>
+                  <div className="flex gap-1.5 flex-wrap overflow-hidden" style={{ maxHeight: showAllSubcats ? "none" : "76px" }}>
+                    {sortedCategoryIds.map((catId) => {
+                      const cat = categories.find(c => c.id === Number(catId));
+                      const catName = catId === "sin-categoria" ? "Sin Categoría" : cat?.name || "Categoría";
+                      const isActive = selectedCategoryId === catId;
+                      return (
+                        <button
+                          key={catId}
+                          className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors border ${
+                            isActive
+                              ? "bg-foreground text-background border-foreground"
+                              : "bg-background border-border hover-elevate"
+                          }`}
+                          onClick={() => setSelectedCategoryId(catId)}
+                          data-testid={`chip-category-${catId}`}
+                        >
+                          {catName}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {sortedCategoryIds.length > 8 && (
                     <button
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                      onClick={() => { setSearchTerm(""); setDebouncedSearch(""); }}
-                      data-testid="button-clear-search"
-                      aria-label="Limpiar búsqueda"
+                      className="text-xs text-primary font-medium mt-1"
+                      onClick={() => setShowAllSubcats(!showAllSubcats)}
+                      data-testid="button-show-all-subcats"
                     >
-                      <X className="w-4 h-4" />
-                    </button>
-                  ) : (
-                    <button
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                      onClick={() => { setSearchExpanded(false); setSearchTerm(""); setDebouncedSearch(""); }}
-                      data-testid="button-close-search"
-                      aria-label="Cerrar búsqueda"
-                    >
-                      <X className="w-4 h-4" />
+                      {showAllSubcats ? "Menos" : `Ver más (${sortedCategoryIds.length})`}
                     </button>
                   )}
                 </div>
-              ) : (
-                <Button size="icon" variant="ghost" onClick={() => setSearchExpanded(true)} data-testid="button-expand-search">
-                  <Search className="w-4 h-4" />
-                </Button>
               )}
             </div>
 
-            {!isSearching && (
-              <div className="flex gap-2 flex-wrap px-3 py-2 md:flex-wrap overflow-x-auto md:overflow-visible no-scrollbar">
-                {sortedCategoryIds.map((catId) => {
-                  const catName = catId === "sin-categoria" ? "Sin Categoría" : categories.find(c => c.id === Number(catId))?.name || "Categoría";
-                  const count = productsByCategory[catId]?.length || 0;
-                  const isActive = selectedCategoryId === catId;
-                  return (
-                    <Button
-                      key={catId}
-                      variant={isActive ? "default" : "outline"}
-                      size="sm"
-                      className="flex-shrink-0 md:flex-shrink whitespace-nowrap"
-                      onClick={() => setSelectedCategoryId(catId)}
-                      data-testid={`chip-category-${catId}`}
-                    >
-                      {catName} <Badge variant="secondary" className="ml-1.5">{count}</Badge>
-                    </Button>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="px-3 pb-4 pt-2">
+            <div className="px-3 pb-4 pt-2 flex-1 overflow-y-auto">
               {(() => {
                 const displayProducts = isSearching ? filteredProducts : (selectedCategoryId ? (productsByCategory[selectedCategoryId] || []) : []);
                 return (
@@ -1263,6 +1303,55 @@ export default function TableDetailPage() {
                 );
               })()}
             </div>
+
+            {searchSheetOpen && (
+              <div className="fixed inset-0 z-[100] bg-black/50" onClick={() => setSearchSheetOpen(false)} data-testid="overlay-search">
+                <div className="absolute bottom-0 left-0 right-0 bg-background rounded-t-xl p-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="relative flex-1">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        placeholder="Buscar ítems..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-9"
+                        data-testid="input-search-menu"
+                      />
+                    </div>
+                    <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(false); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-close-search">
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto">
+                    {debouncedSearch.length > 0 && (
+                      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
+                        {filteredProducts.filter(p => p.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || p.productCode.toLowerCase().includes(debouncedSearch.toLowerCase())).map((p) => {
+                          const inCartQty = cart.filter(c => c.productId === p.id).reduce((s, c) => s + c.qty, 0);
+                          return (
+                            <div
+                              key={p.id}
+                              className={`flex flex-col p-2.5 rounded-md border card-3d cursor-pointer ${p.availablePortions !== null && p.availablePortions <= 0 ? "opacity-50 pointer-events-none" : ""}`}
+                              onClick={(e) => { addToCart(p, e); setSearchSheetOpen(false); setSearchTerm(""); setDebouncedSearch(""); }}
+                              data-testid={`search-item-${p.id}`}
+                            >
+                              <p className="font-medium text-sm truncate">{p.name}</p>
+                              <p className="text-xs text-muted-foreground">₡{Number(p.price).toLocaleString()}</p>
+                              {inCartQty > 0 && <Badge className="bg-primary text-primary-foreground text-xs mt-1 self-start">{inCartQty}</Badge>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {debouncedSearch.length > 0 && filteredProducts.filter(p => p.name.toLowerCase().includes(debouncedSearch.toLowerCase())).length === 0 && (
+                      <p className="text-center py-8 text-muted-foreground">Sin resultados</p>
+                    )}
+                    {debouncedSearch.length === 0 && (
+                      <p className="text-center py-8 text-muted-foreground text-sm">Escriba para buscar</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

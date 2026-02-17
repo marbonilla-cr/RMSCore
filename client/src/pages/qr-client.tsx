@@ -22,7 +22,18 @@ interface QRProduct {
   price: string;
   categoryName: string | null;
   categoryFoodType: string;
+  categoryParentCode: string | null;
   availablePortions: number | null;
+}
+
+interface QRTopCategory {
+  code: string;
+  name: string;
+}
+
+interface QRMenuResponse {
+  products: QRProduct[];
+  topCategories: QRTopCategory[];
 }
 
 interface QRModifierGroup {
@@ -152,6 +163,7 @@ export default function QRClientPage() {
 
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedFoodType, setSelectedFoodType] = useState<"bebidas" | "comidas" | "extras">("comidas");
+  const [selectedQrTopCode, setSelectedQrTopCode] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [pendingProduct, setPendingProduct] = useState<QRProduct | null>(null);
   const [modGroups, setModGroups] = useState<QRModifierGroup[]>([]);
@@ -168,7 +180,7 @@ export default function QRClientPage() {
     enabled: !!tableCode,
   });
 
-  const { data: menu = [] } = useQuery<QRProduct[]>({
+  const { data: menuData } = useQuery<QRMenuResponse>({
     queryKey: ["/api/qr", tableCode, "menu"],
     queryFn: async () => {
       const res = await fetch(`/api/qr/${tableCode}/menu`, { credentials: "include" });
@@ -177,6 +189,8 @@ export default function QRClientPage() {
     },
     enabled: !!tableCode && step !== "welcome",
   });
+  const menu = menuData?.products || [];
+  const qrTopCategories = menuData?.topCategories || [];
 
   const { data: subaccounts = [], refetch: refetchSubaccounts } = useQuery<Subaccount[]>({
     queryKey: ["/api/qr", tableCode, "subaccounts"],
@@ -185,9 +199,20 @@ export default function QRClientPage() {
 
   const activeSubaccounts = subaccounts.filter(s => s.isActive);
 
+  const hasQrTopSystem = qrTopCategories.length > 0;
+
+  useEffect(() => {
+    if (hasQrTopSystem && qrTopCategories.length > 0 && !selectedQrTopCode) {
+      setSelectedQrTopCode(qrTopCategories[0].code);
+    }
+  }, [hasQrTopSystem, qrTopCategories.length]);
+
   const filteredProducts = useMemo(() => {
+    if (hasQrTopSystem && selectedQrTopCode) {
+      return menu.filter(p => p.categoryParentCode === selectedQrTopCode);
+    }
     return menu.filter(p => (p.categoryFoodType || "comidas") === selectedFoodType);
-  }, [menu, selectedFoodType]);
+  }, [menu, selectedFoodType, hasQrTopSystem, selectedQrTopCode]);
 
   const categoriesForFoodType = useMemo(() => {
     const cats = new Map<string, QRProduct[]>();
@@ -205,7 +230,7 @@ export default function QRClientPage() {
     } else {
       setExpandedCategory(null);
     }
-  }, [selectedFoodType, categoriesForFoodType.length]);
+  }, [selectedFoodType, selectedQrTopCode, categoriesForFoodType.length]);
 
   const createSubaccountMutation = useMutation({
     mutationFn: async (slotNum?: number) => {
@@ -594,20 +619,44 @@ export default function QRClientPage() {
                 <h1 className="text-lg font-bold truncate" data-testid="text-step-title">¿Qué querés pedir?</h1>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 mt-3">
-              {foodTypeLabels.map(ft => (
-                <Button
-                  key={ft.key}
-                  variant={selectedFoodType === ft.key ? "default" : "outline"}
-                  className="min-h-[48px] text-sm font-semibold"
-                  onClick={() => setSelectedFoodType(ft.key)}
-                  data-testid={`button-food-type-${ft.key}`}
-                >
-                  {ft.icon}
-                  <span className="ml-1">{ft.label}</span>
-                </Button>
-              ))}
-            </div>
+            {hasQrTopSystem ? (
+              <div className="flex rounded-md overflow-hidden border mt-3">
+                {qrTopCategories.map((top) => {
+                  const isActive = selectedQrTopCode === top.code;
+                  const colorMap: Record<string, string> = {
+                    "TOP-COMIDAS": isActive ? "bg-emerald-600 text-white dark:bg-emerald-500" : "bg-background",
+                    "TOP-BEBIDAS": isActive ? "bg-blue-600 text-white dark:bg-blue-500" : "bg-background",
+                    "TOP-ALCOHOL": isActive ? "bg-purple-600 text-white dark:bg-purple-500" : "bg-background",
+                    "TOP-POSTRES": isActive ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-background",
+                  };
+                  return (
+                    <button
+                      key={top.code}
+                      className={`flex-1 text-center py-3 text-sm font-semibold transition-colors min-h-[48px] ${colorMap[top.code] || (isActive ? "bg-primary text-primary-foreground" : "bg-background")}`}
+                      onClick={() => setSelectedQrTopCode(top.code)}
+                      data-testid={`button-qr-top-${top.code}`}
+                    >
+                      {top.name}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2 mt-3">
+                {foodTypeLabels.map(ft => (
+                  <Button
+                    key={ft.key}
+                    variant={selectedFoodType === ft.key ? "default" : "outline"}
+                    className="min-h-[48px] text-sm font-semibold"
+                    onClick={() => setSelectedFoodType(ft.key)}
+                    data-testid={`button-food-type-${ft.key}`}
+                  >
+                    {ft.icon}
+                    <span className="ml-1">{ft.label}</span>
+                  </Button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

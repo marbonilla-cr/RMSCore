@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Tag, Loader2, ChefHat, Wine, Zap } from "lucide-react";
+import { Plus, Pencil, Tag, Loader2, ChefHat, Wine, Zap, Layers } from "lucide-react";
 import type { Category } from "@shared/schema";
 
 export default function AdminCategoriesPage() {
@@ -21,6 +21,22 @@ export default function AdminCategoriesPage() {
 
   const { data: categories = [], isLoading } = useQuery<Category[]>({
     queryKey: ["/api/admin/categories"],
+  });
+
+  const topCategories = categories.filter(c => c.categoryCode.startsWith("TOP-"));
+  const subCategories = categories.filter(c => !c.categoryCode.startsWith("TOP-"));
+
+  const seedTopsMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", "/api/admin/categories/seed-tops");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/categories"] });
+      toast({ title: "TOPs base creados correctamente" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
   });
 
   const saveMutation = useMutation({
@@ -78,13 +94,25 @@ export default function AdminCategoriesPage() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">Organice los productos del menú</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={openCreate} data-testid="button-add-category">
-              <Plus className="w-4 h-4" />
-              <span className="ml-1">Nueva Categoría</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          {topCategories.length === 0 && (
+            <Button
+              variant="outline"
+              onClick={() => seedTopsMutation.mutate()}
+              disabled={seedTopsMutation.isPending}
+              data-testid="button-seed-tops"
+            >
+              {seedTopsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+              <span className="ml-1">Crear TOPs Base</span>
             </Button>
-          </DialogTrigger>
+          )}
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={openCreate} data-testid="button-add-category">
+                <Plus className="w-4 h-4" />
+                <span className="ml-1">Nueva Categoría</span>
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editing ? "Editar Categoría" : "Nueva Categoría"}</DialogTitle>
@@ -111,12 +139,18 @@ export default function AdminCategoriesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Categoría Padre (opcional)</Label>
-                <Input
-                  value={form.parentCategoryCode}
-                  onChange={(e) => setForm({ ...form, parentCategoryCode: e.target.value })}
-                  placeholder="Código de categoría padre"
-                />
+                <Label>TOP Padre (agrupar bajo)</Label>
+                <Select value={form.parentCategoryCode || "_none"} onValueChange={(v) => setForm({ ...form, parentCategoryCode: v === "_none" ? "" : v })}>
+                  <SelectTrigger data-testid="select-parent-category">
+                    <SelectValue placeholder="Sin TOP padre" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">Sin TOP padre (es TOP)</SelectItem>
+                    {topCategories.map(top => (
+                      <SelectItem key={top.categoryCode} value={top.categoryCode}>{top.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>Orden</Label>
@@ -170,6 +204,7 @@ export default function AdminCategoriesPage() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {isLoading ? (
@@ -185,42 +220,73 @@ export default function AdminCategoriesPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3">
-          {categories.map((cat) => (
-            <Card key={cat.id} data-testid={`card-category-${cat.id}`}>
-              <CardContent className="flex items-center justify-between gap-4 py-3 min-h-[48px]">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-md bg-accent flex items-center justify-center flex-shrink-0">
-                    <Tag className="w-4 h-4 text-accent-foreground" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{cat.name}</p>
-                    <p className="text-xs text-muted-foreground">Código: {cat.categoryCode}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <Badge variant="outline" className="text-xs">
-                    {cat.foodType === "bebidas" ? "Bebidas" : cat.foodType === "extras" ? "Extras" : "Comidas"}
-                  </Badge>
-                  <Badge variant="outline" className="text-xs">
-                    {cat.kdsDestination === "bar" ? <Wine className="w-3 h-3 mr-1" /> : <ChefHat className="w-3 h-3 mr-1" />}
-                    {cat.kdsDestination === "bar" ? "Bar" : "Cocina"}
-                  </Badge>
-                  {cat.easyMode && (
-                    <Badge variant="outline" className="text-xs" data-testid="badge-easy-mode">
-                      <Zap className="w-3 h-3 mr-1" />Easy
-                    </Badge>
-                  )}
-                  <Badge variant={cat.active ? "default" : "secondary"}>
-                    {cat.active ? "Activa" : "Inactiva"}
-                  </Badge>
-                  <Button size="icon" variant="ghost" onClick={() => openEdit(cat)} data-testid={`button-edit-category-${cat.id}`}>
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="space-y-4">
+          {topCategories.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">TOPs</h2>
+              {topCategories.map((cat) => (
+                <Card key={cat.id} data-testid={`card-category-${cat.id}`}>
+                  <CardContent className="flex items-center justify-between gap-4 py-3 min-h-[48px]">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <Layers className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{cat.name}</p>
+                        <p className="text-xs text-muted-foreground">{subCategories.filter(sc => sc.parentCategoryCode === cat.categoryCode).length} subcategorías</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                      <Badge variant={cat.active ? "default" : "secondary"}>
+                        {cat.active ? "Activa" : "Inactiva"}
+                      </Badge>
+                      <Button size="icon" variant="ghost" onClick={() => openEdit(cat)} data-testid={`button-edit-category-${cat.id}`}>
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+          <div className="space-y-3">
+            {topCategories.length > 0 && <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Subcategorías</h2>}
+            {subCategories.map((cat) => {
+              const parentTop = topCategories.find(t => t.categoryCode === cat.parentCategoryCode);
+              return (
+                <Card key={cat.id} data-testid={`card-category-${cat.id}`}>
+                  <CardContent className="flex items-center justify-between gap-4 py-3 min-h-[48px]">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-md bg-accent flex items-center justify-center flex-shrink-0">
+                        <Tag className="w-4 h-4 text-accent-foreground" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{cat.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {parentTop ? parentTop.name : "Sin TOP"}
+                          {" · "}
+                          {cat.kdsDestination === "bar" ? "Bar" : "Cocina"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                      {cat.easyMode && (
+                        <Badge variant="outline" className="text-xs" data-testid="badge-easy-mode">
+                          <Zap className="w-3 h-3 mr-1" />Easy
+                        </Badge>
+                      )}
+                      <Badge variant={cat.active ? "default" : "secondary"}>
+                        {cat.active ? "Activa" : "Inactiva"}
+                      </Badge>
+                      <Button size="icon" variant="ghost" onClick={() => openEdit(cat)} data-testid={`button-edit-category-${cat.id}`}>
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

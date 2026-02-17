@@ -590,6 +590,31 @@ export async function registerRoutes(
     res.json(await storage.getAllCategories());
   });
 
+  app.post("/api/admin/categories/seed-tops", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const tops = [
+        { categoryCode: "TOP-COMIDAS", name: "Comidas", parentCategoryCode: null, active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+        { categoryCode: "TOP-BEBIDAS", name: "Bebidas", parentCategoryCode: null, active: true, sortOrder: 1, kdsDestination: "bar", easyMode: false, foodType: "bebidas" },
+        { categoryCode: "TOP-ALCOHOL", name: "Alcohol", parentCategoryCode: null, active: true, sortOrder: 2, kdsDestination: "bar", easyMode: false, foodType: "bebidas" },
+        { categoryCode: "TOP-POSTRES", name: "Postres", parentCategoryCode: null, active: true, sortOrder: 3, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+      ];
+      const existing = await storage.getAllCategories();
+      const created: any[] = [];
+      for (const top of tops) {
+        const exists = existing.find(c => c.categoryCode === top.categoryCode);
+        if (!exists) {
+          const cat = await storage.createCategory(top);
+          created.push(cat);
+        } else {
+          created.push(exists);
+        }
+      }
+      res.json({ message: `TOPs base listos (${created.length})`, tops: created });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/admin/categories", requireRole("MANAGER"), async (req, res) => {
     try {
       const cat = await storage.createCategory(req.body);
@@ -1865,11 +1890,16 @@ export async function registerRoutes(
           price: p.price,
           categoryName: cat?.name || null,
           categoryFoodType: cat?.foodType || "comidas",
+          categoryParentCode: cat?.parentCategoryCode || null,
           availablePortions: p.availablePortions,
         };
       });
 
-    res.json(result);
+    const topCats = cats.filter(c => c.categoryCode.startsWith("TOP-") && c.active)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(c => ({ code: c.categoryCode, name: c.name }));
+
+    res.json({ products: result, topCategories: topCats });
   });
 
   app.get("/api/qr/:tableCode/my-items", async (req, res) => {
