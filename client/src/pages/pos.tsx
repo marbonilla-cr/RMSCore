@@ -1060,7 +1060,6 @@ export default function POSPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Card>
                 <CardHeader className="pb-2 space-y-3">
-                  <h3 className="font-bold">Items de la Orden</h3>
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       variant="outline"
@@ -1105,44 +1104,59 @@ export default function POSPage() {
                       </Button>
                     )}
                   </div>
+                  <h3 className="font-bold text-sm pt-1">Items de la Orden</h3>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-1">
+                <CardContent className="px-3">
+                  <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-x-3 items-center text-xs font-semibold text-muted-foreground border-b pb-1 mb-1">
+                    <span>Cant</span>
+                    <span>Item</span>
+                    <span className="text-right">P.Unit</span>
+                    <span className="text-right">Subtotal</span>
+                    <span className="text-center">Desc</span>
+                  </div>
+                  <div className="space-y-0">
                     {groupItems(selectedTable.items).map((group) => {
                       const hasDiscount = group.totalDiscount > 0;
+                      const unitPrice = Number(group.productPriceSnapshot) + (group.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
                       return (
                         <div
                           key={group.key}
-                          className={`py-2 px-2 rounded-md min-h-[48px] ${group.hasPaid ? "opacity-50" : ""}`}
+                          className={`py-1.5 border-b border-border/50 last:border-0 ${group.hasPaid ? "opacity-50" : ""}`}
                           data-testid={`item-row-${group.firstItemId}`}
                         >
-                          <div className="flex items-center gap-2">
-                            {group.hasPaid && <Badge variant="secondary" className="text-xs">Pagado</Badge>}
-                            <div className="flex-1">
-                              <span className="text-sm">{group.totalQty}x {group.productNameSnapshot}</span>
+                          <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-x-3 items-start">
+                            <span className="text-sm tabular-nums">{group.totalQty}</span>
+                            <div className="min-w-0">
+                              <span className="text-sm truncate block">{group.productNameSnapshot}</span>
+                              {group.hasPaid && <Badge variant="secondary" className="text-xs mt-0.5">Pagado</Badge>}
                               {group.customerNameSnapshot && (
-                                <div className="text-xs text-muted-foreground">{group.customerNameSnapshot}</div>
+                                <div className="text-xs text-muted-foreground truncate">{group.customerNameSnapshot}</div>
                               )}
                               {group.modifiers.length > 0 && (
-                                <div className="text-xs text-muted-foreground">
+                                <div className="text-xs text-muted-foreground truncate">
                                   {group.modifiers.map(m => m.nameSnapshot).join(", ")}
                                 </div>
                               )}
                             </div>
-                            <span className={`text-sm ${hasDiscount ? "line-through text-muted-foreground" : ""}`}>₡{group.totalAmount.toLocaleString()}</span>
-                            {!group.hasPaid && canPay && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openDiscountDialog(group.firstItemId)}
-                                data-testid={`button-discount-item-${group.firstItemId}`}
-                              >
-                                <Percent className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
+                            <span className="text-sm text-right tabular-nums whitespace-nowrap">₡{unitPrice.toLocaleString()}</span>
+                            <span className={`text-sm text-right tabular-nums whitespace-nowrap ${hasDiscount ? "line-through text-muted-foreground" : ""}`}>₡{group.totalAmount.toLocaleString()}</span>
+                            <div className="flex items-center justify-center">
+                              {!group.hasPaid && canPay ? (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openDiscountDialog(group.firstItemId)}
+                                  data-testid={`button-discount-item-${group.firstItemId}`}
+                                >
+                                  <Percent className="w-3.5 h-3.5" />
+                                </Button>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">-</span>
+                              )}
+                            </div>
                           </div>
                           {hasDiscount && (
-                            <div className="flex items-center gap-2 mt-1 ml-6">
+                            <div className="flex items-center gap-2 mt-0.5 pl-6">
                               <span className="text-xs text-green-600 dark:text-green-400">
                                 -{group.discounts[0]?.discountName}: ₡{group.totalDiscount.toLocaleString()}
                               </span>
