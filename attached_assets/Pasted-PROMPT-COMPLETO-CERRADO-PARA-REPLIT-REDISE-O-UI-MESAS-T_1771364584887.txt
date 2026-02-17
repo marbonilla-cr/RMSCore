@@ -1,0 +1,238 @@
+PROMPT COMPLETO CERRADO PARA REPLIT — REDISEÑO UI “MESAS / TOMAR ORDEN” + GRID + RONDA COMPACTA + NOTAS POR ÍTEM + DARK MODE + MINIMIZAR TECLADO + BLOQUEAR PULL-TO-REFRESH (GLOBAL)
+
+IMPORTANTE (NO NEGOCIABLE):
+	•	NO tocar lógica de negocio, DB, cálculo de totales, impuestos, porciones, KDS, pagos, split, ni endpoints.
+	•	Cambios son solo UI/UX + comportamiento de scroll/refresh.
+	•	Debe funcionar en Safari iOS, Chrome Android, navegadores básicos (QR), tablet y desktop.
+	•	Refresh de datos solo con el botón de refresh existente. Prohibido “pull-to-refresh”.
+
+⸻
+
+1) Objetivo
+
+Optimizar la pantalla donde el salonero toma y revisa órdenes de mesas, para:
+	•	Agregar ítems más rápido sin depender del botón “+”.
+	•	Ver más ítems por pantalla (orden grande = menos scroll).
+	•	Notas por ítem sin campos visibles que consuman espacio.
+	•	Dark Mode completo.
+	•	Minimizar uso del teclado.
+	•	Deshabilitar pull-to-refresh en todo el sistema.
+
+⸻
+
+2) Cambios UI/UX en MÓDULO MESAS / SALONERO
+
+2.1 Layout por dispositivo
+
+Móvil (teléfonos)
+	•	Vista principal = Catálogo (categorías + grid productos).
+	•	“Nueva Ronda” = Bottom Sheet (deslizable) para revisar/editar y enviar.
+	•	Botón fijo para abrir ronda: 🧾 Ronda (X) (contador en tiempo real).
+	•	Dentro del bottom sheet: botón sticky Enviar a Cocina.
+
+Tablet / Desktop
+	•	Layout 2 columnas:
+	•	Izquierda: Categorías (lista vertical)
+	•	Derecha: Productos (grid responsive)
+	•	La ronda puede ser:
+	•	panel lateral si hay espacio, o
+	•	bottom sheet igual (aceptable).
+
+⸻
+
+2.2 Catálogo: categorías + productos (sin accordion)
+
+Buscador sticky (teclado minimizado)
+	•	El buscador NO debe mostrar teclado automáticamente.
+	•	Por defecto mostrar solo un ícono 🔍 y placeholder tipo “Buscar”.
+	•	Al tocar 🔍 se expande el input. Sin autofocus.
+	•	Debounce 200ms.
+
+Categorías
+
+Reemplazar accordions por:
+
+En móvil: chips horizontales (scroll) debajo del buscador
+	•	categoría activa resaltada
+	•	opcional: badge con conteo
+
+En tablet/desktop: lista vertical de botones grandes
+	•	categoría activa resaltada
+
+Productos en grilla responsive (solo categoría seleccionada)
+
+CSS Grid por ancho real (no por user agent):
+	•	<= 360px: 2 columnas
+	•	361–520px: 3 columnas
+	•	521–820px: 4 columnas
+	•	821–1100px: 5 columnas
+	•	1100px: 6 columnas
+
+Tarjeta de producto (compacta, tocable):
+	•	Nombre grande (ellipsis)
+	•	Precio pequeño
+	•	Badge “Opciones” si tiene modificadores
+	•	Si inactivo: NO se muestra
+	•	Si sin porciones: disabled con “Agotado”
+
+Acción tap:
+	•	Si NO tiene modificadores requeridos: agrega 1 unidad a la ronda + toast “Agregado ✅”
+	•	Si requiere modificadores: abrir modal/bottom sheet de modificadores (botones grandes)
+
+Performance:
+	•	Renderizar solo productos de la categoría activa (no todo el menú).
+	•	Sin imágenes pesadas (si hay, lazy-load).
+
+⸻
+
+3) Nueva Ronda (revisión y envío) — compacta y rápida
+
+3.1 Bottom Sheet (móvil)
+	•	Abre/cierra con botón fijo: 🧾 Ronda (X)
+	•	Header dentro del sheet:
+	•	“Nueva Ronda (X ítems)”
+	•	total visible
+	•	Botón sticky principal: Enviar a Cocina
+
+3.2 Lista de ítems compacta (el cambio clave)
+
+Eliminar el campo “Notas…” que aparece fijo debajo de cada ítem.
+
+Layout de cada ítem (máximo 2 líneas)
+
+Línea 1 (siempre):
+	•	Izquierda: Nombre producto (bold)
+	•	Debajo (opcional): ₡precio unitario
+	•	Derecha: control qty compacto [-] qty [+]
+	•	Botones compactos en la misma fila:
+	•	📝 Nota
+	•	🗑️ Eliminar (si aplica/permisos)
+
+Línea 2 (solo si aplica, 1 línea con ellipsis):
+	•	Mods: Mods: … (ellipsis)
+	•	Nota: Nota: … (ellipsis)
+
+Regla: cada item debe ocupar aprox 50–70px de alto (antes era 120–160px).
+Objetivo: en móvil ver mínimo 6 ítems sin scroll.
+
+⸻
+
+4) Notas por ítem (sin usar teclado salvo cuando se abre)
+
+4.1 Botón 📝 en cada ítem
+	•	Gris si no hay nota
+	•	Activo si hay nota
+
+Al tocar 📝:
+	•	Abrir modal/bottom sheet:
+	•	Título: “Nota para {Producto}”
+	•	Textarea grande (máx 200 chars)
+	•	Botones: Guardar / Cancelar / Borrar (si existe)
+	•	Sin autofocus (no abrir teclado solo por abrir pantalla; solo cuando el usuario toca dentro del textarea).
+	•	Guardar: toast “Nota guardada ✅”
+	•	En lista: mostrar snippet 1 línea con ellipsis.
+
+4.2 Permisos (no cambiar lógica)
+	•	Mantener reglas actuales:
+	•	si item ya enviado a cocina: editar nota solo con permiso/rol permitido (ej gerente).
+	•	si no tiene permiso: abrir read-only o mensaje claro.
+
+4.3 KDS
+
+Si el item tiene nota, se muestra debajo del nombre en KDS. Sin tocar lógica del KDS salvo render.
+
+⸻
+
+5) Dark Mode (obligatorio en todo el sistema)
+
+5.1 Implementación
+	•	Soportar prefers-color-scheme: dark
+	•	Toggle manual (🌙/☀️) persistente en localStorage
+	•	Usar CSS variables/tokens:
+	•	--bg, --surface, --text, --muted, --border, --primary, --danger
+	•	Aplicar a:
+	•	Mesas/Salonero, KDS, POS/Caja, Admin, Dashboard, Cliente QR.
+
+5.2 Contraste
+	•	Texto legible y botones visibles en dark.
+	•	Evitar grises muy similares.
+
+⸻
+
+6) Minimizar uso del teclado (GLOBAL)
+
+Reglas obligatorias
+	1.	Prohibido autofocus en cualquier input.
+	2.	Preferir selección por UI:
+	•	categorías chips/lista
+	•	productos grid
+	•	cantidades con +/-
+	•	modificadores con botones
+	•	descuentos con selector (no input libre)
+	3.	Búsqueda colapsada por defecto (icono 🔍) y sin autofocus.
+	4.	Teclados correctos cuando aplique:
+	•	PIN numérico
+	•	cantidades numérico
+	•	email teclado email
+
+Definition of Done:
+	•	Tomar orden normal (agregar 5 productos + enviar) se puede hacer sin que el teclado aparezca nunca, salvo si el usuario decide buscar o escribir una nota.
+
+⸻
+
+7) Deshabilitar pull-to-refresh (GLOBAL, todo el RMS)
+
+Objetivo
+
+Evitar refresco accidental por gesto hacia abajo en móviles. Solo refrescar con botón refresh.
+
+Implementación requerida
+
+7.1 CSS global
+	•	html, body { overscroll-behavior-y: none; }
+	•	Mantener scroll suave (no romper):
+	•	ajustar -webkit-overflow-scrolling: touch; según corresponda
+
+7.2 JS global (fallback)
+
+Interceptar gesto swipe-down cuando el scroll está al tope:
+	•	Si window.scrollY === 0 (o contenedor principal scrollTop === 0) y el gesto es hacia abajo → preventDefault()
+	•	Usar { passive: false }
+
+7.3 Contenedores con overflow
+
+Si el scroll principal vive en un div (layout app):
+	•	aplicar la lógica sobre ese contenedor, no solo window.
+
+Reglas
+	•	No bloquear scroll normal.
+	•	No interferir con gesto lateral de back en iPhone.
+	•	Refresh solo ocurre con el botón refresh existente.
+
+Definition of Done:
+	•	En iOS Safari y Chrome Android, en cualquier pantalla, el gesto pull-down NO recarga la página.
+
+⸻
+
+8) Criterios de aceptación (medibles)
+	1.	Ronda compacta: mínimo 6 ítems visibles en móvil sin scroll.
+	2.	Notas: no existe textarea “Notas…” fijo en cada ítem; solo botón 📝 + modal.
+	3.	Catálogo rápido: categorías chips/lista + productos grid; agregar producto requiere 1 tap (si no hay mods).
+	4.	Grid responsive: columnas cambian al variar ancho (2/3/4/5/6).
+	5.	Dark Mode: automático + toggle manual persistente.
+	6.	Teclado minimizado: flujo normal de tomar orden no dispara teclado.
+	7.	Pull-to-refresh bloqueado: en todo el RMS.
+
+⸻
+
+9) Definition of Done final (entregable)
+	•	Cambios implementados sin romper el flujo actual de órdenes y envío a cocina.
+	•	Probado en:
+	•	Safari iOS
+	•	Chrome Android
+	•	Desktop Chrome
+	•	Entregar evidencia:
+	•	3 screenshots (móvil pequeño, móvil grande, desktop)
+	•	video 20–30s: seleccionar categoría → agregar 3 ítems → abrir ronda → añadir nota → enviar a cocina → toggle dark → verificar no pull-to-refresh.
+
+⸻
