@@ -595,7 +595,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         const subItems = activeItems.filter((i: any) => (i as any).subaccountId === sub.id);
         if (subItems.length === 0) continue;
 
-        const split = await storage.createSplitAccount({ orderId, label: `Mesa ${sub.code}` });
+        const split = await storage.createSplitAccount({ orderId, label: sub.label || `Mesa ${sub.code}` });
         for (const item of subItems) {
           await storage.createSplitItem({ splitId: split.id, orderItemId: item.id });
         }

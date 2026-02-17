@@ -53,6 +53,8 @@ interface POSItem {
   productPriceSnapshot: string;
   status: string;
   notes?: string | null;
+  customerNameSnapshot?: string | null;
+  subaccountId?: number | null;
   modifiers?: POSItemModifier[];
   discounts?: POSItemDiscount[];
   taxes?: POSItemTax[];
@@ -641,6 +643,7 @@ export default function POSPage() {
     totalQty: number;
     productNameSnapshot: string;
     productPriceSnapshot: string;
+    customerNameSnapshot?: string | null;
     modifiers: POSItemModifier[];
     totalAmount: number;
     totalDiscount: number;
@@ -654,7 +657,8 @@ export default function POSPage() {
     for (const item of items) {
       if (item.status === "VOIDED") continue;
       const modSig = (item.modifiers || []).map(m => `${m.nameSnapshot}:${m.priceDeltaSnapshot}`).sort().join("|");
-      const key = `${item.productNameSnapshot}::${item.productPriceSnapshot}::${modSig}`;
+      const custName = item.customerNameSnapshot || "";
+      const key = `${item.productNameSnapshot}::${item.productPriceSnapshot}::${modSig}::${custName}`;
       const existing = map.get(key);
       if (existing) {
         existing.items.push(item);
@@ -674,6 +678,7 @@ export default function POSPage() {
           totalQty: item.qty,
           productNameSnapshot: item.productNameSnapshot,
           productPriceSnapshot: item.productPriceSnapshot,
+          customerNameSnapshot: item.customerNameSnapshot,
           modifiers: item.modifiers || [],
           totalAmount: getItemTotal(item),
           totalDiscount: itemDiscountTotal,
@@ -923,6 +928,9 @@ export default function POSPage() {
                       >
                         <div className="flex-1">
                           <span className="text-sm">{item.productNameSnapshot}</span>
+                          {item.customerNameSnapshot && (
+                            <div className="text-xs text-muted-foreground">{item.customerNameSnapshot}</div>
+                          )}
                           {(item.modifiers && item.modifiers.length > 0) && (
                             <div className="text-xs text-muted-foreground">
                               {item.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
@@ -1003,6 +1011,9 @@ export default function POSPage() {
                               <div key={si.id} className="flex items-center gap-2 text-sm py-1 min-h-[48px]">
                                 <div className="flex-1">
                                   <span>{oi.qty}x {oi.productNameSnapshot}</span>
+                                  {oi.customerNameSnapshot && (
+                                    <div className="text-xs text-muted-foreground">{oi.customerNameSnapshot}</div>
+                                  )}
                                   {(oi.modifiers && oi.modifiers.length > 0) && (
                                     <div className="text-xs text-muted-foreground">
                                       {oi.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
@@ -1106,6 +1117,9 @@ export default function POSPage() {
                             {group.hasPaid && <Badge variant="secondary" className="text-xs">Pagado</Badge>}
                             <div className="flex-1">
                               <span className="text-sm">{group.totalQty}x {group.productNameSnapshot}</span>
+                              {group.customerNameSnapshot && (
+                                <div className="text-xs text-muted-foreground">{group.customerNameSnapshot}</div>
+                              )}
                               {group.modifiers.length > 0 && (
                                 <div className="text-xs text-muted-foreground">
                                   {group.modifiers.map(m => m.nameSnapshot).join(", ")}

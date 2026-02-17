@@ -726,6 +726,9 @@ export default function TableDetailPage() {
                         <Checkbox checked={splitSelectedItems.has(item.id)} />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium">{item.qty}x {item.productNameSnapshot}</p>
+                          {item.customerNameSnapshot && (
+                            <p className="text-xs text-muted-foreground">{item.customerNameSnapshot}</p>
+                          )}
                           {item.modifiers && item.modifiers.length > 0 && (
                             <p className="text-xs text-muted-foreground">
                               {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
@@ -782,7 +785,12 @@ export default function TableDetailPage() {
                         const unitPrice = Number(item.productPriceSnapshot) + modDelta;
                         return (
                           <div key={item.id} className="flex items-center justify-between py-1 text-sm gap-1" data-testid={`split-assigned-item-${item.id}`}>
-                            <span className="flex-1 min-w-0 truncate">{item.qty}x {item.productNameSnapshot}</span>
+                            <div className="flex-1 min-w-0">
+                              <span className="truncate block">{item.qty}x {item.productNameSnapshot}</span>
+                              {item.customerNameSnapshot && (
+                                <span className="text-xs text-muted-foreground">{item.customerNameSnapshot}</span>
+                              )}
+                            </div>
                             <span className="flex-shrink-0">₡{(unitPrice * item.qty).toLocaleString()}</span>
                             <Button
                               size="icon"
