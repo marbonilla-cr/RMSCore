@@ -15,7 +15,7 @@ The system is built as a PWA, ensuring accessibility across various devices.
 - **Authentication**: Session-based authentication is handled using `express-session` with `memorystore`. A PIN-based login system is the primary entry method, with a password login as a fallback. Role-Based Access Control (RBAC) is implemented, where module access is determined by specific permissions (e.g., `MODULE_TABLES_VIEW`, `MODULE_POS_VIEW`), not solely by role. Permissions are configurable by the manager.
 - **Key Features**:
     - **Order Management**: Waiter interface for table management, order taking, and QR order acceptance.
-    - **QR Client Ordering**: Customers can view menus and submit orders via QR codes specific to their table, with rate limiting to prevent abuse.
+    - **QR Client Ordering**: Subaccount-based QR ordering with dual-mode interface (Easy Mode interview flow / Standard Mode card grid). Supports up to 6 subaccounts per table, customer name tracking, modifier selection, and rate limiting. v2 API endpoints handle submission/acceptance with payload snapshots.
     - **Kitchen Display System (KDS)**: Real-time display for kitchen staff to manage food preparation, update item statuses, and receive new orders with audio alerts.
     - **Point of Sale (POS)**: Cash register functionality including payment processing, order splitting, voiding items/orders/payments, cash session management, and thermal/email receipt generation. Supports item-level discounts and configurable tax categories (inclusive/additive).
     - **Manager Dashboard**: Provides a comprehensive overview of restaurant performance, including real-time metrics, historical data with period filters, and drill-down capabilities into specific orders.
@@ -26,7 +26,19 @@ The system is built as a PWA, ensuring accessibility across various devices.
     - **Order Consecutives**: Daily and global order numbering for traceability.
     - **Multi-Printer Support**: Configuration for different printer types (cash register, kitchen, bar) with auto-printing on POS payment.
 
-## Recent Changes (Feb 15, 2026)
+## Recent Changes (Feb 17, 2026)
+
+### QR Subaccounts Module - Complete Implementation
+- **Database**: `order_subaccounts` table (id, tableId, code, label, createdAt), new columns on `order_items` (subaccountId, subaccountCodeSnapshot, customerNameSnapshot), `payloadSnapshot` on `qr_submissions`, `maxSubaccounts` business config (default 6)
+- **Backend Routes**: `server/qr-subaccount-routes.ts` with 7 endpoints: subaccount CRUD, submit-v2 (with payload snapshot + rate limiting), accept-v2 (creates order items with snapshots + sends to KDS), reject, qr-pending, by-subaccount grouping, splits-from-subaccounts (auto-creates POS split accounts from subaccounts)
+- **QR Client Page**: Dual-mode interface (1031 lines). Easy Mode: 7-screen interview flow (category → products → modifiers → review). Standard Mode: card grid per diner with food/drink separation. Both support subaccount selection, customer name input ("Como te llamas?"), modifier selection, and quantity adjustment. Spanish microcopy: "Tranqui: un salonero confirma tu pedido antes de mandarlo a cocina"
+- **Waiter Integration**: table-detail.tsx shows pending QR requests with time/name/items display, "Aceptar todas" bulk button, subaccount filter dropdown, accordion view by subaccount showing "{Nombre} pidió: {Producto}"
+- **POS Integration**: "Por Subcuenta" button auto-generates split tickets from subaccounts for individual billing
+- **WebSocket**: `qr_submission` event broadcasts to waiters with tableId, triggers notification sound and toast
+- **Rate Limiting**: MAX_PENDING_QR_REQUESTS default 8, enforced at submit-v2 endpoint via database-backed qr_rate_limits table
+- **Security**: All queries parameterized via Drizzle, role-based access with requireRole("WAITER","MANAGER"), no auth required for QR client endpoints
+
+### Previous Changes (Feb 15, 2026)
 
 ### Inventory Module - Complete Implementation
 - **14 Database Tables**: `inv_items`, `inv_uom_conversions`, `inv_movements`, `inv_suppliers`, `inv_supplier_items`, `inv_purchase_orders`, `inv_po_lines`, `inv_receipts`, `inv_receipt_lines`, `inv_physical_counts`, `inv_count_lines`, `inv_recipes`, `inv_recipe_lines`, `inv_order_item_consumptions`

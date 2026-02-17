@@ -103,6 +103,8 @@ export default function TableDetailPage() {
   const bottomBarRef = useRef<HTMLDivElement>(null);
   const badgeRef = useRef<HTMLSpanElement>(null);
   const isManager = user?.role === "MANAGER";
+  const [subaccountFilter, setSubaccountFilter] = useState<string>("all");
+  const [expandedSubaccounts, setExpandedSubaccounts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!tableId) return;
@@ -169,6 +171,13 @@ export default function TableDetailPage() {
       wsManager.on("table_status_changed", (p: any) => {
         if (!p.tableId || p.tableId === tableId) invalidate();
       }),
+      wsManager.on("qr_submission", (p: any) => {
+        if (p.tableId === tableId) {
+          invalidate();
+          try { new Audio("/notification.mp3").play().catch(() => {}); } catch {}
+          toast({ title: "Nueva orden QR", description: `Mesa ${currentView?.table?.tableName || tableId}` });
+        }
+      }),
     ];
     return () => unsubs.forEach((u) => u());
   }, [tableId, toast]);
@@ -197,7 +206,7 @@ export default function TableDetailPage() {
 
   const acceptSubmissionMutation = useMutation({
     mutationFn: async (submissionId: number) => {
-      const res = await apiRequest("POST", `/api/waiter/qr-submissions/${submissionId}/accept`);
+      const res = await apiRequest("POST", `/api/waiter/qr-submissions/${submissionId}/accept-v2`);
       return res;
     },
     onSuccess: (data: any) => {
@@ -213,6 +222,22 @@ export default function TableDetailPage() {
       }
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       toast({ title: "Pedido QR aceptado y enviado a cocina" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const acceptAllMutation = useMutation({
+    mutationFn: async (submissionIds: number[]) => {
+      for (const id of submissionIds) {
+        await apiRequest("POST", `/api/waiter/qr-submissions/${id}/accept-v2`);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      toast({ title: "Todos los pedidos QR aceptados y enviados a cocina" });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -417,6 +442,11 @@ export default function TableDetailPage() {
   const activeOrder = currentView?.activeOrder;
   const tableData = currentView?.table;
   const voidedItemsList = currentView?.voidedItems || [];
+
+  const { data: orderBySubaccount } = useQuery<any>({
+    queryKey: ["/api/waiter/orders", activeOrder?.id, "by-subaccount"],
+    enabled: !!activeOrder?.id,
+  });
 
   const groupedItems = orderItems
     .filter((item: any) => item.status !== "VOIDED" && (item.status !== "PENDING" || !item.qrSubmissionId))
@@ -872,37 +902,65 @@ export default function TableDetailPage() {
         ) : viewMode === "order" ? (
           <div className="p-3 max-w-lg mx-auto space-y-3">
             {pendingSubmissions.length > 0 && (
-              <Card className="ring-2 ring-orange-500">
-                <CardHeader className="pb-2 flex flex-row items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-orange-500" />
-                  <h2 className="font-bold text-orange-600 text-base" data-testid="text-pending-qr-title">Pedidos QR Pendientes</h2>
+              <Card>
+                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-orange-500" />
+                    <h2 className="font-bold text-base" data-testid="text-pending-qr-title">Solicitudes QR pendientes</h2>
+                  </div>
+                  <Badge variant="secondary">{pendingSubmissions.length}</Badge>
                 </CardHeader>
-                <CardContent>
-                  {pendingSubmissions.map((sub: any) => (
-                    <div key={sub.id} className="mb-4 last:mb-0" data-testid={`pending-submission-${sub.id}`}>
-                      <div className="space-y-1 mb-3">
-                        {sub.items?.map((item: any) => (
-                          <div key={item.id} className="flex items-center justify-between text-base py-1" data-testid={`qr-item-${item.id}`}>
-                            <span>{item.qty}x {item.productNameSnapshot}</span>
-                            <span className="text-muted-foreground">₡{Number(Number(item.productPriceSnapshot) * item.qty).toLocaleString()}</span>
+                <CardContent className="space-y-3">
+                  {pendingSubmissions.map((sub: any) => {
+                    const payload = sub.payloadSnapshot || sub.payload_snapshot || [];
+                    const firstItem = Array.isArray(payload) ? payload[0] : null;
+                    const customerName = firstItem?.customerName || "Cliente";
+                    const createdAt = sub.createdAt ? new Date(sub.createdAt) : new Date();
+                    const timeStr = createdAt.toLocaleTimeString("es-CR", { hour: "numeric", minute: "2-digit", hour12: true });
+                    const itemNames = Array.isArray(payload) ? payload.map((p: any) => p.productName || `Producto #${p.productId}`).join(" + ") : "";
+                    const subCode = sub.subaccountCode || "";
+                    
+                    return (
+                      <div key={sub.id} className="border rounded-md p-3" data-testid={`pending-submission-${sub.id}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm text-muted-foreground">{timeStr}</span>
+                              <span className="font-medium">{customerName} - {itemNames}</span>
+                            </div>
+                            {subCode && (
+                              <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
+                                <Receipt className="w-3 h-3" />
+                                <span>Mesa {subCode}</span>
+                              </div>
+                            )}
                           </div>
-                        ))}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => acceptSubmissionMutation.mutate(sub.id)}
+                            disabled={acceptSubmissionMutation.isPending}
+                            data-testid={`button-accept-qr-${sub.id}`}
+                          >
+                            {acceptSubmissionMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Revisar"}
+                            <ChevronRight className="w-4 h-4 ml-1" />
+                          </Button>
+                        </div>
                       </div>
-                      <Button
-                        onClick={() => acceptSubmissionMutation.mutate(sub.id)}
-                        disabled={acceptSubmissionMutation.isPending}
-                        className="w-full min-h-[44px] text-base"
-                        data-testid={`button-accept-qr-${sub.id}`}
-                      >
-                        {acceptSubmissionMutation.isPending ? (
-                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                        ) : (
-                          <Check className="w-5 h-5 mr-2" />
-                        )}
-                        Aceptar y Enviar a Cocina
-                      </Button>
-                    </div>
-                  ))}
+                    );
+                  })}
+                  {pendingSubmissions.length > 1 && (
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => acceptAllMutation.mutate(pendingSubmissions.map((s: any) => s.id))}
+                      disabled={acceptAllMutation.isPending}
+                      data-testid="button-accept-all-qr"
+                    >
+                      {acceptAllMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Check className="w-4 h-4 mr-2" />}
+                      Aceptar todas
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -1006,6 +1064,92 @@ export default function TableDetailPage() {
                       </Button>
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            )}
+
+            {orderBySubaccount && orderBySubaccount.groups && orderBySubaccount.groups.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 flex-wrap">
+                  <h2 className="font-bold flex items-center gap-2 text-base">
+                    <Split className="w-5 h-5" /> Orden actual por subcuenta
+                  </h2>
+                  <select
+                    className="text-sm border rounded-md px-2 py-1 bg-background"
+                    value={subaccountFilter}
+                    onChange={(e) => setSubaccountFilter(e.target.value)}
+                    data-testid="select-subaccount-filter"
+                  >
+                    <option value="all">Todas las subcuentas</option>
+                    {orderBySubaccount.groups.map((g: any) => (
+                      <option key={g.subaccount?.id || 'none'} value={g.subaccount?.code || 'none'}>
+                        Mesa {g.subaccount?.code || 'Sin subcuenta'}
+                      </option>
+                    ))}
+                  </select>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {orderBySubaccount.groups
+                    .filter((g: any) => subaccountFilter === "all" || (g.subaccount?.code || 'none') === subaccountFilter)
+                    .map((group: any) => {
+                      const subCode = group.subaccount?.code || "Sin subcuenta";
+                      const subKey = subCode;
+                      const isExpanded = expandedSubaccounts.has(subKey);
+                      const toggleExpanded = () => {
+                        setExpandedSubaccounts(prev => {
+                          const next = new Set(prev);
+                          if (next.has(subKey)) next.delete(subKey);
+                          else next.add(subKey);
+                          return next;
+                        });
+                      };
+                      const items = group.items || [];
+                      const itemCount = items.length;
+                      const subtotal = items.reduce((s: number, i: any) => {
+                        const modDelta = (i.modifiers || []).reduce((ms: number, m: any) => ms + Number(m.priceDeltaSnapshot || 0), 0);
+                        return s + (Number(i.productPriceSnapshot) + modDelta) * i.qty;
+                      }, 0);
+
+                      return (
+                        <div key={subKey} className="border rounded-md" data-testid={`subaccount-group-${subKey}`}>
+                          <button
+                            type="button"
+                            className="w-full flex items-center justify-between p-3 text-left hover-elevate rounded-md"
+                            onClick={toggleExpanded}
+                            data-testid={`button-toggle-subaccount-${subKey}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                              <span className="font-bold">Mesa {subCode}</span>
+                              <span className="text-sm text-muted-foreground">{itemCount} items</span>
+                            </div>
+                            <span className="font-medium">₡{subtotal.toLocaleString()}</span>
+                          </button>
+                          {isExpanded && (
+                            <div className="px-3 pb-3 space-y-2">
+                              {items.map((item: any) => (
+                                <div key={item.id} className="flex items-center justify-between py-1 text-sm border-b last:border-0" data-testid={`subaccount-item-${item.id}`}>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="font-medium">
+                                      {item.customerNameSnapshot ? `${item.customerNameSnapshot} pidio. ` : ""}{item.productNameSnapshot}
+                                    </p>
+                                    {item.modifiers && item.modifiers.length > 0 && (
+                                      <p className="text-xs text-muted-foreground">
+                                        + {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    <span className="text-muted-foreground">Qty: {item.qty}</span>
+                                    {getStatusBadge(item.status)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                 </CardContent>
               </Card>
             )}

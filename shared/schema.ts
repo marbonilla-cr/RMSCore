@@ -106,6 +106,9 @@ export const orderItems = pgTable("order_items", {
   voidedAt: timestamp("voided_at"),
   voidedByUserId: integer("voided_by_user_id"),
   taxSnapshotJson: jsonb("tax_snapshot_json"),
+  subaccountId: integer("subaccount_id"),
+  subaccountCodeSnapshot: text("subaccount_code_snapshot"),
+  customerNameSnapshot: text("customer_name_snapshot"),
 });
 
 export const qrSubmissions = pgTable("qr_submissions", {
@@ -116,6 +119,7 @@ export const qrSubmissions = pgTable("qr_submissions", {
   createdAt: timestamp("created_at").defaultNow(),
   acceptedByUserId: integer("accepted_by_user_id"),
   acceptedAt: timestamp("accepted_at"),
+  payloadSnapshot: jsonb("payload_snapshot"),
 });
 
 export const kitchenTickets = pgTable("kitchen_tickets", {
@@ -689,6 +693,18 @@ export const invAuditAlerts = pgTable("inv_audit_alerts", {
   notes: text("notes"),
 });
 
+// Order Subaccounts (QR payment groups per table)
+export const orderSubaccounts = pgTable("order_subaccounts", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull(),
+  tableId: integer("table_id").notNull(),
+  slotNumber: integer("slot_number").notNull(),
+  code: text("code").notNull(),
+  label: text("label"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertHrSettingsSchema = createInsertSchema(hrSettings).omit({ id: true, updatedAt: true });
 export const insertHrWeeklyScheduleSchema = createInsertSchema(hrWeeklySchedules).omit({ id: true, createdAt: true, updatedAt: true });
@@ -703,8 +719,8 @@ export const insertCategorySchema = createInsertSchema(categories).omit({ id: tr
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
 export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({ id: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, openedAt: true, closedAt: true, totalAmount: true, paidAmount: true, balanceDue: true });
-export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, createdAt: true, sentToKitchenAt: true, voidedAt: true, voidedByUserId: true, taxSnapshotJson: true });
-export const insertQrSubmissionSchema = createInsertSchema(qrSubmissions).omit({ id: true, createdAt: true, acceptedAt: true });
+export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, createdAt: true, sentToKitchenAt: true, voidedAt: true, voidedByUserId: true, taxSnapshotJson: true, subaccountId: true, subaccountCodeSnapshot: true, customerNameSnapshot: true });
+export const insertQrSubmissionSchema = createInsertSchema(qrSubmissions).omit({ id: true, createdAt: true, acceptedAt: true, payloadSnapshot: true });
 export const insertKitchenTicketSchema = createInsertSchema(kitchenTickets).omit({ id: true, createdAt: true, clearedAt: true });
 export const insertKitchenTicketItemSchema = createInsertSchema(kitchenTicketItems).omit({ id: true, prepStartedAt: true, readyAt: true });
 export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true, paidAt: true, voidedByUserId: true, voidedAt: true, voidReason: true });
@@ -726,6 +742,7 @@ export const insertOrderItemTaxSchema = createInsertSchema(orderItemTaxes).omit(
 export const insertOrderItemDiscountSchema = createInsertSchema(orderItemDiscounts).omit({ id: true, appliedAt: true });
 export const insertPortionReservationSchema = createInsertSchema(portionReservations).omit({ id: true, createdAt: true });
 export const insertQrRateLimitSchema = createInsertSchema(qrRateLimits).omit({ id: true });
+export const insertOrderSubaccountSchema = createInsertSchema(orderSubaccounts).omit({ id: true, createdAt: true });
 
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -788,6 +805,8 @@ export type PortionReservation = typeof portionReservations.$inferSelect;
 export type InsertPortionReservation = z.infer<typeof insertPortionReservationSchema>;
 export type QrRateLimit = typeof qrRateLimits.$inferSelect;
 export type InsertQrRateLimit = z.infer<typeof insertQrRateLimitSchema>;
+export type OrderSubaccount = typeof orderSubaccounts.$inferSelect;
+export type InsertOrderSubaccount = z.infer<typeof insertOrderSubaccountSchema>;
 
 // Business config (singleton row)
 export const businessConfig = pgTable("business_config", {
@@ -800,6 +819,7 @@ export const businessConfig = pgTable("business_config", {
   email: text("email").notNull().default(""),
   legalNote: text("legal_note").notNull().default(""),
   updatedAt: timestamp("updated_at").defaultNow(),
+  maxSubaccounts: integer("max_subaccounts").notNull().default(6),
 });
 
 export const printers = pgTable("printers", {

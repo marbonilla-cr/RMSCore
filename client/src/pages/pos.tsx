@@ -437,6 +437,20 @@ export default function POSPage() {
     },
   });
 
+  const splitBySubaccountMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", `/api/pos/orders/${selectedTable!.orderId}/splits-from-subaccounts`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
+      setSplitMode(true);
+      toast({ title: "Cuenta separada por subcuenta" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const voidPaymentMutation = useMutation({
     mutationFn: async (paymentId: number) => {
       return apiRequest("POST", `/api/pos/void-payment/${paymentId}`);
@@ -1054,6 +1068,17 @@ export default function POSPage() {
                       >
                         {normalizing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Split className="w-4 h-4 mr-1" />}
                         Dividir Cuenta
+                      </Button>
+                    )}
+                    {canSplit && (
+                      <Button
+                        variant="outline"
+                        onClick={() => splitBySubaccountMutation.mutate()}
+                        disabled={splitBySubaccountMutation.isPending}
+                        data-testid="button-split-by-subaccount"
+                      >
+                        {splitBySubaccountMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Receipt className="w-4 h-4 mr-1" />}
+                        Por Subcuenta
                       </Button>
                     )}
                     {canPay && (

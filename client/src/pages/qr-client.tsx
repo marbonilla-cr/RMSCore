@@ -1,18 +1,31 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
-  UtensilsCrossed, ShoppingCart, Plus, Minus, Trash2,
-  Send, Loader2, Check, ChevronRight, ChevronDown, ArrowRight, ClipboardList,
-  Search, X,
+  UtensilsCrossed, Plus, Loader2, Check, ChevronLeft,
+  Search, X, Users, User, ArrowRight, Coffee, ChefHat,
+  Utensils, Send, CheckCircle2,
 } from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
+
+type Step =
+  | "welcome"
+  | "subaccount"
+  | "name"
+  | "easy_categories"
+  | "easy_products"
+  | "easy_modifiers"
+  | "easy_review"
+  | "std_food"
+  | "std_drink"
+  | "std_modifiers"
+  | "std_review"
+  | "sent";
 
 interface QRProduct {
   id: number;
@@ -37,19 +50,35 @@ interface QRModifierGroup {
   options: QRModifierOption[];
 }
 
-interface QRCartItem {
-  productId: number;
-  name: string;
-  price: string;
-  qty: number;
-  cartKey: string;
-  modifiers?: { optionId: number; name: string; priceDelta: string; qty: number }[];
+interface Subaccount {
+  id: number;
+  orderId: number;
+  tableId: number;
+  slotNumber: number;
+  code: string;
+  label: string;
+  isActive: boolean;
 }
 
-function makeQRCartKey(productId: number, modifiers?: { optionId: number }[]) {
-  if (!modifiers || modifiers.length === 0) return `${productId}`;
-  const ids = modifiers.map((m) => m.optionId).sort((a, b) => a - b).join(",");
-  return `${productId}:${ids}`;
+interface CartItem {
+  productId: number;
+  productName: string;
+  qty: number;
+  customerName: string;
+  modifiers?: { modGroupId: number; optionId: number }[];
+  categoryName: string;
+}
+
+interface DinerData {
+  name: string;
+  items: CartItem[];
+}
+
+const MAX_SUBACCOUNTS = 6;
+
+function isBeverage(categoryName: string | null): boolean {
+  if (!categoryName) return false;
+  return categoryName.toLowerCase().includes("bebida");
 }
 
 export default function QRClientPage() {
@@ -57,19 +86,29 @@ export default function QRClientPage() {
   const tableCode = params?.tableCode || "";
   const { toast } = useToast();
 
-  const [cart, setCart] = useState<QRCartItem[]>([]);
-  const [confirmSlide, setConfirmSlide] = useState(false);
-  const [slideProgress, setSlideProgress] = useState(0);
-  const [submitted, setSubmitted] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
-  const [modDialogProduct, setModDialogProduct] = useState<QRProduct | null>(null);
+  const [step, setStep] = useState<Step>("welcome");
+  const [mode, setMode] = useState<"easy" | "standard" | null>(null);
+  const [selectedSubaccount, setSelectedSubaccount] = useState<{ id: number; code: string; slotNumber: number } | null>(null);
+  const [customerName, setCustomerName] = useState("");
+  const [nameError, setNameError] = useState("");
+
+  const [easyItems, setEasyItems] = useState<CartItem[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [easySearchTerm, setEasySearchTerm] = useState("");
+  const [pendingProduct, setPendingProduct] = useState<QRProduct | null>(null);
   const [modGroups, setModGroups] = useState<QRModifierGroup[]>([]);
   const [selectedMods, setSelectedMods] = useState<Record<number, number[]>>({});
   const [loadingMods, setLoadingMods] = useState(false);
 
-  const { data: tableInfo, isLoading: tableLoading, error: tableError } = useQuery<any>({
+  const [diners, setDiners] = useState<DinerData[]>([]);
+  const [currentDinerIndex, setCurrentDinerIndex] = useState(0);
+  const [stdSelectedItems, setStdSelectedItems] = useState<CartItem[]>([]);
+
+  const { data: tableInfo, isLoading: tableLoading, error: tableError } = useQuery<{
+    tableId: number;
+    tableName: string;
+    tableCode: string;
+  }>({
     queryKey: ["/api/qr", tableCode, "info"],
     enabled: !!tableCode,
   });
@@ -79,55 +118,207 @@ export default function QRClientPage() {
     enabled: !!tableCode,
   });
 
-  const { data: previousItems = [] } = useQuery<{ id: number; productName: string; qty: number; price: string; status: string }[]>({
-    queryKey: ["/api/qr", tableCode, "my-items"],
-    enabled: !!tableCode,
+  const { data: subaccounts = [], refetch: refetchSubaccounts } = useQuery<Subaccount[]>({
+    queryKey: ["/api/qr", tableCode, "subaccounts"],
+    enabled: !!tableCode && step === "subaccount",
+  });
+
+  const activeSubaccounts = subaccounts.filter((s) => s.isActive);
+
+  const createSubaccountMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/qr/${tableCode}/subaccounts`, {});
+      return res.json();
+    },
+    onSuccess: (data: Subaccount) => {
+      setSelectedSubaccount({ id: data.id, code: data.code, slotNumber: data.slotNumber });
+      queryClient.invalidateQueries({ queryKey: ["/api/qr", tableCode, "subaccounts"] });
+      setStep("name");
+    },
+    onError: (err: Error) => {
+      if (err.message.includes("max") || err.message.includes("limit")) {
+        toast({ title: "Limite alcanzado", description: `Ya hay ${MAX_SUBACCOUNTS} cuentas en esta mesa. Usa una existente o pedile al salonero que lo acomode`, variant: "destructive" });
+      } else {
+        toast({ title: "Error", description: "Se fue la senal un toque. Proba de nuevo y ya quedamos.", variant: "destructive" });
+      }
+    },
   });
 
   const submitMutation = useMutation({
-    mutationFn: async () => {
-      return apiRequest("POST", `/api/qr/${tableCode}/submit`, { items: cart });
+    mutationFn: async (payload: { subaccountId: number; items: CartItem[] }) => {
+      const items = payload.items.map((it) => ({
+        productId: it.productId,
+        qty: it.qty,
+        customerName: it.customerName,
+        modifiers: it.modifiers,
+      }));
+      return apiRequest("POST", `/api/qr/${tableCode}/submit-v2`, {
+        subaccountId: payload.subaccountId,
+        items,
+      });
     },
     onSuccess: () => {
-      setCart([]);
-      setConfirmSlide(false);
-      setSlideProgress(0);
-      setSubmitted(true);
-      queryClient.invalidateQueries({ queryKey: ["/api/qr", tableCode, "my-items"] });
-      toast({ title: "Pedido enviado", description: "Un salonero revisará tu pedido pronto." });
+      setStep("sent");
     },
-    onError: (err: any) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    onError: (err: Error) => {
+      if (err.message.includes("pending") || err.message.includes("confirmando")) {
+        toast({ title: "Espera un momento", description: "Un momentito. El salonero esta confirmando pedidos. Apenas confirme, podes enviar el siguiente.", variant: "destructive" });
+      } else {
+        toast({ title: "Error", description: "Se fue la senal un toque. Proba de nuevo y ya quedamos.", variant: "destructive" });
+      }
     },
   });
 
-  const handleProductClick = async (product: QRProduct) => {
+  const categories = Array.from(new Set(menu.map((p) => p.categoryName || "Otros")));
+
+  const foodProducts = menu.filter((p) => !isBeverage(p.categoryName));
+  const drinkProducts = menu.filter((p) => isBeverage(p.categoryName));
+
+  const handleModeSelect = (m: "easy" | "standard") => {
+    setMode(m);
+    setStep("subaccount");
+    refetchSubaccounts();
+  };
+
+  const handleSubaccountSelect = (sub: Subaccount) => {
+    setSelectedSubaccount({ id: sub.id, code: sub.code, slotNumber: sub.slotNumber });
+    setStep("name");
+  };
+
+  const handleNameContinue = () => {
+    const trimmed = customerName.trim();
+    if (!trimmed) {
+      setNameError("Pone tu nombre para que no se nos enrede la cuenta");
+      return;
+    }
+    setNameError("");
+    if (mode === "easy") {
+      setStep("easy_categories");
+    } else {
+      setDiners([{ name: trimmed, items: [] }]);
+      setCurrentDinerIndex(0);
+      setStdSelectedItems([]);
+      setStep("std_food");
+    }
+  };
+
+  const handleEasyProductClick = useCallback(async (product: QRProduct) => {
+    if (product.availablePortions !== null && product.availablePortions <= 0) {
+      toast({ title: "Agotado", description: "Uy... eso se nos acabo por hoy. Escoge otra opcion y seguimos.", variant: "destructive" });
+      return;
+    }
     setLoadingMods(true);
     try {
       const res = await fetch(`/api/products/${product.id}/modifiers`);
       const groups: QRModifierGroup[] = await res.json();
       if (groups.length > 0) {
-        setModDialogProduct(product);
+        setPendingProduct(product);
         setModGroups(groups);
         setSelectedMods({});
+        setStep("easy_modifiers");
       } else {
-        addToCartDirect(product, []);
+        setEasyItems((prev) => {
+          const existing = prev.find((it) => it.productId === product.id && !it.modifiers?.length);
+          if (existing) {
+            return prev.map((it) => (it === existing ? { ...it, qty: it.qty + 1 } : it));
+          }
+          return [...prev, { productId: product.id, productName: product.name, qty: 1, customerName: customerName.trim(), categoryName: product.categoryName || "Otros" }];
+        });
       }
     } catch {
-      addToCartDirect(product, []);
+      setEasyItems((prev) => [
+        ...prev,
+        { productId: product.id, productName: product.name, qty: 1, customerName: customerName.trim(), categoryName: product.categoryName || "Otros" },
+      ]);
     } finally {
       setLoadingMods(false);
     }
+  }, [customerName, toast]);
+
+  const handleStdProductClick = useCallback(async (product: QRProduct) => {
+    if (product.availablePortions !== null && product.availablePortions <= 0) {
+      toast({ title: "Agotado", description: "Uy... eso se nos acabo por hoy. Escoge otra opcion y seguimos.", variant: "destructive" });
+      return;
+    }
+    setLoadingMods(true);
+    try {
+      const res = await fetch(`/api/products/${product.id}/modifiers`);
+      const groups: QRModifierGroup[] = await res.json();
+      if (groups.length > 0) {
+        setPendingProduct(product);
+        setModGroups(groups);
+        setSelectedMods({});
+        setStep("std_modifiers");
+      } else {
+        addStdItem(product, []);
+      }
+    } catch {
+      addStdItem(product, []);
+    } finally {
+      setLoadingMods(false);
+    }
+  }, [currentDinerIndex, diners]);
+
+  const addStdItem = (product: QRProduct, mods: { modGroupId: number; optionId: number }[]) => {
+    const dinerName = diners[currentDinerIndex]?.name || customerName.trim();
+    const item: CartItem = {
+      productId: product.id,
+      productName: product.name,
+      qty: 1,
+      customerName: dinerName,
+      modifiers: mods.length > 0 ? mods : undefined,
+      categoryName: product.categoryName || "Otros",
+    };
+    setStdSelectedItems((prev) => {
+      const existing = prev.find((it) => it.productId === product.id && JSON.stringify(it.modifiers) === JSON.stringify(item.modifiers));
+      if (existing) {
+        return prev.map((it) => (it === existing ? { ...it, qty: it.qty + 1 } : it));
+      }
+      return [...prev, item];
+    });
   };
 
-  const addToCartDirect = (product: QRProduct, mods: { optionId: number; name: string; priceDelta: string; qty: number }[]) => {
-    const key = makeQRCartKey(product.id, mods);
-    const existing = cart.find((c) => c.cartKey === key);
-    if (existing) {
-      setCart(cart.map((c) => (c.cartKey === key ? { ...c, qty: c.qty + 1 } : c)));
-    } else {
-      setCart([...cart, { productId: product.id, name: product.name, price: product.price, qty: 1, cartKey: key, modifiers: mods.length > 0 ? mods : undefined }]);
+  const removeStdItem = (productId: number) => {
+    setStdSelectedItems((prev) => prev.filter((it) => it.productId !== productId));
+  };
+
+  const confirmModifiers = (returnStep: Step) => {
+    if (!pendingProduct) return;
+    for (const group of modGroups) {
+      const selected = selectedMods[group.id] || [];
+      if (group.required && selected.length === 0) {
+        toast({ title: `"${group.name}" es requerido`, variant: "destructive" });
+        return;
+      }
     }
+    const mods: { modGroupId: number; optionId: number }[] = [];
+    for (const group of modGroups) {
+      const selected = selectedMods[group.id] || [];
+      for (const optId of selected) {
+        mods.push({ modGroupId: group.id, optionId: optId });
+      }
+    }
+
+    if (mode === "easy") {
+      setEasyItems((prev) => [
+        ...prev,
+        {
+          productId: pendingProduct.id,
+          productName: pendingProduct.name,
+          qty: 1,
+          customerName: customerName.trim(),
+          modifiers: mods.length > 0 ? mods : undefined,
+          categoryName: pendingProduct.categoryName || "Otros",
+        },
+      ]);
+      setStep("easy_products");
+    } else {
+      addStdItem(pendingProduct, mods);
+      setStep(returnStep === "std_modifiers" ? "std_food" : returnStep);
+    }
+    setPendingProduct(null);
+    setModGroups([]);
+    setSelectedMods({});
   };
 
   const toggleModOption = (groupId: number, optionId: number, multi: boolean) => {
@@ -140,104 +331,67 @@ export default function QRClientPage() {
     });
   };
 
-  const confirmModifiers = () => {
-    if (!modDialogProduct) return;
-    for (const group of modGroups) {
-      const selected = selectedMods[group.id] || [];
-      if (group.required && selected.length === 0) {
-        toast({ title: `"${group.name}" es requerido`, variant: "destructive" });
-        return;
-      }
-    }
-    const mods: { optionId: number; name: string; priceDelta: string; qty: number }[] = [];
-    for (const group of modGroups) {
-      const selected = selectedMods[group.id] || [];
-      for (const optId of selected) {
-        const opt = group.options.find((o) => o.id === optId);
-        if (opt) mods.push({ optionId: opt.id, name: opt.name, priceDelta: opt.priceDelta, qty: 1 });
-      }
-    }
-    addToCartDirect(modDialogProduct, mods);
-    setModDialogProduct(null);
+  const handleStdNextFromFood = () => {
+    setStep("std_drink");
+  };
+
+  const handleStdNextFromDrink = () => {
+    const dinerName = diners[currentDinerIndex]?.name || customerName.trim();
+    const updatedDiners = [...diners];
+    updatedDiners[currentDinerIndex] = { name: dinerName, items: [...stdSelectedItems] };
+    setDiners(updatedDiners);
+    setStep("std_review");
+  };
+
+  const handleStdSkipDrinks = () => {
+    handleStdNextFromDrink();
+  };
+
+  const handleAddAnotherDiner = () => {
+    const dinerName = diners[currentDinerIndex]?.name || customerName.trim();
+    const updatedDiners = [...diners];
+    updatedDiners[currentDinerIndex] = { name: dinerName, items: [...stdSelectedItems] };
+    setDiners(updatedDiners);
+    setCurrentDinerIndex(updatedDiners.length);
+    setDiners([...updatedDiners, { name: "", items: [] }]);
+    setStdSelectedItems([]);
+    setCustomerName("");
+    setStep("name");
+  };
+
+  const handleSubmitEasy = () => {
+    if (!selectedSubaccount) return;
+    submitMutation.mutate({ subaccountId: selectedSubaccount.id, items: easyItems });
+  };
+
+  const handleSubmitStandard = () => {
+    if (!selectedSubaccount) return;
+    const allItems = diners.flatMap((d) => d.items);
+    submitMutation.mutate({ subaccountId: selectedSubaccount.id, items: allItems });
+  };
+
+  const resetAll = () => {
+    setStep("welcome");
+    setMode(null);
+    setSelectedSubaccount(null);
+    setCustomerName("");
+    setNameError("");
+    setEasyItems([]);
+    setSelectedCategory(null);
+    setEasySearchTerm("");
+    setPendingProduct(null);
     setModGroups([]);
     setSelectedMods({});
+    setDiners([]);
+    setCurrentDinerIndex(0);
+    setStdSelectedItems([]);
   };
 
-  const updateQty = (cartKey: string, qty: number) => {
-    if (qty <= 0) {
-      setCart(cart.filter((c) => c.cartKey !== cartKey));
-    } else {
-      setCart(cart.map((c) => (c.cartKey === cartKey ? { ...c, qty } : c)));
-    }
-  };
-
-  const getItemTotal = (item: QRCartItem) => {
-    const modDelta = (item.modifiers || []).reduce((s, m) => s + Number(m.priceDelta), 0);
-    return (Number(item.price) + modDelta) * item.qty;
-  };
-  const cartTotal = cart.reduce((sum, c) => sum + getItemTotal(c), 0);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 250);
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
-
-  const searchLower = debouncedSearch.toLowerCase();
-  const isSearching = searchLower.length > 0;
-
-  const filteredMenu = menu.filter((p) =>
-    p.name.toLowerCase().includes(searchLower) ||
-    p.description.toLowerCase().includes(searchLower)
-  );
-
-  const groupedMenu = filteredMenu.reduce((acc: Record<string, QRProduct[]>, p) => {
-    const cat = p.categoryName || "Otros";
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(p);
-    return acc;
-  }, {});
-
-  const slugify = (s: string) => s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-
-  const toggleCategory = (cat: string) => {
-    setExpandedCategory((prev) => (prev === cat ? null : cat));
-  };
-
-  const swipeTrackRef = useRef<HTMLDivElement>(null);
-  const swipeThumbRef = useRef<HTMLDivElement>(null);
-  const [swipeX, setSwipeX] = useState(0);
-  const [swiping, setSwiping] = useState(false);
-  const startXRef = useRef(0);
-  const trackWidthRef = useRef(0);
-  const SWIPE_THRESHOLD = 0.85;
-
-  const handleSwipeStart = useCallback((clientX: number) => {
-    if (!swipeTrackRef.current) return;
-    setSwiping(true);
-    startXRef.current = clientX;
-    trackWidthRef.current = swipeTrackRef.current.offsetWidth - 56;
-  }, []);
-
-  const handleSwipeMove = useCallback((clientX: number) => {
-    if (!swiping) return;
-    const dx = clientX - startXRef.current;
-    const clamped = Math.max(0, Math.min(dx, trackWidthRef.current));
-    setSwipeX(clamped);
-  }, [swiping]);
-
-  const handleSwipeEnd = useCallback(() => {
-    if (!swiping) return;
-    setSwiping(false);
-    const pct = swipeX / trackWidthRef.current;
-    if (pct >= SWIPE_THRESHOLD && !submitMutation.isPending) {
-      submitMutation.mutate();
-    }
-    setSwipeX(0);
-  }, [swiping, swipeX, submitMutation]);
+  const easyItemCount = easyItems.reduce((s, it) => s + it.qty, 0);
 
   if (tableLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-screen flex items-center justify-center bg-background" data-testid="loading-spinner">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
       </div>
     );
@@ -246,321 +400,632 @@ export default function QRClientPage() {
   if (tableError || !tableInfo) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-sm">
+        <Card className="w-full max-w-md">
           <CardContent className="py-12 text-center">
             <UtensilsCrossed className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <h2 className="font-bold text-lg mb-2">Mesa no encontrada</h2>
-            <p className="text-sm text-muted-foreground">El código QR no es válido o la mesa no está activa.</p>
+            <h2 className="font-bold text-lg mb-2" data-testid="text-table-not-found">Mesa no encontrada</h2>
+            <p className="text-sm text-muted-foreground">El codigo QR no es valido o la mesa no esta activa.</p>
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  if (submitted) {
+  if (step === "welcome") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-sm">
-          <CardContent className="py-12 text-center">
-            <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-4">
-              <Check className="w-8 h-8 text-green-600" />
-            </div>
-            <h2 className="font-bold text-lg mb-2" data-testid="text-order-sent">Pedido Enviado</h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Un salonero revisará tu pedido y lo enviará a cocina. Puedes agregar más items.
-            </p>
-            <Button onClick={() => setSubmitted(false)} data-testid="button-order-more">
-              <Plus className="w-4 h-4 mr-1" /> Agregar más items
+        <div className="w-full max-w-md space-y-6">
+          <div className="text-center space-y-2">
+            <UtensilsCrossed className="w-10 h-10 mx-auto text-primary" />
+            <h1 className="text-2xl font-bold" data-testid="text-table-name">{tableInfo.tableName}</h1>
+            <p className="text-muted-foreground">Bienvenido! Pedimos facil y sin carrera.</p>
+          </div>
+          <div className="space-y-3">
+            <Button
+              className="w-full min-h-[56px] text-base"
+              onClick={() => handleModeSelect("easy")}
+              data-testid="button-mode-easy"
+            >
+              <ChefHat className="w-5 h-5 mr-2" />
+              Modo facil (entrevista)
             </Button>
-          </CardContent>
-        </Card>
+            <Button
+              variant="outline"
+              className="w-full min-h-[56px] text-base"
+              onClick={() => handleModeSelect("standard")}
+              data-testid="button-mode-standard"
+            >
+              <Utensils className="w-5 h-5 mr-2" />
+              Modo estandar (yo me la juego)
+            </Button>
+          </div>
+          <p className="text-xs text-center text-muted-foreground" data-testid="text-welcome-note">
+            Tranqui: un salonero confirma tu pedido antes de mandarlo a cocina.
+          </p>
+        </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-background pb-32">
-      <div className="bg-primary text-primary-foreground p-4 sticky top-0 z-[9]">
-        <div className="flex items-center justify-between max-w-lg mx-auto">
-          <div className="flex items-center gap-2">
-            <UtensilsCrossed className="w-5 h-5" />
-            <span className="font-bold">Restaurante</span>
+  if (step === "subaccount") {
+    return (
+      <div className="min-h-screen bg-background p-4">
+        <div className="max-w-md mx-auto space-y-6 pt-8">
+          <Button variant="ghost" size="sm" onClick={() => setStep("welcome")} data-testid="button-back-welcome">
+            <ChevronLeft className="w-4 h-4 mr-1" /> Volver
+          </Button>
+          <div className="text-center space-y-2">
+            <Users className="w-10 h-10 mx-auto text-primary" />
+            <h1 className="text-xl font-bold" data-testid="text-subaccount-title">A cual cuenta lo cargamos?</h1>
+            <p className="text-sm text-muted-foreground">Si vienen en grupos, asi en caja sale ordenadito.</p>
           </div>
-          <Badge variant="secondary" className="text-xs" data-testid="text-table-badge">
-            {tableInfo.tableName}
-          </Badge>
-        </div>
-      </div>
-
-      <div className="max-w-lg mx-auto px-4 pt-4">
-        {previousItems.length > 0 && (
-          <Card className="mb-4" data-testid="card-previous-items">
-            <CardHeader className="pb-2 flex flex-row items-center gap-2">
-              <ClipboardList className="w-4 h-4 text-muted-foreground" />
-              <h3 className="font-bold text-sm">Tu Pedido</h3>
-              <Badge variant="secondary" className="ml-auto text-xs">{previousItems.length} items</Badge>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="space-y-1">
-                {previousItems.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between text-sm" data-testid={`prev-item-${item.id}`}>
-                    <span className="text-muted-foreground">{item.qty}x {item.productName}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">₡{(Number(item.price) * item.qty).toLocaleString()}</span>
-                      <Badge variant={item.status === "PENDING" ? "secondary" : "default"} className="text-[10px]">
-                        {item.status === "PENDING" ? "Pendiente" : item.status === "SENT" ? "En cocina" : item.status === "READY" ? "Listo" : item.status}
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="border-t mt-2 pt-2 flex justify-between font-medium text-sm">
-                <span>Subtotal pedido</span>
-                <span>₡{previousItems.reduce((s, i) => s + Number(i.price) * i.qty, 0).toLocaleString()}</span>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      <div className="sticky top-[56px] z-[8] bg-background border-b px-4 py-2 max-w-lg mx-auto">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-          <Input
-            placeholder="Buscar en el menú..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9 pr-9"
-            data-testid="input-search-qr-menu"
-          />
-          {searchTerm && (
-            <button
-              type="button"
-              className="absolute right-3 top-1/2 -translate-y-1/2"
-              onClick={() => { setSearchTerm(""); setDebouncedSearch(""); setExpandedCategory(null); }}
-              data-testid="button-clear-qr-search"
-            >
-              <X className="w-4 h-4 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="max-w-lg mx-auto px-4 pt-2">
-        {filteredMenu.length === 0 && debouncedSearch.length > 0 && (
-          <p className="text-center text-muted-foreground py-8" data-testid="text-no-results">Sin resultados</p>
-        )}
-
-        {Object.entries(groupedMenu).map(([category, items]) => {
-          const isOpen = isSearching || expandedCategory === category;
-          return (
-            <div key={category} className="mb-2">
-              <button
-                type="button"
-                className="w-full flex items-center gap-2 min-h-[48px] px-2 py-2 rounded-md hover-elevate"
-                onClick={() => toggleCategory(category)}
-                data-testid={`button-toggle-qr-category-${slugify(category)}`}
-              >
-                {isOpen ? <ChevronDown className="w-5 h-5 flex-shrink-0" /> : <ChevronRight className="w-5 h-5 flex-shrink-0" />}
-                <span className="font-bold text-base flex-1 text-left">{category}</span>
-                <Badge variant="secondary">{items.length}</Badge>
-              </button>
-              {isOpen && (
-                <div className="space-y-2 pb-2">
-                  {items.map((product) => {
-                    const totalInCart = cart.filter((c) => c.productId === product.id).reduce((s, c) => s + c.qty, 0);
-                    return (
-                      <Card key={product.id} data-testid={`qr-product-${product.id}`}>
-                        <CardContent className="p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <p className="font-medium text-base">{product.name}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
-                              <p className="font-bold text-sm mt-1">₡{Number(product.price).toLocaleString()}</p>
-                            </div>
-                            <div className="flex-shrink-0 flex items-center gap-2">
-                              {totalInCart > 0 && (
-                                <Badge variant="secondary">{totalInCart}</Badge>
-                              )}
-                              <Button size="sm" variant="outline" onClick={() => handleProductClick(product)} disabled={loadingMods} data-testid={`button-add-qr-${product.id}`} className="min-h-[48px]">
-                                <Plus className="w-3 h-3 mr-1" /> Agregar
-                              </Button>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {cart.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4 z-[9]">
-          <div className="max-w-lg mx-auto">
-            {!confirmSlide ? (
+          <div className="space-y-3">
+            {activeSubaccounts.map((sub) => (
               <Button
-                className="w-full"
-                onClick={() => setConfirmSlide(true)}
-                data-testid="button-review-cart"
+                key={sub.id}
+                variant="outline"
+                className="w-full min-h-[48px] text-base"
+                onClick={() => handleSubaccountSelect(sub)}
+                data-testid={`button-subaccount-${sub.id}`}
               >
-                <ShoppingCart className="w-4 h-4 mr-1" />
-                Ver Pedido ({cart.length} items) - ₡{cartTotal.toLocaleString()}
-                <ChevronRight className="w-4 h-4 ml-auto" />
+                {sub.label || sub.code}
+              </Button>
+            ))}
+            {activeSubaccounts.length < MAX_SUBACCOUNTS ? (
+              <Button
+                className="w-full min-h-[48px]"
+                onClick={() => createSubaccountMutation.mutate()}
+                disabled={createSubaccountMutation.isPending}
+                data-testid="button-create-subaccount"
+              >
+                {createSubaccountMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" />
+                )}
+                Crear cuenta nueva
               </Button>
             ) : (
-              <div className="space-y-3">
-                <div className="space-y-2 max-h-40 overflow-y-auto">
-                  {cart.map((item) => (
-                    <div key={item.cartKey} className="flex items-center justify-between text-sm">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <span>{item.qty}x {item.name}</span>
-                          <div className="flex items-center gap-1">
-                            <Button size="icon" variant="ghost" onClick={() => updateQty(item.cartKey, item.qty - 1)}>
-                              <Minus className="w-3 h-3" />
-                            </Button>
-                            <Button size="icon" variant="ghost" onClick={() => updateQty(item.cartKey, item.qty + 1)}>
-                              <Plus className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        </div>
-                        {item.modifiers && item.modifiers.length > 0 && (
-                          <p className="text-xs text-muted-foreground">{item.modifiers.map((m) => m.name).join(", ")}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span>₡{getItemTotal(item).toLocaleString()}</span>
-                        <Button size="icon" variant="ghost" onClick={() => updateQty(item.cartKey, 0)}>
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between font-bold border-t pt-2">
-                  <span>Total</span>
-                  <span>₡{cartTotal.toLocaleString()}</span>
-                </div>
-                <p className="text-xs text-center text-muted-foreground">
-                  Confirme la solicitud de este pedido
-                </p>
-                {submitMutation.isPending ? (
-                  <div className="flex items-center justify-center py-3">
-                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                    <span className="text-sm font-medium">Enviando pedido...</span>
-                  </div>
-                ) : (
-                  <div
-                    ref={swipeTrackRef}
-                    className="relative h-14 rounded-md bg-primary/10 overflow-hidden select-none"
-                    data-testid="swipe-confirm-track"
-                    onTouchStart={(e) => handleSwipeStart(e.touches[0].clientX)}
-                    onTouchMove={(e) => handleSwipeMove(e.touches[0].clientX)}
-                    onTouchEnd={handleSwipeEnd}
-                    onMouseDown={(e) => handleSwipeStart(e.clientX)}
-                    onMouseMove={(e) => handleSwipeMove(e.clientX)}
-                    onMouseUp={handleSwipeEnd}
-                    onMouseLeave={handleSwipeEnd}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <span className="text-sm font-medium text-muted-foreground flex items-center gap-1">
-                        Desliza para confirmar <ArrowRight className="w-4 h-4" />
-                      </span>
-                    </div>
-                    <div
-                      className="absolute inset-y-0 left-0 bg-primary/20 rounded-md transition-none"
-                      style={{ width: swipeX + 56 }}
-                    />
-                    <div
-                      ref={swipeThumbRef}
-                      className="absolute top-1 bottom-1 left-1 w-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground cursor-grab active:cursor-grabbing"
-                      style={{ transform: `translateX(${swipeX}px)`, transition: swiping ? 'none' : 'transform 0.3s ease' }}
-                      data-testid="swipe-confirm-thumb"
-                    >
-                      <Send className="w-4 h-4" />
-                    </div>
-                  </div>
-                )}
-                <Button variant="outline" className="w-full" onClick={() => setConfirmSlide(false)}>
-                  Volver al Menú
-                </Button>
-              </div>
+              <p className="text-sm text-center text-muted-foreground p-3" data-testid="text-max-subaccounts">
+                Ya hay {MAX_SUBACCOUNTS} cuentas en esta mesa. Usa una existente o pedile al salonero que lo acomode
+              </p>
             )}
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {modDialogProduct && (
-        <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50" data-testid="qr-modifier-dialog-overlay" onClick={() => { setModDialogProduct(null); setModGroups([]); setSelectedMods({}); }}>
-          <Card className="w-full rounded-t-xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <CardHeader className="pb-2 flex-shrink-0">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <h3 className="font-bold text-base">{modDialogProduct.name}</h3>
-                <span className="text-sm text-muted-foreground">₡{Number(modDialogProduct.price).toLocaleString()}</span>
+  if (step === "name") {
+    return (
+      <div className="min-h-screen bg-background p-4">
+        <div className="max-w-md mx-auto space-y-6 pt-8">
+          <Button variant="ghost" size="sm" onClick={() => setStep("subaccount")} data-testid="button-back-subaccount">
+            <ChevronLeft className="w-4 h-4 mr-1" /> Volver
+          </Button>
+          <div className="text-center space-y-2">
+            <User className="w-10 h-10 mx-auto text-primary" />
+            <h1 className="text-xl font-bold" data-testid="text-name-title">Como te llamas?</h1>
+            <p className="text-sm text-muted-foreground">Asi el salonero lo lee clarito.</p>
+          </div>
+          <div className="space-y-3">
+            <Input
+              value={customerName}
+              onChange={(e) => { setCustomerName(e.target.value); setNameError(""); }}
+              placeholder="Tu nombre"
+              className="text-lg min-h-[48px]"
+              autoFocus
+              data-testid="input-customer-name"
+            />
+            {nameError && (
+              <p className="text-sm text-destructive" data-testid="text-name-error">{nameError}</p>
+            )}
+            <Button
+              className="w-full min-h-[48px]"
+              onClick={handleNameContinue}
+              data-testid="button-name-continue"
+            >
+              Continuar
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "easy_categories") {
+    return (
+      <div className="min-h-screen bg-background p-4">
+        <div className="max-w-md mx-auto space-y-6 pt-4">
+          <Button variant="ghost" size="sm" onClick={() => setStep("name")} data-testid="button-back-name">
+            <ChevronLeft className="w-4 h-4 mr-1" /> Volver
+          </Button>
+          <div className="text-center space-y-2">
+            <h1 className="text-xl font-bold" data-testid="text-easy-categories-title">Que se te antoja hoy?</h1>
+          </div>
+          <div className="space-y-3">
+            {categories.map((cat) => (
+              <Button
+                key={cat}
+                variant="outline"
+                className="w-full min-h-[56px] text-base"
+                onClick={() => { setSelectedCategory(cat); setEasySearchTerm(""); setStep("easy_products"); }}
+                data-testid={`button-category-${cat.toLowerCase().replace(/\s+/g, "-")}`}
+              >
+                {isBeverage(cat) ? <Coffee className="w-5 h-5 mr-2" /> : <ChefHat className="w-5 h-5 mr-2" />}
+                {cat}
+              </Button>
+            ))}
+          </div>
+          {easyItemCount > 0 && (
+            <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-[9]">
+              <div className="max-w-md mx-auto">
+                <Button className="w-full" onClick={() => setStep("easy_review")} data-testid="button-easy-view-order">
+                  Ver Mi Pedido ({easyItemCount})
+                </Button>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4 overflow-y-auto flex-1 pb-4">
-              {modGroups.map((group) => (
-                <div key={group.id} data-testid={`qr-modifier-group-${group.id}`}>
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className="font-semibold text-sm">{group.name}</span>
-                    {group.required && <Badge variant="secondary">Requerido</Badge>}
-                    {group.multiSelect && <span className="text-xs text-muted-foreground">(varias opciones)</span>}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "easy_products") {
+    const searchLower = easySearchTerm.toLowerCase();
+    const productsInCategory = menu.filter((p) => (p.categoryName || "Otros") === selectedCategory);
+    const filtered = searchLower
+      ? productsInCategory.filter((p) => p.name.toLowerCase().includes(searchLower) || p.description.toLowerCase().includes(searchLower))
+      : productsInCategory;
+
+    return (
+      <div className="min-h-screen bg-background pb-24">
+        <div className="sticky top-0 z-[9] bg-background border-b p-4">
+          <div className="max-w-md mx-auto space-y-3">
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" onClick={() => setStep("easy_categories")} data-testid="button-back-categories">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <h1 className="text-lg font-bold flex-1" data-testid="text-easy-products-title">Elige tu plato</h1>
+              <Badge variant="secondary">{selectedCategory}</Badge>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="Buscar..."
+                value={easySearchTerm}
+                onChange={(e) => setEasySearchTerm(e.target.value)}
+                className="pl-9 pr-9"
+                data-testid="input-easy-search"
+              />
+              {easySearchTerm && (
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2"
+                  onClick={() => setEasySearchTerm("")}
+                  data-testid="button-clear-easy-search"
+                >
+                  <X className="w-4 h-4 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="max-w-md mx-auto px-4 pt-3 space-y-2">
+          {filtered.length === 0 && (
+            <p className="text-center text-muted-foreground py-8" data-testid="text-no-results">Sin resultados</p>
+          )}
+          {filtered.map((product) => {
+            const inCart = easyItems.filter((it) => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
+            const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+            return (
+              <Card key={product.id} data-testid={`card-product-${product.id}`}>
+                <CardContent className="p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-base">{product.name}</p>
+                      {product.description && (
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
+                      )}
+                      <p className="font-bold text-sm mt-1">₡{Number(product.price).toLocaleString()}</p>
+                    </div>
+                    <div className="flex-shrink-0 flex items-center gap-2">
+                      {inCart > 0 && <Badge variant="secondary">{inCart}</Badge>}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleEasyProductClick(product)}
+                        disabled={loadingMods || outOfStock}
+                        data-testid={`button-add-easy-${product.id}`}
+                      >
+                        {outOfStock ? "Agotado" : <><Plus className="w-3 h-3 mr-1" /> Agregar</>}
+                      </Button>
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    {group.options.map((opt) => {
-                      const isSelected = (selectedMods[group.id] || []).includes(opt.id);
-                      return (
-                        <div
-                          key={opt.id}
-                          className={`flex items-center justify-between p-3 rounded-md border cursor-pointer min-h-[44px] transition-colors ${isSelected ? "bg-primary/10 border-primary" : "hover-elevate"}`}
-                          onClick={() => toggleModOption(group.id, opt.id, group.multiSelect)}
-                          data-testid={`qr-modifier-option-${opt.id}`}
-                        >
-                          <div className="flex items-center gap-2">
-                            {group.multiSelect ? (
-                              <Checkbox checked={isSelected} className="pointer-events-none" />
-                            ) : (
-                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isSelected ? "border-primary" : "border-muted-foreground"}`}>
-                                {isSelected && <div className="w-2 h-2 rounded-full bg-primary" />}
-                              </div>
-                            )}
-                            <span className="text-sm">{opt.name}</span>
-                          </div>
-                          {Number(opt.priceDelta) > 0 && (
-                            <span className="text-sm text-muted-foreground">+₡{Number(opt.priceDelta).toLocaleString()}</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+        {easyItemCount > 0 && (
+          <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-[9]">
+            <div className="max-w-md mx-auto">
+              <Button className="w-full" onClick={() => setStep("easy_review")} data-testid="button-easy-view-order-bottom">
+                Ver Mi Pedido ({easyItemCount})
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (step === "easy_modifiers" || step === "std_modifiers") {
+    const returnStep = step === "easy_modifiers" ? "easy_products" : "std_food";
+    return (
+      <div className="min-h-screen bg-background p-4">
+        <div className="max-w-md mx-auto space-y-6 pt-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { setPendingProduct(null); setModGroups([]); setSelectedMods({}); setStep(returnStep); }}
+            data-testid="button-back-from-modifiers"
+          >
+            <ChevronLeft className="w-4 h-4 mr-1" /> Volver
+          </Button>
+          <h1 className="text-xl font-bold text-center" data-testid="text-modifiers-title">
+            Como prefieres tu {pendingProduct?.name}?
+          </h1>
+          <div className="space-y-4">
+            {modGroups.map((group) => (
+              <div key={group.id} className="space-y-2" data-testid={`modifier-group-${group.id}`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold">{group.name}</span>
+                  {group.required && <Badge variant="secondary">Requerido</Badge>}
+                  {group.multiSelect && <span className="text-xs text-muted-foreground">(varias opciones)</span>}
+                </div>
+                <div className="space-y-2">
+                  {group.options.map((opt) => {
+                    const isSelected = (selectedMods[group.id] || []).includes(opt.id);
+                    return (
+                      <Button
+                        key={opt.id}
+                        variant={isSelected ? "default" : "outline"}
+                        className="w-full min-h-[48px] justify-start text-left"
+                        onClick={() => toggleModOption(group.id, opt.id, group.multiSelect)}
+                        data-testid={`button-modifier-${opt.id}`}
+                      >
+                        {isSelected && <Check className="w-4 h-4 mr-2 flex-shrink-0" />}
+                        <span className="flex-1">{opt.name}</span>
+                        {Number(opt.priceDelta) !== 0 && (
+                          <span className="text-xs ml-2">+₡{Number(opt.priceDelta).toLocaleString()}</span>
+                        )}
+                      </Button>
+                    );
+                  })}
+                  {!group.required && (
+                    <Button
+                      variant={(selectedMods[group.id] || []).length === 0 ? "secondary" : "ghost"}
+                      className="w-full min-h-[48px]"
+                      onClick={() => setSelectedMods((prev) => ({ ...prev, [group.id]: [] }))}
+                      data-testid={`button-modifier-skip-${group.id}`}
+                    >
+                      No gracias
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <Button
+            className="w-full min-h-[48px]"
+            onClick={() => confirmModifiers(step)}
+            data-testid="button-confirm-modifiers"
+          >
+            Confirmar
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "easy_review") {
+    return (
+      <div className="min-h-screen bg-background p-4">
+        <div className="max-w-md mx-auto space-y-6 pt-4">
+          <h1 className="text-xl font-bold text-center" data-testid="text-easy-review-title">Revisa tu pedido</h1>
+          <p className="text-center text-muted-foreground" data-testid="text-easy-review-subtitle">
+            {customerName.trim()} ({tableInfo.tableName}-{selectedSubaccount?.slotNumber})
+          </p>
+          <Card>
+            <CardContent className="p-4 space-y-2">
+              {easyItems.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between" data-testid={`review-item-${idx}`}>
+                  <span>{item.qty}x {item.productName}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setEasyItems((prev) => prev.filter((_, i) => i !== idx))}
+                    data-testid={`button-remove-item-${idx}`}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
                 </div>
               ))}
-              <div className="flex gap-2 pt-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => { setModDialogProduct(null); setModGroups([]); setSelectedMods({}); }}
-                  data-testid="button-cancel-qr-modifiers"
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  className="flex-1"
-                  onClick={confirmModifiers}
-                  data-testid="button-confirm-qr-modifiers"
-                >
-                  <Plus className="w-4 h-4 mr-1" /> Agregar
-                </Button>
-              </div>
             </CardContent>
           </Card>
+          {easyItems.length === 0 && (
+            <p className="text-center text-muted-foreground text-sm">No hay items en tu pedido.</p>
+          )}
+          <div className="space-y-3">
+            <Button
+              className="w-full min-h-[48px]"
+              onClick={handleSubmitEasy}
+              disabled={submitMutation.isPending || easyItems.length === 0}
+              data-testid="button-easy-confirm"
+            >
+              {submitMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : (
+                <Send className="w-4 h-4 mr-2" />
+              )}
+              Confirmar Pedido
+            </Button>
+            <button
+              type="button"
+              className="w-full text-center text-sm text-muted-foreground underline py-2"
+              onClick={() => setStep("easy_categories")}
+              data-testid="button-easy-back-to-menu"
+            >
+              Volver atras
+            </button>
+          </div>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
+
+  if (step === "std_food") {
+    const dinerNum = currentDinerIndex + 1;
+    const totalDiners = diners.length;
+    return (
+      <div className="min-h-screen bg-background pb-28">
+        <div className="sticky top-0 z-[9] bg-background border-b p-4">
+          <div className="max-w-md mx-auto space-y-1">
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" onClick={() => setStep("name")} data-testid="button-back-from-food">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Badge variant="secondary" data-testid="text-diner-counter">Comensal {dinerNum} de {totalDiners}</Badge>
+            </div>
+            <h1 className="text-xl font-bold" data-testid="text-std-food-title">Que desea comer?</h1>
+          </div>
+        </div>
+        <div className="max-w-md mx-auto px-4 pt-3">
+          <div className="grid grid-cols-2 gap-3">
+            {foodProducts.map((product) => {
+              const isSelected = stdSelectedItems.some((it) => it.productId === product.id);
+              const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+              return (
+                <Card key={product.id} className={isSelected ? "ring-2 ring-primary" : ""} data-testid={`card-food-${product.id}`}>
+                  <CardContent className="p-3 space-y-2">
+                    <p className="font-medium text-sm">{product.name}</p>
+                    {product.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-2">{product.description}</p>
+                    )}
+                    <p className="font-bold text-sm">₡{Number(product.price).toLocaleString()}</p>
+                    {isSelected ? (
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-primary" />
+                        <Button variant="ghost" size="sm" onClick={() => removeStdItem(product.id)} data-testid={`button-remove-food-${product.id}`}>
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => handleStdProductClick(product)}
+                        disabled={loadingMods || outOfStock}
+                        data-testid={`button-select-food-${product.id}`}
+                      >
+                        {outOfStock ? "Agotado" : "Elegir"}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-[9]">
+          <div className="max-w-md mx-auto space-y-2">
+            {stdSelectedItems.length > 0 && (
+              <p className="text-sm text-muted-foreground truncate" data-testid="text-food-selection-summary">
+                Pedido: {stdSelectedItems.map((it) => it.productName).join(", ")}
+              </p>
+            )}
+            <Button
+              className="w-full"
+              onClick={handleStdNextFromFood}
+              data-testid="button-std-next-food"
+            >
+              Siguiente
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "std_drink") {
+    const dinerNum = currentDinerIndex + 1;
+    const totalDiners = diners.length;
+    return (
+      <div className="min-h-screen bg-background pb-28">
+        <div className="sticky top-0 z-[9] bg-background border-b p-4">
+          <div className="max-w-md mx-auto space-y-1">
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" onClick={() => setStep("std_food")} data-testid="button-back-from-drink">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Badge variant="secondary" data-testid="text-diner-counter-drink">Comensal {dinerNum} de {totalDiners}</Badge>
+            </div>
+            <h1 className="text-xl font-bold" data-testid="text-std-drink-title">Algo para beber?</h1>
+            <p className="text-sm text-muted-foreground">Pa' bajar la comida como Dios manda.</p>
+          </div>
+        </div>
+        <div className="max-w-md mx-auto px-4 pt-3">
+          <div className="grid grid-cols-2 gap-3">
+            {drinkProducts.map((product) => {
+              const isSelected = stdSelectedItems.some((it) => it.productId === product.id);
+              const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+              return (
+                <Card key={product.id} className={isSelected ? "ring-2 ring-primary" : ""} data-testid={`card-drink-${product.id}`}>
+                  <CardContent className="p-3 space-y-2">
+                    <p className="font-medium text-sm">{product.name}</p>
+                    {product.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-2">{product.description}</p>
+                    )}
+                    <p className="font-bold text-sm">₡{Number(product.price).toLocaleString()}</p>
+                    {isSelected ? (
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-primary" />
+                        <Button variant="ghost" size="sm" onClick={() => removeStdItem(product.id)} data-testid={`button-remove-drink-${product.id}`}>
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => handleStdProductClick(product)}
+                        disabled={loadingMods || outOfStock}
+                        data-testid={`button-select-drink-${product.id}`}
+                      >
+                        {outOfStock ? "Agotado" : "Elegir"}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-[9]">
+          <div className="max-w-md mx-auto space-y-2">
+            {stdSelectedItems.length > 0 && (
+              <p className="text-sm text-muted-foreground truncate" data-testid="text-drink-selection-summary">
+                Pedido: {stdSelectedItems.map((it) => it.productName).join(", ")}
+              </p>
+            )}
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={handleStdSkipDrinks}
+                data-testid="button-std-skip-drinks"
+              >
+                Omitir
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handleStdNextFromDrink}
+                data-testid="button-std-next-drink"
+              >
+                Siguiente
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "std_review") {
+    return (
+      <div className="min-h-screen bg-background p-4">
+        <div className="max-w-md mx-auto space-y-6 pt-4">
+          <h1 className="text-xl font-bold text-center" data-testid="text-std-review-title">Revisar y Enviar</h1>
+          <div className="space-y-4">
+            {diners.map((diner, dIdx) => (
+              <Card key={dIdx} data-testid={`card-diner-${dIdx}`}>
+                <CardContent className="p-4 space-y-2">
+                  <p className="font-bold">{diner.name}</p>
+                  {diner.items.map((item, iIdx) => (
+                    <div key={iIdx} className="flex items-center gap-2 text-sm" data-testid={`review-std-item-${dIdx}-${iIdx}`}>
+                      <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />
+                      <span>{item.qty}x {item.productName}</span>
+                    </div>
+                  ))}
+                  {diner.items.length === 0 && (
+                    <p className="text-sm text-muted-foreground">Sin items seleccionados</p>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <div className="space-y-3">
+            <Button
+              variant="outline"
+              className="w-full min-h-[48px]"
+              onClick={handleAddAnotherDiner}
+              data-testid="button-add-diner"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Agregar otro comensal
+            </Button>
+            <Button
+              className="w-full min-h-[48px]"
+              onClick={handleSubmitStandard}
+              disabled={submitMutation.isPending || diners.every((d) => d.items.length === 0)}
+              data-testid="button-std-confirm"
+            >
+              {submitMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : (
+                <Send className="w-4 h-4 mr-2" />
+              )}
+              Confirmar y enviar pedido
+            </Button>
+            <button
+              type="button"
+              className="w-full text-center text-sm text-muted-foreground underline py-2"
+              onClick={() => setStep("std_food")}
+              data-testid="button-std-back"
+            >
+              Volver atras
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "sent") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="w-full max-w-md text-center space-y-6">
+          <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
+            <Check className="w-8 h-8 text-green-600" />
+          </div>
+          <h1 className="text-2xl font-bold" data-testid="text-order-sent">Pedido Enviado</h1>
+          <p className="text-muted-foreground" data-testid="text-order-sent-message">En un momentito llega el salonero a confirmarlo.</p>
+          <p className="text-sm text-muted-foreground">Gracias, y buen provecho</p>
+          <Button onClick={resetAll} data-testid="button-new-order">
+            <Plus className="w-4 h-4 mr-2" />
+            Hacer otro pedido
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }

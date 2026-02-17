@@ -7,6 +7,7 @@ import * as storage from "./storage";
 import { registerInventoryRoutes } from "./inventory-routes";
 import { registerShortageRoutes } from "./shortage-routes";
 import { registerSalesCubeRoutes } from "./sales-cube-routes";
+import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema } from "@shared/schema";
 
@@ -4036,6 +4037,9 @@ export async function registerRoutes(
 
   // ==================== SALES CUBE REPORTS ====================
   registerSalesCubeRoutes(app);
+
+  // ==================== QR SUBACCOUNTS MODULE ====================
+  registerQrSubaccountRoutes(app, broadcast);
 
   // ==================== WEBSOCKET ====================
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
