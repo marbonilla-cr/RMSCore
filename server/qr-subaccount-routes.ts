@@ -130,6 +130,56 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     }
   });
 
+  app.post("/api/qr/:tableCode/subaccounts-batch", async (req, res) => {
+    try {
+      const tableCode = req.params.tableCode as string;
+      const { count } = req.body || {};
+
+      const table = await storage.getTableByCode(tableCode);
+      if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+
+      const order = await getOrCreateOrderForTable(table.id);
+      const maxSubs = await getMaxSubaccounts();
+      const wanted = Math.min(Math.max(Number(count) || 2, 1), maxSubs);
+
+      const existing = await db.select().from(orderSubaccounts)
+        .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)));
+
+      if (existing.length >= wanted) {
+        return res.json(existing.sort((a: any, b: any) => a.slotNumber - b.slotNumber).slice(0, wanted));
+      }
+
+      const toCreate = Math.min(wanted - existing.length, maxSubs - existing.length);
+      if (toCreate <= 0) {
+        return res.json(existing);
+      }
+
+      const usedSlots = new Set(existing.map(s => s.slotNumber));
+      const tableNumber = extractTableNumber(table.tableName);
+      const created: any[] = [];
+
+      for (let i = 0; i < toCreate; i++) {
+        let slotNumber = 1;
+        while (usedSlots.has(slotNumber) && slotNumber <= maxSubs) slotNumber++;
+        usedSlots.add(slotNumber);
+        const code = `${tableNumber}-${slotNumber}`;
+        const [sub] = await db.insert(orderSubaccounts).values({
+          orderId: order.id,
+          tableId: table.id,
+          slotNumber,
+          code,
+          label: `Cuenta ${slotNumber}`,
+          isActive: true,
+        }).returning();
+        created.push(sub);
+      }
+
+      res.json([...existing, ...created]);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/qr/:tableCode/submit-v2", async (req, res) => {
     try {
       const tableCode = req.params.tableCode as string;

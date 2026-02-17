@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -8,17 +8,17 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
-  UtensilsCrossed, Plus, Loader2, Check, ChevronLeft,
+  UtensilsCrossed, Plus, Loader2, Check, ChevronLeft, ChevronRight,
   Search, X, Users, User, ArrowRight, Coffee, ChefHat,
-  Utensils, Send, CheckCircle2,
+  Utensils, Send, CheckCircle2, Minus,
 } from "lucide-react";
 
 type Step =
   | "welcome"
   | "subaccount"
   | "name"
-  | "easy_categories"
-  | "easy_products"
+  | "easy_food"
+  | "easy_drink"
   | "easy_modifiers"
   | "easy_review"
   | "std_food"
@@ -36,18 +36,12 @@ interface QRProduct {
   availablePortions: number | null;
 }
 
-interface QRModifierOption {
-  id: number;
-  name: string;
-  priceDelta: string;
-}
-
 interface QRModifierGroup {
   id: number;
   name: string;
   required: boolean;
   multiSelect: boolean;
-  options: QRModifierOption[];
+  options: { id: number; name: string; priceDelta: string }[];
 }
 
 interface Subaccount {
@@ -75,10 +69,172 @@ interface DinerData {
 }
 
 const MAX_SUBACCOUNTS = 6;
+const ITEMS_PER_PAGE = 4;
 
 function isBeverage(categoryName: string | null): boolean {
   if (!categoryName) return false;
-  return categoryName.toLowerCase().includes("bebida");
+  const lower = categoryName.toLowerCase();
+  return lower.includes("bebida") || lower.includes("trago") || lower.includes("coctel")
+    || lower.includes("cerveza") || lower.includes("vino") || lower.includes("licor")
+    || lower.includes("drink") || lower.includes("refresco") || lower.includes("jugo")
+    || lower.includes("smoothie") || lower.includes("batido") || lower.includes("café")
+    || lower.includes("cafe") || lower.includes("té") || lower.includes("te ");
+}
+
+function EasyStepLayout({
+  step, totalSteps, title, subtitle, children, stickyButton, onBack,
+}: {
+  step: number;
+  totalSteps: number;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  stickyButton?: React.ReactNode;
+  onBack?: () => void;
+}) {
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <div className="sticky top-0 z-[9] bg-background border-b px-4 py-3">
+        <div className="max-w-md mx-auto">
+          <div className="flex items-center gap-3">
+            {onBack && (
+              <Button variant="ghost" size="icon" onClick={onBack} data-testid="button-step-back">
+                <ChevronLeft className="w-5 h-5" />
+              </Button>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-muted-foreground font-medium" data-testid="text-step-progress">
+                Paso {step} de {totalSteps}
+              </p>
+              <h1 className="text-lg font-bold truncate" data-testid="text-step-title">{title}</h1>
+            </div>
+          </div>
+          {subtitle && <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div className="max-w-md mx-auto">
+          {children}
+        </div>
+      </div>
+      {stickyButton && (
+        <div className="sticky bottom-0 z-[9] bg-background border-t px-4 py-3">
+          <div className="max-w-md mx-auto">
+            {stickyButton}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PagedMenuGrid({
+  products, onSelect, cart, loading, searchTerm, onSearchChange, categoryLabel,
+}: {
+  products: QRProduct[];
+  onSelect: (p: QRProduct) => void;
+  cart: CartItem[];
+  loading: boolean;
+  searchTerm: string;
+  onSearchChange: (v: string) => void;
+  categoryLabel?: string;
+}) {
+  const [page, setPage] = useState(0);
+
+  const filtered = useMemo(() => {
+    if (!searchTerm.trim()) return products;
+    const lower = searchTerm.toLowerCase();
+    return products.filter(p => p.name.toLowerCase().includes(lower) || (p.description || "").toLowerCase().includes(lower));
+  }, [products, searchTerm]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageItems = filtered.slice(safePage * ITEMS_PER_PAGE, (safePage + 1) * ITEMS_PER_PAGE);
+
+  return (
+    <div className="space-y-4">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+        <Input
+          placeholder="Buscar..."
+          value={searchTerm}
+          onChange={(e) => { onSearchChange(e.target.value); setPage(0); }}
+          className="pl-9 pr-9 min-h-[48px] text-base"
+          data-testid="input-menu-search"
+        />
+        {searchTerm && (
+          <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => { onSearchChange(""); setPage(0); }} data-testid="button-clear-search">
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        )}
+      </div>
+      {categoryLabel && <Badge variant="secondary" className="text-xs">{categoryLabel}</Badge>}
+
+      {filtered.length === 0 ? (
+        <p className="text-center text-muted-foreground py-8" data-testid="text-no-results">Sin resultados</p>
+      ) : (
+        <div className="space-y-3">
+          {pageItems.map((product) => {
+            const inCart = cart.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
+            const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+            return (
+              <Card key={product.id} className={outOfStock ? "opacity-50" : ""} data-testid={`card-product-${product.id}`}>
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-base">{product.name}</p>
+                      {product.description && (
+                        <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
+                      )}
+                      <p className="font-bold text-base mt-1">₡{Number(product.price).toLocaleString()}</p>
+                    </div>
+                    <div className="flex-shrink-0 flex items-center gap-2">
+                      {inCart > 0 && <Badge variant="secondary">{inCart}</Badge>}
+                      <Button
+                        className="min-h-[44px] min-w-[80px]"
+                        variant={outOfStock ? "secondary" : "default"}
+                        onClick={() => onSelect(product)}
+                        disabled={loading || outOfStock}
+                        data-testid={`button-add-${product.id}`}
+                      >
+                        {outOfStock ? "Agotado" : "Elegir"}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between pt-2 gap-3">
+          <Button
+            variant="outline"
+            className="flex-1 min-h-[48px]"
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={safePage === 0}
+            data-testid="button-page-prev"
+          >
+            <ChevronLeft className="w-4 h-4 mr-1" /> Atrás
+          </Button>
+          <span className="text-sm text-muted-foreground whitespace-nowrap" data-testid="text-page-indicator">
+            {safePage + 1} / {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            className="flex-1 min-h-[48px]"
+            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            disabled={safePage >= totalPages - 1}
+            data-testid="button-page-next"
+          >
+            Siguiente <ChevronRight className="w-4 h-4 ml-1" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function QRClientPage() {
@@ -93,8 +249,8 @@ export default function QRClientPage() {
   const [nameError, setNameError] = useState("");
 
   const [easyItems, setEasyItems] = useState<CartItem[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [easySearchTerm, setEasySearchTerm] = useState("");
+  const [easyFoodSearch, setEasyFoodSearch] = useState("");
+  const [easyDrinkSearch, setEasyDrinkSearch] = useState("");
   const [pendingProduct, setPendingProduct] = useState<QRProduct | null>(null);
   const [modGroups, setModGroups] = useState<QRModifierGroup[]>([]);
   const [selectedMods, setSelectedMods] = useState<Record<number, number[]>>({});
@@ -123,7 +279,7 @@ export default function QRClientPage() {
     enabled: !!tableCode && step === "subaccount",
   });
 
-  const activeSubaccounts = subaccounts.filter((s) => s.isActive);
+  const activeSubaccounts = subaccounts.filter(s => s.isActive);
 
   const createSubaccountMutation = useMutation({
     mutationFn: async () => {
@@ -136,17 +292,36 @@ export default function QRClientPage() {
       setStep("name");
     },
     onError: (err: Error) => {
-      if (err.message.includes("max") || err.message.includes("limit")) {
-        toast({ title: "Limite alcanzado", description: `Ya hay ${MAX_SUBACCOUNTS} cuentas en esta mesa. Usa una existente o pedile al salonero que lo acomode`, variant: "destructive" });
+      if (err.message.includes("max") || err.message.includes("limit") || err.message.includes("Máximo")) {
+        toast({ title: "Límite alcanzado", description: `Ya hay ${MAX_SUBACCOUNTS} cuentas en esta mesa. Usá una existente o pedile al salonero.`, variant: "destructive" });
       } else {
-        toast({ title: "Error", description: "Se fue la senal un toque. Proba de nuevo y ya quedamos.", variant: "destructive" });
+        toast({ title: "Error", description: "Se fue la señal un toque. Probá de nuevo.", variant: "destructive" });
       }
+    },
+  });
+
+  const batchSubaccountMutation = useMutation({
+    mutationFn: async (count: number) => {
+      const res = await apiRequest("POST", `/api/qr/${tableCode}/subaccounts-batch`, { count });
+      return res.json() as Promise<Subaccount[]>;
+    },
+    onSuccess: (data: Subaccount[]) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/qr", tableCode, "subaccounts"] });
+      if (data.length === 1) {
+        setSelectedSubaccount({ id: data[0].id, code: data[0].code, slotNumber: data[0].slotNumber });
+        setStep("name");
+      } else {
+        refetchSubaccounts();
+      }
+    },
+    onError: () => {
+      toast({ title: "Error", description: "No se pudieron crear las cuentas. Probá de nuevo.", variant: "destructive" });
     },
   });
 
   const submitMutation = useMutation({
     mutationFn: async (payload: { subaccountId: number; items: CartItem[] }) => {
-      const items = payload.items.map((it) => ({
+      const items = payload.items.map(it => ({
         productId: it.productId,
         qty: it.qty,
         customerName: it.customerName,
@@ -157,22 +332,18 @@ export default function QRClientPage() {
         items,
       });
     },
-    onSuccess: () => {
-      setStep("sent");
-    },
+    onSuccess: () => setStep("sent"),
     onError: (err: Error) => {
       if (err.message.includes("pending") || err.message.includes("confirmando")) {
-        toast({ title: "Espera un momento", description: "Un momentito. El salonero esta confirmando pedidos. Apenas confirme, podes enviar el siguiente.", variant: "destructive" });
+        toast({ title: "Esperá un momento", description: "El salonero está confirmando pedidos. Apenas confirme, podés enviar el siguiente.", variant: "destructive" });
       } else {
-        toast({ title: "Error", description: "Se fue la senal un toque. Proba de nuevo y ya quedamos.", variant: "destructive" });
+        toast({ title: "Error", description: "Se fue la señal un toque. Probá de nuevo.", variant: "destructive" });
       }
     },
   });
 
-  const categories = Array.from(new Set(menu.map((p) => p.categoryName || "Otros")));
-
-  const foodProducts = menu.filter((p) => !isBeverage(p.categoryName));
-  const drinkProducts = menu.filter((p) => isBeverage(p.categoryName));
+  const foodProducts = useMemo(() => menu.filter(p => !isBeverage(p.categoryName)), [menu]);
+  const drinkProducts = useMemo(() => menu.filter(p => isBeverage(p.categoryName)), [menu]);
 
   const handleModeSelect = (m: "easy" | "standard") => {
     setMode(m);
@@ -185,15 +356,19 @@ export default function QRClientPage() {
     setStep("name");
   };
 
+  const handleGroupSelect = async (count: number) => {
+    batchSubaccountMutation.mutate(count);
+  };
+
   const handleNameContinue = () => {
     const trimmed = customerName.trim();
     if (!trimmed) {
-      setNameError("Pone tu nombre para que no se nos enrede la cuenta");
+      setNameError("Poné tu nombre para que no se nos enrede la cuenta");
       return;
     }
     setNameError("");
     if (mode === "easy") {
-      setStep("easy_categories");
+      setStep("easy_food");
     } else {
       setDiners([{ name: trimmed, items: [] }]);
       setCurrentDinerIndex(0);
@@ -202,9 +377,9 @@ export default function QRClientPage() {
     }
   };
 
-  const handleEasyProductClick = useCallback(async (product: QRProduct) => {
+  const handleProductClick = useCallback(async (product: QRProduct, returnStep: Step) => {
     if (product.availablePortions !== null && product.availablePortions <= 0) {
-      toast({ title: "Agotado", description: "Uy... eso se nos acabo por hoy. Escoge otra opcion y seguimos.", variant: "destructive" });
+      toast({ title: "Agotado", description: "Eso se nos acabó por hoy. Escogé otra opción.", variant: "destructive" });
       return;
     }
     setLoadingMods(true);
@@ -215,71 +390,42 @@ export default function QRClientPage() {
         setPendingProduct(product);
         setModGroups(groups);
         setSelectedMods({});
-        setStep("easy_modifiers");
+        setStep(returnStep === "std_food" || returnStep === "std_drink" ? "std_modifiers" : "easy_modifiers");
       } else {
-        setEasyItems((prev) => {
-          const existing = prev.find((it) => it.productId === product.id && !it.modifiers?.length);
-          if (existing) {
-            return prev.map((it) => (it === existing ? { ...it, qty: it.qty + 1 } : it));
-          }
-          return [...prev, { productId: product.id, productName: product.name, qty: 1, customerName: customerName.trim(), categoryName: product.categoryName || "Otros" }];
-        });
+        addItemToCart(product, [], returnStep);
       }
     } catch {
-      setEasyItems((prev) => [
-        ...prev,
-        { productId: product.id, productName: product.name, qty: 1, customerName: customerName.trim(), categoryName: product.categoryName || "Otros" },
-      ]);
+      addItemToCart(product, [], returnStep);
     } finally {
       setLoadingMods(false);
     }
-  }, [customerName, toast]);
+  }, [customerName, toast, mode, currentDinerIndex, diners]);
 
-  const handleStdProductClick = useCallback(async (product: QRProduct) => {
-    if (product.availablePortions !== null && product.availablePortions <= 0) {
-      toast({ title: "Agotado", description: "Uy... eso se nos acabo por hoy. Escoge otra opcion y seguimos.", variant: "destructive" });
-      return;
-    }
-    setLoadingMods(true);
-    try {
-      const res = await fetch(`/api/products/${product.id}/modifiers`);
-      const groups: QRModifierGroup[] = await res.json();
-      if (groups.length > 0) {
-        setPendingProduct(product);
-        setModGroups(groups);
-        setSelectedMods({});
-        setStep("std_modifiers");
-      } else {
-        addStdItem(product, []);
-      }
-    } catch {
-      addStdItem(product, []);
-    } finally {
-      setLoadingMods(false);
-    }
-  }, [currentDinerIndex, diners]);
-
-  const addStdItem = (product: QRProduct, mods: { modGroupId: number; optionId: number }[]) => {
-    const dinerName = diners[currentDinerIndex]?.name || customerName.trim();
+  const addItemToCart = (product: QRProduct, mods: { modGroupId: number; optionId: number }[], context: Step) => {
+    const name = customerName.trim();
     const item: CartItem = {
       productId: product.id,
       productName: product.name,
       qty: 1,
-      customerName: dinerName,
+      customerName: name,
       modifiers: mods.length > 0 ? mods : undefined,
       categoryName: product.categoryName || "Otros",
     };
-    setStdSelectedItems((prev) => {
-      const existing = prev.find((it) => it.productId === product.id && JSON.stringify(it.modifiers) === JSON.stringify(item.modifiers));
-      if (existing) {
-        return prev.map((it) => (it === existing ? { ...it, qty: it.qty + 1 } : it));
-      }
-      return [...prev, item];
-    });
-  };
 
-  const removeStdItem = (productId: number) => {
-    setStdSelectedItems((prev) => prev.filter((it) => it.productId !== productId));
+    if (context === "std_food" || context === "std_drink" || context === "std_modifiers") {
+      setStdSelectedItems(prev => {
+        const existing = prev.find(it => it.productId === product.id && JSON.stringify(it.modifiers) === JSON.stringify(item.modifiers));
+        if (existing) return prev.map(it => it === existing ? { ...it, qty: it.qty + 1 } : it);
+        return [...prev, item];
+      });
+    } else {
+      setEasyItems(prev => {
+        const existing = prev.find(it => it.productId === product.id && JSON.stringify(it.modifiers) === JSON.stringify(item.modifiers));
+        if (existing) return prev.map(it => it === existing ? { ...it, qty: it.qty + 1 } : it);
+        return [...prev, item];
+      });
+      toast({ title: "Apuntado", description: product.name });
+    }
   };
 
   const confirmModifiers = (returnStep: Step) => {
@@ -293,47 +439,54 @@ export default function QRClientPage() {
     }
     const mods: { modGroupId: number; optionId: number }[] = [];
     for (const group of modGroups) {
-      const selected = selectedMods[group.id] || [];
-      for (const optId of selected) {
+      for (const optId of (selectedMods[group.id] || [])) {
         mods.push({ modGroupId: group.id, optionId: optId });
       }
     }
 
-    if (mode === "easy") {
-      setEasyItems((prev) => [
-        ...prev,
-        {
-          productId: pendingProduct.id,
-          productName: pendingProduct.name,
-          qty: 1,
-          customerName: customerName.trim(),
-          modifiers: mods.length > 0 ? mods : undefined,
-          categoryName: pendingProduct.categoryName || "Otros",
-        },
-      ]);
-      setStep("easy_products");
-    } else {
-      addStdItem(pendingProduct, mods);
-      setStep(returnStep === "std_modifiers" ? "std_food" : returnStep);
-    }
+    const isStd = returnStep === "std_food" || returnStep === "std_drink" || returnStep === "std_modifiers";
+    addItemToCart(pendingProduct, mods, isStd ? stdModReturnStep : modReturnStep);
+
+    const goBack = isStd ? stdModReturnStep : modReturnStep;
     setPendingProduct(null);
     setModGroups([]);
     setSelectedMods({});
+    setStep(goBack as Step);
   };
 
+  const [modReturnStep, setModReturnStep] = useState<Step>("easy_food");
+  const [stdModReturnStep, setStdModReturnStep] = useState<Step>("std_food");
+
   const toggleModOption = (groupId: number, optionId: number, multi: boolean) => {
-    setSelectedMods((prev) => {
+    setSelectedMods(prev => {
       const current = prev[groupId] || [];
       if (multi) {
-        return { ...prev, [groupId]: current.includes(optionId) ? current.filter((id) => id !== optionId) : [...current, optionId] };
+        return { ...prev, [groupId]: current.includes(optionId) ? current.filter(id => id !== optionId) : [...current, optionId] };
       }
       return { ...prev, [groupId]: current.includes(optionId) ? [] : [optionId] };
     });
   };
 
-  const handleStdNextFromFood = () => {
-    setStep("std_drink");
+  const removeEasyItem = (idx: number) => {
+    setEasyItems(prev => prev.filter((_, i) => i !== idx));
   };
+
+  const removeStdItem = (productId: number) => {
+    setStdSelectedItems(prev => prev.filter(it => it.productId !== productId));
+  };
+
+  const handleSubmitEasy = () => {
+    if (!selectedSubaccount) return;
+    submitMutation.mutate({ subaccountId: selectedSubaccount.id, items: easyItems });
+  };
+
+  const handleSubmitStandard = () => {
+    if (!selectedSubaccount) return;
+    const allItems = diners.flatMap(d => d.items);
+    submitMutation.mutate({ subaccountId: selectedSubaccount.id, items: allItems });
+  };
+
+  const handleStdNextFromFood = () => setStep("std_drink");
 
   const handleStdNextFromDrink = () => {
     const dinerName = diners[currentDinerIndex]?.name || customerName.trim();
@@ -341,10 +494,6 @@ export default function QRClientPage() {
     updatedDiners[currentDinerIndex] = { name: dinerName, items: [...stdSelectedItems] };
     setDiners(updatedDiners);
     setStep("std_review");
-  };
-
-  const handleStdSkipDrinks = () => {
-    handleStdNextFromDrink();
   };
 
   const handleAddAnotherDiner = () => {
@@ -359,17 +508,6 @@ export default function QRClientPage() {
     setStep("name");
   };
 
-  const handleSubmitEasy = () => {
-    if (!selectedSubaccount) return;
-    submitMutation.mutate({ subaccountId: selectedSubaccount.id, items: easyItems });
-  };
-
-  const handleSubmitStandard = () => {
-    if (!selectedSubaccount) return;
-    const allItems = diners.flatMap((d) => d.items);
-    submitMutation.mutate({ subaccountId: selectedSubaccount.id, items: allItems });
-  };
-
   const resetAll = () => {
     setStep("welcome");
     setMode(null);
@@ -377,8 +515,8 @@ export default function QRClientPage() {
     setCustomerName("");
     setNameError("");
     setEasyItems([]);
-    setSelectedCategory(null);
-    setEasySearchTerm("");
+    setEasyFoodSearch("");
+    setEasyDrinkSearch("");
     setPendingProduct(null);
     setModGroups([]);
     setSelectedMods({});
@@ -388,6 +526,7 @@ export default function QRClientPage() {
   };
 
   const easyItemCount = easyItems.reduce((s, it) => s + it.qty, 0);
+  const EASY_TOTAL_STEPS = 5;
 
   if (tableLoading) {
     return (
@@ -404,30 +543,31 @@ export default function QRClientPage() {
           <CardContent className="py-12 text-center">
             <UtensilsCrossed className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
             <h2 className="font-bold text-lg mb-2" data-testid="text-table-not-found">Mesa no encontrada</h2>
-            <p className="text-sm text-muted-foreground">El codigo QR no es valido o la mesa no esta activa.</p>
+            <p className="text-sm text-muted-foreground">El código QR no es válido o la mesa no está activa.</p>
           </CardContent>
         </Card>
       </div>
     );
   }
 
+  // ─── Pantalla 1: Bienvenida ─────────────────────────────────
   if (step === "welcome") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <div className="w-full max-w-md space-y-6">
           <div className="text-center space-y-2">
-            <UtensilsCrossed className="w-10 h-10 mx-auto text-primary" />
+            <UtensilsCrossed className="w-12 h-12 mx-auto text-primary" />
             <h1 className="text-2xl font-bold" data-testid="text-table-name">{tableInfo.tableName}</h1>
-            <p className="text-muted-foreground">Bienvenido! Pedimos facil y sin carrera.</p>
+            <p className="text-muted-foreground text-base">Bienvenido! Pedimos fácil y sin carrera.</p>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-4">
             <Button
               className="w-full min-h-[56px] text-base"
               onClick={() => handleModeSelect("easy")}
               data-testid="button-mode-easy"
             >
               <ChefHat className="w-5 h-5 mr-2" />
-              Modo facil (entrevista)
+              Modo fácil (entrevista)
             </Button>
             <Button
               variant="outline"
@@ -436,7 +576,7 @@ export default function QRClientPage() {
               data-testid="button-mode-standard"
             >
               <Utensils className="w-5 h-5 mr-2" />
-              Modo estandar (yo me la juego)
+              Modo estándar (yo me la juego)
             </Button>
           </div>
           <p className="text-xs text-center text-muted-foreground" data-testid="text-welcome-note">
@@ -447,346 +587,406 @@ export default function QRClientPage() {
     );
   }
 
+  // ─── Pantalla 2: Subcuenta / Grupo ──────────────────────────
   if (step === "subaccount") {
-    return (
-      <div className="min-h-screen bg-background p-4">
-        <div className="max-w-md mx-auto space-y-6 pt-8">
-          <Button variant="ghost" size="sm" onClick={() => setStep("welcome")} data-testid="button-back-welcome">
-            <ChevronLeft className="w-4 h-4 mr-1" /> Volver
-          </Button>
-          <div className="text-center space-y-2">
-            <Users className="w-10 h-10 mx-auto text-primary" />
-            <h1 className="text-xl font-bold" data-testid="text-subaccount-title">A cual cuenta lo cargamos?</h1>
-            <p className="text-sm text-muted-foreground">Si vienen en grupos, asi en caja sale ordenadito.</p>
-          </div>
-          <div className="space-y-3">
-            {activeSubaccounts.map((sub) => (
-              <Button
-                key={sub.id}
-                variant="outline"
-                className="w-full min-h-[48px] text-base"
-                onClick={() => handleSubaccountSelect(sub)}
-                data-testid={`button-subaccount-${sub.id}`}
-              >
-                {sub.label || sub.code}
-              </Button>
-            ))}
-            {activeSubaccounts.length < MAX_SUBACCOUNTS ? (
-              <Button
-                className="w-full min-h-[48px]"
-                onClick={() => createSubaccountMutation.mutate()}
-                disabled={createSubaccountMutation.isPending}
-                data-testid="button-create-subaccount"
-              >
-                {createSubaccountMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                ) : (
-                  <Plus className="w-4 h-4 mr-2" />
-                )}
-                Crear cuenta nueva
-              </Button>
-            ) : (
-              <p className="text-sm text-center text-muted-foreground p-3" data-testid="text-max-subaccounts">
-                Ya hay {MAX_SUBACCOUNTS} cuentas en esta mesa. Usa una existente o pedile al salonero que lo acomode
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
+    const hasExisting = activeSubaccounts.length > 0;
+    const canCreateMore = activeSubaccounts.length < MAX_SUBACCOUNTS;
 
-  if (step === "name") {
     return (
-      <div className="min-h-screen bg-background p-4">
-        <div className="max-w-md mx-auto space-y-6 pt-8">
-          <Button variant="ghost" size="sm" onClick={() => setStep("subaccount")} data-testid="button-back-subaccount">
-            <ChevronLeft className="w-4 h-4 mr-1" /> Volver
-          </Button>
-          <div className="text-center space-y-2">
-            <User className="w-10 h-10 mx-auto text-primary" />
-            <h1 className="text-xl font-bold" data-testid="text-name-title">Como te llamas?</h1>
-            <p className="text-sm text-muted-foreground">Asi el salonero lo lee clarito.</p>
-          </div>
-          <div className="space-y-3">
-            <Input
-              value={customerName}
-              onChange={(e) => { setCustomerName(e.target.value); setNameError(""); }}
-              placeholder="Tu nombre"
-              className="text-lg min-h-[48px]"
-              autoFocus
-              data-testid="input-customer-name"
-            />
-            {nameError && (
-              <p className="text-sm text-destructive" data-testid="text-name-error">{nameError}</p>
-            )}
-            <Button
-              className="w-full min-h-[48px]"
-              onClick={handleNameContinue}
-              data-testid="button-name-continue"
-            >
-              Continuar
-              <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (step === "easy_categories") {
-    return (
-      <div className="min-h-screen bg-background p-4">
-        <div className="max-w-md mx-auto space-y-6 pt-4">
-          <Button variant="ghost" size="sm" onClick={() => setStep("name")} data-testid="button-back-name">
-            <ChevronLeft className="w-4 h-4 mr-1" /> Volver
-          </Button>
-          <div className="text-center space-y-2">
-            <h1 className="text-xl font-bold" data-testid="text-easy-categories-title">Que se te antoja hoy?</h1>
-          </div>
-          <div className="space-y-3">
-            {categories.map((cat) => (
-              <Button
-                key={cat}
-                variant="outline"
-                className="w-full min-h-[56px] text-base"
-                onClick={() => { setSelectedCategory(cat); setEasySearchTerm(""); setStep("easy_products"); }}
-                data-testid={`button-category-${cat.toLowerCase().replace(/\s+/g, "-")}`}
-              >
-                {isBeverage(cat) ? <Coffee className="w-5 h-5 mr-2" /> : <ChefHat className="w-5 h-5 mr-2" />}
-                {cat}
-              </Button>
-            ))}
-          </div>
-          {easyItemCount > 0 && (
-            <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-[9]">
-              <div className="max-w-md mx-auto">
-                <Button className="w-full" onClick={() => setStep("easy_review")} data-testid="button-easy-view-order">
-                  Ver Mi Pedido ({easyItemCount})
-                </Button>
+      <EasyStepLayout
+        step={1}
+        totalSteps={mode === "easy" ? EASY_TOTAL_STEPS : 5}
+        title="¿A cuál cuenta lo cargamos?"
+        subtitle="Si vienen en grupos, así en caja sale ordenadito."
+        onBack={() => setStep("welcome")}
+      >
+        <div className="space-y-6">
+          {/* Quick-select: Somos N */}
+          {!hasExisting && (
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-muted-foreground text-center">¿Cuántos son?</p>
+              <div className="grid grid-cols-3 gap-3">
+                {[1, 2, 3, 4, 5, 6].filter(n => n <= MAX_SUBACCOUNTS).map(n => (
+                  <Button
+                    key={n}
+                    variant="outline"
+                    className="min-h-[64px] text-lg font-bold flex flex-col gap-1"
+                    onClick={() => handleGroupSelect(n)}
+                    disabled={batchSubaccountMutation.isPending}
+                    data-testid={`button-group-${n}`}
+                  >
+                    <Users className="w-5 h-5" />
+                    {n === 1 ? "Solo yo" : `Somos ${n}`}
+                  </Button>
+                ))}
               </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (step === "easy_products") {
-    const searchLower = easySearchTerm.toLowerCase();
-    const productsInCategory = menu.filter((p) => (p.categoryName || "Otros") === selectedCategory);
-    const filtered = searchLower
-      ? productsInCategory.filter((p) => p.name.toLowerCase().includes(searchLower) || p.description.toLowerCase().includes(searchLower))
-      : productsInCategory;
-
-    return (
-      <div className="min-h-screen bg-background pb-24">
-        <div className="sticky top-0 z-[9] bg-background border-b p-4">
-          <div className="max-w-md mx-auto space-y-3">
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setStep("easy_categories")} data-testid="button-back-categories">
-                <ChevronLeft className="w-4 h-4" />
-              </Button>
-              <h1 className="text-lg font-bold flex-1" data-testid="text-easy-products-title">Elige tu plato</h1>
-              <Badge variant="secondary">{selectedCategory}</Badge>
-            </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-              <Input
-                placeholder="Buscar..."
-                value={easySearchTerm}
-                onChange={(e) => setEasySearchTerm(e.target.value)}
-                className="pl-9 pr-9"
-                data-testid="input-easy-search"
-              />
-              {easySearchTerm && (
-                <button
-                  type="button"
-                  className="absolute right-3 top-1/2 -translate-y-1/2"
-                  onClick={() => setEasySearchTerm("")}
-                  data-testid="button-clear-easy-search"
-                >
-                  <X className="w-4 h-4 text-muted-foreground" />
-                </button>
+              {batchSubaccountMutation.isPending && (
+                <div className="flex items-center justify-center gap-2 py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm text-muted-foreground">Creando cuentas...</span>
+                </div>
               )}
             </div>
-          </div>
-        </div>
-        <div className="max-w-md mx-auto px-4 pt-3 space-y-2">
-          {filtered.length === 0 && (
-            <p className="text-center text-muted-foreground py-8" data-testid="text-no-results">Sin resultados</p>
           )}
-          {filtered.map((product) => {
-            const inCart = easyItems.filter((it) => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
-            const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
-            return (
-              <Card key={product.id} data-testid={`card-product-${product.id}`}>
-                <CardContent className="p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-base">{product.name}</p>
-                      {product.description && (
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{product.description}</p>
-                      )}
-                      <p className="font-bold text-sm mt-1">₡{Number(product.price).toLocaleString()}</p>
-                    </div>
-                    <div className="flex-shrink-0 flex items-center gap-2">
-                      {inCart > 0 && <Badge variant="secondary">{inCart}</Badge>}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleEasyProductClick(product)}
-                        disabled={loadingMods || outOfStock}
-                        data-testid={`button-add-easy-${product.id}`}
-                      >
-                        {outOfStock ? "Agotado" : <><Plus className="w-3 h-3 mr-1" /> Agregar</>}
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-        {easyItemCount > 0 && (
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-[9]">
-            <div className="max-w-md mx-auto">
-              <Button className="w-full" onClick={() => setStep("easy_review")} data-testid="button-easy-view-order-bottom">
-                Ver Mi Pedido ({easyItemCount})
-              </Button>
+
+          {/* Existing subaccounts - pick one */}
+          {hasExisting && (
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-muted-foreground text-center">Elegí tu cuenta:</p>
+              {activeSubaccounts.map(sub => (
+                <Button
+                  key={sub.id}
+                  variant="outline"
+                  className="w-full min-h-[56px] text-base justify-start gap-3"
+                  onClick={() => handleSubaccountSelect(sub)}
+                  data-testid={`button-subaccount-${sub.id}`}
+                >
+                  <User className="w-5 h-5 flex-shrink-0" />
+                  <span>{sub.label || `Cuenta ${sub.slotNumber}`}</span>
+                  <Badge variant="secondary" className="ml-auto">{sub.code}</Badge>
+                </Button>
+              ))}
+
+              {canCreateMore && (
+                <Button
+                  variant="default"
+                  className="w-full min-h-[56px] text-base"
+                  onClick={() => createSubaccountMutation.mutate()}
+                  disabled={createSubaccountMutation.isPending}
+                  data-testid="button-create-subaccount"
+                >
+                  {createSubaccountMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Plus className="w-5 h-5 mr-2" />
+                  )}
+                  Crear cuenta nueva
+                </Button>
+              )}
+
+              {!canCreateMore && (
+                <p className="text-sm text-center text-muted-foreground p-3" data-testid="text-max-subaccounts">
+                  Ya hay {MAX_SUBACCOUNTS} cuentas en esta mesa. Usá una existente o pedile al salonero.
+                </p>
+              )}
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </EasyStepLayout>
     );
   }
 
-  if (step === "easy_modifiers" || step === "std_modifiers") {
-    const returnStep = step === "easy_modifiers" ? "easy_products" : "std_food";
+  // ─── Pantalla 3: Nombre ─────────────────────────────────────
+  if (step === "name") {
     return (
-      <div className="min-h-screen bg-background p-4">
-        <div className="max-w-md mx-auto space-y-6 pt-4">
+      <EasyStepLayout
+        step={2}
+        totalSteps={mode === "easy" ? EASY_TOTAL_STEPS : 5}
+        title="¿Cómo te llamás?"
+        subtitle="Así el salonero lo lee clarito."
+        onBack={() => setStep("subaccount")}
+        stickyButton={
           <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => { setPendingProduct(null); setModGroups([]); setSelectedMods({}); setStep(returnStep); }}
-            data-testid="button-back-from-modifiers"
+            className="w-full min-h-[56px] text-base"
+            onClick={handleNameContinue}
+            data-testid="button-name-continue"
           >
-            <ChevronLeft className="w-4 h-4 mr-1" /> Volver
+            Continuar
+            <ArrowRight className="w-5 h-5 ml-2" />
           </Button>
-          <h1 className="text-xl font-bold text-center" data-testid="text-modifiers-title">
-            Como prefieres tu {pendingProduct?.name}?
-          </h1>
-          <div className="space-y-4">
-            {modGroups.map((group) => (
-              <div key={group.id} className="space-y-2" data-testid={`modifier-group-${group.id}`}>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold">{group.name}</span>
-                  {group.required && <Badge variant="secondary">Requerido</Badge>}
-                  {group.multiSelect && <span className="text-xs text-muted-foreground">(varias opciones)</span>}
-                </div>
-                <div className="space-y-2">
-                  {group.options.map((opt) => {
-                    const isSelected = (selectedMods[group.id] || []).includes(opt.id);
-                    return (
-                      <Button
-                        key={opt.id}
-                        variant={isSelected ? "default" : "outline"}
-                        className="w-full min-h-[48px] justify-start text-left"
-                        onClick={() => toggleModOption(group.id, opt.id, group.multiSelect)}
-                        data-testid={`button-modifier-${opt.id}`}
-                      >
-                        {isSelected && <Check className="w-4 h-4 mr-2 flex-shrink-0" />}
-                        <span className="flex-1">{opt.name}</span>
-                        {Number(opt.priceDelta) !== 0 && (
-                          <span className="text-xs ml-2">+₡{Number(opt.priceDelta).toLocaleString()}</span>
-                        )}
-                      </Button>
-                    );
-                  })}
-                  {!group.required && (
-                    <Button
-                      variant={(selectedMods[group.id] || []).length === 0 ? "secondary" : "ghost"}
-                      className="w-full min-h-[48px]"
-                      onClick={() => setSelectedMods((prev) => ({ ...prev, [group.id]: [] }))}
-                      data-testid={`button-modifier-skip-${group.id}`}
-                    >
-                      No gracias
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ))}
+        }
+      >
+        <div className="space-y-4 pt-4">
+          <User className="w-12 h-12 mx-auto text-primary" />
+          <Input
+            value={customerName}
+            onChange={(e) => { setCustomerName(e.target.value); setNameError(""); }}
+            placeholder="Tu nombre"
+            className="text-lg min-h-[56px] text-center"
+            autoFocus
+            data-testid="input-customer-name"
+          />
+          {nameError && (
+            <p className="text-sm text-destructive text-center" data-testid="text-name-error">{nameError}</p>
+          )}
+        </div>
+      </EasyStepLayout>
+    );
+  }
+
+  // ─── Easy: Pantalla 4 — Platos (paginado) ───────────────────
+  if (step === "easy_food") {
+    return (
+      <EasyStepLayout
+        step={3}
+        totalSteps={EASY_TOTAL_STEPS}
+        title="¿Qué se te antoja para comer?"
+        onBack={() => setStep("name")}
+        stickyButton={
+          <div className="space-y-2">
+            {easyItemCount > 0 && (
+              <p className="text-sm text-muted-foreground text-center">
+                {easyItemCount} item{easyItemCount !== 1 ? "s" : ""} en tu pedido
+              </p>
+            )}
+            <Button
+              className="w-full min-h-[56px] text-base"
+              onClick={() => setStep("easy_drink")}
+              data-testid="button-easy-next-to-drinks"
+            >
+              Siguiente: Bebidas
+              <ArrowRight className="w-5 h-5 ml-2" />
+            </Button>
           </div>
+        }
+      >
+        <PagedMenuGrid
+          products={foodProducts}
+          onSelect={(p) => {
+            setModReturnStep("easy_food");
+            handleProductClick(p, "easy_food");
+          }}
+          cart={easyItems}
+          loading={loadingMods}
+          searchTerm={easyFoodSearch}
+          onSearchChange={setEasyFoodSearch}
+        />
+      </EasyStepLayout>
+    );
+  }
+
+  // ─── Easy: Pantalla 5 — Bebidas (paginado) ──────────────────
+  if (step === "easy_drink") {
+    return (
+      <EasyStepLayout
+        step={4}
+        totalSteps={EASY_TOTAL_STEPS}
+        title="¿Algo para beber?"
+        onBack={() => setStep("easy_food")}
+        stickyButton={
+          <div className="space-y-2">
+            <Button
+              className="w-full min-h-[56px] text-base"
+              onClick={() => setStep("easy_review")}
+              data-testid="button-easy-next-to-review"
+            >
+              Siguiente: Revisar pedido
+              <ArrowRight className="w-5 h-5 ml-2" />
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full min-h-[48px] text-base text-muted-foreground"
+              onClick={() => setStep("easy_review")}
+              data-testid="button-easy-skip-drinks"
+            >
+              No quiero bebida
+            </Button>
+          </div>
+        }
+      >
+        {drinkProducts.length === 0 ? (
+          <div className="text-center py-8">
+            <Coffee className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+            <p className="text-muted-foreground">No hay bebidas disponibles por ahora.</p>
+          </div>
+        ) : (
+          <PagedMenuGrid
+            products={drinkProducts}
+            onSelect={(p) => {
+              setModReturnStep("easy_drink");
+              handleProductClick(p, "easy_drink");
+            }}
+            cart={easyItems}
+            loading={loadingMods}
+            searchTerm={easyDrinkSearch}
+            onSearchChange={setEasyDrinkSearch}
+          />
+        )}
+      </EasyStepLayout>
+    );
+  }
+
+  // ─── Easy/Std: Modificadores ────────────────────────────────
+  if (step === "easy_modifiers" || step === "std_modifiers") {
+    const returnStep = step === "easy_modifiers" ? modReturnStep : stdModReturnStep;
+    return (
+      <EasyStepLayout
+        step={step === "easy_modifiers" ? 3 : 3}
+        totalSteps={mode === "easy" ? EASY_TOTAL_STEPS : 5}
+        title={`¿Cómo preferís tu ${pendingProduct?.name}?`}
+        onBack={() => { setPendingProduct(null); setModGroups([]); setSelectedMods({}); setStep(returnStep); }}
+        stickyButton={
           <Button
-            className="w-full min-h-[48px]"
-            onClick={() => confirmModifiers(step)}
+            className="w-full min-h-[56px] text-base"
+            onClick={() => confirmModifiers(returnStep)}
             data-testid="button-confirm-modifiers"
           >
             Confirmar
-            <ArrowRight className="w-4 h-4 ml-2" />
+            <ArrowRight className="w-5 h-5 ml-2" />
           </Button>
+        }
+      >
+        <div className="space-y-5">
+          {modGroups.map(group => (
+            <div key={group.id} className="space-y-2" data-testid={`modifier-group-${group.id}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-base">{group.name}</span>
+                {group.required && <Badge variant="secondary">Requerido</Badge>}
+                {group.multiSelect && <span className="text-xs text-muted-foreground">(varias opciones)</span>}
+              </div>
+              <div className="space-y-2">
+                {group.options.map(opt => {
+                  const isSelected = (selectedMods[group.id] || []).includes(opt.id);
+                  return (
+                    <Button
+                      key={opt.id}
+                      variant={isSelected ? "default" : "outline"}
+                      className="w-full min-h-[56px] justify-start text-left text-base"
+                      onClick={() => toggleModOption(group.id, opt.id, group.multiSelect)}
+                      data-testid={`button-modifier-${opt.id}`}
+                    >
+                      {isSelected && <CheckCircle2 className="w-5 h-5 mr-2 flex-shrink-0" />}
+                      <span className="flex-1">{opt.name}</span>
+                      {Number(opt.priceDelta) !== 0 && (
+                        <span className="text-sm ml-2">+₡{Number(opt.priceDelta).toLocaleString()}</span>
+                      )}
+                    </Button>
+                  );
+                })}
+                {!group.required && (
+                  <Button
+                    variant={(selectedMods[group.id] || []).length === 0 ? "secondary" : "ghost"}
+                    className="w-full min-h-[56px] text-base"
+                    onClick={() => setSelectedMods(prev => ({ ...prev, [group.id]: [] }))}
+                    data-testid={`button-modifier-skip-${group.id}`}
+                  >
+                    No gracias
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
-      </div>
+      </EasyStepLayout>
     );
   }
 
+  // ─── Easy: Pantalla 6 — Resumen ─────────────────────────────
   if (step === "easy_review") {
+    const foodItems = easyItems.filter(it => !isBeverage(it.categoryName));
+    const drinkItems = easyItems.filter(it => isBeverage(it.categoryName));
+
     return (
-      <div className="min-h-screen bg-background p-4">
-        <div className="max-w-md mx-auto space-y-6 pt-4">
-          <h1 className="text-xl font-bold text-center" data-testid="text-easy-review-title">Revisa tu pedido</h1>
-          <p className="text-center text-muted-foreground" data-testid="text-easy-review-subtitle">
-            {customerName.trim()} ({tableInfo.tableName}-{selectedSubaccount?.slotNumber})
-          </p>
+      <EasyStepLayout
+        step={5}
+        totalSteps={EASY_TOTAL_STEPS}
+        title="Revisá tu pedido"
+        onBack={() => setStep("easy_drink")}
+        stickyButton={
+          <Button
+            className="w-full min-h-[56px] text-base"
+            onClick={handleSubmitEasy}
+            disabled={submitMutation.isPending || easyItems.length === 0}
+            data-testid="button-easy-confirm"
+          >
+            {submitMutation.isPending ? (
+              <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            ) : (
+              <Send className="w-5 h-5 mr-2" />
+            )}
+            Confirmar y enviar pedido
+          </Button>
+        }
+      >
+        <div className="space-y-4">
           <Card>
-            <CardContent className="p-4 space-y-2">
-              {easyItems.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between" data-testid={`review-item-${idx}`}>
-                  <span>{item.qty}x {item.productName}</span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setEasyItems((prev) => prev.filter((_, i) => i !== idx))}
-                    data-testid={`button-remove-item-${idx}`}
-                  >
-                    <X className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
+            <CardContent className="p-4 space-y-1">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Users className="w-4 h-4" />
+                <span>Cuenta: {tableInfo.tableName}-{selectedSubaccount?.slotNumber}</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <User className="w-4 h-4" />
+                <span>Nombre: <strong className="text-foreground">{customerName.trim()}</strong></span>
+              </div>
             </CardContent>
           </Card>
-          {easyItems.length === 0 && (
-            <p className="text-center text-muted-foreground text-sm">No hay items en tu pedido.</p>
+
+          {foodItems.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                <ChefHat className="w-4 h-4" /> Comida
+              </p>
+              {foodItems.map((item, idx) => {
+                const globalIdx = easyItems.indexOf(item);
+                return (
+                  <Card key={globalIdx} data-testid={`review-food-item-${globalIdx}`}>
+                    <CardContent className="p-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium">{item.qty}x {item.productName}</p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeEasyItem(globalIdx)}
+                        data-testid={`button-remove-item-${globalIdx}`}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           )}
-          <div className="space-y-3">
-            <Button
-              className="w-full min-h-[48px]"
-              onClick={handleSubmitEasy}
-              disabled={submitMutation.isPending || easyItems.length === 0}
-              data-testid="button-easy-confirm"
-            >
-              {submitMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : (
-                <Send className="w-4 h-4 mr-2" />
-              )}
-              Confirmar Pedido
-            </Button>
-            <button
-              type="button"
-              className="w-full text-center text-sm text-muted-foreground underline py-2"
-              onClick={() => setStep("easy_categories")}
-              data-testid="button-easy-back-to-menu"
-            >
-              Volver atras
-            </button>
-          </div>
+
+          {drinkItems.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                <Coffee className="w-4 h-4" /> Bebidas
+              </p>
+              {drinkItems.map((item) => {
+                const globalIdx = easyItems.indexOf(item);
+                return (
+                  <Card key={globalIdx} data-testid={`review-drink-item-${globalIdx}`}>
+                    <CardContent className="p-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium">{item.qty}x {item.productName}</p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeEasyItem(globalIdx)}
+                        data-testid={`button-remove-drink-${globalIdx}`}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
+          {easyItems.length === 0 && (
+            <p className="text-center text-muted-foreground text-sm py-4">No hay items en tu pedido.</p>
+          )}
+
+          <Button
+            variant="outline"
+            className="w-full min-h-[56px] text-base"
+            onClick={() => setStep("easy_food")}
+            data-testid="button-easy-add-more"
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            Agregar algo más
+          </Button>
         </div>
-      </div>
+      </EasyStepLayout>
     );
   }
 
+  // ─── Standard: Food ─────────────────────────────────────────
   if (step === "std_food") {
     const dinerNum = currentDinerIndex + 1;
     const totalDiners = diners.length;
@@ -800,13 +1000,13 @@ export default function QRClientPage() {
               </Button>
               <Badge variant="secondary" data-testid="text-diner-counter">Comensal {dinerNum} de {totalDiners}</Badge>
             </div>
-            <h1 className="text-xl font-bold" data-testid="text-std-food-title">Que desea comer?</h1>
+            <h1 className="text-xl font-bold" data-testid="text-std-food-title">¿Qué deseás comer?</h1>
           </div>
         </div>
         <div className="max-w-md mx-auto px-4 pt-3">
           <div className="grid grid-cols-2 gap-3">
-            {foodProducts.map((product) => {
-              const isSelected = stdSelectedItems.some((it) => it.productId === product.id);
+            {foodProducts.map(product => {
+              const isSelected = stdSelectedItems.some(it => it.productId === product.id);
               const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
               return (
                 <Card key={product.id} className={isSelected ? "ring-2 ring-primary" : ""} data-testid={`card-food-${product.id}`}>
@@ -828,7 +1028,7 @@ export default function QRClientPage() {
                         variant="outline"
                         size="sm"
                         className="w-full"
-                        onClick={() => handleStdProductClick(product)}
+                        onClick={() => { setStdModReturnStep("std_food"); handleProductClick(product, "std_food"); }}
                         disabled={loadingMods || outOfStock}
                         data-testid={`button-select-food-${product.id}`}
                       >
@@ -845,16 +1045,11 @@ export default function QRClientPage() {
           <div className="max-w-md mx-auto space-y-2">
             {stdSelectedItems.length > 0 && (
               <p className="text-sm text-muted-foreground truncate" data-testid="text-food-selection-summary">
-                Pedido: {stdSelectedItems.map((it) => it.productName).join(", ")}
+                Pedido: {stdSelectedItems.map(it => it.productName).join(", ")}
               </p>
             )}
-            <Button
-              className="w-full"
-              onClick={handleStdNextFromFood}
-              data-testid="button-std-next-food"
-            >
-              Siguiente
-              <ArrowRight className="w-4 h-4 ml-2" />
+            <Button className="w-full" onClick={handleStdNextFromFood} data-testid="button-std-next-food">
+              Siguiente <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>
         </div>
@@ -862,6 +1057,7 @@ export default function QRClientPage() {
     );
   }
 
+  // ─── Standard: Drink ────────────────────────────────────────
   if (step === "std_drink") {
     const dinerNum = currentDinerIndex + 1;
     const totalDiners = diners.length;
@@ -875,14 +1071,13 @@ export default function QRClientPage() {
               </Button>
               <Badge variant="secondary" data-testid="text-diner-counter-drink">Comensal {dinerNum} de {totalDiners}</Badge>
             </div>
-            <h1 className="text-xl font-bold" data-testid="text-std-drink-title">Algo para beber?</h1>
-            <p className="text-sm text-muted-foreground">Pa' bajar la comida como Dios manda.</p>
+            <h1 className="text-xl font-bold" data-testid="text-std-drink-title">¿Algo para beber?</h1>
           </div>
         </div>
         <div className="max-w-md mx-auto px-4 pt-3">
           <div className="grid grid-cols-2 gap-3">
-            {drinkProducts.map((product) => {
-              const isSelected = stdSelectedItems.some((it) => it.productId === product.id);
+            {drinkProducts.map(product => {
+              const isSelected = stdSelectedItems.some(it => it.productId === product.id);
               const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
               return (
                 <Card key={product.id} className={isSelected ? "ring-2 ring-primary" : ""} data-testid={`card-drink-${product.id}`}>
@@ -904,7 +1099,7 @@ export default function QRClientPage() {
                         variant="outline"
                         size="sm"
                         className="w-full"
-                        onClick={() => handleStdProductClick(product)}
+                        onClick={() => { setStdModReturnStep("std_drink"); handleProductClick(product, "std_drink"); }}
                         disabled={loadingMods || outOfStock}
                         data-testid={`button-select-drink-${product.id}`}
                       >
@@ -921,25 +1116,15 @@ export default function QRClientPage() {
           <div className="max-w-md mx-auto space-y-2">
             {stdSelectedItems.length > 0 && (
               <p className="text-sm text-muted-foreground truncate" data-testid="text-drink-selection-summary">
-                Pedido: {stdSelectedItems.map((it) => it.productName).join(", ")}
+                Pedido: {stdSelectedItems.map(it => it.productName).join(", ")}
               </p>
             )}
             <div className="flex gap-3">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={handleStdSkipDrinks}
-                data-testid="button-std-skip-drinks"
-              >
-                Omitir
+              <Button variant="outline" className="flex-1" onClick={() => handleStdNextFromDrink()} data-testid="button-std-skip-drinks">
+                No quiero bebida
               </Button>
-              <Button
-                className="flex-1"
-                onClick={handleStdNextFromDrink}
-                data-testid="button-std-next-drink"
-              >
-                Siguiente
-                <ArrowRight className="w-4 h-4 ml-2" />
+              <Button className="flex-1" onClick={handleStdNextFromDrink} data-testid="button-std-next-drink">
+                Siguiente <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             </div>
           </div>
@@ -948,6 +1133,7 @@ export default function QRClientPage() {
     );
   }
 
+  // ─── Standard: Review ───────────────────────────────────────
   if (step === "std_review") {
     return (
       <div className="min-h-screen bg-background p-4">
@@ -974,23 +1160,23 @@ export default function QRClientPage() {
           <div className="space-y-3">
             <Button
               variant="outline"
-              className="w-full min-h-[48px]"
+              className="w-full min-h-[56px] text-base"
               onClick={handleAddAnotherDiner}
               data-testid="button-add-diner"
             >
-              <Plus className="w-4 h-4 mr-2" />
+              <Plus className="w-5 h-5 mr-2" />
               Agregar otro comensal
             </Button>
             <Button
-              className="w-full min-h-[48px]"
+              className="w-full min-h-[56px] text-base"
               onClick={handleSubmitStandard}
-              disabled={submitMutation.isPending || diners.every((d) => d.items.length === 0)}
+              disabled={submitMutation.isPending || diners.every(d => d.items.length === 0)}
               data-testid="button-std-confirm"
             >
               {submitMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                <Loader2 className="w-5 h-5 animate-spin mr-2" />
               ) : (
-                <Send className="w-4 h-4 mr-2" />
+                <Send className="w-5 h-5 mr-2" />
               )}
               Confirmar y enviar pedido
             </Button>
@@ -1000,7 +1186,7 @@ export default function QRClientPage() {
               onClick={() => setStep("std_food")}
               data-testid="button-std-back"
             >
-              Volver atras
+              Volver atrás
             </button>
           </div>
         </div>
@@ -1008,18 +1194,21 @@ export default function QRClientPage() {
     );
   }
 
+  // ─── Pantalla Éxito ─────────────────────────────────────────
   if (step === "sent") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <div className="w-full max-w-md text-center space-y-6">
-          <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
-            <Check className="w-8 h-8 text-green-600" />
+          <div className="w-20 h-20 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
+            <Check className="w-10 h-10 text-green-600" />
           </div>
-          <h1 className="text-2xl font-bold" data-testid="text-order-sent">Pedido Enviado</h1>
-          <p className="text-muted-foreground" data-testid="text-order-sent-message">En un momentito llega el salonero a confirmarlo.</p>
-          <p className="text-sm text-muted-foreground">Gracias, y buen provecho</p>
-          <Button onClick={resetAll} data-testid="button-new-order">
-            <Plus className="w-4 h-4 mr-2" />
+          <h1 className="text-2xl font-bold" data-testid="text-order-sent">Listo! Ya lo avisamos</h1>
+          <p className="text-muted-foreground text-base" data-testid="text-order-sent-message">
+            En un momentito llega el salonero a confirmarlo.
+          </p>
+          <p className="text-sm text-muted-foreground">Gracias, y buen provecho!</p>
+          <Button className="min-h-[56px] text-base" onClick={resetAll} data-testid="button-new-order">
+            <Plus className="w-5 h-5 mr-2" />
             Hacer otro pedido
           </Button>
         </div>
