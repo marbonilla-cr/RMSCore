@@ -9,6 +9,8 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useShortageAlerts } from "@/hooks/use-shortage-alerts";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { usePreventPullRefresh } from "@/hooks/use-prevent-pull-refresh";
 import { Loader2, LogOut, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PinLoginPage from "@/pages/pin-login";
@@ -182,6 +184,7 @@ function AuthenticatedLayout() {
               </Button>
             </div>
             <div className="flex items-center gap-2">
+              <ThemeToggle />
               {user && (
                 <span className="text-xs text-muted-foreground hidden sm:inline" data-testid="text-current-user">
                   {user.displayName}
@@ -281,6 +284,7 @@ function useWakeLock() {
 
 function App() {
   useWakeLock();
+  usePreventPullRefresh();
 
   return (
     <QueryClientProvider client={queryClient}>

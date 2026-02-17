@@ -14,8 +14,8 @@ import { wsManager } from "@/lib/ws";
 import {
   ArrowLeft, Plus, Send, Check, Trash2, Loader2,
   ShoppingBag, AlertCircle, ChefHat, Minus, Search, X,
-  ClipboardList, Ban, ChevronDown, ChevronRight, Clock, Eye,
-  Settings2, Receipt, Split, ArrowRight,
+  ClipboardList, Ban, ChevronDown, ChevronRight, Clock,
+  Settings2, Receipt, Split, ArrowRight, FileText,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Product, Category } from "@shared/schema";
@@ -65,7 +65,7 @@ interface TableCurrentView {
   voidedItems?: any[];
 }
 
-type ViewMode = "order" | "menu" | "cart" | "split";
+type ViewMode = "order" | "menu" | "split";
 
 interface SplitAccount {
   id: number;
@@ -106,6 +106,11 @@ export default function TableDetailPage() {
   const isManager = user?.role === "MANAGER";
   const [subaccountFilter, setSubaccountFilter] = useState<string>("all");
   const [expandedSubaccounts, setExpandedSubaccounts] = useState<Set<string>>(new Set());
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [noteDialogItem, setNoteDialogItem] = useState<CartItem | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const [rondaSheetOpen, setRondaSheetOpen] = useState(false);
 
   useEffect(() => {
     if (!tableId) return;
@@ -198,6 +203,7 @@ export default function TableDetailPage() {
       localStorage.removeItem(`cart_table_${tableId}`);
       setCart([]);
       setViewMode("order");
+      setRondaSheetOpen(false);
       toast({ title: "Ronda enviada a cocina" });
     },
     onError: (err: any) => {
@@ -439,6 +445,12 @@ export default function TableDetailPage() {
     return (catA?.sortOrder ?? 999) - (catB?.sortOrder ?? 999);
   });
 
+  useEffect(() => {
+    if (sortedCategoryIds.length > 0 && !selectedCategoryId) {
+      setSelectedCategoryId(sortedCategoryIds[0]);
+    }
+  }, [sortedCategoryIds]);
+
   const orderItems = currentView?.orderItems || [];
   const pendingSubmissions = currentView?.pendingQrSubmissions || [];
   const activeOrder = currentView?.activeOrder;
@@ -659,23 +671,10 @@ export default function TableDetailPage() {
               <span className="hidden sm:inline">Dividir</span>
             </Button>
           )}
-          {cart.length > 0 && (
-            <Button
-              size="sm"
-              variant={viewMode === "cart" ? "default" : "ghost"}
-              onClick={() => setViewMode("cart")}
-              data-testid="button-view-cart"
-              className="relative"
-            >
-              <ShoppingBag className="w-4 h-4 mr-1" />
-              <span className="hidden sm:inline">Pedido</span>
-              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">{cartCount}</span>
-            </Button>
-          )}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto" style={{ paddingBottom: cart.length > 0 && viewMode !== "cart" && viewMode !== "split" ? "140px" : "16px" }}>
+      <div className="flex-1 overflow-y-auto" style={{ paddingBottom: cart.length > 0 && viewMode !== "split" ? "80px" : "16px" }}>
         {viewMode === "split" ? (
           <div className="p-3 max-w-lg mx-auto">
             <h2 className="font-bold text-lg flex items-center gap-2 mb-3">
@@ -823,89 +822,6 @@ export default function TableDetailPage() {
               >
                 {splitLoading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Check className="w-4 h-4 mr-1" />}
                 Confirmar División
-              </Button>
-            </div>
-          </div>
-        ) : viewMode === "cart" ? (
-          <div className="p-3 max-w-lg mx-auto">
-            <h2 className="font-bold text-lg flex items-center gap-2 mb-3">
-              <ShoppingBag className="w-5 h-5" /> Nueva Ronda ({cartCount} items)
-            </h2>
-            <div className="space-y-2">
-              {cart.map((item) => (
-                <Card key={item.cartKey} data-testid={`cart-item-${item.cartKey}`}>
-                  <CardContent className="p-3">
-                    <div className="flex items-start gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-base font-medium">{item.name}</p>
-                        <p className="text-sm text-muted-foreground">₡{Number(item.price).toLocaleString()} c/u</p>
-                        {item.modifiers.length > 0 && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            <Settings2 className="w-3 h-3 inline mr-1" />
-                            {item.modifiers.map(m => m.name + (Number(m.priceDelta) > 0 ? ` +₡${Number(m.priceDelta).toLocaleString()}` : "")).join(", ")}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <Button size="icon" variant="outline" onClick={() => updateCartQty(item.cartKey, item.qty - 1)} data-testid={`button-qty-minus-${item.cartKey}`}>
-                          <Minus className="w-4 h-4" />
-                        </Button>
-                        <span className="w-8 text-center text-base font-bold">{item.qty}</span>
-                        <Button size="icon" variant="outline" onClick={() => updateCartQty(item.cartKey, item.qty + 1)} data-testid={`button-qty-plus-${item.cartKey}`}>
-                          <Plus className="w-4 h-4" />
-                        </Button>
-                        <Button size="icon" variant="ghost" onClick={() => removeFromCart(item.cartKey)} data-testid={`button-remove-${item.cartKey}`}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <Input
-                      placeholder="Notas..."
-                      value={item.notes}
-                      onChange={(e) =>
-                        setCart(cart.map((c) => (c.cartKey === item.cartKey ? { ...c, notes: e.target.value } : c)))
-                      }
-                      className="mt-2 text-sm min-h-[40px]"
-                      data-testid={`input-notes-${item.cartKey}`}
-                    />
-                    <p className="text-right text-sm font-semibold mt-1">₡{getItemTotal(item).toLocaleString()}</p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-            <div className="flex items-center justify-between pt-4 pb-2 font-bold text-lg">
-              <span>Total</span>
-              <span>₡{cartTotal.toLocaleString()}</span>
-            </div>
-            <div className="flex gap-2 pb-4">
-              <Button
-                variant="ghost"
-                className="min-h-[48px]"
-                onClick={() => {
-                  setCart([]);
-                  localStorage.removeItem(`cart_table_${tableId}`);
-                  setViewMode("menu");
-                }}
-                data-testid="button-clear-cart"
-              >
-                <Trash2 className="w-5 h-5" />
-              </Button>
-              <Button
-                variant="outline"
-                className="flex-1 min-h-[48px] text-base"
-                onClick={() => setViewMode("menu")}
-                data-testid="button-back-to-menu"
-              >
-                <Plus className="w-5 h-5 mr-2" /> Agregar Más
-              </Button>
-              <Button
-                className="flex-1 min-h-[48px] text-base"
-                onClick={() => sendRoundMutation.mutate()}
-                disabled={sendRoundMutation.isPending}
-                data-testid="button-send-round-cart"
-              >
-                {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Send className="w-5 h-5 mr-2" />}
-                Enviar a Cocina
               </Button>
             </div>
           </div>
@@ -1244,162 +1160,191 @@ export default function TableDetailPage() {
           </div>
         ) : (
           <div className="flex flex-col max-w-lg mx-auto h-full">
-            <div className="sticky top-0 z-[9] bg-background px-3 pt-2 pb-2 border-b" style={{ paddingTop: "max(8px, env(safe-area-inset-top, 8px))" }}>
-              <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Buscar ítems..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-9 pr-9 min-h-[44px] text-base"
-                  data-testid="input-search-menu"
-                  aria-label="Buscar ítems en el menú"
-                />
-                {searchTerm && (
-                  <button
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                    onClick={() => { setSearchTerm(""); setDebouncedSearch(""); }}
-                    data-testid="button-clear-search"
-                    aria-label="Limpiar búsqueda"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
+            <div className="sticky top-0 z-[9] bg-background px-3 py-2 border-b">
+              {searchExpanded ? (
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar ítems..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-9 pr-9"
+                    data-testid="input-search-menu"
+                    aria-label="Buscar ítems en el menú"
+                  />
+                  {searchTerm ? (
+                    <button
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      onClick={() => { setSearchTerm(""); setDebouncedSearch(""); }}
+                      data-testid="button-clear-search"
+                      aria-label="Limpiar búsqueda"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <button
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      onClick={() => { setSearchExpanded(false); setSearchTerm(""); setDebouncedSearch(""); }}
+                      data-testid="button-close-search"
+                      aria-label="Cerrar búsqueda"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <Button size="icon" variant="ghost" onClick={() => setSearchExpanded(true)} data-testid="button-expand-search">
+                  <Search className="w-4 h-4" />
+                </Button>
+              )}
             </div>
 
-            <div className="px-3 pb-4">
-              <div className="space-y-1 mt-2">
+            {!isSearching && (
+              <div className="flex gap-2 overflow-x-auto no-scrollbar px-3 py-2">
                 {sortedCategoryIds.map((catId) => {
-                  const catName = catId === "sin-categoria"
-                    ? "Sin Categoría"
-                    : categories.find((c) => c.id === Number(catId))?.name || "Categoría";
-                  const items = productsByCategory[catId];
-                  const isExpanded = isSearching || expandedCategoryId === catId;
-
-                  const toggleCategory = () => {
-                    if (isSearching) return;
-                    setExpandedCategoryId(expandedCategoryId === catId ? null : catId);
-                  };
-
+                  const catName = catId === "sin-categoria" ? "Sin Categoría" : categories.find(c => c.id === Number(catId))?.name || "Categoría";
+                  const count = productsByCategory[catId]?.length || 0;
+                  const isActive = selectedCategoryId === catId;
                   return (
-                    <div key={catId} data-testid={`category-group-${catId}`}>
-                      <button
-                        className="w-full flex items-center justify-between gap-2 px-3 py-3 rounded-md hover-elevate min-h-[48px] text-left"
-                        onClick={toggleCategory}
-                        aria-expanded={isExpanded}
-                        aria-label={`${isExpanded ? "Colapsar" : "Expandir"} categoría ${catName}`}
-                        data-testid={`button-toggle-category-${catId}`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isExpanded
-                            ? <ChevronDown className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
-                            : <ChevronRight className="w-4 h-4 flex-shrink-0 text-muted-foreground" />}
-                          <span className="font-semibold text-base truncate" data-testid={`text-category-${catId}`}>{catName}</span>
-                        </div>
-                        <Badge variant="secondary">{items.length}</Badge>
-                      </button>
-
-                      {isExpanded && (
-                        <div className="space-y-1.5 pb-2 pt-1">
-                          {items.map((p) => {
-                            const inCartQty = cart.filter(c => c.productId === p.id).reduce((s, c) => s + c.qty, 0);
-                            return (
-                              <div
-                                key={p.id}
-                                className="flex items-center justify-between p-3 rounded-md border hover-elevate cursor-pointer active:scale-[0.98] transition-transform duration-100 min-h-[56px]"
-                                onClick={(e) => addToCart(p, e)}
-                                data-testid={`menu-item-${p.id}`}
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <p className="font-medium text-base leading-tight">{p.name}</p>
-                                  {p.description && <p className="text-sm text-muted-foreground truncate">{p.description}</p>}
-                                </div>
-                                <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                                  <span className="font-semibold text-base">₡{Number(p.price).toLocaleString()}</span>
-                                  {p.availablePortions !== null && (
-                                    <Badge variant="secondary">{p.availablePortions}</Badge>
-                                  )}
-                                  {inCartQty > 0 && (
-                                    <Badge className="bg-primary text-primary-foreground min-w-[24px] text-center">{inCartQty}</Badge>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                    <Button
+                      key={catId}
+                      variant={isActive ? "default" : "outline"}
+                      size="sm"
+                      className="flex-shrink-0 whitespace-nowrap"
+                      onClick={() => setSelectedCategoryId(catId)}
+                      data-testid={`chip-category-${catId}`}
+                    >
+                      {catName} <Badge variant="secondary" className="ml-1.5">{count}</Badge>
+                    </Button>
                   );
                 })}
-                {sortedCategoryIds.length === 0 && (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <Search className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                    <p className="text-base">Sin resultados para "{debouncedSearch}"</p>
-                  </div>
-                )}
               </div>
+            )}
+
+            <div className="px-3 pb-4 pt-2">
+              {(() => {
+                const displayProducts = isSearching ? filteredProducts : (selectedCategoryId ? (productsByCategory[selectedCategoryId] || []) : []);
+                return (
+                  <>
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
+                      {displayProducts.map((p) => {
+                        const inCartQty = cart.filter(c => c.productId === p.id).reduce((s, c) => s + c.qty, 0);
+                        return (
+                          <div
+                            key={p.id}
+                            className={`flex flex-col p-3 rounded-md border hover-elevate cursor-pointer active:scale-[0.98] transition-transform duration-100 ${p.availablePortions !== null && p.availablePortions <= 0 ? "opacity-50 pointer-events-none" : ""}`}
+                            onClick={(e) => addToCart(p, e)}
+                            data-testid={`menu-item-${p.id}`}
+                          >
+                            <p className="font-medium text-sm leading-tight truncate">{p.name}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">₡{Number(p.price).toLocaleString()}</p>
+                            <div className="flex items-center gap-1 mt-1 flex-wrap">
+                              {p.availablePortions !== null && p.availablePortions <= 0 && (
+                                <Badge variant="secondary" className="text-xs">Agotado</Badge>
+                              )}
+                              {p.availablePortions !== null && p.availablePortions > 0 && (
+                                <Badge variant="secondary" className="text-xs">{p.availablePortions}</Badge>
+                              )}
+                              {inCartQty > 0 && (
+                                <Badge className="bg-primary text-primary-foreground text-xs">{inCartQty}</Badge>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {displayProducts.length === 0 && (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <Search className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                        <p className="text-base">{isSearching ? `Sin resultados para "${debouncedSearch}"` : "Seleccione una categoría"}</p>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}
       </div>
 
-      {cart.length > 0 && viewMode !== "cart" && (
+      {cart.length > 0 && !rondaSheetOpen && (
         <div
           ref={bottomBarRef}
           className="fixed bottom-0 left-0 right-0 z-[9] bg-card border-t"
           style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
           data-testid="bottom-order-bar"
         >
-          <div className="max-w-lg mx-auto px-3 py-2 space-y-2">
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-              {lastChips.map((item) => (
-                <span
-                  key={item.cartKey}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-sm whitespace-nowrap flex-shrink-0"
-                  data-testid={`chip-item-${item.cartKey}`}
-                >
-                  {item.name.length > 12 ? item.name.slice(0, 12) + "…" : item.name}
-                  {item.modifiers.length > 0 && <Settings2 className="w-3 h-3" />}
-                  <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-xs">{item.qty}</Badge>
-                </span>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-2">
+          <div className="max-w-lg mx-auto px-3 py-2 flex items-center gap-2">
+            <Button className="flex-1" onClick={() => setRondaSheetOpen(true)} data-testid="button-open-ronda">
+              <ShoppingBag className="w-4 h-4 mr-2" />
               <span
                 ref={badgeRef}
-                className={`inline-flex items-center justify-center w-9 h-9 rounded-full bg-primary text-primary-foreground font-bold text-base transition-transform duration-200 ${badgePop ? "scale-[1.2]" : "scale-100"}`}
+                className={`transition-transform duration-200 ${badgePop ? "scale-[1.2]" : "scale-100"}`}
                 data-testid="badge-cart-count"
               >
-                {cartCount}
+                Ronda ({cartCount})
               </span>
-              <span className="font-bold text-lg flex-1">
-                ₡{cartTotal.toLocaleString()}
-              </span>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => { setCart([]); localStorage.removeItem(`cart_table_${tableId}`); }}
-                data-testid="button-clear-cart"
-              >
-                <Trash2 className="w-5 h-5" />
+              <span className="ml-auto font-bold">₡{cartTotal.toLocaleString()}</span>
+            </Button>
+            <Button size="icon" onClick={() => sendRoundMutation.mutate()} disabled={sendRoundMutation.isPending} data-testid="button-send-round">
+              {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {rondaSheetOpen && (
+        <div className="fixed inset-0 z-[100] flex flex-col justify-end" data-testid="ronda-sheet">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setRondaSheetOpen(false)} />
+          <div className="relative bg-background rounded-t-xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-center pt-2 pb-1">
+              <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+            </div>
+            <div className="px-4 pb-2 flex items-center justify-between gap-2">
+              <h3 className="font-bold text-base">Nueva Ronda ({cartCount} items)</h3>
+              <span className="font-bold text-base">₡{cartTotal.toLocaleString()}</span>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 pb-2">
+              {cart.map((item) => (
+                <div key={item.cartKey} className="flex items-center gap-2 py-1.5 border-b border-border/50 last:border-0" data-testid={`cart-item-${item.cartKey}`} style={{ minHeight: "50px", maxHeight: "70px" }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="font-medium text-sm truncate">{item.name}</span>
+                      <span className="text-xs text-muted-foreground flex-shrink-0">₡{Number(item.price).toLocaleString()}</span>
+                    </div>
+                    {(item.modifiers.length > 0 || item.notes) && (
+                      <p className="text-xs text-muted-foreground truncate">
+                        {item.modifiers.length > 0 && `Mods: ${item.modifiers.map(m => m.name).join(", ")}`}
+                        {item.modifiers.length > 0 && item.notes && " | "}
+                        {item.notes && `Nota: ${item.notes}`}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-0.5 flex-shrink-0">
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => updateCartQty(item.cartKey, item.qty - 1)} data-testid={`button-qty-minus-${item.cartKey}`}>
+                      <Minus className="w-3 h-3" />
+                    </Button>
+                    <span className="w-6 text-center text-sm font-bold">{item.qty}</span>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => updateCartQty(item.cartKey, item.qty + 1)} data-testid={`button-qty-plus-${item.cartKey}`}>
+                      <Plus className="w-3 h-3" />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setNoteDialogItem(item); setNoteText(item.notes); }} data-testid={`button-note-${item.cartKey}`}>
+                      <FileText className="w-3 h-3" style={{ color: item.notes ? "hsl(var(--primary))" : undefined }} />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => removeFromCart(item.cartKey)} data-testid={`button-remove-${item.cartKey}`}>
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="border-t px-4 py-3 flex gap-2" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom, 12px))" }}>
+              <Button variant="outline" className="flex-1" onClick={() => { setRondaSheetOpen(false); setViewMode("menu"); }} data-testid="button-add-more-from-sheet">
+                <Plus className="w-4 h-4 mr-1" /> Agregar Más
               </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setViewMode("cart")}
-                data-testid="button-view-order-detail"
-              >
-                <Eye className="w-5 h-5" />
-              </Button>
-              <Button
-                size="icon"
-                onClick={() => sendRoundMutation.mutate()}
-                disabled={sendRoundMutation.isPending}
-                data-testid="button-send-round"
-              >
-                {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+              <Button className="flex-1" onClick={() => { sendRoundMutation.mutate(); setRondaSheetOpen(false); }} disabled={sendRoundMutation.isPending} data-testid="button-send-round-sheet">
+                {sendRoundMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Send className="w-4 h-4 mr-1" />}
+                Enviar a Cocina
               </Button>
             </div>
           </div>
@@ -1548,6 +1493,52 @@ export default function TableDetailPage() {
                 >
                   {voidItemMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Ban className="w-4 h-4 mr-1" />}
                   {voidQty < voidDialogItem.qty ? `Anular ${voidQty}` : "Anular todo"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {noteDialogItem && (
+        <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50" data-testid="note-dialog-overlay" onClick={() => { setNoteDialogItem(null); setNoteText(""); }}>
+          <Card className="w-full sm:w-[90%] sm:max-w-sm mx-0 sm:mx-4 rounded-t-xl sm:rounded-xl" onClick={(e) => e.stopPropagation()}>
+            <CardHeader className="pb-2">
+              <h3 className="font-bold text-base">Nota para {noteDialogItem.name}</h3>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value.slice(0, 200))}
+                placeholder="Escribe una nota..."
+                className="text-base"
+                rows={3}
+                maxLength={200}
+                data-testid="input-note-text"
+              />
+              <p className="text-xs text-muted-foreground text-right">{noteText.length}/200</p>
+              <div className="flex gap-2">
+                {noteDialogItem.notes && (
+                  <Button variant="ghost" className="text-destructive" onClick={() => {
+                    setCart(cart.map(c => c.cartKey === noteDialogItem.cartKey ? { ...c, notes: "" } : c));
+                    setNoteDialogItem(null);
+                    setNoteText("");
+                    toast({ title: "Nota eliminada" });
+                  }} data-testid="button-delete-note">
+                    <Trash2 className="w-4 h-4 mr-1" /> Borrar
+                  </Button>
+                )}
+                <div className="flex-1" />
+                <Button variant="outline" onClick={() => { setNoteDialogItem(null); setNoteText(""); }} data-testid="button-cancel-note">
+                  Cancelar
+                </Button>
+                <Button onClick={() => {
+                  setCart(cart.map(c => c.cartKey === noteDialogItem.cartKey ? { ...c, notes: noteText } : c));
+                  setNoteDialogItem(null);
+                  setNoteText("");
+                  toast({ title: "Nota guardada" });
+                }} data-testid="button-save-note">
+                  Guardar
                 </Button>
               </div>
             </CardContent>
