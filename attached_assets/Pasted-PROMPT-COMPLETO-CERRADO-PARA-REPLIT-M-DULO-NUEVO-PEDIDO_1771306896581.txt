@@ -1,0 +1,274 @@
+PROMPT COMPLETO CERRADO PARA REPLIT — MÓDULO NUEVO “PEDIDO POR QR” (GRUPOS/SUBCUENTAS) + MODO FÁCIL (ENTREVISTA) + SALONERO CONFIRMA + KDS CONSOLIDADO + POS SEPARA O CONSOLIDA
+
+Objetivo
+
+Implementar un módulo de Pedido por QR nuevo (Cliente QR) con enfoque mobile-first, que funcione así:
+	1.	Cliente escanea QR de una mesa → entra a Cliente QR.
+	2.	Cliente elige Modo Fácil (entrevista) o Modo estándar.
+	3.	El cliente elige o crea una subcuenta (grupo de pago): Mesa10-1, Mesa10-2… (NO es 1 por persona).
+	4.	Cliente escribe nombre (por cada línea/pedido) para trazabilidad: “quién pidió qué”.
+	5.	Cliente selecciona plato y bebida (entrevista guiada).
+	6.	Cliente confirma → se crea Solicitud QR pendiente.
+	7.	Salonero recibe notificación, abre la mesa, ve una lista única de solicitudes y confirma una por una (puede editar antes).
+	8.	Al confirmar, los ítems pasan a la orden y se envían a KDS consolidado (una sola cocina).
+	9.	En POS/Caja, al pagar:
+	•	se puede cobrar todo junto, o
+	•	separar por subcuenta (Mesa10-1..Mesa10-N).
+
+Este módulo debe conectarse con el flujo existente sin “loose ends”.
+
+⸻
+
+Reglas en piedra
+	•	1 orden madre abierta por mesa. No se permiten múltiples órdenes abiertas por la misma mesa.
+	•	Subcuentas = grupos de pago, no personas.
+	•	MAX_SUBACCOUNTS_PER_TABLE configurable (default 6; permitir 4/6/8).
+	•	El salonero ve todo como “una sola cuenta” pero con desglose por subcuenta.
+	•	QR crea solicitudes; NO manda directo a KDS. Solo al aceptar el salonero.
+	•	Cada ítem QR debe guardar:
+	•	subaccount_id + subaccount_code_snapshot (ej: “10-3”)
+	•	customer_name_snapshot (nombre del cliente que pidió esa línea)
+	•	UI Cliente QR debe servir en navegador básico (mobile first), sin animaciones pesadas.
+
+⸻
+
+Datos / Modelo
+
+Tabla nueva: order_subaccounts
+	•	id
+	•	order_id
+	•	table_id
+	•	slot_number int (1..MAX_SUBACCOUNTS)
+	•	code string (ej: “10-3”) derivado de mesa + slot
+	•	label string nullable (ej: “Familia”, “Amigos”)
+	•	is_active bool default true
+	•	created_at
+
+Reglas:
+	•	Slot = menor disponible (1..MAX_SUBACCOUNTS).
+	•	code = {tableNumber}-{slot_number}.
+
+Cambios a order_items
+
+Agregar:
+	•	subaccount_id nullable FK
+	•	subaccount_code_snapshot string
+	•	customer_name_snapshot string
+
+Solicitudes QR (si ya existe estructura, reusar)
+
+Debe existir un registro “request/round” para QR:
+	•	id
+	•	order_id
+	•	table_id
+	•	status SUBMITTED|ACCEPTED|REJECTED|EXPIRED
+	•	created_at
+	•	created_by = QR
+	•	payload_snapshot (items solicitados con subaccount_id + nombre + mods)
+
+⸻
+
+Cliente QR — UX exacto (mobile-first) + diálogos “campo” (humor ligero)
+
+Pantalla 1 — Entrada QR
+
+Título: Mesa {N}
+Texto: ¡Bienvenido! Pedimos fácil y sin carrera.
+Botones:
+	•	Modo fácil (entrevista)
+	•	Modo estándar (yo me la juego)
+Nota pequeña: Tranqui: un salonero confirma tu pedido antes de mandarlo a cocina.
+
+Pantalla 2 — Elegir cuenta (subcuenta / grupo)
+
+Título: ¿A cuál cuenta lo cargamos?
+Subtexto: Si vienen en grupos, así en caja sale ordenadito.
+Mostrar botones de subcuentas existentes (activas):
+	•	Mesa {N}-1
+	•	Mesa {N}-2
+…
+Botón grande:
+	•	Crear cuenta nueva
+	•	visible solo si count(active) < MAX_SUBACCOUNTS
+
+Si llegó al máximo:
+Mensaje: Ya hay {MAX} cuentas en esta mesa. Usá una existente o pedile al salonero que lo acomode 😊
+
+Pantalla 3 — Nombre (por línea)
+
+Título: ¿Cómo te llamás?
+Ayuda: Así el salonero lo lee clarito.
+Input grande + Continuar
+
+Validación:
+	•	Si vacío → Poné tu nombre para que no se nos enrede la cuenta 😊
+
+Pantalla 4 — Plato (entrevista)
+
+Título: ¿Qué se te antoja para comer?
+Subtexto: Escogé con calma… aquí nadie te apura.
+Lista paginada (no infinito), cada item con:
+	•	Nombre grande
+	•	Descripción (si existe)
+	•	Botón Elegir
+Botones: Siguiente / Atrás
+Botón secundario fijo: Ver mi pedido
+
+Toast al elegir: ¡Apuntado! ✅
+
+Si producto tiene modificadores:
+	•	ir a pantalla de modificadores (Pantalla 5)
+
+Pantalla 5 — Modificadores (si aplica)
+
+Título: Para dejarlo a tu gusto…
+Pregunta con botones grandes usando el nombre real del modificador.
+	•	Opción No gracias solo si no requerido.
+Toast: Perfecto, así lo anotamos ✅
+
+Pantalla 6 — Bebida
+
+Título: ¿Algo para tomar?
+Subtexto: Pa’ bajar la comida como Dios manda.
+Lista paginada, botón Elegir
+Botón grande: No quiero bebida
+
+Pantalla 7 — Resumen línea
+
+Mostrar:
+	•	Cuenta: Mesa {N}-{slot}
+	•	Nombre: {Nombre}
+	•	Plato + bebida + mods
+Botones:
+	•	Agregar algo más
+	•	Confirmar y enviar
+
+Al confirmar:
+	•	crear Solicitud QR SUBMITTED
+	•	notificar saloneros
+Pantalla final:
+Título: ¡Listo! Ya lo avisamos ✅
+Mensaje: En un momentito llega el salonero a confirmarlo.
+Nota: Gracias, y buen provecho 😄
+
+Errores:
+	•	Producto agotado: Uy… eso se nos acabó por hoy. Escogé otra opción y seguimos.
+	•	Señal: Se fue la señal un toque. Probá de nuevo y ya quedamos.
+
+⸻
+
+Notificaciones (salonero)
+
+Cuando entra solicitud:
+	•	Sonido + banner interno
+	•	Texto:
+Nueva orden QR • Mesa {N} • {Nombre} ({MesaN-slot})
+
+⸻
+
+Salonero (mobile-first) — nueva vista de desglose
+
+Vista Mesa (Salonero)
+
+Debe tener 2 secciones:
+
+1) Solicitudes QR pendientes
+
+Lista única en orden de llegada:
+{hora} • {Nombre} • {Plato} • {Bebida} • ({MesaN-slot})
+Acciones por línea:
+	•	Revisar (abre detalle editable)
+	•	Aceptar (envía a cocina)
+Opcional:
+	•	Aceptar todas (con confirmación)
+
+Regla:
+	•	Al aceptar, se crean/adjuntan los order_items al order madre con subaccount_id y snapshots.
+	•	Enviar al KDS usando el flujo existente.
+
+2) Orden actual por subcuenta (accordion)
+
+Accordion por subcuenta activa:
+Header:
+Mesa {N}-{slot}  |  {# ítems} ítems  |  ₡{subtotal opcional}
+Dentro:
+Cada ítem debe mostrar:
+	•	{Nombre} — {Producto}
+	•	Mods (si hay)
+	•	Qty + estado
+Filtro arriba:
+Todas / Mesa N-1 / Mesa N-2…
+
+⸻
+
+POS/Caja — comportamiento (compatibilidad)
+
+La mesa tiene 1 order madre.
+Al cobrar:
+	•	Cobrar todo junto
+	•	Separar por subcuenta
+	•	generar tickets internos: MesaN-1, MesaN-2… según subaccount_id
+En ticket/email mostrar:
+	•	“Mesa N-slot”
+	•	(opcional) nombres incluidos por subcuenta.
+
+⸻
+
+Límites recomendados (configurables)
+	•	MAX_SUBACCOUNTS_PER_TABLE: default 6
+	•	MAX_PENDING_QR_REQUESTS_PER_TABLE: default 8
+Si pendientes exceden:
+Mensaje:
+Un momentito 😊 El salonero está confirmando pedidos. Apenas confirme, podés enviar el siguiente.
+
+⸻
+
+Historias de usuario (cerradas) + Criterios + DoD
+
+ÉPICA QR-SUBACCOUNTS
+
+HU1 — Elegir o crear subcuenta
+
+CA: Se muestran subcuentas existentes y se permite crear nueva solo con cupo.
+DoD: order_subaccounts creado/reusado correctamente.
+
+HU2 — Nombre obligatorio por línea
+
+CA: No avanza sin nombre.
+DoD: customer_name_snapshot queda guardado.
+
+HU3 — Flujo entrevista plato→mods→bebida→resumen
+
+CA: UI mobile-first, lista paginada, texto grande, microcopy exacto.
+DoD: Pedido completo enviado como solicitud SUBMITTED.
+
+ÉPICA WAITER-QR-ACCEPT
+
+HU4 — Salonero ve lista única de solicitudes y acepta
+
+CA: Cada solicitud muestra nombre+subcuenta.
+DoD: Al aceptar, pasa a order_items y se envía a KDS.
+
+HU5 — Salonero ve desglose por subcuenta y quién pidió qué
+
+CA: Accordion por subcuenta y nombre por ítem.
+DoD: Funciona en móvil sin perder datos.
+
+ÉPICA POS-SUBACCOUNT-PAY
+
+HU6 — Caja cobra consolidado o separado por subcuenta
+
+CA: Separación por subaccount_id.
+DoD: Ticket/email refleja subcuenta.
+
+⸻
+
+Definition of Done global
+	•	Cliente QR: modo fácil + estándar.
+	•	Subcuentas por grupo (no por persona), con límite configurable.
+	•	Solicitudes QR pendientes, notificaciones, aceptación por salonero.
+	•	KDS consolidado.
+	•	POS separa o consolida.
+	•	Salonero puede ver “quién pidió qué” por subcuenta en móvil.
+
+⸻
