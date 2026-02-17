@@ -1,0 +1,88 @@
+Entendido. En tu screenshot el problema es layout, no lógica:
+	1.	El catálogo (grid) está “encajonado” al centro → no usa el ancho disponible.
+	2.	Las categorías están en una fila con scroll horizontal → querés que queden en 2–3 filas (wrap) y sin scroll, alineadas al ancho del grid.
+
+Aquí tenés el prompt cerrado para Replit solo para este ajuste.
+
+⸻
+
+PROMPT CERRADO PARA REPLIT — FIX LAYOUT DESKTOP: GRID FULL-WIDTH + CATEGORÍAS SIN SCROLL (WRAP EN 2–3 FILAS)
+
+IMPORTANTE: No tocar lógica, endpoints, ni estado de órdenes. Solo CSS/layout del catálogo (categorías + grilla productos) en vista Mesas/Salonero (desktop/tablet).
+
+1) Problema a corregir (según screenshot en Mac)
+	•	El contenedor del catálogo tiene un max-width/centrado que no permite que el grid use todo el espacio.
+	•	Las categorías están en un contenedor con overflow-x: auto y por eso aparecen en scroll horizontal.
+	•	Requisito: categorías visibles completas, sin scroll, en 2–3 filas si hace falta.
+
+⸻
+
+2) Requerimiento exacto
+
+A) Grid debe usar el ancho disponible
+	•	El área central (contenido) debe ocupar 100% del ancho disponible a la derecha del sidebar.
+	•	El catálogo debe alinearse a la izquierda, sin “columna vacía” innecesaria.
+	•	El grid debe expandir columnas automáticamente según el ancho.
+
+CSS recomendado (conceptual)
+	•	Asegurar que el wrapper de contenido tenga:
+	•	width: 100%
+	•	max-width: none (o eliminar max-width)
+	•	display: flex o grid correcto sin centrado tipo margin: 0 auto si no se quiere.
+	•	El grid de productos:
+	•	display: grid
+	•	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) (ajustar min según tamaño de card)
+	•	gap: 12px (o similar)
+	•	El contenedor padre debe permitir que el grid crezca (no max-width: 900px ni wrappers centrados).
+
+B) Categorías sin scroll, con wrap
+	•	Cambiar el contenedor de categorías de “chips horizontales con overflow” a una grilla de categorías que haga wrap:
+	•	display: flex; flex-wrap: wrap;
+	•	overflow: visible; overflow-x: hidden;
+	•	Sin scroll horizontal.
+	•	Las categorías deben ocupar el mismo ancho visual del área de productos (mismo contenedor).
+	•	Deben acomodarse en 1–3 filas según ancho, pero siempre 100% visibles.
+
+Estilo categorías
+	•	Botones “chip” con ancho flexible:
+	•	min-width razonable (ej 160px)
+	•	max-width opcional
+	•	Si no caben, pasan a la siguiente línea automáticamente.
+	•	Mantener el badge con conteo.
+
+⸻
+
+3) Responsive: reglas por breakpoint
+	•	Desktop (>= 1024px):
+	•	Categorías: wrap sin scroll.
+	•	Grid: auto-fit para usar ancho completo.
+	•	Tablet (>= 768px y < 1024px):
+	•	Categorías: wrap sin scroll (máx 2–3 filas).
+	•	Grid: 3–5 columnas según ancho.
+	•	Mobile (< 768px):
+	•	Mantener el comportamiento mobile-first anterior (chips scroll o wrap).
+	•	Si querés también sin scroll en mobile, aplicar wrap igual, pero ojo: puede ocupar demasiado alto; si igual lo querés, hacerlo también.
+
+(Preferencia para ti: sin scroll también en tablet/desktop; mobile puede quedarse con scroll si hace falta.)
+
+⸻
+
+4) Criterios de aceptación (verificables)
+	1.	En Mac desktop, el grid de productos usa el ancho completo del panel derecho (no queda centrado con espacio vacío grande).
+	2.	Las categorías se ven todas sin scroll horizontal y se acomodan en 2–3 filas si hace falta.
+	3.	No aparece barra de scroll horizontal en la sección de categorías.
+	4.	Al cambiar tamaño de ventana, el grid ajusta columnas sin romper cards.
+
+⸻
+
+5) DoD
+	•	Entregar screenshots en desktop:
+	•	ancho grande (pantalla completa)
+	•	ancho mediano (ventana reducida)
+Mostrando que:
+	•	categorías wrap sin scroll
+	•	grid full width.
+
+⸻
+
+Si querés que quede perfecto: decime si querés que también en móvil las categorías sean sin scroll (wrap), o solo en desktop/tablet.
