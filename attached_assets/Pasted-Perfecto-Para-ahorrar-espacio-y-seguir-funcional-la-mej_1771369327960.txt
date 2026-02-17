@@ -1,0 +1,90 @@
+Perfecto. Para ahorrar espacio y seguir funcional, la mejor versión del flujo TOP → Subcategoría → Productos es esta (sin barras extra ni scroll inútil). Te dejo el prompt cerrado optimizado a espacio.
+
+⸻
+
+PROMPT CERRADO PARA REPLIT — UI MENÚ 2 NIVELES “COMPACTO” (TOP → SUBCATEGORÍA → PRODUCTOS) AHORRANDO ESPACIO
+
+NO TOCAR: lógica de órdenes/KDS/pagos/impuestos/porciones/endpoints.
+SÍ TOCAR: solo UI del catálogo + estructura de categorías (parentCategoryId).
+
+⸻
+
+1) Objetivo
+
+Implementar selección obligatoria 2 niveles:
+	1.	TOP: Comidas | Bebidas | Alcohol | Postres
+	2.	Subcategoría (hijas del TOP)
+	3.	Productos de la subcategoría
+
+Pero con mínimo consumo de pantalla.
+
+⸻
+
+2) Diseño compacto (mobile-first)
+
+2.1 TOP selector — 1 sola fila, sin scroll y sin ocupar alto
+	•	Mostrar los 4 TOP como Segmented Control (tipo iOS):
+	•	[Comidas] [Bebidas] [Alcohol] [Postres]
+	•	Debe caber en 1 fila siempre.
+	•	Si no cabe por texto, usar abreviaciones:
+	•	Comidas, Bebidas, Alcohol, Postres (ya son cortas)
+	•	Sin badges, sin contadores.
+	•	Altura objetivo: 40–44px.
+
+2.2 Subcategorías — chips compactos con wrap máximo 2 filas
+	•	Debajo del TOP, mostrar subcategorías como chips.
+	•	Wrap sí, pero limitado:
+	•	Máximo 2 filas visibles.
+	•	Si hay más, mostrar botón Ver más (N) que abre un bottom-sheet con la lista completa.
+	•	Esto evita que 40 subcategorías te empujen los productos hacia abajo.
+
+Regla: al cambiar TOP, se reemplazan subcategorías y se auto-selecciona la primera activa.
+
+2.3 Productos — grid inmediato
+	•	Debajo de subcategorías, grid responsive como ya existe.
+	•	Nada de headers grandes.
+
+⸻
+
+3) Búsqueda minimizando teclado
+	•	Ícono 🔍 a la derecha del segmented control o debajo (muy pequeño).
+	•	Al tocar abre un input en modal/bottom-sheet (no fijo en pantalla).
+	•	Sin autofocus.
+
+⸻
+
+4) Modelo de datos
+
+Tabla categories agrega/usa:
+	•	parentCategoryId nullable (FK a categories.id)
+TOP categories: parentCategoryId null
+Subcategorías: parentCategoryId = TOP id
+Productos: products.categoryId = subcategoría
+
+Admin:
+	•	Botón “Crear TOP base” (idempotente)
+	•	Dropdown “TOP padre” en cada categoría existente (no asumir agrupación)
+
+⸻
+
+5) Criterios de aceptación (espacio + funcionalidad)
+	1.	TOP selector ocupa máximo 1 fila y no hace scroll horizontal.
+	2.	Subcategorías ocupan máximo 2 filas; si hay más, se usa Ver más.
+	3.	Productos siempre quedan visibles arriba “lo más posible” (no empujados).
+	4.	Cambiar TOP reemplaza subcategorías y productos correctamente.
+	5.	Seleccionar subcategoría filtra productos correctamente.
+	6.	En móvil se puede operar con una mano (targets grandes).
+
+⸻
+
+6) DoD
+	•	Implementado en Mesas/Salonero y Cliente QR si comparten catálogo.
+	•	Test: TOP→subcat→productos en 2–3 TOP distintos.
+	•	Capturas en móvil y desktop mostrando:
+	•	TOP 1 fila
+	•	subcats 2 filas + ver más
+	•	productos visibles
+
+⸻
+
+Si querés que quede todavía más eficiente: en lugar de chips de subcategoría, podemos usar un dropdown compacto (“Subcategoría: Antojos ▾”) que ocupa una sola línea siempre. Eso ahorra aún más pantalla.
