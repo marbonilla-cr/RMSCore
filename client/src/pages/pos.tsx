@@ -9,13 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
   CreditCard, DollarSign, Loader2, Receipt,
-  Banknote, ArrowLeft, Lock, Unlock,
+  Banknote, ArrowLeft, Lock, Unlock, Wallet,
   Split, Trash2, XCircle, Mail, Printer, ArrowRight, ArrowLeftRight,
   Percent, X, Plus, Minus, Save, SendHorizontal,
 } from "lucide-react";
@@ -130,11 +129,6 @@ export default function POSPage() {
   const [splitMode, setSplitMode] = useState(false);
   const [normalizing, setNormalizing] = useState(false);
   const [movingItemId, setMovingItemId] = useState<number | null>(null);
-  const [lastPaidOrder, setLastPaidOrder] = useState<{orderId: number; tableName: string; orderNumber: string; paymentMethod: string; clientName?: string; _items: {name:string;qty:number;price:number;total:number}[]; _totalAmount: number; _totalDiscounts?: number; _totalTaxes?: number; _taxBreakdown?: TaxBreakdownEntry[]} | null>(null);
-  const [printingDirect, setPrintingDirect] = useState(false);
-  const [sendingEmail, setSendingEmail] = useState(false);
-  const [emailInput, setEmailInput] = useState("");
-  const [showEmailForm, setShowEmailForm] = useState(false);
 
   const [voidOrderOpen, setVoidOrderOpen] = useState(false);
   const [voidOrderId, setVoidOrderId] = useState<number | null>(null);
@@ -307,18 +301,23 @@ export default function POSPage() {
         return { name: i.productNameSnapshot + modLabel, qty: i.qty, price: unitPrice, total: unitPrice * i.qty };
       });
 
-      setLastPaidOrder({
-        orderId: tbl.orderId,
-        tableName: tbl.tableName,
-        orderNumber: orderNum,
-        paymentMethod: pm?.paymentName || "",
-        clientName: clientName || undefined,
-        _items: receiptItems,
-        _totalAmount: Number(tbl.totalAmount),
-        _totalDiscounts: Number(tbl.totalDiscounts || 0),
-        _totalTaxes: Number(tbl.totalTaxes || 0),
-        _taxBreakdown: tbl.taxBreakdown,
-      });
+      const orderId = tbl.orderId;
+      const tableName = tbl.tableName;
+      const pmName = pm?.paymentName || "";
+      const clName = clientName || undefined;
+      const totalAmount = Number(tbl.totalAmount);
+      const totalDiscounts = Number(tbl.totalDiscounts || 0);
+      const totalTaxes = Number(tbl.totalTaxes || 0);
+      const taxBk = tbl.taxBreakdown;
+
+      triggerReceiptPrint(receiptItems, totalAmount, pmName, tableName, orderNum, clName, totalDiscounts, totalTaxes, taxBk);
+
+      if (canPrint) {
+        apiRequest("POST", "/api/pos/print-receipt", { orderId })
+          .then(r => r.json())
+          .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
+          .catch(() => {});
+      }
 
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
@@ -1551,16 +1550,28 @@ export default function POSPage() {
             </div>
             <div className="space-y-2">
               <Label>Método de Pago</Label>
-              <Select value={paymentMethodId} onValueChange={setPaymentMethodId}>
-                <SelectTrigger data-testid="select-payment-method">
-                  <SelectValue placeholder="Seleccionar método" />
-                </SelectTrigger>
-                <SelectContent>
-                  {activePaymentMethods.map((m) => (
-                    <SelectItem key={m.id} value={m.id.toString()}>{m.paymentName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="grid grid-cols-3 gap-2">
+                {activePaymentMethods.map((m) => {
+                  const isSelected = paymentMethodId === m.id.toString();
+                  const code = m.paymentCode.toUpperCase();
+                  const icon = code.includes("CASH") || code.includes("EFECT") ? Banknote
+                    : code.includes("CARD") || code.includes("TARJ") ? CreditCard
+                    : Wallet;
+                  const Icon = icon;
+                  return (
+                    <Button
+                      key={m.id}
+                      variant={isSelected ? "default" : "outline"}
+                      className={`flex flex-col items-center gap-1 h-auto py-3 ${isSelected ? "ring-2 ring-primary" : ""}`}
+                      onClick={() => setPaymentMethodId(m.id.toString())}
+                      data-testid={`button-pm-${m.id}`}
+                    >
+                      <Icon className="w-5 h-5" />
+                      <span className="text-xs">{m.paymentName}</span>
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
             {canEditCustomerPrepay && (
               <>
@@ -1623,131 +1634,6 @@ export default function POSPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!lastPaidOrder} onOpenChange={(open) => { if (!open) { setLastPaidOrder(null); setShowEmailForm(false); setEmailInput(""); } }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Pago Exitoso</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Orden {lastPaidOrder?.orderNumber} - {lastPaidOrder?.tableName}
-            </p>
-            {showEmailForm ? (
-              <div className="space-y-3">
-                <Label>Correo electrónico del cliente</Label>
-                <Input
-                  data-testid="input-client-email"
-                  type="email"
-                  placeholder="cliente@ejemplo.com"
-                  value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                />
-                <div className="flex flex-col gap-2">
-                  <Button
-                    data-testid="button-confirm-send-email"
-                    disabled={sendingEmail || !emailInput.trim()}
-                    onClick={async () => {
-                      if (!lastPaidOrder || !emailInput.trim()) return;
-                      setSendingEmail(true);
-                      try {
-                        await apiRequest("POST", "/api/pos/send-ticket", {
-                          orderId: lastPaidOrder.orderId,
-                          clientEmail: emailInput.trim(),
-                          clientName: lastPaidOrder.clientName || "",
-                        });
-                        toast({ title: "Tiquete enviado", description: `Enviado a ${emailInput.trim()}` });
-                        setShowEmailForm(false);
-                        setEmailInput("");
-                      } catch (err: any) {
-                        toast({ title: "Error al enviar", description: err.message, variant: "destructive" });
-                      } finally {
-                        setSendingEmail(false);
-                      }
-                    }}
-                  >
-                    {sendingEmail ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Mail className="w-4 h-4 mr-1" />}
-                    Enviar
-                  </Button>
-                  <Button
-                    data-testid="button-cancel-email"
-                    variant="ghost"
-                    onClick={() => { setShowEmailForm(false); setEmailInput(""); }}
-                  >
-                    <ArrowLeft className="w-4 h-4 mr-1" />
-                    Regresar
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {canPrint && (
-                  <>
-                    <Button
-                      data-testid="button-direct-print"
-                      disabled={printingDirect}
-                      onClick={async () => {
-                        if (!lastPaidOrder) return;
-                        setPrintingDirect(true);
-                        try {
-                          const res = await apiRequest("POST", "/api/pos/print-receipt", {
-                            orderId: lastPaidOrder.orderId,
-                          });
-                          const data = await res.json();
-                          toast({ title: "Impreso", description: `Enviado a ${data.printer}` });
-                        } catch (err: any) {
-                          toast({ title: "Error de impresora", description: err.message, variant: "destructive" });
-                        } finally {
-                          setPrintingDirect(false);
-                        }
-                      }}
-                    >
-                      {printingDirect ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Printer className="w-4 h-4 mr-1" />}
-                      Imprimir en Impresora WiFi
-                    </Button>
-                    <Button
-                      data-testid="button-browser-print"
-                      variant="outline"
-                      onClick={() => {
-                        if (!lastPaidOrder) return;
-                        triggerReceiptPrint(
-                          lastPaidOrder._items,
-                          lastPaidOrder._totalAmount,
-                          lastPaidOrder.paymentMethod,
-                          lastPaidOrder.tableName,
-                          lastPaidOrder.orderNumber,
-                          lastPaidOrder.clientName,
-                          lastPaidOrder._totalDiscounts,
-                          lastPaidOrder._totalTaxes,
-                          lastPaidOrder._taxBreakdown
-                        );
-                      }}
-                    >
-                      <Receipt className="w-4 h-4 mr-1" />
-                      Ver Tiquete en Pantalla
-                    </Button>
-                  </>
-                )}
-                {canEmailTicket && (
-                  <Button
-                    data-testid="button-send-email-receipt"
-                    variant="outline"
-                    onClick={() => setShowEmailForm(true)}
-                  >
-                    <Mail className="w-4 h-4 mr-1" />
-                    Enviar Tiquete por Correo
-                  </Button>
-                )}
-                <Button
-                  data-testid="button-close-print-dialog"
-                  variant="ghost"
-                  onClick={() => setLastPaidOrder(null)}
-                >
-                  <ArrowLeft className="w-4 h-4 mr-1" />
-                  Regresar
-                </Button>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={closeOpen} onOpenChange={setCloseOpen}>
         <DialogContent>
