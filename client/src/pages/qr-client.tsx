@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   UtensilsCrossed, Plus, Loader2, Check, ChevronLeft, ChevronRight,
   X, Users, User, ArrowRight, Coffee, ChefHat,
-  Utensils, Send, CheckCircle2, ShoppingBag,
+  Utensils, Send, CheckCircle2, ShoppingBag, ChevronDown,
 } from "lucide-react";
 
 type Step =
@@ -23,8 +23,7 @@ type Step =
   | "easy_drink_products"
   | "easy_modifiers"
   | "easy_review"
-  | "std_food"
-  | "std_drink"
+  | "std_menu"
   | "std_modifiers"
   | "std_review"
   | "sent";
@@ -210,11 +209,12 @@ export default function QRClientPage() {
   const [selectedMods, setSelectedMods] = useState<Record<number, number[]>>({});
   const [loadingMods, setLoadingMods] = useState(false);
   const [modReturnStep, setModReturnStep] = useState<Step>("easy_food_cats");
-  const [stdModReturnStep, setStdModReturnStep] = useState<Step>("std_food");
+  const [stdModReturnStep, setStdModReturnStep] = useState<Step>("std_menu");
 
   const [diners, setDiners] = useState<DinerData[]>([]);
   const [currentDinerIndex, setCurrentDinerIndex] = useState(0);
   const [stdSelectedItems, setStdSelectedItems] = useState<CartItem[]>([]);
+  const [expandedStdCategory, setExpandedStdCategory] = useState<string | null>(null);
 
   const { data: tableInfo, isLoading: tableLoading, error: tableError } = useQuery<{
     tableId: number;
@@ -272,6 +272,16 @@ export default function QRClientPage() {
     const pool = isDrinkStep ? drinkProducts : foodProducts;
     return pool.filter(p => (p.categoryName || "Otros") === selectedCategory);
   }, [step, foodProducts, drinkProducts, selectedCategory]);
+
+  const menuByCategory = useMemo(() => {
+    const cats = new Map<string, QRProduct[]>();
+    menu.forEach(p => {
+      const c = p.categoryName || "Otros";
+      if (!cats.has(c)) cats.set(c, []);
+      cats.get(c)!.push(p);
+    });
+    return Array.from(cats.entries()).map(([name, products]) => ({ name, products }));
+  }, [menu]);
 
   const createSubaccountMutation = useMutation({
     mutationFn: async (slotNum?: number) => {
@@ -340,7 +350,7 @@ export default function QRClientPage() {
       setDiners([{ name: trimmed, items: [] }]);
       setCurrentDinerIndex(0);
       setStdSelectedItems([]);
-      setStep("std_food");
+      setStep("std_menu");
     }
   };
 
@@ -357,7 +367,7 @@ export default function QRClientPage() {
         setPendingProduct(product);
         setModGroups(groups);
         setSelectedMods({});
-        if (returnStep === "std_food" || returnStep === "std_drink") {
+        if (returnStep === "std_menu") {
           setStdModReturnStep(returnStep);
           setStep("std_modifiers");
         } else {
@@ -385,7 +395,7 @@ export default function QRClientPage() {
       categoryName: product.categoryName || "Otros",
     };
 
-    if (context === "std_food" || context === "std_drink") {
+    if (context === "std_menu") {
       setStdSelectedItems(prev => {
         const existing = prev.find(it => it.productId === product.id && JSON.stringify(it.modifiers) === JSON.stringify(item.modifiers));
         if (existing) return prev.map(it => it === existing ? { ...it, qty: it.qty + 1 } : it);
@@ -454,9 +464,7 @@ export default function QRClientPage() {
     submitMutation.mutate({ subaccountId: selectedSubaccount.id, items: allItems });
   };
 
-  const handleStdNextFromFood = () => setStep("std_drink");
-
-  const handleStdNextFromDrink = () => {
+  const handleStdNextFromMenu = () => {
     const dinerName = diners[currentDinerIndex]?.name || customerName.trim();
     const updatedDiners = [...diners];
     updatedDiners[currentDinerIndex] = { name: dinerName, items: [...stdSelectedItems] };
@@ -490,6 +498,7 @@ export default function QRClientPage() {
     setSelectedMods({});
     setDiners([]);
     setCurrentDinerIndex(0);
+    setExpandedStdCategory(null);
     setStdSelectedItems([]);
   };
 
@@ -1104,150 +1113,102 @@ export default function QRClientPage() {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  STANDARD: FOOD
+  //  STANDARD: MENÚ (acordeón de categorías)
   // ═══════════════════════════════════════════════════════════════
-  if (step === "std_food") {
+  if (step === "std_menu") {
     const dinerNum = currentDinerIndex + 1;
     const totalDiners = diners.length;
+    const stdItemCount = stdSelectedItems.reduce((s, it) => s + it.qty, 0);
     return (
       <div className="min-h-screen bg-background pb-28">
         <div className="sticky top-0 z-[9] bg-background border-b p-4">
           <div className="max-w-md mx-auto space-y-1">
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setStep("name")} data-testid="button-back-from-food">
+              <Button variant="ghost" size="icon" onClick={() => setStep("name")} data-testid="button-back-from-menu">
                 <ChevronLeft className="w-4 h-4" />
               </Button>
               <Badge variant="secondary" data-testid="text-diner-counter">Comensal {dinerNum} de {totalDiners}</Badge>
             </div>
-            <h1 className="text-xl font-bold" data-testid="text-std-food-title">¿Qué deseás comer?</h1>
+            <h1 className="text-xl font-bold" data-testid="text-std-menu-title">¿Qué deseás ordenar?</h1>
           </div>
         </div>
-        <div className="max-w-md mx-auto px-4 pt-3">
-          <div className="grid grid-cols-2 gap-3">
-            {foodProducts.map(product => {
-              const isSelected = stdSelectedItems.some(it => it.productId === product.id);
-              const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+        <div className="max-w-md mx-auto px-3 pt-2">
+          <div className="space-y-1">
+            {menuByCategory.map(({ name: catName, products: catProducts }) => {
+              const isExpanded = expandedStdCategory === catName;
               return (
-                <Card key={product.id} className={isSelected ? "ring-2 ring-primary" : ""} data-testid={`card-food-${product.id}`}>
-                  <CardContent className="p-3 space-y-2">
-                    <p className="font-medium text-sm">{product.name}</p>
-                    {product.description && (
-                      <p className="text-xs text-muted-foreground line-clamp-2">{product.description}</p>
-                    )}
-                    <p className="font-bold text-sm">₡{Number(product.price).toLocaleString()}</p>
-                    {isSelected ? (
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-primary" />
-                        <Button variant="ghost" size="sm" onClick={() => removeStdItem(product.id)} data-testid={`button-remove-food-${product.id}`}>
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => { setStdModReturnStep("std_food"); handleProductClick(product, "std_food"); }}
-                        disabled={loadingMods || outOfStock}
-                        data-testid={`button-select-food-${product.id}`}
-                      >
-                        {outOfStock ? "Agotado" : "Elegir"}
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
+                <div key={catName} data-testid={`category-group-${catName}`}>
+                  <button
+                    className="w-full flex items-center justify-between gap-2 px-3 py-3 rounded-md hover-elevate min-h-[48px] text-left"
+                    onClick={() => setExpandedStdCategory(isExpanded ? null : catName)}
+                    aria-expanded={isExpanded}
+                    data-testid={`button-toggle-category-${catName}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {isExpanded
+                        ? <ChevronDown className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                        : <ChevronRight className="w-4 h-4 flex-shrink-0 text-muted-foreground" />}
+                      <span className="font-semibold text-sm truncate">{catName}</span>
+                    </div>
+                    <Badge variant="secondary" className="text-xs">{catProducts.length}</Badge>
+                  </button>
+                  {isExpanded && (
+                    <div className="pl-4 pr-1 pb-2 space-y-1">
+                      {catProducts.map(product => {
+                        const qty = stdSelectedItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
+                        const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+                        return (
+                          <div
+                            key={product.id}
+                            className={`flex items-center justify-between gap-2 px-3 py-2 rounded-md ${outOfStock ? "opacity-50" : "hover-elevate cursor-pointer"}`}
+                            onClick={() => {
+                              if (!outOfStock && !loadingMods) {
+                                setStdModReturnStep("std_menu");
+                                handleProductClick(product, "std_menu");
+                              }
+                            }}
+                            data-testid={`product-row-${product.id}`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-sm truncate">{product.name}</p>
+                              <p className="text-xs text-muted-foreground">₡{Number(product.price).toLocaleString()}</p>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {qty > 0 && (
+                                <Badge variant="default" className="text-xs" data-testid={`badge-qty-${product.id}`}>{qty}</Badge>
+                              )}
+                              {outOfStock ? (
+                                <span className="text-xs text-muted-foreground">Agotado</span>
+                              ) : (
+                                <Plus className="w-4 h-4 text-muted-foreground" />
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
+            {menuByCategory.length === 0 && (
+              <div className="text-center py-8">
+                <Utensils className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+                <p className="text-lg text-muted-foreground">No hay productos disponibles.</p>
+              </div>
+            )}
           </div>
         </div>
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-[9]">
           <div className="max-w-md mx-auto space-y-2">
-            {stdSelectedItems.length > 0 && (
-              <p className="text-sm text-muted-foreground truncate" data-testid="text-food-selection-summary">
-                Pedido: {stdSelectedItems.map(it => it.productName).join(", ")}
+            {stdItemCount > 0 && (
+              <p className="text-sm text-muted-foreground truncate" data-testid="text-menu-selection-summary">
+                {stdItemCount} item{stdItemCount !== 1 ? "s" : ""}: {stdSelectedItems.map(it => it.productName).join(", ")}
               </p>
             )}
-            <Button className="w-full" onClick={handleStdNextFromFood} data-testid="button-std-next-food">
-              Siguiente <ArrowRight className="w-4 h-4 ml-2" />
+            <Button className="w-full" onClick={handleStdNextFromMenu} disabled={stdItemCount === 0} data-testid="button-std-next-menu">
+              Revisar pedido <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  //  STANDARD: DRINK
-  // ═══════════════════════════════════════════════════════════════
-  if (step === "std_drink") {
-    const dinerNum = currentDinerIndex + 1;
-    const totalDiners = diners.length;
-    return (
-      <div className="min-h-screen bg-background pb-28">
-        <div className="sticky top-0 z-[9] bg-background border-b p-4">
-          <div className="max-w-md mx-auto space-y-1">
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setStep("std_food")} data-testid="button-back-from-drink">
-                <ChevronLeft className="w-4 h-4" />
-              </Button>
-              <Badge variant="secondary" data-testid="text-diner-counter-drink">Comensal {dinerNum} de {totalDiners}</Badge>
-            </div>
-            <h1 className="text-xl font-bold" data-testid="text-std-drink-title">¿Algo para beber?</h1>
-          </div>
-        </div>
-        <div className="max-w-md mx-auto px-4 pt-3">
-          <div className="grid grid-cols-2 gap-3">
-            {drinkProducts.map(product => {
-              const isSelected = stdSelectedItems.some(it => it.productId === product.id);
-              const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
-              return (
-                <Card key={product.id} className={isSelected ? "ring-2 ring-primary" : ""} data-testid={`card-drink-${product.id}`}>
-                  <CardContent className="p-3 space-y-2">
-                    <p className="font-medium text-sm">{product.name}</p>
-                    {product.description && (
-                      <p className="text-xs text-muted-foreground line-clamp-2">{product.description}</p>
-                    )}
-                    <p className="font-bold text-sm">₡{Number(product.price).toLocaleString()}</p>
-                    {isSelected ? (
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-primary" />
-                        <Button variant="ghost" size="sm" onClick={() => removeStdItem(product.id)} data-testid={`button-remove-drink-${product.id}`}>
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => { setStdModReturnStep("std_drink"); handleProductClick(product, "std_drink"); }}
-                        disabled={loadingMods || outOfStock}
-                        data-testid={`button-select-drink-${product.id}`}
-                      >
-                        {outOfStock ? "Agotado" : "Elegir"}
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-[9]">
-          <div className="max-w-md mx-auto space-y-2">
-            {stdSelectedItems.length > 0 && (
-              <p className="text-sm text-muted-foreground truncate" data-testid="text-drink-selection-summary">
-                Pedido: {stdSelectedItems.map(it => it.productName).join(", ")}
-              </p>
-            )}
-            <div className="flex gap-3">
-              <Button variant="outline" className="flex-1" onClick={handleStdNextFromDrink} data-testid="button-std-skip-drinks">
-                No quiero bebida
-              </Button>
-              <Button className="flex-1" onClick={handleStdNextFromDrink} data-testid="button-std-next-drink">
-                Siguiente <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
-            </div>
           </div>
         </div>
       </div>
@@ -1306,7 +1267,7 @@ export default function QRClientPage() {
             <button
               type="button"
               className="w-full text-center text-sm text-muted-foreground underline py-2"
-              onClick={() => setStep("std_food")}
+              onClick={() => setStep("std_menu")}
               data-testid="button-std-back"
             >
               Volver atrás
