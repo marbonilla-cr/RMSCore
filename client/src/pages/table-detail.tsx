@@ -97,6 +97,7 @@ export default function TableDetailPage() {
   const [loadingModifiers, setLoadingModifiers] = useState(false);
   const [pendingClickEvent, setPendingClickEvent] = useState<HTMLElement | null>(null);
   const [splitSelectedItems, setSplitSelectedItems] = useState<Set<number>>(new Set());
+  const [expandedSubmissionId, setExpandedSubmissionId] = useState<number | null>(null);
   const [splitAccounts, setSplitAccounts] = useState<SplitAccount[]>([]);
   const [activeSplitId, setActiveSplitId] = useState<number | null>(null);
   const [splitLoading, setSplitLoading] = useState(false);
@@ -207,9 +208,10 @@ export default function TableDetailPage() {
   const acceptSubmissionMutation = useMutation({
     mutationFn: async (submissionId: number) => {
       const res = await apiRequest("POST", `/api/waiter/qr-submissions/${submissionId}/accept-v2`);
-      return res;
+      return res.json();
     },
     onSuccess: (data: any) => {
+      setExpandedSubmissionId(null);
       if (data.activeOrder) {
         queryClient.setQueryData(["/api/tables", tableId, "current"], {
           table: data.table || currentView?.table,
@@ -912,40 +914,50 @@ export default function TableDetailPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {pendingSubmissions.map((sub: any) => {
-                    const payload = sub.payloadSnapshot || sub.payload_snapshot || [];
-                    const firstItem = Array.isArray(payload) ? payload[0] : null;
+                    const rawPayload = sub.payloadSnapshot || sub.payload_snapshot;
+                    const payloadItems = rawPayload?.items || (Array.isArray(rawPayload) ? rawPayload : []);
+                    const firstItem = payloadItems[0] || null;
                     const customerName = firstItem?.customerName || "Cliente";
                     const createdAt = sub.createdAt ? new Date(sub.createdAt) : new Date();
                     const timeStr = createdAt.toLocaleTimeString("es-CR", { hour: "numeric", minute: "2-digit", hour12: true });
-                    const itemNames = Array.isArray(payload) ? payload.map((p: any) => p.productName || `Producto #${p.productId}`).join(" + ") : "";
-                    const subCode = sub.subaccountCode || "";
+                    const isExpanded = expandedSubmissionId === sub.id;
                     
                     return (
                       <div key={sub.id} className="border rounded-md p-3" data-testid={`pending-submission-${sub.id}`}>
-                        <div className="flex items-start justify-between gap-2">
+                        <div
+                          className="flex items-start justify-between gap-2 cursor-pointer"
+                          onClick={() => setExpandedSubmissionId(isExpanded ? null : sub.id)}
+                          data-testid={`button-toggle-qr-${sub.id}`}
+                        >
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm text-muted-foreground">{timeStr}</span>
-                              <span className="font-medium">{customerName} - {itemNames}</span>
+                              <span className="font-medium">{customerName}</span>
+                              <Badge variant="secondary">{payloadItems.length} {payloadItems.length === 1 ? "item" : "items"}</Badge>
                             </div>
-                            {subCode && (
-                              <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
-                                <Receipt className="w-3 h-3" />
-                                <span>Mesa {subCode}</span>
-                              </div>
-                            )}
                           </div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => acceptSubmissionMutation.mutate(sub.id)}
-                            disabled={acceptSubmissionMutation.isPending}
-                            data-testid={`button-accept-qr-${sub.id}`}
-                          >
-                            {acceptSubmissionMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Revisar"}
-                            <ChevronRight className="w-4 h-4 ml-1" />
-                          </Button>
+                          <ChevronRight className={`w-5 h-5 text-muted-foreground transition-transform shrink-0 ${isExpanded ? "rotate-90" : ""}`} />
                         </div>
+                        {isExpanded && (
+                          <div className="mt-3 space-y-3">
+                            <div className="space-y-1 pl-1">
+                              {payloadItems.map((item: any, idx: number) => (
+                                <div key={idx} className="flex items-center justify-between text-sm py-1 border-b last:border-b-0">
+                                  <span>{item.qty}x {item.productName || `Producto #${item.productId}`}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <Button
+                              className="w-full"
+                              onClick={() => acceptSubmissionMutation.mutate(sub.id)}
+                              disabled={acceptSubmissionMutation.isPending}
+                              data-testid={`button-accept-qr-${sub.id}`}
+                            >
+                              {acceptSubmissionMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+                              Enviar a cocina
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

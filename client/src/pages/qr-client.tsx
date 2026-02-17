@@ -307,6 +307,7 @@ export default function QRClientPage() {
     mutationFn: async (payload: { subaccountId: number; items: CartItem[] }) => {
       const items = payload.items.map(it => ({
         productId: it.productId,
+        productName: it.productName,
         qty: it.qty,
         customerName: it.customerName,
         modifiers: it.modifiers,
@@ -1355,11 +1356,11 @@ export default function QRClientPage() {
           <div className="w-20 h-20 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
             <Check className="w-10 h-10 text-green-600" />
           </div>
-          <h1 className="text-2xl font-bold" data-testid="text-order-sent">Listo! Ya lo avisamos</h1>
+          <h1 className="text-2xl font-bold" data-testid="text-order-sent">Pedido enviado</h1>
           <p className="text-muted-foreground text-lg" data-testid="text-order-sent-message">
-            En un momentito llega el salonero a confirmarlo.
+            Ya viene un salonero a confirmarles la orden.
           </p>
-          <p className="text-base text-muted-foreground">Gracias, y buen provecho!</p>
+          <p className="text-base text-muted-foreground">Gracias por la paciencia, y buen provecho!</p>
           <Button className="min-h-[64px] text-lg" onClick={resetAll} data-testid="button-new-order">
             <Plus className="w-6 h-6 mr-2" />
             Hacer otro pedido
