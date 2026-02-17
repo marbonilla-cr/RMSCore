@@ -1159,7 +1159,7 @@ export default function TableDetailPage() {
             )}
           </div>
         ) : (
-          <div className="flex flex-col max-w-lg mx-auto h-full">
+          <div className="flex flex-col h-full">
             <div className="sticky top-0 z-[9] bg-background px-3 py-2 border-b">
               {searchExpanded ? (
                 <div className="relative">
@@ -1200,7 +1200,7 @@ export default function TableDetailPage() {
             </div>
 
             {!isSearching && (
-              <div className="flex gap-2 overflow-x-auto no-scrollbar px-3 py-2">
+              <div className="flex gap-2 flex-wrap px-3 py-2 md:flex-wrap overflow-x-auto md:overflow-visible no-scrollbar">
                 {sortedCategoryIds.map((catId) => {
                   const catName = catId === "sin-categoria" ? "Sin Categoría" : categories.find(c => c.id === Number(catId))?.name || "Categoría";
                   const count = productsByCategory[catId]?.length || 0;
@@ -1210,7 +1210,7 @@ export default function TableDetailPage() {
                       key={catId}
                       variant={isActive ? "default" : "outline"}
                       size="sm"
-                      className="flex-shrink-0 whitespace-nowrap"
+                      className="flex-shrink-0 md:flex-shrink whitespace-nowrap"
                       onClick={() => setSelectedCategoryId(catId)}
                       data-testid={`chip-category-${catId}`}
                     >
@@ -1226,13 +1226,13 @@ export default function TableDetailPage() {
                 const displayProducts = isSearching ? filteredProducts : (selectedCategoryId ? (productsByCategory[selectedCategoryId] || []) : []);
                 return (
                   <>
-                    <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
+                    <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
                       {displayProducts.map((p) => {
                         const inCartQty = cart.filter(c => c.productId === p.id).reduce((s, c) => s + c.qty, 0);
                         return (
                           <div
                             key={p.id}
-                            className={`flex flex-col p-3 rounded-md border hover-elevate cursor-pointer active:scale-[0.98] transition-transform duration-100 ${p.availablePortions !== null && p.availablePortions <= 0 ? "opacity-50 pointer-events-none" : ""}`}
+                            className={`flex flex-col p-3 rounded-md border card-3d cursor-pointer ${p.availablePortions !== null && p.availablePortions <= 0 ? "opacity-50 pointer-events-none" : ""}`}
                             onClick={(e) => addToCart(p, e)}
                             data-testid={`menu-item-${p.id}`}
                           >
