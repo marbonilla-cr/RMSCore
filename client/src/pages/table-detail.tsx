@@ -1189,35 +1189,62 @@ export default function TableDetailPage() {
           <div className="flex flex-col h-full">
             <div className="sticky top-0 z-[9] bg-background px-3 py-2 border-b space-y-2">
               {hasTopSystem && !isSearching && (
-                <div className="flex items-center gap-1">
-                  <div className="flex flex-1 rounded-md overflow-hidden border">
-                    {topCategories.map((top) => {
-                      const isActive = selectedTopCode === top.categoryCode;
-                      const colorMap: Record<string, string> = {
-                        "TOP-COMIDAS": isActive ? "bg-emerald-600 text-white dark:bg-emerald-500" : "bg-background",
-                        "TOP-BEBIDAS": isActive ? "bg-blue-600 text-white dark:bg-blue-500" : "bg-background",
-                        "TOP-ALCOHOL": isActive ? "bg-purple-600 text-white dark:bg-purple-500" : "bg-background",
-                        "TOP-POSTRES": isActive ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-background",
-                      };
-                      return (
-                        <button
-                          key={top.categoryCode}
-                          className={`flex-1 text-center py-2.5 text-sm font-semibold transition-colors min-h-[44px] ${colorMap[top.categoryCode] || (isActive ? "bg-primary text-primary-foreground" : "bg-background")}`}
-                          onClick={() => setSelectedTopCode(top.categoryCode)}
-                          data-testid={`button-top-${top.categoryCode}`}
-                        >
-                          {top.name}
-                        </button>
-                      );
-                    })}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1">
+                    <div className="flex-1 grid gap-2" style={{ gridTemplateColumns: `repeat(${topCategories.length}, 1fr)` }}>
+                      {topCategories.map((top) => {
+                        const isActive = selectedTopCode === top.categoryCode;
+                        const colorMap: Record<string, string> = {
+                          "TOP-COMIDAS": isActive ? "bg-emerald-600 text-white border-emerald-600 dark:bg-emerald-500 dark:border-emerald-500" : "bg-background border-border",
+                          "TOP-BEBIDAS": isActive ? "bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500" : "bg-background border-border",
+                          "TOP-POSTRES": isActive ? "bg-rose-600 text-white border-rose-600 dark:bg-rose-500 dark:border-rose-500" : "bg-background border-border",
+                        };
+                        return (
+                          <button
+                            key={top.categoryCode}
+                            className={`text-center text-sm font-semibold transition-colors rounded-md border truncate ${colorMap[top.categoryCode] || (isActive ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border")}`}
+                            style={{ height: "48px" }}
+                            onClick={() => setSelectedTopCode(top.categoryCode)}
+                            data-testid={`button-top-${top.categoryCode}`}
+                          >
+                            {top.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search">
+                      <Search className="w-4 h-4" />
+                    </Button>
                   </div>
-                  <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search">
-                    <Search className="w-4 h-4" />
-                  </Button>
+                  {sortedCategoryIds.length > 0 && (
+                    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${sortedCategoryIds.length <= 3 ? sortedCategoryIds.length : 2}, 1fr)` }}>
+                      {sortedCategoryIds.map((catId) => {
+                        const cat = categories.find(c => c.id === Number(catId));
+                        const catName = cat?.name || "Categoría";
+                        const isActive = selectedCategoryId === catId;
+                        const count = (productsByCategory[catId] || []).length;
+                        return (
+                          <button
+                            key={catId}
+                            className={`text-center text-sm font-medium transition-colors rounded-md border truncate ${
+                              isActive
+                                ? "bg-foreground text-background border-foreground"
+                                : "bg-background border-border hover-elevate"
+                            }`}
+                            style={{ height: "48px" }}
+                            onClick={() => setSelectedCategoryId(catId)}
+                            data-testid={`chip-category-${catId}`}
+                          >
+                            {catName}{count > 0 ? ` (${count})` : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
-              {!hasTopSystem && (
+              {!hasTopSystem && !isSearching && (
                 <div className="flex items-center gap-1">
                   <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search-flat">
                     <Search className="w-4 h-4" />
@@ -1225,38 +1252,28 @@ export default function TableDetailPage() {
                 </div>
               )}
 
-              {!isSearching && sortedCategoryIds.length > 0 && (
-                <div>
-                  <div className="flex gap-1.5 flex-wrap overflow-hidden" style={{ maxHeight: showAllSubcats ? "none" : "76px" }}>
-                    {sortedCategoryIds.map((catId) => {
-                      const cat = categories.find(c => c.id === Number(catId));
-                      const catName = catId === "sin-categoria" ? "Sin Categoría" : cat?.name || "Categoría";
-                      const isActive = selectedCategoryId === catId;
-                      return (
-                        <button
-                          key={catId}
-                          className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors border ${
-                            isActive
-                              ? "bg-foreground text-background border-foreground"
-                              : "bg-background border-border hover-elevate"
-                          }`}
-                          onClick={() => setSelectedCategoryId(catId)}
-                          data-testid={`chip-category-${catId}`}
-                        >
-                          {catName}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {sortedCategoryIds.length > 8 && (
-                    <button
-                      className="text-xs text-primary font-medium mt-1"
-                      onClick={() => setShowAllSubcats(!showAllSubcats)}
-                      data-testid="button-show-all-subcats"
-                    >
-                      {showAllSubcats ? "Menos" : `Ver más (${sortedCategoryIds.length})`}
-                    </button>
-                  )}
+              {!hasTopSystem && !isSearching && sortedCategoryIds.length > 0 && (
+                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${sortedCategoryIds.length <= 3 ? sortedCategoryIds.length : 2}, 1fr)` }}>
+                  {sortedCategoryIds.map((catId) => {
+                    const cat = categories.find(c => c.id === Number(catId));
+                    const catName = catId === "sin-categoria" ? "Sin Categoría" : cat?.name || "Categoría";
+                    const isActive = selectedCategoryId === catId;
+                    return (
+                      <button
+                        key={catId}
+                        className={`text-center text-sm font-medium transition-colors rounded-md border truncate ${
+                          isActive
+                            ? "bg-foreground text-background border-foreground"
+                            : "bg-background border-border hover-elevate"
+                        }`}
+                        style={{ height: "48px" }}
+                        onClick={() => setSelectedCategoryId(catId)}
+                        data-testid={`chip-category-${catId}`}
+                      >
+                        {catName}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>

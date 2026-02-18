@@ -595,21 +595,33 @@ export async function registerRoutes(
       const tops = [
         { categoryCode: "TOP-COMIDAS", name: "Comidas", parentCategoryCode: null, active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
         { categoryCode: "TOP-BEBIDAS", name: "Bebidas", parentCategoryCode: null, active: true, sortOrder: 1, kdsDestination: "bar", easyMode: false, foodType: "bebidas" },
-        { categoryCode: "TOP-ALCOHOL", name: "Alcohol", parentCategoryCode: null, active: true, sortOrder: 2, kdsDestination: "bar", easyMode: false, foodType: "bebidas" },
-        { categoryCode: "TOP-POSTRES", name: "Postres", parentCategoryCode: null, active: true, sortOrder: 3, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+        { categoryCode: "TOP-POSTRES", name: "Postres", parentCategoryCode: null, active: true, sortOrder: 2, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+      ];
+      const subcats = [
+        { categoryCode: "COM-PLATOS", name: "Platos Fuertes", parentCategoryCode: "TOP-COMIDAS", active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+        { categoryCode: "COM-ANTOJOS", name: "Antojos", parentCategoryCode: "TOP-COMIDAS", active: true, sortOrder: 1, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+        { categoryCode: "COM-CARNES", name: "Carnes", parentCategoryCode: "TOP-COMIDAS", active: true, sortOrder: 2, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+        { categoryCode: "COM-DESAYUNO", name: "Desayuno", parentCategoryCode: "TOP-COMIDAS", active: true, sortOrder: 3, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+        { categoryCode: "BEB-NATURALES", name: "Bebidas Naturales", parentCategoryCode: "TOP-BEBIDAS", active: true, sortOrder: 0, kdsDestination: "bar", easyMode: false, foodType: "bebidas" },
+        { categoryCode: "BEB-GASEOSAS", name: "Gaseosas", parentCategoryCode: "TOP-BEBIDAS", active: true, sortOrder: 1, kdsDestination: "bar", easyMode: false, foodType: "bebidas" },
+        { categoryCode: "BEB-CALIENTES", name: "Bebidas Calientes", parentCategoryCode: "TOP-BEBIDAS", active: true, sortOrder: 2, kdsDestination: "bar", easyMode: false, foodType: "bebidas" },
+        { categoryCode: "BEB-ALCOHOL", name: "Alcohol y Cerveza", parentCategoryCode: "TOP-BEBIDAS", active: true, sortOrder: 3, kdsDestination: "bar", easyMode: false, foodType: "bebidas" },
+        { categoryCode: "POS-DULCES", name: "Postres Dulces", parentCategoryCode: "TOP-POSTRES", active: true, sortOrder: 0, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+        { categoryCode: "POS-SALADOS", name: "Salados", parentCategoryCode: "TOP-POSTRES", active: true, sortOrder: 1, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
+        { categoryCode: "POS-DULCERIA", name: "Dulces", parentCategoryCode: "TOP-POSTRES", active: true, sortOrder: 2, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
       ];
       const existing = await storage.getAllCategories();
       const created: any[] = [];
-      for (const top of tops) {
-        const exists = existing.find(c => c.categoryCode === top.categoryCode);
+      for (const item of [...tops, ...subcats]) {
+        const exists = existing.find(c => c.categoryCode === item.categoryCode);
         if (!exists) {
-          const cat = await storage.createCategory(top);
+          const cat = await storage.createCategory(item);
           created.push(cat);
         } else {
           created.push(exists);
         }
       }
-      res.json({ message: `TOPs base listos (${created.length})`, tops: created });
+      res.json({ message: `TOPs y subcategorías listos (${created.length})`, tops: created.filter((c: any) => c.categoryCode.startsWith("TOP-")), subcategories: created.filter((c: any) => !c.categoryCode.startsWith("TOP-")) });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

@@ -164,6 +164,7 @@ export default function QRClientPage() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedFoodType, setSelectedFoodType] = useState<"bebidas" | "comidas" | "extras">("comidas");
   const [selectedQrTopCode, setSelectedQrTopCode] = useState<string | null>(null);
+  const [selectedQrSubcat, setSelectedQrSubcat] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [pendingProduct, setPendingProduct] = useState<QRProduct | null>(null);
   const [modGroups, setModGroups] = useState<QRModifierGroup[]>([]);
@@ -207,14 +208,37 @@ export default function QRClientPage() {
     }
   }, [hasQrTopSystem, qrTopCategories.length]);
 
+  const subcatsForQrTop = useMemo(() => {
+    if (!hasQrTopSystem || !selectedQrTopCode) return [];
+    const cats = new Map<string, QRProduct[]>();
+    menu.filter(p => p.categoryParentCode === selectedQrTopCode).forEach(p => {
+      const c = p.categoryName || "Otros";
+      if (!cats.has(c)) cats.set(c, []);
+      cats.get(c)!.push(p);
+    });
+    return Array.from(cats.entries()).map(([name, products]) => ({ name, products }));
+  }, [menu, hasQrTopSystem, selectedQrTopCode]);
+
+  useEffect(() => {
+    if (subcatsForQrTop.length > 0) {
+      setSelectedQrSubcat(subcatsForQrTop[0].name);
+    } else {
+      setSelectedQrSubcat(null);
+    }
+  }, [selectedQrTopCode, subcatsForQrTop.length]);
+
   const filteredProducts = useMemo(() => {
     if (hasQrTopSystem && selectedQrTopCode) {
+      if (selectedQrSubcat) {
+        return menu.filter(p => p.categoryParentCode === selectedQrTopCode && p.categoryName === selectedQrSubcat);
+      }
       return menu.filter(p => p.categoryParentCode === selectedQrTopCode);
     }
     return menu.filter(p => (p.categoryFoodType || "comidas") === selectedFoodType);
-  }, [menu, selectedFoodType, hasQrTopSystem, selectedQrTopCode]);
+  }, [menu, selectedFoodType, hasQrTopSystem, selectedQrTopCode, selectedQrSubcat]);
 
   const categoriesForFoodType = useMemo(() => {
+    if (hasQrTopSystem) return [];
     const cats = new Map<string, QRProduct[]>();
     filteredProducts.forEach(p => {
       const c = p.categoryName || "Otros";
@@ -222,7 +246,7 @@ export default function QRClientPage() {
       cats.get(c)!.push(p);
     });
     return Array.from(cats.entries()).map(([name, products]) => ({ name, products }));
-  }, [filteredProducts]);
+  }, [filteredProducts, hasQrTopSystem]);
 
   useEffect(() => {
     if (categoriesForFoodType.length > 0) {
@@ -230,7 +254,7 @@ export default function QRClientPage() {
     } else {
       setExpandedCategory(null);
     }
-  }, [selectedFoodType, selectedQrTopCode, categoriesForFoodType.length]);
+  }, [selectedFoodType, categoriesForFoodType.length]);
 
   const createSubaccountMutation = useMutation({
     mutationFn: async (slotNum?: number) => {
@@ -620,26 +644,50 @@ export default function QRClientPage() {
               </div>
             </div>
             {hasQrTopSystem ? (
-              <div className="flex rounded-md overflow-hidden border mt-3">
-                {qrTopCategories.map((top) => {
-                  const isActive = selectedQrTopCode === top.code;
-                  const colorMap: Record<string, string> = {
-                    "TOP-COMIDAS": isActive ? "bg-emerald-600 text-white dark:bg-emerald-500" : "bg-background",
-                    "TOP-BEBIDAS": isActive ? "bg-blue-600 text-white dark:bg-blue-500" : "bg-background",
-                    "TOP-ALCOHOL": isActive ? "bg-purple-600 text-white dark:bg-purple-500" : "bg-background",
-                    "TOP-POSTRES": isActive ? "bg-rose-600 text-white dark:bg-rose-500" : "bg-background",
-                  };
-                  return (
-                    <button
-                      key={top.code}
-                      className={`flex-1 text-center py-3 text-sm font-semibold transition-colors min-h-[48px] ${colorMap[top.code] || (isActive ? "bg-primary text-primary-foreground" : "bg-background")}`}
-                      onClick={() => setSelectedQrTopCode(top.code)}
-                      data-testid={`button-qr-top-${top.code}`}
-                    >
-                      {top.name}
-                    </button>
-                  );
-                })}
+              <div className="space-y-2 mt-3">
+                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${qrTopCategories.length}, 1fr)` }}>
+                  {qrTopCategories.map((top) => {
+                    const isActive = selectedQrTopCode === top.code;
+                    const colorMap: Record<string, string> = {
+                      "TOP-COMIDAS": isActive ? "bg-emerald-600 text-white border-emerald-600 dark:bg-emerald-500 dark:border-emerald-500" : "bg-background border-border",
+                      "TOP-BEBIDAS": isActive ? "bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500" : "bg-background border-border",
+                      "TOP-POSTRES": isActive ? "bg-rose-600 text-white border-rose-600 dark:bg-rose-500 dark:border-rose-500" : "bg-background border-border",
+                    };
+                    return (
+                      <button
+                        key={top.code}
+                        className={`text-center text-sm font-semibold transition-colors rounded-md border truncate ${colorMap[top.code] || (isActive ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border")}`}
+                        style={{ height: "48px" }}
+                        onClick={() => setSelectedQrTopCode(top.code)}
+                        data-testid={`button-qr-top-${top.code}`}
+                      >
+                        {top.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                {subcatsForQrTop.length > 0 && (
+                  <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${subcatsForQrTop.length <= 3 ? subcatsForQrTop.length : 2}, 1fr)` }}>
+                    {subcatsForQrTop.map(({ name: catName, products: catProducts }) => {
+                      const isActive = selectedQrSubcat === catName;
+                      return (
+                        <button
+                          key={catName}
+                          className={`text-center text-sm font-medium transition-colors rounded-md border truncate ${
+                            isActive
+                              ? "bg-foreground text-background border-foreground"
+                              : "bg-background border-border hover-elevate"
+                          }`}
+                          style={{ height: "48px" }}
+                          onClick={() => setSelectedQrSubcat(catName)}
+                          data-testid={`button-qr-subcat-${catName}`}
+                        >
+                          {catName} ({catProducts.length})
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2 mt-3">
@@ -662,7 +710,31 @@ export default function QRClientPage() {
 
         <div className="flex-1 overflow-y-auto px-4 py-3">
           <div className="max-w-md mx-auto">
-            {categoriesForFoodType.length === 0 ? (
+            {hasQrTopSystem ? (
+              filteredProducts.length === 0 ? (
+                <div className="text-center py-8">
+                  <Utensils className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+                  <p className="text-lg text-muted-foreground">No hay productos disponibles.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {filteredProducts.map(product => {
+                    const inCart = cartItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
+                    const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+                    return (
+                      <ProductCard
+                        key={product.id}
+                        product={product}
+                        inCart={inCart}
+                        outOfStock={outOfStock}
+                        loading={loadingMods}
+                        onSelect={() => handleProductClick(product)}
+                      />
+                    );
+                  })}
+                </div>
+              )
+            ) : categoriesForFoodType.length === 0 ? (
               <div className="text-center py-8">
                 <Utensils className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
                 <p className="text-lg text-muted-foreground">No hay productos disponibles en esta categoría.</p>
