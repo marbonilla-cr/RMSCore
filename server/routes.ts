@@ -172,6 +172,49 @@ export async function registerRoutes(
     })
   );
 
+  // ==================== TEMP MIGRATION ENDPOINT ====================
+  const MIGRATION_KEY = "loyverse-migrate-2026-02-18-xyz";
+  app.post("/api/_migrate/loyverse-ledger", async (req, res) => {
+    try {
+      if (req.headers["x-migration-key"] !== MIGRATION_KEY) return res.status(403).json({ error: "forbidden" });
+      const rows = req.body.rows;
+      if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: "no rows" });
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      let inserted = 0;
+      for (const r of rows) {
+        await db.execute(sql`INSERT INTO sales_ledger_items (id,business_date,created_at,table_id,table_name_snapshot,order_id,order_item_id,product_id,product_code_snapshot,product_name_snapshot,category_id,category_code_snapshot,category_name_snapshot,qty,unit_price,line_subtotal,origin,created_by_user_id,responsible_waiter_id,status,sent_to_kitchen_at,kds_ready_at,paid_at) VALUES (${r.id},${r.business_date},${r.created_at},${r.table_id},${r.table_name_snapshot},${r.order_id},${r.order_item_id},${r.product_id},${r.product_code_snapshot},${r.product_name_snapshot},${r.category_id},${r.category_code_snapshot},${r.category_name_snapshot},${r.qty},${r.unit_price},${r.line_subtotal},${r.origin},${r.created_by_user_id},${r.responsible_waiter_id},${r.status},${r.sent_to_kitchen_at},${r.kds_ready_at},${r.paid_at}) ON CONFLICT (id) DO NOTHING`);
+        inserted++;
+      }
+      res.json({ ok: true, inserted });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+  app.post("/api/_migrate/loyverse-payments", async (req, res) => {
+    try {
+      if (req.headers["x-migration-key"] !== MIGRATION_KEY) return res.status(403).json({ error: "forbidden" });
+      const rows = req.body.rows;
+      if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: "no rows" });
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      let inserted = 0;
+      for (const r of rows) {
+        await db.execute(sql`INSERT INTO payments (id,order_id,split_id,amount,payment_method_id,paid_at,cashier_user_id,status,client_name_snapshot,client_email_snapshot,business_date,voided_by_user_id,voided_at,void_reason) VALUES (${r.id},${r.order_id},${r.split_id},${r.amount},${r.payment_method_id},${r.paid_at},${r.cashier_user_id},${r.status},${r.client_name_snapshot},${r.client_email_snapshot},${r.business_date},${r.voided_by_user_id},${r.voided_at},${r.void_reason}) ON CONFLICT (id) DO NOTHING`);
+        inserted++;
+      }
+      res.json({ ok: true, inserted });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+  app.post("/api/_migrate/update-sequences", async (req, res) => {
+    try {
+      if (req.headers["x-migration-key"] !== MIGRATION_KEY) return res.status(403).json({ error: "forbidden" });
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`SELECT setval(pg_get_serial_sequence('sales_ledger_items', 'id'), (SELECT MAX(id) FROM sales_ledger_items))`);
+      await db.execute(sql`SELECT setval(pg_get_serial_sequence('payments', 'id'), (SELECT MAX(id) FROM payments))`);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // ==================== AUTH ====================
   app.post("/api/auth/login", async (req, res) => {
     try {
