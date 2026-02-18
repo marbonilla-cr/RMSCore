@@ -1,0 +1,95 @@
+Perfecto. Entonces la regla visual queda así, para que Replit no invente:
+	•	TOP (nivel 1): 3 botones idénticos (mismo ancho/alto).
+	•	Subcategorías (nivel 2): botones idénticos entre sí, y si son 4 → se muestran en 2 filas de 2 (todas del mismo tamaño).
+	•	Nada de scroll, nada de wrap. Es grid fijo.
+
+Te dejo el prompt cerrado ya ajustado con esa exigencia de “botones del mismo tamaño por nivel”.
+
+⸻
+
+PROMPT CERRADO PARA REPLIT — TOP + SUBCATEGORÍAS EN GRID FIJO (BOTONES IGUALES) + SIN SCROLL/SIN WRAP + PRODUCTOS SUMAN +1
+
+IMPORTANTE:
+No tocar lógica de orden/cart/ronda, ni endpoints. Solo UI de navegación del menú.
+
+⸻
+
+1) Nivel 1 (TOP) — 3 botones iguales, siempre visibles
+
+Mostrar arriba un grid fijo de 3 columnas:
+
+[ Comidas ] [ Bebidas ] [ Postres ]
+
+Reglas:
+	•	Mismo alto y mismo ancho (3 columnas iguales).
+	•	1 línea de texto con ellipsis si hiciera falta (ideal que quepa).
+	•	Sin scroll.
+
+Implementación:
+	•	display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+	•	button height: 44–52px (tamaño tocable)
+
+⸻
+
+2) Nivel 2 (Subcategorías) — grid fijo, botones iguales, 1 o 2 filas
+
+Al seleccionar TOP, renderizar SOLO sus subcategorías.
+
+2.1 Si son 2 o 3 subcategorías
+	•	1 fila, grid con N columnas:
+	•	2 → repeat(2, 1fr)
+	•	3 → repeat(3, 1fr)
+	•	Botones iguales.
+
+2.2 Si son 4 subcategorías (tu caso típico)
+	•	EXACTAMENTE 2 filas de 2:
+Fila 1: 2 botones
+Fila 2: 2 botones
+	•	Botones iguales.
+
+Implementación:
+	•	display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 44–52px; gap: 8px;
+	•	Orden natural:
+	•	[0],[1] arriba
+	•	[2],[3] abajo
+
+2.3 Regla general si en el futuro son 5 o 6
+	•	5 → fila1: 3, fila2: 2 (pero botones siempre iguales por fila: usar repeat(3, 1fr) y dejar un “slot” vacío alineado o usar layout alterno consistente)
+	•	6 → 3 y 3
+
+No usar wrap. No usar overflow scroll.
+
+⸻
+
+3) Estilo visual (limpio y ordenado)
+	•	Todos los botones por nivel comparten:
+	•	mismo height
+	•	mismo border radius
+	•	mismo padding
+	•	tipografía consistente
+	•	Estado activo:
+	•	fondo destacado + texto contrastado
+	•	Estado inactivo:
+	•	fondo neutro
+	•	Badge conteo opcional a la derecha, pero no altera tamaño del botón (inline badge).
+
+⸻
+
+4) Productos
+
+Debajo, productos por subcategoría en grid full width.
+Al tocar producto:
+	•	solo ejecutar la acción actual de sumar +1 al cart/ronda (sin cambios).
+
+⸻
+
+5) Criterios de aceptación
+	1.	TOP siempre se ve como 3 “teclas” iguales.
+	2.	Subcategorías: si son 4, se ven 2x2 con botones idénticos, sin scroll, sin wrap.
+	3.	Interfaz se ve alineada y simétrica (limpia).
+	4.	Tap en producto suma +1 usando el flujo actual.
+
+⸻
+
+Si querés, te digo el ajuste fino que hace que se vea “premium” sin cambiar nada:
+misma altura (48px), mismo radius (10–12px), gap 8px, y texto en 14–16px bold.
