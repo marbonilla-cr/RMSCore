@@ -15,7 +15,7 @@ import {
   insertInvRecipeLineSchema,
 } from "@shared/schema";
 import { db } from "./db";
-import { invItems } from "@shared/schema";
+import { invItems, products } from "@shared/schema";
 import { eq, and, lt, asc } from "drizzle-orm";
 
 function requirePermission(...permissionKeys: string[]) {
@@ -44,6 +44,15 @@ function broadcast(wss: any, type: string, payload: any) {
 }
 
 export function registerInventoryRoutes(app: Express, wss: any) {
+  app.get("/api/inv/products", requirePermission("INV_VIEW"), async (_req, res) => {
+    try {
+      const allProducts = await db.select().from(products).orderBy(asc(products.name));
+      res.json(allProducts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/inv/items", requirePermission("INV_VIEW"), async (_req, res) => {
     try {
       res.json(await invStorage.getAllInvItems());
@@ -127,6 +136,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
             name,
             category: item.category || "General",
             baseUom: item.baseUom || "UNIT",
+            onHandQtyBase: item.onHandQtyBase || "0",
             reorderPointQtyBase: item.reorderPointQtyBase || "0",
             parLevelQtyBase: item.parLevelQtyBase || "0",
             isPerishable: item.isPerishable || false,

@@ -58,11 +58,30 @@ interface InvItem {
   lastCostPerBaseUom: string;
 }
 
+const UOM_OPTIONS = [
+  { value: "UNIT", label: "UNIT - Unidad" },
+  { value: "KG", label: "KG - Kilogramo" },
+  { value: "G", label: "G - Gramo" },
+  { value: "LB", label: "LB - Libra" },
+  { value: "OZ", label: "OZ - Onza" },
+  { value: "LT", label: "LT - Litro" },
+  { value: "ML", label: "ML - Mililitro" },
+  { value: "GAL", label: "GAL - Galón" },
+  { value: "M", label: "M - Metro" },
+  { value: "CM", label: "CM - Centímetro" },
+  { value: "BOLSA", label: "BOLSA - Bolsa" },
+  { value: "CAJA", label: "CAJA - Caja" },
+  { value: "PAQUETE", label: "PAQUETE - Paquete" },
+  { value: "BOTELLA", label: "BOTELLA - Botella" },
+  { value: "LATA", label: "LATA - Lata" },
+];
+
 const formSchema = z.object({
   sku: z.string().min(1, "SKU requerido"),
   name: z.string().min(1, "Nombre requerido"),
   category: z.string().min(1, "Categoría requerida"),
   baseUom: z.string().min(1, "UOM requerida"),
+  onHandQtyBase: z.string().min(1, "Stock inicial requerido"),
   reorderPointQtyBase: z.string().default("0"),
   parLevelQtyBase: z.string().default("0"),
   isPerishable: z.boolean().default(false),
@@ -94,9 +113,10 @@ function parseImportText(text: string) {
       name: (parts[1] || "").trim(),
       category: (parts[2] || "General").trim(),
       baseUom: (parts[3] || "UNIT").trim(),
-      reorderPointQtyBase: (parts[4] || "0").trim(),
-      parLevelQtyBase: (parts[5] || "0").trim(),
-      isPerishable: (parts[6] || "").trim().toLowerCase() === "true" || (parts[6] || "").trim() === "1",
+      onHandQtyBase: (parts[4] || "0").trim(),
+      reorderPointQtyBase: (parts[5] || "0").trim(),
+      parLevelQtyBase: (parts[6] || "0").trim(),
+      isPerishable: (parts[7] || "").trim().toLowerCase() === "true" || (parts[7] || "").trim() === "1",
     };
   }).filter(item => item.sku && item.name);
 }
@@ -123,6 +143,7 @@ export default function InventoryItems() {
       name: "",
       category: "General",
       baseUom: "UNIT",
+      onHandQtyBase: "",
       reorderPointQtyBase: "0",
       parLevelQtyBase: "0",
       isPerishable: false,
@@ -314,8 +335,9 @@ export default function InventoryItems() {
                   <FormItem>
                     <FormLabel>SKU</FormLabel>
                     <FormControl>
-                      <Input {...field} data-testid="input-sku" />
+                      <Input {...field} placeholder="Ej: ARR-001" data-testid="input-sku" />
                     </FormControl>
+                    <p className="text-xs text-muted-foreground">Código único del insumo</p>
                   </FormItem>
                 )}
               />
@@ -326,7 +348,7 @@ export default function InventoryItems() {
                   <FormItem>
                     <FormLabel>Nombre</FormLabel>
                     <FormControl>
-                      <Input {...field} data-testid="input-name" />
+                      <Input {...field} placeholder="Ej: Arroz Horizonte 5kg" data-testid="input-name" />
                     </FormControl>
                   </FormItem>
                 )}
@@ -337,9 +359,27 @@ export default function InventoryItems() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Categoría</FormLabel>
-                    <FormControl>
-                      <Input {...field} data-testid="input-category" />
-                    </FormControl>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-category">
+                          <SelectValue placeholder="Seleccionar categoría" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="General">General</SelectItem>
+                        <SelectItem value="Carnes">Carnes</SelectItem>
+                        <SelectItem value="Lácteos">Lácteos</SelectItem>
+                        <SelectItem value="Vegetales">Vegetales</SelectItem>
+                        <SelectItem value="Frutas">Frutas</SelectItem>
+                        <SelectItem value="Granos">Granos</SelectItem>
+                        <SelectItem value="Aceites">Aceites</SelectItem>
+                        <SelectItem value="Condimentos">Condimentos</SelectItem>
+                        <SelectItem value="Bebidas">Bebidas</SelectItem>
+                        <SelectItem value="Limpieza">Limpieza</SelectItem>
+                        <SelectItem value="Desechables">Desechables</SelectItem>
+                        <SelectItem value="Otros">Otros</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </FormItem>
                 )}
               />
@@ -349,9 +389,34 @@ export default function InventoryItems() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Unidad Base (UOM)</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-base-uom">
+                          <SelectValue placeholder="Seleccionar unidad" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {UOM_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Unidad en que se mide el stock (ej: KG para arroz, UNIT para botellas)</p>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="onHandQtyBase"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Stock Inicial</FormLabel>
                     <FormControl>
-                      <Input {...field} data-testid="input-base-uom" />
+                      <Input type="number" step="0.01" min="0" {...field} placeholder="Ej: 50" data-testid="input-initial-stock" />
                     </FormControl>
+                    <p className="text-xs text-muted-foreground">Cantidad actual en inventario (en la unidad base seleccionada)</p>
                   </FormItem>
                 )}
               />
@@ -365,6 +430,7 @@ export default function InventoryItems() {
                       <FormControl>
                         <Input type="number" step="0.01" {...field} data-testid="input-reorder-point" />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground">Alerta cuando baje de esta cantidad</p>
                     </FormItem>
                   )}
                 />
@@ -377,6 +443,7 @@ export default function InventoryItems() {
                       <FormControl>
                         <Input type="number" step="0.01" {...field} data-testid="input-par-level" />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground">Cantidad ideal a mantener</p>
                     </FormItem>
                   )}
                 />
@@ -398,9 +465,9 @@ export default function InventoryItems() {
                 name="notes"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Notas</FormLabel>
+                    <FormLabel>Notas (opcional)</FormLabel>
                     <FormControl>
-                      <Textarea {...field} data-testid="input-notes" />
+                      <Textarea {...field} placeholder="Observaciones adicionales..." data-testid="input-notes" />
                     </FormControl>
                   </FormItem>
                 )}
@@ -426,10 +493,10 @@ export default function InventoryItems() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground" data-testid="text-import-instructions">
-              Pegue datos separados por tabulador o coma. Columnas: SKU, Nombre, Categoría, UOM, Punto Reorden, Nivel Par, Perecedero (true/false)
+              Pegue datos separados por tabulador o coma. Columnas: SKU, Nombre, Categoría, UOM, Stock Inicial, Punto Reorden, Nivel Par, Perecedero (true/false)
             </p>
             <Textarea
-              placeholder={"SKU\tNombre\tCategoría\tUOM\tReorden\tParLevel\tPerecederol\nINS-001\tLeche Entera\tLácteos\tLT\t10\t20\tfalse"}
+              placeholder={"SKU\tNombre\tCategoría\tUOM\tStock\tReorden\tParLevel\tPerecedero\nINS-001\tLeche Entera\tLácteos\tLT\t50\t10\t20\tfalse"}
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
               rows={8}
@@ -472,6 +539,7 @@ export default function InventoryItems() {
                       <TableHead>Nombre</TableHead>
                       <TableHead>Categoría</TableHead>
                       <TableHead>UOM</TableHead>
+                      <TableHead>Stock</TableHead>
                       <TableHead>Reorden</TableHead>
                       <TableHead>Par</TableHead>
                       <TableHead>Perec.</TableHead>
@@ -484,6 +552,7 @@ export default function InventoryItems() {
                         <TableCell>{item.name}</TableCell>
                         <TableCell>{item.category}</TableCell>
                         <TableCell>{item.baseUom}</TableCell>
+                        <TableCell>{item.onHandQtyBase}</TableCell>
                         <TableCell>{item.reorderPointQtyBase}</TableCell>
                         <TableCell>{item.parLevelQtyBase}</TableCell>
                         <TableCell>{item.isPerishable ? "Si" : "No"}</TableCell>

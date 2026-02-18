@@ -78,7 +78,7 @@ export default function RecipesPage() {
   const [lineForm, setLineForm] = useState({ invItemId: "", qtyBasePerMenuUnit: "", wastePct: "0" });
 
   const { data: products, isLoading: productsLoading } = useQuery<Product[]>({
-    queryKey: ["/api/products"],
+    queryKey: ["/api/inv/products"],
   });
 
   const { data: invItems } = useQuery<InvItem[]>({
@@ -135,7 +135,7 @@ export default function RecipesPage() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/products"] });
       toast({ title: "Control de inventario actualizado" });
     },
     onError: (error: Error) => {

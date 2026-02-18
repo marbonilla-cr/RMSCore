@@ -424,14 +424,18 @@ export default function PurchaseOrdersPage() {
                       onChange={(e) => setNewLine({ ...newLine, qtyPurchaseUom: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-1 w-24">
+                  <div className="space-y-1 w-28">
                     <Label>UOM</Label>
-                    <Input
-                      data-testid="input-line-uom"
-                      value={newLine.purchaseUom}
-                      onChange={(e) => setNewLine({ ...newLine, purchaseUom: e.target.value })}
-                      placeholder="KG, LB..."
-                    />
+                    <Select value={newLine.purchaseUom} onValueChange={(v) => setNewLine({ ...newLine, purchaseUom: v })}>
+                      <SelectTrigger data-testid="select-line-uom">
+                        <SelectValue placeholder="Unidad" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["UNIT","KG","G","LB","OZ","LT","ML","GAL","BOLSA","CAJA","PAQUETE","BOTELLA","LATA"].map((u) => (
+                          <SelectItem key={u} value={u}>{u}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-1 w-28">
                     <Label>Precio Unit.</Label>
