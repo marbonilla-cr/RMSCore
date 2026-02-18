@@ -142,11 +142,11 @@ export default function HrSettingsPage() {
             Usar mi ubicaci\u00f3n actual
           </Button>
 
-          {values.businessLat !== 0 || values.businessLng !== 0 ? (
+          {(typeof values.businessLat === 'number' && typeof values.businessLng === 'number') && (values.businessLat !== 0 || values.businessLng !== 0) ? (
             <div className="rounded-md border p-3 text-sm text-muted-foreground" data-testid="text-location-coords">
               <div className="flex items-center gap-2">
                 <MapPin className="h-4 w-4 text-green-600 flex-shrink-0" />
-                <span>Ubicaci\u00f3n configurada: {values.businessLat.toFixed(6)}, {values.businessLng.toFixed(6)}</span>
+                <span>Ubicaci\u00f3n configurada: {Number(values.businessLat).toFixed(6)}, {Number(values.businessLng).toFixed(6)}</span>
               </div>
             </div>
           ) : (
