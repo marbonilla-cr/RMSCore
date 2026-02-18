@@ -4,6 +4,8 @@ import { registerRoutes } from "./routes";
 import { createServer } from "http";
 import { ensureSystemPermissions } from "./storage";
 import { startHrBackgroundJobs } from "./hr-jobs";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 
 const app = express();
 const httpServer = createServer(app);
@@ -64,8 +66,48 @@ app.use((req, res, next) => {
   next();
 });
 
+async function runLoyverseTimestampFix() {
+  try {
+    const check = await db.execute(sql`
+      SELECT EXTRACT(HOUR FROM created_at) as raw_hour, COUNT(*) as cnt
+      FROM sales_ledger_items 
+      WHERE origin = 'LOYVERSE_POS' 
+        AND business_date >= '2025-12-01' AND business_date <= '2025-12-31'
+      GROUP BY raw_hour ORDER BY cnt DESC LIMIT 1
+    `);
+    const peakHour = Number(check.rows?.[0]?.raw_hour ?? -1);
+    if (peakHour >= 4 && peakHour <= 12) {
+      console.log(`[MIGRATION] Loyverse timestamps need fix (peak raw hour=${peakHour}). Applying +12h...`);
+      const r1 = await db.execute(sql`
+        UPDATE sales_ledger_items 
+        SET created_at = created_at + INTERVAL '12 hours',
+            paid_at = paid_at + INTERVAL '12 hours',
+            business_date = (((created_at + INTERVAL '12 hours') AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica')::date::text
+        WHERE origin = 'LOYVERSE_POS'
+      `);
+      const r2 = await db.execute(sql`
+        UPDATE payments 
+        SET paid_at = paid_at + INTERVAL '12 hours'
+        WHERE order_id IN (SELECT DISTINCT order_id FROM sales_ledger_items WHERE origin = 'LOYVERSE_POS')
+        AND paid_at IS NOT NULL
+      `);
+      const r3 = await db.execute(sql`
+        UPDATE sales_ledger_items
+        SET category_name_snapshot = regexp_replace(category_name_snapshot, '^\d+-', '')
+        WHERE origin = 'LOYVERSE_POS' AND category_name_snapshot ~ '^\d+-'
+      `);
+      console.log(`[MIGRATION] Done: ledger=${r1.rowCount}, payments=${r2.rowCount}, categories=${r3.rowCount}`);
+    } else {
+      console.log(`[MIGRATION] Loyverse timestamps already correct (peak raw hour=${peakHour}). Skipping.`);
+    }
+  } catch (err) {
+    console.error("[MIGRATION] Loyverse timestamp fix error:", err);
+  }
+}
+
 (async () => {
   await ensureSystemPermissions();
+  await runLoyverseTimestampFix();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
