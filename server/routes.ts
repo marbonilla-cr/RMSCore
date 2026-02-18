@@ -3,6 +3,8 @@ import { createServer, type Server } from "http";
 import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
+import { sql } from "drizzle-orm";
+import { db } from "./db";
 import * as storage from "./storage";
 import { registerInventoryRoutes } from "./inventory-routes";
 import { registerShortageRoutes } from "./shortage-routes";
@@ -4210,6 +4212,26 @@ export async function registerRoutes(
     });
     ws.on("close", () => wsClients.delete(ws));
     ws.on("error", () => wsClients.delete(ws));
+  });
+
+  app.post("/api/admin/fix-loyverse-timestamps", requireRole("MANAGER"), async (_req, res) => {
+    try {
+      const result1 = await db.execute(sql`
+        UPDATE sales_ledger_items 
+        SET created_at = created_at - INTERVAL '6 hours',
+            paid_at = paid_at - INTERVAL '6 hours'
+        WHERE origin = 'LOYVERSE_POS'
+      `);
+      const result2 = await db.execute(sql`
+        UPDATE payments 
+        SET paid_at = paid_at - INTERVAL '6 hours'
+        WHERE order_id IN (SELECT DISTINCT order_id FROM sales_ledger_items WHERE origin = 'LOYVERSE_POS')
+        AND paid_at IS NOT NULL
+      `);
+      res.json({ ok: true, ledgerRows: result1.rowCount, paymentRows: result2.rowCount });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   return httpServer;
