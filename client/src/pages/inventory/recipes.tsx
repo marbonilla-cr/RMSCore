@@ -131,7 +131,7 @@ export default function RecipesPage() {
   const toggleInventoryControl = useMutation({
     mutationFn: async ({ productId, enabled }: { productId: number; enabled: boolean }) => {
       await apiRequest("PATCH", `/api/inv/products/${productId}/inventory-control`, {
-        inventoryControlEnabled: enabled,
+        enabled,
       });
     },
     onSuccess: () => {

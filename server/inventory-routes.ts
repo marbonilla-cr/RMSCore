@@ -387,9 +387,48 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.post("/api/inv/purchase-orders/:id/lines", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
+      const { invItemId, qtyPurchaseUom, purchaseUom, unitPricePerPurchaseUom } = req.body;
+
+      if (!invItemId || !purchaseUom) {
+        return res.status(400).json({ message: "Artículo y UOM son requeridos" });
+      }
+
+      const qtyNum = parseFloat(String(qtyPurchaseUom));
+      const priceNum = parseFloat(String(unitPricePerPurchaseUom));
+      if (isNaN(qtyNum) || qtyNum <= 0) {
+        return res.status(400).json({ message: "Cantidad debe ser un número mayor a 0" });
+      }
+      if (isNaN(priceNum) || priceNum < 0) {
+        return res.status(400).json({ message: "Precio debe ser un número válido" });
+      }
+
+      const uom = String(purchaseUom).trim();
+      const itemId = parseInt(String(invItemId));
+      const item = await invStorage.getInvItem(itemId);
+      if (!item) {
+        return res.status(404).json({ message: "Artículo de inventario no encontrado" });
+      }
+
+      let multiplier = "1";
+      if (uom !== item.baseUom) {
+        const conversions = await invStorage.getUomConversions(item.id);
+        const conv = conversions.find((c: any) => c.fromUom === uom);
+        if (!conv) {
+          return res.status(400).json({ message: `No existe conversión de UOM '${uom}' a '${item.baseUom}'. Agregue la conversión primero en el detalle del insumo.` });
+        }
+        multiplier = conv.multiplier;
+      }
+
+      const qtyBaseExpected = String(qtyNum * parseFloat(multiplier));
+
       const parsed = insertInvPurchaseOrderLineSchema.parse({
-        ...req.body,
         purchaseOrderId: parseInt(req.params.id),
+        invItemId: itemId,
+        qtyPurchaseUom: String(qtyNum),
+        purchaseUom: uom,
+        unitPricePerPurchaseUom: String(priceNum),
+        toBaseMultiplierSnapshot: multiplier,
+        qtyBaseExpected,
       });
       const line = await invStorage.createPurchaseOrderLine(parsed);
       broadcast(wss, "INV_PO_LINE_CREATED", line);

@@ -398,7 +398,10 @@ export default function PurchaseOrdersPage() {
                 <div className="flex gap-2 flex-wrap items-end">
                   <div className="space-y-1 min-w-[180px]">
                     <Label>Artículo</Label>
-                    <Select value={newLine.invItemId} onValueChange={(v) => setNewLine({ ...newLine, invItemId: v })}>
+                    <Select value={newLine.invItemId} onValueChange={(v) => {
+                      const selectedItem = items?.find(i => String(i.id) === v);
+                      setNewLine({ ...newLine, invItemId: v, purchaseUom: selectedItem?.baseUom || newLine.purchaseUom });
+                    }}>
                       <SelectTrigger data-testid="select-line-item">
                         <SelectValue placeholder="Seleccionar artículo" />
                       </SelectTrigger>
