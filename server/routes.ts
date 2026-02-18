@@ -186,7 +186,7 @@ export async function registerRoutes(
       }
       req.session.userId = user.id;
       await storage.createAuditEvent({ actorType: "USER", actorUserId: user.id, action: "LOGIN_PASSWORD", entityType: "USER", entityId: user.id, metadata: {} });
-      const { password: _, pin: _p, pinPlain: _pp, ...safeUser } = user;
+      const { password: _, pin: _p, ...safeUser } = user;
       req.session.save((err) => {
         if (err) return res.status(500).json({ message: "Error de sesión" });
         res.json({ user: { ...safeUser, hasPin: !!user.pin } });
@@ -208,7 +208,7 @@ export async function registerRoutes(
     if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
     const user = await storage.getUser(req.session.userId);
     if (!user) return res.status(401).json({ message: "No autenticado" });
-    const { password: _, pin: _p, pinPlain: _pp, ...safeUser } = user;
+    const { password: _, pin: _p, ...safeUser } = user;
     res.json({ ...safeUser, hasPin: !!user.pin });
   });
 
@@ -230,7 +230,7 @@ export async function registerRoutes(
           await storage.createAuditEvent({ actorType: "USER", actorUserId: u.id, action: "LOGIN_PIN", entityType: "USER", entityId: u.id, metadata: {} });
           const fullUser = await storage.getUser(u.id);
           if (!fullUser) return res.status(500).json({ message: "Error interno" });
-          const { password: _, pin: _p, pinPlain: _pp, ...safeUser } = fullUser;
+          const { password: _, pin: _p, ...safeUser } = fullUser;
           return req.session.save((err) => {
             if (err) return res.status(500).json({ message: "Error de sesión" });
             res.json({ user: { ...safeUser, hasPin: true } });
@@ -451,7 +451,7 @@ export async function registerRoutes(
     const allUsers = await storage.getAllUsers();
     const safe = allUsers.map(u => {
       const { password: _, pin: _p, ...rest } = u;
-      return { ...rest, hasPin: !!u.pin, pinPlain: u.pinPlain || null };
+      return { ...rest, hasPin: !!u.pin };
     });
     res.json(safe);
   });
@@ -465,8 +465,8 @@ export async function registerRoutes(
       const existing = await storage.getUserByUsername(username);
       if (existing) return res.status(400).json({ message: "Username ya existe" });
       const user = await storage.createUser({ username, password, displayName, role, active: active !== false, email: email || null, dailyRate: dailyRate || null });
-      const { password: _, pin: _p, pinPlain: _pp, ...safeUser } = user;
-      res.json({ ...safeUser, hasPin: !!user.pin, pinPlain: user.pinPlain || null });
+      const { password: _, pin: _p, ...safeUser } = user;
+      res.json({ ...safeUser, hasPin: !!user.pin });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
@@ -492,8 +492,8 @@ export async function registerRoutes(
         await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "USER_DISABLED", entityType: "USER", entityId: id, metadata: {} });
       }
       const user = await storage.updateUser(id, updates);
-      const { password: _, pin: _p, pinPlain: _pp, ...safeUser } = user;
-      res.json({ ...safeUser, hasPin: !!user.pin, pinPlain: user.pinPlain || null });
+      const { password: _, pin: _p, ...safeUser } = user;
+      res.json({ ...safeUser, hasPin: !!user.pin });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }

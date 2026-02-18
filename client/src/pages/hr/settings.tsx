@@ -132,39 +132,28 @@ export default function HrSettingsPage() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <Label htmlFor="businessLat">Latitud</Label>
-              <Input
-                id="businessLat"
-                data-testid="input-businessLat"
-                type="number"
-                step="any"
-                value={values.businessLat}
-                onChange={(e) => handleNumberChange("businessLat", e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="businessLng">Longitud</Label>
-              <Input
-                id="businessLng"
-                data-testid="input-businessLng"
-                type="number"
-                step="any"
-                value={values.businessLng}
-                onChange={(e) => handleNumberChange("businessLng", e.target.value)}
-              />
-            </div>
-          </div>
-
           <Button
             variant="outline"
             data-testid="button-use-location"
             onClick={useCurrentLocation}
+            className="w-full"
           >
             <MapPin className="mr-2 h-4 w-4" />
-            Usar mi ubicación actual
+            Usar mi ubicaci\u00f3n actual
           </Button>
+
+          {values.businessLat !== 0 || values.businessLng !== 0 ? (
+            <div className="rounded-md border p-3 text-sm text-muted-foreground" data-testid="text-location-coords">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-green-600 flex-shrink-0" />
+                <span>Ubicaci\u00f3n configurada: {values.businessLat.toFixed(6)}, {values.businessLng.toFixed(6)}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground" data-testid="text-no-location">
+              No hay ubicaci\u00f3n configurada. Presione el bot\u00f3n para usar su GPS.
+            </p>
+          )}
 
           <div className="space-y-1">
             <Label htmlFor="geoRadiusMeters">Radio permitido (metros)</Label>

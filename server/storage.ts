@@ -91,12 +91,12 @@ export async function verifyPassword(password: string, hash: string) {
 // PIN Auth
 export async function enrollPin(userId: number, pin: string) {
   const hash = await bcrypt.hash(pin, 10);
-  const [user] = await db.update(users).set({ pin: hash, pinPlain: pin, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
+  const [user] = await db.update(users).set({ pin: hash, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
   return user;
 }
 
 export async function resetPin(userId: number) {
-  const [user] = await db.update(users).set({ pin: null, pinPlain: null, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
+  const [user] = await db.update(users).set({ pin: null, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
   return user;
 }
 

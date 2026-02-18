@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Users, Loader2, KeyRound, Lock, ShieldCheck, ShieldOff, RefreshCw, Copy } from "lucide-react";
+import { Plus, Pencil, Users, Loader2, Lock, ShieldCheck, ShieldOff, RefreshCw, Copy } from "lucide-react";
 
 interface Employee {
   id: number;
@@ -20,7 +20,6 @@ interface Employee {
   active: boolean;
   email: string | null;
   hasPin: boolean;
-  pinPlain: string | null;
   createdAt: string;
   dailyRate: string | null;
 }
@@ -332,7 +331,7 @@ export default function AdminEmployeesPage() {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Comunique este PIN al empleado. El PIN se muestra en la lista de empleados.
+              Comunique este PIN al empleado. No se podr\u00e1 consultar despu\u00e9s.
             </p>
           </div>
         </DialogContent>
@@ -392,14 +391,7 @@ export default function AdminEmployeesPage() {
 
                 <div className="mt-2 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    {emp.hasPin && emp.pinPlain ? (
-                      <div className="flex items-center gap-1.5">
-                        <KeyRound className="w-3.5 h-3.5 text-green-600" />
-                        <span className="font-mono text-sm font-bold tracking-widest" data-testid={`text-employee-pin-${emp.id}`}>
-                          {emp.pinPlain}
-                        </span>
-                      </div>
-                    ) : emp.hasPin ? (
+                    {emp.hasPin ? (
                       <div className="flex items-center gap-1.5">
                         <ShieldCheck className="w-3.5 h-3.5 text-green-600" />
                         <span className="text-xs text-muted-foreground">PIN asignado</span>
