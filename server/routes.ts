@@ -4218,17 +4218,28 @@ export async function registerRoutes(
     try {
       const result1 = await db.execute(sql`
         UPDATE sales_ledger_items 
-        SET created_at = created_at - INTERVAL '6 hours',
-            paid_at = paid_at - INTERVAL '6 hours'
+        SET created_at = created_at + INTERVAL '12 hours',
+            paid_at = paid_at + INTERVAL '12 hours',
+            business_date = (((created_at + INTERVAL '12 hours') AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica')::date::text
         WHERE origin = 'LOYVERSE_POS'
       `);
       const result2 = await db.execute(sql`
         UPDATE payments 
-        SET paid_at = paid_at - INTERVAL '6 hours'
+        SET paid_at = paid_at + INTERVAL '12 hours'
         WHERE order_id IN (SELECT DISTINCT order_id FROM sales_ledger_items WHERE origin = 'LOYVERSE_POS')
         AND paid_at IS NOT NULL
       `);
-      res.json({ ok: true, ledgerRows: result1.rowCount, paymentRows: result2.rowCount });
+      const result3 = await db.execute(sql`
+        UPDATE sales_ledger_items
+        SET category_name_snapshot = regexp_replace(category_name_snapshot, '^\d+-', '')
+        WHERE origin = 'LOYVERSE_POS' AND category_name_snapshot ~ '^\d+-'
+      `);
+      res.json({ 
+        ok: true, 
+        ledgerTimestampRows: result1.rowCount, 
+        paymentRows: result2.rowCount,
+        categoryCleanupRows: result3.rowCount
+      });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
