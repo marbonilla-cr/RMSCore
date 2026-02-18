@@ -544,7 +544,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/role-permissions", requireRole("MANAGER"), async (_req, res) => {
-    const roles = ["MANAGER", "CASHIER", "WAITER", "KITCHEN", "STAFF"];
+    const roles = ["MANAGER", "FARM_MANAGER", "CASHIER", "WAITER", "KITCHEN", "STAFF"];
     const result: Record<string, string[]> = {};
     for (const role of roles) {
       result[role] = await storage.getPermissionKeysForRole(role);

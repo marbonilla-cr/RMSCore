@@ -14,8 +14,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Plus, Pencil, Users, Loader2 } from "lucide-react";
 import type { User } from "@shared/schema";
 
-const ROLES = ["WAITER", "KITCHEN", "CASHIER", "MANAGER"];
-const ROLE_LABELS: Record<string, string> = { WAITER: "Salonero", KITCHEN: "Cocina", CASHIER: "Cajero", MANAGER: "Gerente" };
+const ROLES = ["WAITER", "KITCHEN", "CASHIER", "MANAGER", "FARM_MANAGER"];
+const ROLE_LABELS: Record<string, string> = { WAITER: "Salonero", KITCHEN: "Cocina", CASHIER: "Cajero", MANAGER: "Gerente", FARM_MANAGER: "Gerente Granja" };
 
 export default function AdminUsersPage() {
   const { toast } = useToast();

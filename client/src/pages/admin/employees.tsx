@@ -24,9 +24,10 @@ interface Employee {
   dailyRate: string | null;
 }
 
-const ROLES = ["MANAGER", "CASHIER", "WAITER", "KITCHEN", "STAFF"];
+const ROLES = ["MANAGER", "FARM_MANAGER", "CASHIER", "WAITER", "KITCHEN", "STAFF"];
 const ROLE_LABELS: Record<string, string> = {
   MANAGER: "Gerente",
+  FARM_MANAGER: "Gerente Granja",
   CASHIER: "Cajero",
   WAITER: "Salonero",
   KITCHEN: "Cocina",
