@@ -40,7 +40,7 @@ import {
 } from "@/components/ui/form";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, Plus, Search } from "lucide-react";
+import { Loader2, Plus, Search, Upload } from "lucide-react";
 
 interface InvItem {
   id: number;
@@ -79,12 +79,38 @@ function stockBadge(onHand: string, reorderPoint: string) {
   return <Badge className="bg-green-600 text-white" data-testid="badge-stock-green">OK</Badge>;
 }
 
+function parseImportText(text: string) {
+  const lines = text.trim().split("\n").filter(l => l.trim());
+  if (lines.length === 0) return [];
+
+  const firstLine = lines[0].toLowerCase();
+  const hasHeader = firstLine.includes("sku") || firstLine.includes("nombre") || firstLine.includes("name");
+  const dataLines = hasHeader ? lines.slice(1) : lines;
+
+  return dataLines.map(line => {
+    const parts = line.split("\t").length > 1 ? line.split("\t") : line.split(",");
+    return {
+      sku: (parts[0] || "").trim(),
+      name: (parts[1] || "").trim(),
+      category: (parts[2] || "General").trim(),
+      baseUom: (parts[3] || "UNIT").trim(),
+      reorderPointQtyBase: (parts[4] || "0").trim(),
+      parLevelQtyBase: (parts[5] || "0").trim(),
+      isPerishable: (parts[6] || "").trim().toLowerCase() === "true" || (parts[6] || "").trim() === "1",
+    };
+  }).filter(item => item.sku && item.name);
+}
+
 export default function InventoryItems() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("__all__");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importPreview, setImportPreview] = useState<any[]>([]);
+  const [importResults, setImportResults] = useState<{created: number; skipped: number; errors: string[]} | null>(null);
 
   const { data: items, isLoading } = useQuery<InvItem[]>({
     queryKey: ["/api/inv/items"],
@@ -116,6 +142,21 @@ export default function InventoryItems() {
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const importMutation = useMutation({
+    mutationFn: async (importItems: any[]) => {
+      const res = await apiRequest("POST", "/api/inv/items/bulk-import", { items: importItems });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setImportResults(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+      toast({ title: `Importación completada: ${data.created} creados, ${data.skipped} omitidos` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error en importación", description: err.message, variant: "destructive" });
     },
   });
 
@@ -153,10 +194,16 @@ export default function InventoryItems() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap">
           <CardTitle className="text-lg" data-testid="text-page-title">Insumos</CardTitle>
-          <Button onClick={() => setDialogOpen(true)} data-testid="button-create-item">
-            <Plus className="h-4 w-4 mr-2" />
-            Nuevo Insumo
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" onClick={() => { setImportOpen(true); setImportText(""); setImportPreview([]); setImportResults(null); }} data-testid="button-import-items">
+              <Upload className="h-4 w-4 mr-2" />
+              Importar
+            </Button>
+            <Button onClick={() => setDialogOpen(true)} data-testid="button-create-item">
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Insumo
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
@@ -369,6 +416,104 @@ export default function InventoryItems() {
               </div>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle data-testid="text-import-dialog-title">Importar Insumos</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground" data-testid="text-import-instructions">
+              Pegue datos separados por tabulador o coma. Columnas: SKU, Nombre, Categoría, UOM, Punto Reorden, Nivel Par, Perecedero (true/false)
+            </p>
+            <Textarea
+              placeholder={"SKU\tNombre\tCategoría\tUOM\tReorden\tParLevel\tPerecederol\nINS-001\tLeche Entera\tLácteos\tLT\t10\t20\tfalse"}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              rows={8}
+              data-testid="textarea-import-data"
+            />
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const parsed = parseImportText(importText);
+                  setImportPreview(parsed);
+                  setImportResults(null);
+                  if (parsed.length === 0) {
+                    toast({ title: "No se encontraron items válidos", variant: "destructive" });
+                  }
+                }}
+                disabled={!importText.trim()}
+                data-testid="button-analyze-import"
+              >
+                Analizar
+              </Button>
+              {importPreview.length > 0 && (
+                <Button
+                  onClick={() => importMutation.mutate(importPreview)}
+                  disabled={importMutation.isPending}
+                  data-testid="button-execute-import"
+                >
+                  {importMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                  Importar {importPreview.length} items
+                </Button>
+              )}
+            </div>
+
+            {importPreview.length > 0 && !importResults && (
+              <div className="overflow-x-auto">
+                <Table data-testid="table-import-preview">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>SKU</TableHead>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead>Categoría</TableHead>
+                      <TableHead>UOM</TableHead>
+                      <TableHead>Reorden</TableHead>
+                      <TableHead>Par</TableHead>
+                      <TableHead>Perec.</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importPreview.map((item, idx) => (
+                      <TableRow key={idx} data-testid={`row-import-preview-${idx}`}>
+                        <TableCell className="font-mono text-sm">{item.sku}</TableCell>
+                        <TableCell>{item.name}</TableCell>
+                        <TableCell>{item.category}</TableCell>
+                        <TableCell>{item.baseUom}</TableCell>
+                        <TableCell>{item.reorderPointQtyBase}</TableCell>
+                        <TableCell>{item.parLevelQtyBase}</TableCell>
+                        <TableCell>{item.isPerishable ? "Si" : "No"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            {importResults && (
+              <Card data-testid="card-import-results">
+                <CardContent className="p-4 space-y-2">
+                  <p className="font-medium" data-testid="text-import-results-summary">
+                    Creados: {importResults.created} | Omitidos: {importResults.skipped}
+                  </p>
+                  {importResults.errors.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-destructive">Errores:</p>
+                      <ul className="text-sm text-muted-foreground space-y-1">
+                        {importResults.errors.map((err, idx) => (
+                          <li key={idx} data-testid={`text-import-error-${idx}`}>{err}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

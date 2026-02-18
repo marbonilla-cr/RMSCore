@@ -36,6 +36,11 @@ export async function getInvItem(id: number) {
   return item;
 }
 
+export async function getInvItemBySku(sku: string) {
+  const [item] = await db.select().from(invItems).where(eq(invItems.sku, sku)).limit(1);
+  return item || null;
+}
+
 export async function createInvItem(data: InsertInvItem) {
   const [item] = await db.insert(invItems).values(data).returning();
   return item;

@@ -112,6 +112,31 @@ function getBusinessDate(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
 }
 
+async function sendHrAlertEmail(settings: any, subject: string, textBody: string) {
+  try {
+    if (!settings?.lateAlertEmailTo) return;
+    const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPass = process.env.SMTP_PASS;
+    if (!smtpHost || !smtpUser || !smtpPass) return;
+    const nodemailer = await import("nodemailer");
+    const transporter = (nodemailer.default || nodemailer).createTransport({
+      host: smtpHost,
+      port: Number(process.env.SMTP_PORT || "587"),
+      secure: process.env.SMTP_SECURE === "true",
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || smtpUser,
+      to: settings.lateAlertEmailTo,
+      subject,
+      text: textBody,
+    });
+  } catch (err) {
+    console.error("[HR] Failed to send alert email:", err);
+  }
+}
+
 function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000;
   const toRad = (deg: number) => deg * Math.PI / 180;
@@ -325,7 +350,6 @@ export async function registerRoutes(
 
       if (action === "clock_out") {
         const openPunch = await storage.getOpenPunchForEmployee(employeeId);
-        if (!openPunch) return res.status(404).json({ message: "No hay entrada abierta para marcar salida" });
 
         let geoVerified = false;
         if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockout && settings.businessLat && settings.businessLng) {
@@ -338,6 +362,38 @@ export async function registerRoutes(
             return res.status(403).json({ message: `Fuera del rango permitido (${Math.round(distance)}m)` });
           }
           geoVerified = true;
+        }
+
+        const user = await storage.getUser(employeeId);
+
+        if (!openPunch) {
+          const businessDate = getBusinessDate();
+          const punchData: any = {
+            employeeId,
+            businessDate,
+            clockInAt: now,
+            clockOutAt: now,
+            clockOutType: "MANUAL",
+            workedMinutes: 0,
+            notes: "Salida sin entrada registrada - requiere corrección manual de hora de entrada",
+            clockinGeoVerified: false,
+            clockoutGeoLat: lat ? String(lat) : null,
+            clockoutGeoLng: lng ? String(lng) : null,
+            clockoutGeoAccuracyM: accuracy ? String(accuracy) : null,
+            clockoutGeoVerified: geoVerified,
+          };
+          const newPunch = await storage.createTimePunch(punchData);
+          await storage.createAuditEvent({
+            actorType: "USER", actorUserId: employeeId,
+            action: "CLOCK_OUT_WITHOUT_ENTRY", entityType: "HR_PUNCH", entityId: newPunch.id,
+            metadata: { note: "Employee clocked out without prior clock-in" },
+          });
+          sendHrAlertEmail(settings,
+            `[Sin Entrada] ${user?.displayName || "Empleado"} - Salida sin marca de entrada`,
+            `${user?.displayName || "Empleado"} marcó salida el ${businessDate} sin haber registrado entrada.\nSe requiere corrección manual de la hora de entrada.`
+          );
+          broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+          return res.json({ punch: newPunch, displayName: user?.displayName || "Empleado", action: "clock_out", workedMinutes: 0, missingClockIn: true });
         }
 
         const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
@@ -363,7 +419,6 @@ export async function registerRoutes(
         });
 
         broadcast("hr_punch_update", { employeeId, type: "clock_out" });
-        const user = await storage.getUser(employeeId);
         return res.json({ punch: updatedPunch, displayName: user?.displayName || "Empleado", action: "clock_out", workedMinutes });
       }
     } catch (err: any) {
@@ -403,13 +458,13 @@ export async function registerRoutes(
 
   app.post("/api/admin/employees", requireRole("MANAGER"), async (req, res) => {
     try {
-      const { username, password, displayName, role, active, email } = req.body;
+      const { username, password, displayName, role, active, email, dailyRate } = req.body;
       if (!username || !password || !displayName || !role) {
         return res.status(400).json({ message: "Campos requeridos: username, password, displayName, role" });
       }
       const existing = await storage.getUserByUsername(username);
       if (existing) return res.status(400).json({ message: "Username ya existe" });
-      const user = await storage.createUser({ username, password, displayName, role, active: active !== false, email: email || null });
+      const user = await storage.createUser({ username, password, displayName, role, active: active !== false, email: email || null, dailyRate: dailyRate || null });
       const { password: _, pin: _p, pinPlain: _pp, ...safeUser } = user;
       res.json({ ...safeUser, hasPin: !!user.pin, pinPlain: user.pinPlain || null });
     } catch (err: any) {
@@ -426,6 +481,7 @@ export async function registerRoutes(
       if (role !== undefined) updates.role = role;
       if (active !== undefined) updates.active = active;
       if (email !== undefined) updates.email = email;
+      if (req.body.dailyRate !== undefined) updates.dailyRate = req.body.dailyRate;
       if (username !== undefined) {
         const existing = await storage.getUserByUsername(username);
         if (existing && existing.id !== id) return res.status(400).json({ message: "Username ya existe" });
@@ -3692,26 +3748,12 @@ export async function registerRoutes(
         metadata: { lateMinutes, geoVerified },
       });
       
-      // Send late alert email if late
-      if (lateMinutes > 0 && settings?.lateAlertEmailTo) {
-        try {
-          const user = await storage.getUser(employeeId);
-          const nodemailer = await import("nodemailer");
-          const transporter = nodemailer.createTransport({
-            host: process.env.SMTP_HOST || "smtp.gmail.com",
-            port: Number(process.env.SMTP_PORT) || 587,
-            secure: false,
-            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-          });
-          await transporter.sendMail({
-            from: process.env.SMTP_USER,
-            to: settings.lateAlertEmailTo,
-            subject: `[Tardía] ${user?.displayName || "Empleado"} - ${lateMinutes} min tarde`,
-            text: `${user?.displayName} marcó entrada ${lateMinutes} minutos tarde el ${businessDate}.\nHora programada: ${scheduledStartAt?.toLocaleTimeString("es-CR") || "N/A"}\nHora de entrada: ${now.toLocaleTimeString("es-CR")}`,
-          });
-        } catch (emailErr) {
-          console.error("[HR] Failed to send late alert email:", emailErr);
-        }
+      if (lateMinutes > 0) {
+        const user = await storage.getUser(employeeId);
+        sendHrAlertEmail(settings,
+          `[Tardía] ${user?.displayName || "Empleado"} - ${lateMinutes} min tarde`,
+          `${user?.displayName || "Empleado"} marcó entrada ${lateMinutes} minutos tarde el ${businessDate}.\nHora programada: ${scheduledStartAt?.toLocaleTimeString("es-CR") || "N/A"}\nHora de entrada: ${now.toLocaleTimeString("es-CR")}`
+        );
       }
       
       broadcast("hr_punch_update", { employeeId, type: "clock_in" });
@@ -3728,7 +3770,6 @@ export async function registerRoutes(
       const { lat, lng, accuracy } = req.body;
       
       const openPunch = await storage.getOpenPunchForEmployee(employeeId);
-      if (!openPunch) return res.status(404).json({ message: "No hay entrada abierta para marcar salida" });
       
       const settings = await storage.getHrSettings();
       const now = new Date();
@@ -3744,6 +3785,37 @@ export async function registerRoutes(
           return res.status(403).json({ message: `Fuera del rango permitido (${Math.round(distance)}m de ${settings.geoRadiusMeters || 120}m). Solicite override al gerente.` });
         }
         geoVerified = true;
+      }
+
+      if (!openPunch) {
+        const businessDate = getBusinessDate();
+        const punchData: any = {
+          employeeId,
+          businessDate,
+          clockInAt: now,
+          clockOutAt: now,
+          clockOutType: "MANUAL",
+          workedMinutes: 0,
+          notes: "Salida sin entrada registrada - requiere corrección manual de hora de entrada",
+          clockinGeoVerified: false,
+          clockoutGeoLat: lat ? String(lat) : null,
+          clockoutGeoLng: lng ? String(lng) : null,
+          clockoutGeoAccuracyM: accuracy ? String(accuracy) : null,
+          clockoutGeoVerified: geoVerified,
+        };
+        const newPunch = await storage.createTimePunch(punchData);
+        await storage.createAuditEvent({
+          actorType: "USER", actorUserId: employeeId,
+          action: "CLOCK_OUT_WITHOUT_ENTRY", entityType: "HR_PUNCH", entityId: newPunch.id,
+          metadata: { note: "Employee clocked out without prior clock-in" },
+        });
+        const user = await storage.getUser(employeeId);
+        sendHrAlertEmail(settings,
+          `[Sin Entrada] ${user?.displayName || "Empleado"} - Salida sin marca de entrada`,
+          `${user?.displayName || "Empleado"} marcó salida el ${businessDate} sin haber registrado entrada.\nSe requiere corrección manual de la hora de entrada.`
+        );
+        broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+        return res.json(newPunch);
       }
       
       const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
@@ -3787,6 +3859,7 @@ export async function registerRoutes(
       
       const now = new Date();
       const businessDate = getBusinessDate();
+      const settings = await storage.getHrSettings();
       
       if (action === "clock_in") {
         const openPunch = await storage.getOpenPunchForEmployee(employeeId);
@@ -3815,7 +3888,33 @@ export async function registerRoutes(
       
       if (action === "clock_out") {
         const openPunch = await storage.getOpenPunchForEmployee(employeeId);
-        if (!openPunch) return res.status(404).json({ message: "No hay entrada abierta" });
+        
+        if (!openPunch) {
+          const punchData: any = {
+            employeeId,
+            businessDate,
+            clockInAt: now,
+            clockOutAt: now,
+            clockOutType: "OVERRIDE",
+            workedMinutes: 0,
+            notes: `Override por gerente: ${reason || "Sin razón"} - Salida sin entrada registrada`,
+            clockinGeoVerified: false,
+            clockoutGeoVerified: false,
+          };
+          const newPunch = await storage.createTimePunch(punchData);
+          await storage.createAuditEvent({
+            actorType: "USER", actorUserId: req.session.userId!,
+            action: "CLOCK_OUT_WITHOUT_ENTRY", entityType: "HR_PUNCH", entityId: newPunch.id,
+            metadata: { targetEmployeeId: employeeId, reason, note: "Override clock-out without prior clock-in" },
+          });
+          const targetUser = await storage.getUser(employeeId);
+          sendHrAlertEmail(settings,
+            `[Sin Entrada] ${targetUser?.displayName || "Empleado"} - Override salida sin entrada`,
+            `${targetUser?.displayName || "Empleado"} recibió override de salida el ${businessDate} sin haber registrado entrada.\nRazón: ${reason || "Sin razón"}\nSe requiere corrección manual de la hora de entrada.`
+          );
+          broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+          return res.json(newPunch);
+        }
         
         const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
         const workedMinutes = Math.floor(workedMs / 60000);

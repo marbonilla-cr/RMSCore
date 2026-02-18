@@ -50,7 +50,7 @@ interface OpenPunch {
 
 interface Employee {
   id: number;
-  name: string;
+  displayName: string;
 }
 
 function todayStr(): string {
@@ -103,7 +103,7 @@ export default function PunchesPage() {
   const employeeMap = new Map<number, string>();
   if (employees) {
     for (const emp of employees) {
-      employeeMap.set(emp.id, emp.name);
+      employeeMap.set(emp.id, emp.displayName);
     }
   }
 
@@ -245,7 +245,7 @@ export default function PunchesPage() {
                 <SelectContent>
                   {employees?.map((emp) => (
                     <SelectItem key={emp.id} value={String(emp.id)} data-testid={`option-employee-${emp.id}`}>
-                      {emp.name}
+                      {emp.displayName}
                     </SelectItem>
                   ))}
                 </SelectContent>

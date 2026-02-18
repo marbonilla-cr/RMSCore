@@ -96,6 +96,56 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     }
   });
 
+  app.post("/api/inv/items/bulk-import", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
+    try {
+      const { items: importItems } = req.body;
+      if (!Array.isArray(importItems) || importItems.length === 0) {
+        return res.status(400).json({ message: "Se requiere un array de items" });
+      }
+      if (importItems.length > 500) {
+        return res.status(400).json({ message: "Máximo 500 items por importación" });
+      }
+      
+      const results: { created: number; skipped: number; errors: string[] } = { created: 0, skipped: 0, errors: [] };
+      
+      for (const item of importItems) {
+        try {
+          const sku = String(item.sku || "").trim().toUpperCase();
+          const name = String(item.name || "").trim();
+          if (!sku || !name) {
+            results.errors.push(`Item sin SKU o nombre: ${JSON.stringify(item).slice(0, 100)}`);
+            results.skipped++;
+            continue;
+          }
+          const existing = await invStorage.getInvItemBySku(sku);
+          if (existing) {
+            results.skipped++;
+            continue;
+          }
+          const parsed = insertInvItemSchema.parse({
+            sku,
+            name,
+            category: item.category || "General",
+            baseUom: item.baseUom || "UNIT",
+            reorderPointQtyBase: item.reorderPointQtyBase || "0",
+            parLevelQtyBase: item.parLevelQtyBase || "0",
+            isPerishable: item.isPerishable || false,
+            notes: item.notes || null,
+          });
+          await invStorage.createInvItem(parsed);
+          results.created++;
+        } catch (itemErr: any) {
+          results.errors.push(`SKU ${item.sku}: ${itemErr.message}`);
+          results.skipped++;
+        }
+      }
+      
+      res.json(results);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   app.get("/api/inv/items/:id/uom-conversions", requirePermission("INV_VIEW"), async (req, res) => {
     try {
       res.json(await invStorage.getUomConversions(parseInt(req.params.id)));

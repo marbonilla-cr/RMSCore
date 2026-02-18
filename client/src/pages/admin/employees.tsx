@@ -22,6 +22,7 @@ interface Employee {
   hasPin: boolean;
   pinPlain: string | null;
   createdAt: string;
+  dailyRate: string | null;
 }
 
 const ROLES = ["MANAGER", "CASHIER", "WAITER", "KITCHEN", "STAFF"];
@@ -49,6 +50,7 @@ export default function AdminEmployeesPage() {
     displayName: "",
     role: "WAITER",
     email: "",
+    dailyRate: "",
     active: true,
   });
 
@@ -134,7 +136,7 @@ export default function AdminEmployeesPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ username: "", password: "", displayName: "", role: "WAITER", email: "", active: true });
+    setForm({ username: "", password: "", displayName: "", role: "WAITER", email: "", dailyRate: "", active: true });
     setOpen(true);
   };
 
@@ -146,6 +148,7 @@ export default function AdminEmployeesPage() {
       displayName: emp.displayName,
       role: emp.role,
       email: emp.email || "",
+      dailyRate: emp.dailyRate || "",
       active: emp.active,
     });
     setOpen(true);
@@ -164,6 +167,8 @@ export default function AdminEmployeesPage() {
       delete payload.password;
     }
     if (!payload.email) delete payload.email;
+    if (!payload.dailyRate) payload.dailyRate = null;
+    else payload.dailyRate = String(payload.dailyRate);
     saveMutation.mutate(payload);
   };
 
@@ -249,6 +254,18 @@ export default function AdminEmployeesPage() {
                   type="email"
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Salario Diario (₡)</Label>
+                <Input
+                  data-testid="input-employee-daily-rate"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.dailyRate}
+                  onChange={(e) => setForm({ ...form, dailyRate: e.target.value })}
+                  placeholder="0.00"
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -353,6 +370,11 @@ export default function AdminEmployeesPage() {
                       <p className="text-xs text-muted-foreground" data-testid={`text-employee-username-${emp.id}`}>
                         @{emp.username}
                       </p>
+                      {emp.dailyRate && (
+                        <p className="text-xs text-muted-foreground" data-testid={`text-employee-salary-${emp.id}`}>
+                          Salario: ₡{Number(emp.dailyRate).toLocaleString("es-CR")} / día
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap">
