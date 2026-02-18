@@ -11,7 +11,7 @@ const MIGRATION_KEY = "loyverse-migrate-2026-02-18-xyz";
 const ORDER_ID_OFFSET = 200;
 const PROD_MAX_ORDER_ID = 121;
 const PROD_MAX_PAYMENT_ID = 111;
-const BATCH_SIZE = 300;
+const BATCH_SIZE = 1000;
 
 const offset = PROD_MAX_ORDER_ID + ORDER_ID_OFFSET;
 
