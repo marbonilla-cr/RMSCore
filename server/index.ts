@@ -4,9 +4,7 @@ import { registerRoutes } from "./routes";
 import { createServer } from "http";
 import { ensureSystemPermissions } from "./storage";
 import { startHrBackgroundJobs } from "./hr-jobs";
-import { db } from "./db";
 import { pool } from "./db";
-import { sql } from "drizzle-orm";
 import fs from "fs";
 
 const app = express();
@@ -111,27 +109,10 @@ function mapPaymentCode(code: string): number {
 
 async function runLoyverseReimport() {
   try {
-    const check = await db.execute(sql`
-      SELECT EXTRACT(HOUR FROM (created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica') as cr_hour, COUNT(*) as cnt
-      FROM sales_ledger_items 
-      WHERE origin = 'LOYVERSE_POS' 
-        AND business_date >= '2025-12-01' AND business_date <= '2025-12-31'
-      GROUP BY cr_hour ORDER BY cnt DESC LIMIT 1
-    `);
-    const peakHour = Number(check.rows?.[0]?.cr_hour ?? -1);
-    const totalRows = Number(check.rows?.[0]?.cnt ?? 0);
-
-    if (totalRows === 0) {
-      console.log("[REIMPORT] No LOYVERSE_POS data found. Importing from CSVs...");
-    } else if (peakHour >= 10 && peakHour <= 17) {
-      console.log(`[REIMPORT] Data already correct (peak CR hour=${peakHour}). Skipping.`);
-      return;
-    } else {
-      console.log(`[REIMPORT] Data has wrong hours (peak CR hour=${peakHour}). Deleting and reimporting...`);
-      await db.execute(sql`DELETE FROM payments WHERE order_id IN (SELECT DISTINCT order_id FROM sales_ledger_items WHERE origin = 'LOYVERSE_POS')`);
-      await db.execute(sql`DELETE FROM sales_ledger_items WHERE origin = 'LOYVERSE_POS'`);
-      console.log("[REIMPORT] Old data deleted.");
-    }
+    console.log("[REIMPORT] Deleting all existing LOYVERSE_POS data...");
+    await pool.query(`DELETE FROM payments WHERE order_id IN (SELECT DISTINCT order_id FROM sales_ledger_items WHERE origin = 'LOYVERSE_POS')`);
+    await pool.query(`DELETE FROM sales_ledger_items WHERE origin = 'LOYVERSE_POS'`);
+    console.log("[REIMPORT] Old data deleted. Starting fresh import...");
 
     const ledgerPath = "attached_assets/sales_ledger_items_import_v2_with_order_id_1771384006312.csv";
     const paymentsPath = "attached_assets/payments_import_prefer_tarjeta_1771424281023.csv";
