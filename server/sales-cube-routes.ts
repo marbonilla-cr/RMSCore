@@ -53,7 +53,7 @@ function getGroupSelect(key: GroupKey): { selectExpr: SQL; alias: string } {
       };
     case "hour":
       return {
-        selectExpr: sql`extract(hour from coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}))::int`,
+        selectExpr: sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))::int`,
         alias: "hour"
       };
     case "product":
@@ -92,17 +92,17 @@ function buildWhereConditions(filters: CubeFilters): SQL[] {
   }
 
   if (filters.hourFrom !== undefined && filters.hourTo !== undefined) {
-    const hourExpr = sql`extract(hour from coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}))::int`;
+    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))::int`;
     if (filters.hourFrom <= filters.hourTo) {
       conditions.push(sql`${hourExpr} >= ${filters.hourFrom} AND ${hourExpr} <= ${filters.hourTo}`);
     } else {
       conditions.push(sql`(${hourExpr} >= ${filters.hourFrom} OR ${hourExpr} <= ${filters.hourTo})`);
     }
   } else if (filters.hourFrom !== undefined) {
-    const hourExpr = sql`extract(hour from coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}))::int`;
+    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))::int`;
     conditions.push(sql`${hourExpr} >= ${filters.hourFrom}`);
   } else if (filters.hourTo !== undefined) {
-    const hourExpr = sql`extract(hour from coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}))::int`;
+    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))::int`;
     conditions.push(sql`${hourExpr} <= ${filters.hourTo}`);
   }
 

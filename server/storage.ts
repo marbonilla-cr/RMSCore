@@ -953,12 +953,18 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   const validHourFilter = hourFrom !== undefined && hourTo !== undefined
     && !isNaN(hourFrom) && !isNaN(hourTo) && hourFrom >= 0 && hourTo <= 23 && hourFrom <= hourTo;
 
+  const getCRHour = (dateVal: any): number => {
+    const d = new Date(dateVal);
+    const crTime = new Date(d.toLocaleString("en-US", { timeZone: "America/Costa_Rica" }));
+    return crTime.getHours();
+  };
+
   const filterByHour = <T extends { [key: string]: any }>(items: T[], dateField: string): T[] => {
     if (!validHourFilter) return items;
     return items.filter(item => {
       const dateVal = item[dateField];
       if (!dateVal) return false;
-      const h = new Date(dateVal).getHours();
+      const h = getCRHour(dateVal);
       return h >= hourFrom! && h <= hourTo!;
     });
   };
@@ -966,7 +972,7 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   if (validHourFilter) {
     allOrders = allOrders.filter(o => {
       if (!o.openedAt) return false;
-      const h = new Date(o.openedAt).getHours();
+      const h = getCRHour(o.openedAt);
       return h >= hourFrom! && h <= hourTo!;
     });
   }
