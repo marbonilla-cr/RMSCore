@@ -41,6 +41,28 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 -   **Item Voiding System:** Soft-voids for waiters, hard-deletes for managers, with full audit trails.
 -   **POS Cash Report Permission:** Granular control over cash report visibility and data filtering.
 
+## Data Milestones
+
+### Loyverse Historical Data Import (February 18, 2026)
+-   **Status:** COMPLETED - One-time import, script deleted to prevent re-execution.
+-   **Checkpoint de referencia (pre-importación):** Commit `69014ab4d603be6087acf688abfc19761613889c` — Estado del sistema antes de la carga histórica. Punto de rollback si fuera necesario.
+-   **Data imported:**
+    -   58,344 sales ledger items (`sales_ledger_items` table)
+    -   11,269 payments (`payments` table)
+    -   Spanning: April 2024 to February 2026 (573 unique business days)
+    -   254 unique products, 11,269 unique orders
+    -   Total paid sales: ~₡210.5M (CARD ₡174.8M, CASH ₡33.7M, SINPE ₡3.4M)
+-   **Data integrity verified:**
+    -   Ledger vs Payments discrepancy: <0.01% (1 order / ₡11,000 of ₡210.5M)
+    -   0 orphaned payment records (all payments have matching ledger entries)
+    -   0 NULL business_date, product_name, unit_price, origin, or status values
+    -   189 items without category (generic Loyverse items) — acceptable
+    -   2 items with qty=0 (adjustments/courtesies) — acceptable
+    -   Hour distribution consistent with restaurant hours (peak 7pm-10pm CR time)
+-   **Timezone handling:** All timestamps stored as UTC in `timestamp without time zone` columns. Business date/hour extraction uses double `AT TIME ZONE` conversion: `(ts AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'`.
+-   **Safety:** Import script (`scripts/import-historical-data.ts`) was deleted after successful import. No mechanism exists to re-run the import. The script had an idempotency check (abort if >50,000 rows exist) as an additional safeguard.
+-   **Origin marker:** All imported records have `origin = 'LOYVERSE'` to distinguish from system-generated records (`origin = 'SYSTEM'`).
+
 ## External Dependencies
 -   **PostgreSQL:** Primary database.
 -   **Vite:** Frontend build tool.
