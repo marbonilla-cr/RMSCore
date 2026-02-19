@@ -135,10 +135,10 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarContent>
-        <div className="p-4 pb-2">
-          <div className="flex items-center gap-2">
-            <img src={logoImg} alt="La Antigua Lechería" className="w-8 h-8 rounded-full object-cover" data-testid="img-sidebar-logo" />
-            <span className="font-bold text-sm">La Antigua Lechería</span>
+        <div style={{ padding: "16px 16px 8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <img src={logoImg} alt="La Antigua Lechería" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} data-testid="img-sidebar-logo" />
+            <span style={{ fontFamily: "var(--f-disp)", fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "0.02em" }}>La Antigua Lechería</span>
           </div>
         </div>
 

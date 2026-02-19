@@ -2,13 +2,10 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Grid3x3, Clock, ChefHat, AlertCircle, Users, DollarSign, Timer } from "lucide-react";
+import { Search, Settings, Loader2 } from "lucide-react";
 import { wsManager } from "@/lib/ws";
+import { formatCurrency, timeAgo } from "@/lib/utils";
 
 interface TableView {
   id: number;
@@ -28,11 +25,7 @@ interface TableView {
 
 function formatElapsed(dateStr: string | null) {
   if (!dateStr) return "--";
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
+  return timeAgo(dateStr);
 }
 
 type ColumnKey = "waiter" | "items" | "amount" | "time";
@@ -44,120 +37,43 @@ const COLUMN_OPTIONS: { key: ColumnKey; label: string }[] = [
   { key: "time", label: "Tiempo" },
 ];
 
-function TablesSplitView({ tables, visibleColumns, getStatusColor, getStatusVariant, getStatusLabel }: {
-  tables: TableView[];
-  visibleColumns: Set<ColumnKey>;
-  getStatusColor: (t: TableView) => string;
-  getStatusVariant: (t: TableView) => "default" | "secondary" | "destructive";
-  getStatusLabel: (t: TableView) => string;
-}) {
-  const activeTables = tables.filter(t => t.active);
-  const withOrder = activeTables.filter(t => t.hasOpenOrder);
-  const withoutOrder = activeTables.filter(t => !t.hasOpenOrder);
+function getTableStatusClass(t: TableView): string {
+  if (t.pendingQrCount > 0) return "qr";
+  if (t.orderStatus === "READY") return "ready";
+  if (t.orderStatus === "PREPARING") return "preparing";
+  if (t.orderStatus === "IN_KITCHEN") return "kitchen";
+  if (t.hasOpenOrder) return "open";
+  return "";
+}
 
-  const renderTableCard = (table: TableView) => (
-    <Link key={table.id} href={`/tables/${table.id}`}>
-      <Card
-        className={`hover-elevate cursor-pointer transition-colors min-h-[48px] ${getStatusColor(table)}`}
-        data-testid={`card-table-${table.id}`}
-      >
-        <CardContent className="p-2.5 md:p-4">
-          <div className="flex items-start justify-between gap-1 mb-1.5 md:mb-3">
-            <h3 className="font-bold text-sm md:text-lg truncate" data-testid={`text-table-name-${table.id}`}>
-              {table.tableName}
-            </h3>
-            <Badge variant={getStatusVariant(table)} className="text-[10px] md:text-xs shrink-0" data-testid={`badge-status-${table.id}`}>
-              {table.pendingQrCount > 0 && <AlertCircle className="w-2.5 h-2.5 mr-0.5" />}
-              {getStatusLabel(table)}
-            </Badge>
-          </div>
+function getTableBadge(t: TableView): { label: string; cls: string } {
+  if (t.pendingQrCount > 0) return { label: "QR Pendiente", cls: "badge-ds badge-amber" };
+  if (!t.hasOpenOrder) return { label: "Libre", cls: "badge-ds badge-muted" };
+  if (t.orderStatus === "READY") return { label: "Lista", cls: "badge-ds badge-green" };
+  if (t.orderStatus === "PREPARING") return { label: "Preparando", cls: "badge-ds badge-amber" };
+  if (t.orderStatus === "IN_KITCHEN") return { label: "En Cocina", cls: "badge-ds badge-blue" };
+  return { label: "Abierta", cls: "badge-ds badge-green" };
+}
 
-          {table.hasOpenOrder ? (
-            <div className="space-y-1 md:space-y-2">
-              {visibleColumns.has("waiter") && table.responsibleWaiterName && (
-                <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-waiter-${table.id}`}>
-                  <span className="text-muted-foreground flex items-center gap-1">
-                    <Users className="w-3 h-3" />
-                    <span className="hidden sm:inline">Salonero</span>
-                  </span>
-                  <span className="font-medium truncate ml-1">{table.responsibleWaiterName}</span>
-                </div>
-              )}
-
-              {visibleColumns.has("items") && (
-                <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-items-${table.id}`}>
-                  <span className="text-muted-foreground flex items-center gap-1">
-                    <ChefHat className="w-3 h-3" />
-                    <span className="hidden sm:inline">Items</span>
-                  </span>
-                  <span className="font-medium">{table.itemCount}</span>
-                </div>
-              )}
-
-              {visibleColumns.has("time") && (
-                <>
-                  <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-time-open-${table.id}`}>
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span className="hidden sm:inline">T. abierta</span>
-                    </span>
-                    <span className="font-medium">{formatElapsed(table.openedAt)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs md:text-sm" data-testid={`text-time-kitchen-${table.id}`}>
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <Timer className="w-3 h-3" />
-                      <span className="hidden sm:inline">T. cocina</span>
-                    </span>
-                    <span className="font-medium">{formatElapsed(table.lastSentToKitchenAt)}</span>
-                  </div>
-                </>
-              )}
-
-              {visibleColumns.has("amount") && table.totalAmount && (
-                <div className="pt-1 md:pt-2 border-t">
-                  <div className="flex items-center justify-between" data-testid={`text-amount-${table.id}`}>
-                    <span className="text-xs text-muted-foreground">Total</span>
-                    <span className="font-bold text-xs md:text-sm">₡{Number(table.totalAmount).toLocaleString()}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs md:text-sm text-muted-foreground">Disponible</p>
-          )}
-        </CardContent>
-      </Card>
-    </Link>
-  );
-
+function TablesSkeleton() {
   return (
-    <div className="flex flex-col md:flex-row gap-4">
-      <div className="flex-1">
-        <h2 className="text-sm font-semibold text-muted-foreground mb-2">Con cuenta abierta ({withOrder.length})</h2>
-        {withOrder.length > 0 ? (
-          <div className="grid grid-cols-2 gap-2 md:gap-3">
-            {withOrder.map(renderTableCard)}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground py-4 text-center">Ninguna mesa con cuenta</p>
-        )}
-      </div>
-      <div className="flex-1">
-        <h2 className="text-sm font-semibold text-muted-foreground mb-2">Libres ({withoutOrder.length})</h2>
-        {withoutOrder.length > 0 ? (
-          <div className="grid grid-cols-2 gap-2 md:gap-3">
-            {withoutOrder.map(renderTableCard)}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground py-4 text-center">Ninguna mesa libre</p>
-        )}
-      </div>
+    <div className="tables-grid stagger-children">
+      {[...Array(6)].map((_, i) => (
+        <div key={i} className="table-card" style={{ opacity: 0.5 }}>
+          <div className="skeleton" style={{ height: 20, width: 60, marginBottom: 8 }} />
+          <div className="skeleton" style={{ height: 16, width: 90, marginBottom: 12 }} />
+          <div className="skeleton" style={{ height: 12, width: 100 }} />
+          <div className="skeleton" style={{ height: 12, width: 80, marginTop: 4 }} />
+        </div>
+      ))}
     </div>
   );
 }
 
 export default function TablesPage() {
   const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     try {
       const saved = localStorage.getItem("tables_visible_columns");
@@ -212,97 +128,316 @@ export default function TablesPage() {
   const toggleColumn = (key: ColumnKey) => {
     setVisibleColumns((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       localStorage.setItem("tables_visible_columns", JSON.stringify(Array.from(next)));
       return next;
     });
   };
 
-  const getStatusColor = (t: TableView) => {
-    if (t.pendingQrCount > 0) return "ring-2 ring-orange-500";
-    if (t.orderStatus === "READY") return "ring-2 ring-emerald-500";
-    if (t.orderStatus === "PREPARING") return "ring-2 ring-yellow-500";
-    if (t.orderStatus === "IN_KITCHEN") return "ring-2 ring-blue-500";
-    if (t.hasOpenOrder) return "ring-2 ring-green-500";
-    return "";
-  };
+  const activeTables = tables.filter(t => t.active);
+  const filtered = search
+    ? activeTables.filter(t => t.tableName.toLowerCase().includes(search.toLowerCase()) || t.tableCode.toLowerCase().includes(search.toLowerCase()))
+    : activeTables;
+  const withOrder = filtered.filter(t => t.hasOpenOrder);
+  const withoutOrder = filtered.filter(t => !t.hasOpenOrder);
+  const occupiedCount = activeTables.filter(t => t.hasOpenOrder).length;
 
-  const getStatusLabel = (t: TableView) => {
-    if (t.pendingQrCount > 0) return "QR Pendiente";
-    if (!t.hasOpenOrder) return "Libre";
-    if (t.orderStatus === "READY") return "En mesa";
-    if (t.orderStatus === "PREPARING") return "Preparando";
-    if (t.orderStatus === "IN_KITCHEN") return "En cocina";
-    return t.orderStatus || "Abierta";
-  };
-
-  const getStatusVariant = (t: TableView): "default" | "secondary" | "destructive" => {
-    if (t.pendingQrCount > 0) return "destructive";
-    if (!t.hasOpenOrder) return "secondary";
-    return "default";
-  };
-
-  if (isLoading) {
-    return (
-      <div className="p-3 md:p-4">
-        <h1 className="text-lg md:text-2xl font-bold mb-4 flex items-center gap-2">
-          <Grid3x3 className="w-5 h-5" /> Mesas
-        </h1>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <Skeleton key={i} className="h-20 md:h-28 rounded-md" />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  const now = new Date();
+  const dayName = now.toLocaleDateString("es-CR", { weekday: "long" });
+  const timeStr = now.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", hour12: true });
 
   return (
-    <div className="p-3 md:p-4">
-      <div className="mb-4">
-        <h1 className="text-lg md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
-          <Grid3x3 className="w-5 h-5 md:w-6 md:h-6" /> Mesas
-        </h1>
-        <p className="text-xs md:text-sm text-muted-foreground mt-1">
-          {tables.filter((t) => t.hasOpenOrder).length} de {tables.length} mesas ocupadas
-        </p>
+    <div className="screen-tables page-enter">
+      <style>{`
+        .screen-tables {
+          background: var(--s0);
+          min-height: 100dvh;
+          display: flex;
+          flex-direction: column;
+          font-family: var(--f-body);
+          color: var(--text);
+        }
+
+        .tables-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 10px;
+          padding: 0 18px 10px;
+        }
+
+        .table-card {
+          background: var(--s1);
+          border: 1.5px solid var(--border-ds);
+          border-radius: var(--r-md);
+          padding: 14px;
+          cursor: pointer;
+          transition: all var(--t-fast);
+          position: relative;
+          text-decoration: none;
+          display: block;
+          color: var(--text);
+        }
+        .table-card:active { background: var(--s2); }
+        .table-card.qr { border-color: rgba(243,156,18,0.4); }
+        .table-card.kitchen { border-color: rgba(59,130,246,0.3); }
+        .table-card.ready { border-color: rgba(46,204,113,0.4); box-shadow: 0 0 16px rgba(46,204,113,0.12); }
+        .table-card.preparing { border-color: rgba(243,156,18,0.3); }
+        .table-card.open { border-color: rgba(46,204,113,0.2); }
+
+        .tc-name {
+          font-family: var(--f-disp);
+          font-size: 20px;
+          font-weight: 800;
+          margin-bottom: 6px;
+        }
+        .tc-meta {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          margin-top: 8px;
+        }
+        .tc-meta-row {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          color: var(--text3);
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .tc-meta-row .val {
+          color: var(--text2);
+        }
+        .tc-amount {
+          font-family: var(--f-mono);
+          font-size: 15px;
+          font-weight: 600;
+          color: var(--green);
+          margin-top: 4px;
+        }
+
+        .tables-free-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+          padding: 0 18px 16px;
+        }
+        .table-card-free {
+          background: var(--s1);
+          border: 1px solid var(--border-ds);
+          border-radius: var(--r-sm);
+          padding: 12px;
+          text-align: center;
+          cursor: pointer;
+          transition: all var(--t-fast);
+          text-decoration: none;
+          display: block;
+          color: var(--text);
+        }
+        .table-card-free:active { background: var(--s2); }
+        .tcf-name {
+          font-family: var(--f-disp);
+          font-size: 16px;
+          font-weight: 700;
+        }
+        .tcf-sub {
+          font-family: var(--f-mono);
+          font-size: 10px;
+          color: var(--text3);
+          margin-top: 2px;
+        }
+
+        .tables-scroll {
+          flex: 1;
+          overflow-y: auto;
+          padding-bottom: 8px;
+        }
+
+        .col-picker-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 99;
+        }
+        .col-picker {
+          position: absolute;
+          top: 52px;
+          right: 18px;
+          background: var(--s1);
+          border: 1px solid var(--border-ds);
+          border-radius: var(--r-md);
+          padding: 10px;
+          z-index: 100;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          min-width: 140px;
+        }
+        .col-option {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 10px;
+          border-radius: var(--r-xs);
+          font-family: var(--f-mono);
+          font-size: 12px;
+          color: var(--text2);
+          cursor: pointer;
+          background: none;
+          border: none;
+          width: 100%;
+          text-align: left;
+          transition: background var(--t-fast);
+        }
+        .col-option:active { background: var(--s2); }
+        .col-option.active { color: var(--green); }
+        .col-check {
+          width: 16px; height: 16px;
+          border-radius: 4px;
+          border: 1.5px solid var(--border2);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 10px;
+          flex-shrink: 0;
+        }
+        .col-option.active .col-check {
+          background: var(--green);
+          border-color: var(--green);
+          color: #050f08;
+        }
+
+        .empty-state {
+          text-align: center;
+          padding: 40px 20px;
+          color: var(--text3);
+          font-family: var(--f-mono);
+          font-size: 13px;
+        }
+      `}</style>
+
+      <div className="screen-header">
+        <div style={{ flex: 1 }}>
+          <div className="header-title" data-testid="text-page-title">Mesas</div>
+          <div className="header-sub" style={{ textTransform: "capitalize" }}>
+            {dayName} · {timeStr} · <span style={{ color: "var(--green)" }}>{occupiedCount} activas</span>
+          </div>
+        </div>
+        <button
+          className="header-action"
+          onClick={() => setShowColumnPicker(!showColumnPicker)}
+          data-testid="button-column-settings"
+        >
+          <Settings size={16} />
+        </button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="column-selector">
-        <span className="text-xs md:text-sm text-muted-foreground mr-1">Mostrar:</span>
-        {COLUMN_OPTIONS.map((col) => (
-          <Button
-            key={col.key}
-            variant={visibleColumns.has(col.key) ? "default" : "outline"}
-            size="sm"
-            onClick={() => toggleColumn(col.key)}
-            className="toggle-elevate"
-            data-testid={`toggle-column-${col.key}`}
-          >
-            {col.label}
-          </Button>
-        ))}
+      {showColumnPicker && (
+        <>
+          <div className="col-picker-overlay" onClick={() => setShowColumnPicker(false)} />
+          <div className="col-picker" data-testid="column-selector">
+            {COLUMN_OPTIONS.map((col) => (
+              <button
+                key={col.key}
+                className={`col-option ${visibleColumns.has(col.key) ? "active" : ""}`}
+                onClick={() => toggleColumn(col.key)}
+                data-testid={`toggle-column-${col.key}`}
+              >
+                <span className="col-check">{visibleColumns.has(col.key) ? "\u2713" : ""}</span>
+                {col.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="tables-topbar">
+        <div className="search-bar">
+          <Search size={14} className="search-icon" />
+          <input
+            type="text"
+            placeholder="Buscar mesa..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            data-testid="input-search-tables"
+          />
+        </div>
       </div>
 
-      {tables.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Grid3x3 className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <p className="text-muted-foreground">No hay mesas configuradas. Configure mesas en Admin.</p>
-          </CardContent>
-        </Card>
+      {isLoading ? (
+        <div style={{ padding: "0 18px" }}>
+          <TablesSkeleton />
+        </div>
+      ) : tables.length === 0 ? (
+        <div className="empty-state">
+          No hay mesas configuradas. Configure mesas en Admin.
+        </div>
       ) : (
-        <TablesSplitView
-          tables={tables}
-          visibleColumns={visibleColumns}
-          getStatusColor={getStatusColor}
-          getStatusVariant={getStatusVariant}
-          getStatusLabel={getStatusLabel}
-        />
+        <div className="tables-scroll">
+          <div className="section-label">
+            Con cuenta abierta
+            <span className="section-count">{withOrder.length}</span>
+          </div>
+
+          {withOrder.length > 0 ? (
+            <div className="tables-grid stagger-children">
+              {withOrder.map(table => {
+                const badge = getTableBadge(table);
+                const statusCls = getTableStatusClass(table);
+                return (
+                  <Link key={table.id} href={`/tables/${table.id}`} className={`table-card ${statusCls}`} data-testid={`card-table-${table.id}`}>
+                    {table.pendingQrCount > 0 && (
+                      <div className="qr-alert">{table.pendingQrCount}</div>
+                    )}
+                    <div className="tc-name" data-testid={`text-table-name-${table.id}`}>{table.tableName}</div>
+                    <div className={badge.cls} data-testid={`badge-status-${table.id}`}>{badge.label}</div>
+                    <div className="tc-meta">
+                      {visibleColumns.has("waiter") && table.responsibleWaiterName && (
+                        <div className="tc-meta-row" data-testid={`text-waiter-${table.id}`}>
+                          <span className="val">{table.responsibleWaiterName}</span>
+                        </div>
+                      )}
+                      {visibleColumns.has("items") && (
+                        <div className="tc-meta-row" data-testid={`text-items-${table.id}`}>
+                          <span className="val">{table.itemCount} items</span>
+                        </div>
+                      )}
+                      {visibleColumns.has("time") && (
+                        <div className="tc-meta-row" data-testid={`text-time-open-${table.id}`}>
+                          <span className="val">{formatElapsed(table.openedAt)}</span>
+                        </div>
+                      )}
+                      {visibleColumns.has("amount") && table.totalAmount && (
+                        <div className="tc-amount" data-testid={`text-amount-${table.id}`}>
+                          {formatCurrency(table.totalAmount)}
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty-state">Ninguna mesa con cuenta</div>
+          )}
+
+          <div className="section-label">
+            Libres
+            <span className="section-count">{withoutOrder.length}</span>
+          </div>
+
+          {withoutOrder.length > 0 ? (
+            <div className="tables-free-grid stagger-children">
+              {withoutOrder.map(table => (
+                <Link key={table.id} href={`/tables/${table.id}`} className="table-card-free" data-testid={`card-table-${table.id}`}>
+                  <div className="tcf-name" data-testid={`text-table-name-${table.id}`}>{table.tableName}</div>
+                  <div className="tcf-sub">Libre</div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">Todas las mesas tienen cuenta</div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -1,9 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Delete, Loader2, KeyRound, Clock, LogIn, LogOut, CheckCircle, XCircle } from "lucide-react";
+import { Delete, Loader2, Clock, LogIn, LogOut, CheckCircle } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -29,6 +26,20 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
   const [mode, setMode] = useState<ClockMode>("login");
   const [clockAction, setClockAction] = useState<"clock_in" | "clock_out">("clock_in");
   const [clockResult, setClockResult] = useState<ClockResult | null>(null);
+  const [shakeKey, setShakeKey] = useState(0);
+  const [currentTime, setCurrentTime] = useState("");
+  const [currentDate, setCurrentDate] = useState("");
+
+  useEffect(() => {
+    const update = () => {
+      const now = new Date();
+      setCurrentTime(now.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", hour12: false }));
+      setCurrentDate(now.toLocaleDateString("es-CR", { weekday: "long", day: "numeric", month: "long" }));
+    };
+    update();
+    const interval = setInterval(update, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleDigit = (digit: string) => {
     if (pin.length >= 4) return;
@@ -56,6 +67,10 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
     setError("");
   };
 
+  const triggerShake = () => {
+    setShakeKey(k => k + 1);
+  };
+
   const submitPin = async (p: string) => {
     setLoading(true);
     try {
@@ -63,6 +78,7 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
     } catch (err: any) {
       setError(err.message || "PIN incorrecto");
       setPin("");
+      triggerShake();
     } finally {
       setLoading(false);
     }
@@ -108,6 +124,7 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
       }
       setError(msg);
       setPin("");
+      triggerShake();
     } finally {
       setLoading(false);
     }
@@ -120,151 +137,353 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
     setClockResult(null);
   };
 
-  const dots = Array.from({ length: 4 }, (_, i) => (
-    <div
-      key={i}
-      data-testid={`pin-dot-${i}`}
-      className={`w-4 h-4 rounded-full border-2 transition-all ${
-        i < pin.length ? "bg-primary border-primary scale-110" : "border-muted-foreground/40"
-      }`}
-    />
-  ));
-
   const digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-xs">
-        <div className="flex flex-col items-center mb-6">
-          <img src={logoImg} alt="La Antigua Lechería" className="w-20 h-20 rounded-full object-cover mb-3" data-testid="img-logo" />
-          <h1 className="text-xl font-bold" data-testid="text-app-title">La Antigua Lechería</h1>
-          {mode === "login" ? (
-            <p className="text-muted-foreground text-sm mt-1 flex items-center gap-1">
-              <KeyRound className="w-3.5 h-3.5" />
-              Ingrese su PIN
-            </p>
-          ) : (
-            <p className="text-muted-foreground text-sm mt-1 flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" />
-              Marcar {clockAction === "clock_in" ? "Entrada" : "Salida"}
-            </p>
-          )}
-        </div>
+    <div className="pin-screen">
+      <style>{`
+        .pin-screen {
+          min-height: 100dvh;
+          background: var(--bg);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          font-family: var(--f-body);
+          color: var(--text);
+          padding: 20px;
+        }
 
-        {mode === "clock" && (
-          <div className="flex gap-2 mb-3">
-            <Button
-              variant={clockAction === "clock_in" ? "default" : "outline"}
-              className="flex-1 toggle-elevate"
-              onClick={() => { setClockAction("clock_in"); setPin(""); setError(""); setClockResult(null); }}
-              data-testid="button-select-clock-in"
-            >
-              <LogIn className="w-4 h-4 mr-1" /> Entrada
-            </Button>
-            <Button
-              variant={clockAction === "clock_out" ? "default" : "outline"}
-              className="flex-1 toggle-elevate"
-              onClick={() => { setClockAction("clock_out"); setPin(""); setError(""); setClockResult(null); }}
-              data-testid="button-select-clock-out"
-            >
-              <LogOut className="w-4 h-4 mr-1" /> Salida
-            </Button>
-          </div>
+        .pin-brand {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          margin-bottom: 32px;
+        }
+        .pin-logo {
+          width: 72px; height: 72px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 2px solid var(--border-ds);
+          margin-bottom: 12px;
+        }
+        .brand-name {
+          font-family: var(--f-disp);
+          font-size: 22px;
+          font-weight: 800;
+          letter-spacing: 0.03em;
+          color: var(--text);
+          text-align: center;
+        }
+        .brand-time {
+          font-family: var(--f-mono);
+          font-size: 48px;
+          font-weight: 600;
+          color: var(--text);
+          letter-spacing: 0.04em;
+          margin-top: 6px;
+          line-height: 1;
+        }
+        .brand-date {
+          font-family: var(--f-mono);
+          font-size: 12px;
+          color: var(--text3);
+          margin-top: 6px;
+          text-transform: capitalize;
+        }
+
+        .pin-mode-label {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          color: var(--text2);
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          margin-bottom: 20px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .clock-toggle {
+          display: flex;
+          gap: 8px;
+          margin-bottom: 20px;
+          width: 100%;
+          max-width: 280px;
+        }
+        .clock-toggle-btn {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 10px 16px;
+          border-radius: var(--r-sm);
+          font-family: var(--f-disp);
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all var(--t-fast);
+          border: 1.5px solid var(--border-ds);
+          background: var(--s2);
+          color: var(--text3);
+        }
+        .clock-toggle-btn.active {
+          background: var(--green-d);
+          border-color: var(--green-m);
+          color: var(--green);
+        }
+
+        .pin-dots {
+          display: flex;
+          gap: 16px;
+          margin-bottom: 8px;
+        }
+        .pin-dot {
+          width: 14px; height: 14px;
+          border-radius: 50%;
+          border: 2px solid var(--border2);
+          background: transparent;
+          transition: all 0.38s cubic-bezier(.22,.68,0,1.2);
+        }
+        .pin-dot.filled {
+          background: var(--green);
+          border-color: var(--green);
+          box-shadow: 0 0 10px var(--green-m);
+        }
+        .pin-dot.error {
+          background: var(--red);
+          border-color: var(--red);
+          box-shadow: 0 0 10px var(--red-d);
+        }
+
+        .pin-feedback {
+          height: 36px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 4px;
+        }
+        .pin-error {
+          font-family: var(--f-mono);
+          font-size: 12px;
+          color: var(--red);
+        }
+        .pin-success {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-family: var(--f-mono);
+          font-size: 12px;
+          color: var(--green);
+        }
+        .pin-loading {
+          color: var(--green);
+        }
+
+        .pin-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 72px);
+          gap: 14px;
+          justify-content: center;
+        }
+        .pin-btn {
+          width: 72px; height: 72px;
+          border-radius: 50%;
+          background: var(--s2);
+          border: 1.5px solid var(--border-ds);
+          color: var(--text);
+          font-family: var(--f-disp);
+          font-size: 28px;
+          font-weight: 700;
+          transition: all var(--t-fast);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .pin-btn:active {
+          background: var(--s3);
+          border-color: var(--border2);
+          transform: scale(0.92);
+        }
+        .pin-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+        .pin-btn.clear-btn {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          font-weight: 500;
+          color: var(--text3);
+          letter-spacing: 0.05em;
+        }
+        .pin-btn.delete-btn {
+          color: var(--text2);
+        }
+        .pin-btn.empty-btn {
+          visibility: hidden;
+        }
+
+        .pin-links {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 12px;
+          margin-top: 28px;
+        }
+        .pin-link {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          color: var(--text3);
+          background: none;
+          border: none;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          transition: color var(--t-fast);
+          letter-spacing: 0.04em;
+        }
+        .pin-link:active { color: var(--text2); }
+
+        @keyframes pin-shake {
+          0%,100% { transform: translateX(0); }
+          20% { transform: translateX(-8px); }
+          40% { transform: translateX(8px); }
+          60% { transform: translateX(-6px); }
+          80% { transform: translateX(6px); }
+        }
+        .pin-shake { animation: pin-shake 0.4s ease; }
+      `}</style>
+
+      <div className="pin-brand">
+        <img src={logoImg} alt="Logo" className="pin-logo" data-testid="img-logo" />
+        <div className="brand-name" data-testid="text-app-title">La Antigua Lechería</div>
+        <div className="brand-time">{currentTime}</div>
+        <div className="brand-date">{currentDate}</div>
+      </div>
+
+      <div className="pin-mode-label">
+        {mode === "login" ? (
+          <>Ingrese su PIN</>
+        ) : (
+          <>Marcar {clockAction === "clock_in" ? "Entrada" : "Salida"}</>
         )}
+      </div>
 
-        <Card>
-          <CardContent className="pt-6 pb-4">
-            <div className="flex justify-center gap-4 mb-6" data-testid="pin-dots">
-              {dots}
-            </div>
-
-            {error && (
-              <p className="text-sm text-destructive text-center mb-4" data-testid="text-pin-error">{error}</p>
-            )}
-
-            {clockResult && clockResult.success && (
-              <div className="flex items-center justify-center gap-2 mb-4 text-sm" data-testid="text-clock-result">
-                <CheckCircle className="w-4 h-4 text-green-600" />
-                <span className="text-green-700 dark:text-green-400">{clockResult.message}</span>
-              </div>
-            )}
-
-            {loading && (
-              <div className="flex justify-center mb-4">
-                <Loader2 className="w-5 h-5 animate-spin text-primary" />
-              </div>
-            )}
-
-            <div className="grid grid-cols-3 gap-2">
-              {digits.map((d) => (
-                <Button
-                  key={d}
-                  variant="outline"
-                  className="h-14 text-xl font-semibold"
-                  data-testid={`button-pin-${d}`}
-                  onClick={() => handleDigit(d)}
-                  disabled={loading}
-                >
-                  {d}
-                </Button>
-              ))}
-              <Button
-                variant="outline"
-                className="h-14 text-sm"
-                data-testid="button-pin-clear"
-                onClick={handleClear}
-                disabled={loading}
-              >
-                Borrar
-              </Button>
-              <Button
-                variant="outline"
-                className="h-14 text-xl font-semibold"
-                data-testid="button-pin-0"
-                onClick={() => handleDigit("0")}
-                disabled={loading}
-              >
-                0
-              </Button>
-              <Button
-                variant="outline"
-                className="h-14"
-                data-testid="button-pin-delete"
-                onClick={handleDelete}
-                disabled={loading}
-              >
-                <Delete className="w-5 h-5" />
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="flex flex-col items-center gap-2 mt-4">
-          {mode === "login" ? (
-            <button
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-              data-testid="button-switch-to-clock"
-              onClick={() => switchMode("clock")}
-            >
-              <Clock className="w-3.5 h-3.5" /> Marcar Entrada / Salida
-            </button>
-          ) : (
-            <button
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-              data-testid="button-switch-to-login"
-              onClick={() => switchMode("login")}
-            >
-              <KeyRound className="w-3.5 h-3.5" /> Volver a Login
-            </button>
-          )}
+      {mode === "clock" && (
+        <div className="clock-toggle">
           <button
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors text-center"
-            data-testid="link-password-login"
-            onClick={onSwitchToPassword}
+            className={`clock-toggle-btn ${clockAction === "clock_in" ? "active" : ""}`}
+            onClick={() => { setClockAction("clock_in"); setPin(""); setError(""); setClockResult(null); }}
+            data-testid="button-select-clock-in"
           >
-            Usar usuario/contraseña
+            <LogIn size={16} /> Entrada
+          </button>
+          <button
+            className={`clock-toggle-btn ${clockAction === "clock_out" ? "active" : ""}`}
+            onClick={() => { setClockAction("clock_out"); setPin(""); setError(""); setClockResult(null); }}
+            data-testid="button-select-clock-out"
+          >
+            <LogOut size={16} /> Salida
           </button>
         </div>
+      )}
+
+      <div
+        className={`pin-dots ${error ? "pin-shake" : ""}`}
+        key={shakeKey}
+        data-testid="pin-dots"
+      >
+        {Array.from({ length: 4 }, (_, i) => (
+          <div
+            key={i}
+            data-testid={`pin-dot-${i}`}
+            className={`pin-dot ${i < pin.length ? (error ? "error" : "filled") : ""}`}
+          />
+        ))}
+      </div>
+
+      <div className="pin-feedback">
+        {error && (
+          <span className="pin-error" data-testid="text-pin-error">{error}</span>
+        )}
+        {clockResult && clockResult.success && (
+          <span className="pin-success" data-testid="text-clock-result">
+            <CheckCircle size={14} />
+            {clockResult.message}
+          </span>
+        )}
+        {loading && (
+          <Loader2 size={20} className="pin-loading animate-spin" />
+        )}
+      </div>
+
+      <div className="pin-grid">
+        {digits.map((d) => (
+          <button
+            key={d}
+            className="pin-btn"
+            data-testid={`button-pin-${d}`}
+            onClick={() => handleDigit(d)}
+            disabled={loading}
+          >
+            {d}
+          </button>
+        ))}
+        <button
+          className="pin-btn clear-btn"
+          data-testid="button-pin-clear"
+          onClick={handleClear}
+          disabled={loading}
+        >
+          CLR
+        </button>
+        <button
+          className="pin-btn"
+          data-testid="button-pin-0"
+          onClick={() => handleDigit("0")}
+          disabled={loading}
+        >
+          0
+        </button>
+        <button
+          className="pin-btn delete-btn"
+          data-testid="button-pin-delete"
+          onClick={handleDelete}
+          disabled={loading}
+        >
+          <Delete size={22} />
+        </button>
+      </div>
+
+      <div className="pin-links">
+        {mode === "login" ? (
+          <button
+            className="pin-link"
+            data-testid="button-switch-to-clock"
+            onClick={() => switchMode("clock")}
+          >
+            <Clock size={13} /> Marcar Entrada / Salida
+          </button>
+        ) : (
+          <button
+            className="pin-link"
+            data-testid="button-switch-to-login"
+            onClick={() => switchMode("login")}
+          >
+            Volver a Login
+          </button>
+        )}
+        <button
+          className="pin-link"
+          data-testid="link-password-login"
+          onClick={onSwitchToPassword}
+        >
+          Usar usuario / contraseña
+        </button>
       </div>
     </div>
   );

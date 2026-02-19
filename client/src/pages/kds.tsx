@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { wsManager } from "@/lib/ws";
 import { ChefHat, Clock, CheckCircle, Loader2, Trash2, Wine } from "lucide-react";
 
@@ -47,6 +43,17 @@ function formatElapsed(dateStr: string) {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
+function getElapsedMins(dateStr: string) {
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
+}
+
+function getElapsedClass(dateStr: string) {
+  const mins = getElapsedMins(dateStr);
+  if (mins < 10) return "ok";
+  if (mins < 20) return "warning";
+  return "urgent";
+}
+
 function playAlertSound() {
   try {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -68,7 +75,6 @@ function playAlertSound() {
     playTone(1200, 0.28, 0.12, "square");
     playTone(1500, 0.42, 0.12, "square");
     playTone(1800, 0.56, 0.25, "sawtooth");
-
     playTone(1200, 0.9, 0.12, "square");
     playTone(1500, 1.04, 0.12, "square");
     playTone(1200, 1.18, 0.12, "square");
@@ -111,6 +117,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
   const [pendingAlertCount, setPendingAlertCount] = useState(0);
   const knownTicketIdsRef = useRef<Set<number> | null>(null);
   const alertDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [currentTime, setCurrentTime] = useState("");
 
   const activeQueryKey = ["/api/kds/tickets", "active", destination];
   const historyQueryKey = ["/api/kds/tickets", "history", destination];
@@ -131,7 +138,6 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
     const existingOrder = groupOrderRef.current.filter(id => currentOrderIds.has(id));
     const newIds = groupedTickets.map(g => g.orderId).filter(id => !existingOrder.includes(id));
     groupOrderRef.current = [...existingOrder, ...newIds];
-
     const groupMap = new Map(groupedTickets.map(g => [g.orderId, g]));
     return groupOrderRef.current.map(id => groupMap.get(id)!).filter(Boolean);
   }, [groupedTickets]);
@@ -155,9 +161,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
       dataLoadedRef.current = true;
       return;
     }
-
     if (!dataLoadedRef.current) return;
-
     const currentIds = new Set(activeTickets.map(t => t.id));
     const newTicketIds = Array.from(currentIds).filter(id => !knownTicketIdsRef.current!.has(id));
     if (newTicketIds.length > 0) {
@@ -168,7 +172,6 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
         alertDebounceRef.current = null;
       }, 500);
     }
-
     knownTicketIdsRef.current = currentIds;
   }, [activeTickets, isLoading]);
 
@@ -177,16 +180,25 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
     const unsub = wsManager.on("kitchen_ticket_created", () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
     });
-
     const unsub2 = wsManager.on("kitchen_item_status_changed", () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
     });
-
     const unsub3 = wsManager.on("order_updated", () => {
       queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
     });
-
     return () => { unsub(); unsub2(); unsub3(); };
+  }, []);
+
+  useEffect(() => {
+    const update = () => {
+      setCurrentTime(new Date().toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", hour12: false }));
+    };
+    update();
+    const interval = setInterval(() => {
+      forceUpdate(c => c + 1);
+      update();
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const getNextStatus = (status: string) => {
@@ -269,183 +281,521 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
     },
   });
 
-  const getItemStatusColor = (status: string) => {
-    switch (status) {
-      case "NEW": return "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200";
-      case "PREPARING": return "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200";
-      case "READY": return "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200";
-      default: return "";
-    }
+  const emptyMessage = destination === "bar" ? "No hay tickets activos en bar" : "No hay tickets activos en cocina";
+  const titleIcon = destination === "bar" ? "BAR" : "COCINA";
+
+  const getItemStatusLabel = (status: string) => {
+    if (status === "NEW") return "NUEVO";
+    if (status === "PREPARING") return "PREP";
+    return "LISTO";
   };
 
-  useEffect(() => {
-    const interval = setInterval(() => forceUpdate(c => c + 1), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const emptyMessage = destination === "bar" ? "No hay tickets activos en bar" : "No hay tickets activos en cocina";
+  const getItemStatusCls = (status: string) => {
+    if (status === "NEW") return "new";
+    if (status === "PREPARING") return "preparing";
+    return "ready";
+  };
 
   return (
-    <div className="p-3 md:p-4">
+    <div className="kds-layout">
+      <style>{`
+        .kds-layout {
+          background: var(--bg);
+          min-height: 100dvh;
+          display: flex;
+          flex-direction: column;
+          font-family: var(--f-body);
+          color: var(--text);
+        }
+        .kds-header {
+          padding: 16px 24px;
+          background: var(--s0);
+          border-bottom: 1px solid var(--border-ds);
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          flex-shrink: 0;
+        }
+        .kds-title {
+          font-family: var(--f-disp);
+          font-size: 26px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+        }
+        .kds-stats {
+          font-family: var(--f-mono);
+          font-size: 13px;
+          color: var(--text2);
+        }
+        .kds-time {
+          font-family: var(--f-mono);
+          font-size: 22px;
+          font-weight: 600;
+          color: var(--text2);
+          margin-left: auto;
+        }
+
+        .kds-tabs {
+          display: flex;
+          gap: 4px;
+          padding: 12px 24px 0;
+          border-bottom: 1px solid var(--border-ds);
+        }
+        .kds-tab {
+          padding: 10px 18px;
+          border-radius: var(--r-sm) var(--r-sm) 0 0;
+          border: 1px solid transparent;
+          border-bottom: none;
+          background: transparent;
+          color: var(--text3);
+          font-family: var(--f-disp);
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all var(--t-fast);
+        }
+        .kds-tab.active {
+          background: var(--s1);
+          border-color: var(--border-ds);
+          color: var(--green);
+        }
+
+        .kds-grid {
+          flex: 1;
+          padding: 20px;
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          gap: 16px;
+          align-content: start;
+          overflow-y: auto;
+        }
+
+        .kds-card {
+          background: var(--s1);
+          border: 2px solid var(--border-ds);
+          border-radius: var(--r-lg);
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+        .kds-card.has-new { border-color: var(--amber); }
+
+        .kds-card-header {
+          padding: 14px 16px;
+          background: var(--s2);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .kds-table-name {
+          font-family: var(--f-disp);
+          font-size: 22px;
+          font-weight: 800;
+        }
+        .kds-elapsed {
+          font-family: var(--f-mono);
+          font-size: 20px;
+          font-weight: 600;
+        }
+        .kds-elapsed.ok { color: var(--green); }
+        .kds-elapsed.warning { color: var(--amber); }
+        .kds-elapsed.urgent { color: var(--red); animation: pulse-red 1s infinite; }
+
+        @keyframes pulse-red {
+          0%,100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+
+        .kds-item-count {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          color: var(--text3);
+          margin-top: 2px;
+        }
+
+        .kds-items {
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          flex: 1;
+        }
+        .kds-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 12px;
+          border-radius: var(--r-sm);
+          background: var(--s2);
+          border: 1px solid var(--border-ds);
+          cursor: pointer;
+          transition: all var(--t-fast);
+          min-height: 48px;
+        }
+        .kds-item:active { transform: scale(0.98); }
+        .kds-item.new { border-left: 3px solid var(--amber); }
+        .kds-item.preparing { border-left: 3px solid var(--blue); background: var(--blue-d); }
+        .kds-item.ready { border-left: 3px solid var(--green); background: var(--green-d); opacity: 0.7; }
+
+        .kds-item-qty {
+          font-family: var(--f-mono);
+          font-size: 18px;
+          font-weight: 700;
+          color: var(--text2);
+          width: 28px;
+          text-align: center;
+          flex-shrink: 0;
+        }
+        .kds-item-info { flex: 1; min-width: 0; }
+        .kds-item-name {
+          font-size: 15px;
+          font-weight: 500;
+          color: var(--text);
+        }
+        .kds-item-customer {
+          font-size: 12px;
+          color: var(--text3);
+          margin-top: 1px;
+        }
+        .kds-item-mods {
+          font-size: 12px;
+          color: var(--text3);
+          margin-top: 2px;
+        }
+        .kds-item-notes {
+          font-size: 11px;
+          color: var(--amber);
+          font-style: italic;
+          margin-top: 2px;
+        }
+        .kds-item-status {
+          font-family: var(--f-mono);
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          flex-shrink: 0;
+        }
+        .kds-item.new .kds-item-status { color: var(--amber); }
+        .kds-item.preparing .kds-item-status { color: var(--blue); }
+        .kds-item.ready .kds-item-status { color: var(--green); }
+
+        .kds-complete-btn {
+          margin: 12px;
+          padding: 14px;
+          border-radius: var(--r-sm);
+          background: var(--green);
+          color: #050f08;
+          font-family: var(--f-disp);
+          font-size: 16px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          border: none;
+          cursor: pointer;
+          transition: all var(--t-mid);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+        .kds-complete-btn:disabled {
+          background: var(--s3);
+          color: var(--text3);
+          cursor: default;
+        }
+        .kds-complete-btn:active:not(:disabled) { transform: scale(0.97); }
+
+        .kds-hint {
+          text-align: center;
+          font-family: var(--f-mono);
+          font-size: 10px;
+          color: var(--text3);
+          padding: 8px 12px 14px;
+          letter-spacing: 0.04em;
+        }
+
+        .kds-empty {
+          text-align: center;
+          padding: 60px 20px;
+          color: var(--text3);
+        }
+        .kds-empty-icon {
+          margin-bottom: 16px;
+          opacity: 0.3;
+        }
+        .kds-empty-text {
+          font-family: var(--f-mono);
+          font-size: 14px;
+        }
+
+        .kds-history-bar {
+          display: flex;
+          justify-content: flex-end;
+          padding: 0 20px 12px;
+        }
+        .kds-clear-btn {
+          padding: 8px 16px;
+          border-radius: var(--r-sm);
+          background: var(--s2);
+          border: 1px solid var(--border-ds);
+          color: var(--text2);
+          font-family: var(--f-disp);
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          transition: all var(--t-fast);
+        }
+        .kds-clear-btn:active { background: var(--s3); }
+
+        .kds-history-card {
+          background: var(--s1);
+          border: 1px solid var(--border-ds);
+          border-radius: var(--r-md);
+          opacity: 0.65;
+          overflow: hidden;
+        }
+        .kds-history-header {
+          padding: 12px 14px;
+          background: var(--s2);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .kds-history-name {
+          font-family: var(--f-disp);
+          font-size: 16px;
+          font-weight: 700;
+        }
+        .kds-history-count {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          color: var(--text3);
+        }
+        .kds-history-items {
+          padding: 8px 14px;
+        }
+        .kds-history-item {
+          display: flex;
+          justify-content: space-between;
+          padding: 4px 0;
+          font-size: 13px;
+          color: var(--text2);
+        }
+
+        .kds-new-alert {
+          position: fixed;
+          inset: 0;
+          z-index: 9999;
+          background: rgba(0,0,0,0.85);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .kds-alert-box {
+          background: var(--s1);
+          border: 2px solid var(--green-m);
+          border-radius: var(--r-xl);
+          padding: 40px;
+          text-align: center;
+          box-shadow: 0 0 60px rgba(46,204,113,0.2);
+          animation: alertPop 0.4s cubic-bezier(.22,.68,0,1.2);
+        }
+        @keyframes alertPop {
+          from { transform: scale(0.7); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+        .kds-alert-count {
+          font-family: var(--f-disp);
+          font-size: 80px;
+          font-weight: 800;
+          color: var(--green);
+          line-height: 1;
+        }
+        .kds-alert-label {
+          font-family: var(--f-disp);
+          font-size: 24px;
+          color: var(--text2);
+          margin: 8px 0 24px;
+        }
+        .kds-alert-ok {
+          padding: 14px 48px;
+          border-radius: var(--r-sm);
+          background: var(--green);
+          color: #050f08;
+          font-family: var(--f-disp);
+          font-size: 18px;
+          font-weight: 800;
+          border: none;
+          cursor: pointer;
+          transition: all var(--t-mid);
+        }
+        .kds-alert-ok:active { transform: scale(0.97); }
+
+        .kds-loading {
+          display: flex;
+          justify-content: center;
+          padding: 60px;
+          color: var(--text3);
+        }
+      `}</style>
+
       {pendingAlertCount > 0 && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60" data-testid="modal-new-order-alert">
-          <Card className="w-[90%] max-w-sm mx-auto shadow-2xl border-2 border-yellow-500 animate-in fade-in zoom-in-95 duration-200">
-            <CardContent className="pt-6 pb-4 text-center space-y-4">
-              <div className="w-16 h-16 mx-auto rounded-full bg-yellow-100 dark:bg-yellow-900/40 flex items-center justify-center">
-                <Icon className="w-9 h-9 text-yellow-600 dark:text-yellow-400" />
-              </div>
-              <h2 className="text-xl font-bold" data-testid="text-new-order-title">
-                {pendingAlertCount === 1 ? "Nueva Orden" : `${pendingAlertCount} Nuevas Órdenes`}
-              </h2>
-              <p className="text-muted-foreground text-sm">
-                {destination === "bar"
-                  ? (pendingAlertCount === 1 ? "Ha llegado un nuevo pedido al bar" : `Han llegado ${pendingAlertCount} nuevos pedidos al bar`)
-                  : (pendingAlertCount === 1 ? "Ha llegado un nuevo pedido a cocina" : `Han llegado ${pendingAlertCount} nuevos pedidos a cocina`)}
-              </p>
-              <Button
-                className="w-full min-h-[48px] text-base font-bold"
-                onClick={() => setPendingAlertCount(0)}
-                data-testid="button-dismiss-new-order"
-              >
-                OK
-              </Button>
-            </CardContent>
-          </Card>
+        <div className="kds-new-alert" data-testid="modal-new-order-alert">
+          <div className="kds-alert-box">
+            <div className="kds-alert-count" data-testid="text-new-order-title">{pendingAlertCount}</div>
+            <div className="kds-alert-label">
+              {pendingAlertCount === 1 ? "Nueva Orden" : "Nuevas Ordenes"}
+            </div>
+            <button
+              className="kds-alert-ok"
+              onClick={() => setPendingAlertCount(0)}
+              data-testid="button-dismiss-new-order"
+            >
+              OK
+            </button>
+          </div>
         </div>
       )}
 
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
-        <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
-          <Icon className="w-6 h-6" /> {title}
-        </h1>
+      <div className="kds-header">
+        <Icon size={24} />
+        <span className="kds-title" data-testid="text-page-title">{titleIcon}</span>
+        <span className="kds-stats">{stableGroups.length} tickets activos</span>
+        <span className="kds-time">{currentTime}</span>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="active" className="min-h-[44px]" data-testid="tab-active">
-            Activos ({stableGroups.length})
-          </TabsTrigger>
-          <TabsTrigger value="history" className="min-h-[44px]" data-testid="tab-history">
-            Historial
-          </TabsTrigger>
-        </TabsList>
+      <div className="kds-tabs">
+        <button
+          className={`kds-tab ${tab === "active" ? "active" : ""}`}
+          onClick={() => setTab("active")}
+          data-testid="tab-active"
+        >
+          Activos ({stableGroups.length})
+        </button>
+        <button
+          className={`kds-tab ${tab === "history" ? "active" : ""}`}
+          onClick={() => setTab("history")}
+          data-testid="tab-history"
+        >
+          Historial
+        </button>
+      </div>
 
-        <TabsContent value="active">
-          {isLoading ? (
-            <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
-          ) : stableGroups.length === 0 ? (
-            <Card>
-              <CardContent className="py-12 text-center">
-                <Icon className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-muted-foreground">{emptyMessage}</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {stableGroups.map((group) => {
-                const hasNewItems = group.items.some(i => i.status === "NEW");
-                return (
-                  <Card key={group.orderId} className={hasNewItems ? "border-yellow-500 border-2" : ""} data-testid={`card-group-${group.orderId}`}>
-                    <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-                      <div>
-                        <h3 className="font-bold text-lg">{group.tableNameSnapshot}</h3>
-                        <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> {formatElapsed(group.earliestCreatedAt)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Badge variant={hasNewItems ? "destructive" : "default"}>
-                          {group.items.length} {group.items.length === 1 ? "ítem" : "ítems"}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2 mb-3">
-                        {group.items.map((item) => (
-                          <div
-                            key={item.id}
-                            className={`flex items-center justify-between p-2 rounded-md min-h-[48px] ${getItemStatusColor(item.status)} cursor-pointer transition-colors duration-150`}
-                            onClick={() => {
-                              const next = getNextStatus(item.status);
-                              if (next) updateItemMutation.mutate({ itemId: item.id, status: next });
-                            }}
-                            data-testid={`kds-item-${item.id}`}
-                          >
-                            <div className="min-w-0">
-                              <p className="font-medium text-sm">
-                                <span className="font-bold mr-1">{item.qty}x</span>
-                                {item.productNameSnapshot}
-                              </p>
-                              {item.customerNameSnapshot && (
-                                <p className="text-xs text-muted-foreground" data-testid={`kds-item-customer-${item.id}`}>{item.customerNameSnapshot}</p>
-                              )}
-                              {item.modifiers && item.modifiers.length > 0 && (
-                                <p className="text-xs font-medium opacity-90">
-                                  {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
-                                </p>
-                              )}
-                              {item.notes && <p className="text-xs opacity-75">{item.notes}</p>}
-                            </div>
-                            <Badge variant="secondary" className="text-xs flex-shrink-0">
-                              {item.status === "NEW" ? "NUEVO" : item.status === "PREPARING" ? "PREPARANDO" : "LISTO"}
-                            </Badge>
+      {tab === "active" ? (
+        isLoading ? (
+          <div className="kds-loading"><Loader2 size={32} className="animate-spin" /></div>
+        ) : stableGroups.length === 0 ? (
+          <div className="kds-empty">
+            <Icon size={48} className="kds-empty-icon" />
+            <p className="kds-empty-text">{emptyMessage}</p>
+          </div>
+        ) : (
+          <div className="kds-grid">
+            {stableGroups.map((group) => {
+              const hasNewItems = group.items.some(i => i.status === "NEW");
+              const elapsedCls = getElapsedClass(group.earliestCreatedAt);
+              return (
+                <div key={group.orderId} className={`kds-card ${hasNewItems ? "has-new" : ""}`} data-testid={`card-group-${group.orderId}`}>
+                  <div className="kds-card-header">
+                    <div>
+                      <div className="kds-table-name">{group.tableNameSnapshot}</div>
+                      <div className="kds-item-count">{group.items.length} {group.items.length === 1 ? "item" : "items"}</div>
+                    </div>
+                    <div className={`kds-elapsed ${elapsedCls}`}>
+                      {formatElapsed(group.earliestCreatedAt)}
+                    </div>
+                  </div>
+                  <div className="kds-items">
+                    {group.items.map((item) => {
+                      const statusCls = getItemStatusCls(item.status);
+                      return (
+                        <div
+                          key={item.id}
+                          className={`kds-item ${statusCls}`}
+                          onClick={() => {
+                            const next = getNextStatus(item.status);
+                            if (next) updateItemMutation.mutate({ itemId: item.id, status: next });
+                          }}
+                          data-testid={`kds-item-${item.id}`}
+                        >
+                          <span className="kds-item-qty">{item.qty}x</span>
+                          <div className="kds-item-info">
+                            <div className="kds-item-name">{item.productNameSnapshot}</div>
+                            {item.customerNameSnapshot && (
+                              <div className="kds-item-customer" data-testid={`kds-item-customer-${item.id}`}>{item.customerNameSnapshot}</div>
+                            )}
+                            {item.modifiers && item.modifiers.length > 0 && (
+                              <div className="kds-item-mods">
+                                {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
+                              </div>
+                            )}
+                            {item.notes && <div className="kds-item-notes">{item.notes}</div>}
                           </div>
-                        ))}
-                      </div>
-                      {group.allReady ? (
-                        <Button className="w-full min-h-[48px] bg-green-600 dark:bg-green-700 text-white" disabled={markGroupReadyMutation.isPending} onClick={() => markGroupReadyMutation.mutate(group.ticketIds)} data-testid={`button-complete-group-${group.orderId}`}>
-                          <CheckCircle className="w-4 h-4 mr-1" /> Ticket Completo
-                        </Button>
-                      ) : (
-                        <p className="text-xs text-center text-muted-foreground">Toque cada ítem para avanzar su estado</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="history">
-          <div className="flex justify-end mb-4">
-            <Button variant="outline" onClick={() => clearHistoryMutation.mutate()} disabled={clearHistoryMutation.isPending} data-testid="button-clear-history">
-              <Trash2 className="w-4 h-4 mr-1" /> Vaciar Vista
-            </Button>
+                          <span className="kds-item-status">{getItemStatusLabel(item.status)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {group.allReady ? (
+                    <button
+                      className="kds-complete-btn"
+                      disabled={markGroupReadyMutation.isPending}
+                      onClick={() => markGroupReadyMutation.mutate(group.ticketIds)}
+                      data-testid={`button-complete-group-${group.orderId}`}
+                    >
+                      <CheckCircle size={18} /> Ticket Completo
+                    </button>
+                  ) : (
+                    <div className="kds-hint">Toque cada item para avanzar su estado</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        <>
+          <div className="kds-history-bar">
+            <button
+              className="kds-clear-btn"
+              onClick={() => clearHistoryMutation.mutate()}
+              disabled={clearHistoryMutation.isPending}
+              data-testid="button-clear-history"
+            >
+              <Trash2 size={14} /> Vaciar Vista
+            </button>
           </div>
           {groupedHistory.length === 0 ? (
-            <Card><CardContent className="py-12 text-center">
-              <p className="text-muted-foreground">No hay tickets en historial</p>
-            </CardContent></Card>
+            <div className="kds-empty">
+              <p className="kds-empty-text">No hay tickets en historial</p>
+            </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="kds-grid">
               {groupedHistory.map((group) => (
-                <Card key={group.orderId} className="opacity-75" data-testid={`card-history-group-${group.orderId}`}>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-bold">{group.tableNameSnapshot}</h3>
-                      <Badge variant="secondary">{group.items.length} ítems</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
+                <div key={group.orderId} className="kds-history-card" data-testid={`card-history-group-${group.orderId}`}>
+                  <div className="kds-history-header">
+                    <span className="kds-history-name">{group.tableNameSnapshot}</span>
+                    <span className="kds-history-count">{group.items.length} items</span>
+                  </div>
+                  <div className="kds-history-items">
                     {group.items.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between py-1 text-sm">
-                        <div className="min-w-0">
-                          <span>{item.qty}x {item.productNameSnapshot}</span>
-                          {item.customerNameSnapshot && (
-                            <p className="text-xs text-muted-foreground">{item.customerNameSnapshot}</p>
-                          )}
-                        </div>
-                        <Badge variant="secondary" className="text-xs flex-shrink-0">LISTO</Badge>
+                      <div key={item.id} className="kds-history-item">
+                        <span>{item.qty}x {item.productNameSnapshot}</span>
+                        {item.customerNameSnapshot && (
+                          <span style={{ color: "var(--text3)", fontSize: 11 }}>{item.customerNameSnapshot}</span>
+                        )}
                       </div>
                     ))}
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               ))}
             </div>
           )}
-        </TabsContent>
-      </Tabs>
+        </>
+      )}
     </div>
   );
 }

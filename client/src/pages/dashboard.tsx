@@ -2,29 +2,12 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { wsManager } from "@/lib/ws";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { formatCurrency } from "@/lib/utils";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   LayoutDashboard, ShoppingBag, DollarSign,
   TrendingUp, XCircle, Clock, ChevronDown, ChevronRight,
@@ -160,10 +143,11 @@ const statusLabels: Record<string, string> = {
   VOIDED: "Anulado",
 };
 
-function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "PAID" || status === "READY") return "default";
-  if (status === "VOIDED" || status === "CANCELLED" || status === "VOID") return "destructive";
-  return "secondary";
+function statusBadgeClass(status: string): string {
+  if (status === "PAID" || status === "READY") return "badge-ds badge-green";
+  if (status === "VOIDED" || status === "CANCELLED" || status === "VOID") return "badge-ds badge-red";
+  if (status === "IN_KITCHEN" || status === "PREPARING") return "badge-ds badge-blue";
+  return "badge-ds badge-muted";
 }
 
 function OrderDetailDialog({ orderId, open, onClose }: { orderId: number | null; open: boolean; onClose: () => void }) {
@@ -172,101 +156,97 @@ function OrderDetailDialog({ orderId, open, onClose }: { orderId: number | null;
     enabled: !!orderId && open,
   });
 
+  if (!open) return null;
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle data-testid="text-order-detail-title">
-            {isLoading ? "Cargando..." : data ? `Orden #${data.dailyNumber || data.id} (Global: ${data.globalNumber || "—"})` : "Orden"}
-          </DialogTitle>
-        </DialogHeader>
-        {isLoading && <Skeleton className="h-40" />}
+    <div className="ds-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="ds-dialog">
+        <div className="ds-dialog-title" data-testid="text-order-detail-title">
+          {isLoading ? "Cargando..." : data ? `Orden #${data.dailyNumber || data.id} (Global: ${data.globalNumber || "—"})` : "Orden"}
+        </div>
+        {isLoading && <div style={{ height: 160, background: 'var(--s2)', borderRadius: 'var(--r-sm)', animation: 'pulse 2s infinite' }} />}
         {data && (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={statusVariant(data.status)}>{statusLabels[data.status] || data.status}</Badge>
-              <span className="text-sm text-muted-foreground">{data.tableName}</span>
-              <span className="text-sm text-muted-foreground ml-auto">Abierta: {formatDateTime(data.openedAt)}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+              <span className={statusBadgeClass(data.status)}>{statusLabels[data.status] || data.status}</span>
+              <span className="dash-meta">{data.tableName}</span>
+              <span className="dash-meta" style={{ marginLeft: 'auto' }}>Abierta: {formatDateTime(data.openedAt)}</span>
             </div>
 
             <div>
-              <h4 className="text-sm font-bold mb-2">Items ({data.items.length})</h4>
+              <div className="dash-section-title">Items ({data.items.length})</div>
               {data.items.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Sin ítems</p>
+                <p className="dash-empty">Sin ítems</p>
               ) : (
-                <div className="rounded-md border overflow-x-auto">
-                  <table className="w-full text-xs" data-testid="table-order-detail-items">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left p-2 font-medium">Producto</th>
-                        <th className="text-right p-2 font-medium">Cant</th>
-                        <th className="text-right p-2 font-medium">P.Unit</th>
-                        <th className="text-right p-2 font-medium">Subtotal</th>
-                        <th className="text-left p-2 font-medium">Estado</th>
+                <table className="top-table" data-testid="table-order-detail-items">
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th style={{ textAlign: 'right' }}>Cant</th>
+                      <th style={{ textAlign: 'right' }}>P.Unit</th>
+                      <th style={{ textAlign: 'right' }}>Subtotal</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.items.map(item => (
+                      <tr key={item.id}>
+                        <td>{item.productName}{item.notes ? ` (${item.notes})` : ""}</td>
+                        <td style={{ textAlign: 'right' }}>{item.qty}</td>
+                        <td style={{ textAlign: 'right', fontFamily: 'var(--f-mono)', color: 'var(--text2)' }}>{formatCurrency(item.unitPrice)}</td>
+                        <td style={{ textAlign: 'right' }}>{formatCurrency(item.subtotal)}</td>
+                        <td>
+                          <span className={statusBadgeClass(item.status)} style={{ fontSize: 9 }}>
+                            {statusLabels[item.status] || item.status}
+                          </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {data.items.map(item => (
-                        <tr key={item.id} className="border-b last:border-b-0">
-                          <td className="p-2">{item.productName}{item.notes ? ` (${item.notes})` : ""}</td>
-                          <td className="p-2 text-right">{item.qty}</td>
-                          <td className="p-2 text-right">₡{item.unitPrice.toLocaleString()}</td>
-                          <td className="p-2 text-right">₡{item.subtotal.toLocaleString()}</td>
-                          <td className="p-2">
-                            <Badge variant={statusVariant(item.status)} className="text-[10px]">
-                              {statusLabels[item.status] || item.status}
-                            </Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
 
             {data.payments.length > 0 && (
               <div>
-                <h4 className="text-sm font-bold mb-2">Pagos ({data.payments.length})</h4>
-                <div className="rounded-md border overflow-x-auto">
-                  <table className="w-full text-xs" data-testid="table-order-detail-payments">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left p-2 font-medium">Método</th>
-                        <th className="text-right p-2 font-medium">Monto</th>
-                        <th className="text-left p-2 font-medium">Hora</th>
-                        <th className="text-left p-2 font-medium">Estado</th>
+                <div className="dash-section-title">Pagos ({data.payments.length})</div>
+                <table className="top-table" data-testid="table-order-detail-payments">
+                  <thead>
+                    <tr>
+                      <th>Método</th>
+                      <th style={{ textAlign: 'right' }}>Monto</th>
+                      <th>Hora</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.payments.map(p => (
+                      <tr key={p.id}>
+                        <td>{p.method}</td>
+                        <td style={{ textAlign: 'right' }}>{formatCurrency(p.amount)}</td>
+                        <td>{formatTime(p.paidAt)}</td>
+                        <td>
+                          <span className={statusBadgeClass(p.status)} style={{ fontSize: 9 }}>
+                            {statusLabels[p.status] || p.status}
+                          </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {data.payments.map(p => (
-                        <tr key={p.id} className="border-b last:border-b-0">
-                          <td className="p-2">{p.method}</td>
-                          <td className="p-2 text-right">₡{p.amount.toLocaleString()}</td>
-                          <td className="p-2">{formatTime(p.paidAt)}</td>
-                          <td className="p-2">
-                            <Badge variant={statusVariant(p.status)} className="text-[10px]">
-                              {statusLabels[p.status] || p.status}
-                            </Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
 
-            <div className="flex items-center justify-between border-t pt-2">
-              <span className="text-sm font-bold">Total</span>
-              <span className="text-sm font-bold" data-testid="text-order-detail-total">
-                ₡{data.totalAmount.toLocaleString()}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border-ds)', paddingTop: 12 }}>
+              <span className="dash-section-title" style={{ marginBottom: 0 }}>Total</span>
+              <span className="kpi-value" style={{ fontSize: 18, color: 'var(--green)' }} data-testid="text-order-detail-total">
+                {formatCurrency(data.totalAmount)}
               </span>
             </div>
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }
 
@@ -274,44 +254,42 @@ function OrderListSection({ orders, label }: { orders: OrderSummary[]; label: st
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
 
   if (orders.length === 0) {
-    return <p className="text-xs text-muted-foreground py-2 text-center">Sin {label.toLowerCase()}</p>;
+    return <p className="dash-empty">Sin {label.toLowerCase()}</p>;
   }
 
   return (
     <>
-      <div className="rounded-md border overflow-x-auto mt-2">
-        <table className="w-full text-xs" data-testid={`table-${label.toLowerCase().replace(/\s/g, "-")}`}>
-          <thead>
-            <tr className="border-b bg-muted/50">
-              <th className="text-left p-2 font-medium">#Día</th>
-              <th className="text-left p-2 font-medium">#Global</th>
-              <th className="text-left p-2 font-medium">Mesa</th>
-              <th className="text-right p-2 font-medium">Total</th>
-              <th className="text-left p-2 font-medium">Hora</th>
-              <th className="p-2"></th>
+      <table className="top-table" data-testid={`table-${label.toLowerCase().replace(/\s/g, "-")}`}>
+        <thead>
+          <tr>
+            <th>#Día</th>
+            <th>#Global</th>
+            <th>Mesa</th>
+            <th style={{ textAlign: 'right' }}>Total</th>
+            <th>Hora</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map(o => (
+            <tr
+              key={o.id}
+              style={{ cursor: 'pointer' }}
+              onClick={() => setSelectedOrderId(o.id)}
+              data-testid={`row-order-${o.id}`}
+            >
+              <td style={{ fontWeight: 600 }}>{o.dailyNumber || "—"}</td>
+              <td style={{ color: 'var(--text3)' }}>{o.globalNumber || "—"}</td>
+              <td>{o.tableName}</td>
+              <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCurrency(o.totalAmount)}</td>
+              <td style={{ color: 'var(--text3)' }}>{formatTime(o.openedAt)}</td>
+              <td>
+                <Eye className="w-3.5 h-3.5" style={{ color: 'var(--text3)' }} />
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {orders.map(o => (
-              <tr
-                key={o.id}
-                className="border-b last:border-b-0 cursor-pointer hover-elevate"
-                onClick={() => setSelectedOrderId(o.id)}
-                data-testid={`row-order-${o.id}`}
-              >
-                <td className="p-2 font-medium">{o.dailyNumber || "—"}</td>
-                <td className="p-2 text-muted-foreground">{o.globalNumber || "—"}</td>
-                <td className="p-2">{o.tableName}</td>
-                <td className="p-2 text-right font-medium">₡{o.totalAmount.toLocaleString()}</td>
-                <td className="p-2 text-muted-foreground">{formatTime(o.openedAt)}</td>
-                <td className="p-2">
-                  <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
       <OrderDetailDialog
         orderId={selectedOrderId}
         open={!!selectedOrderId}
@@ -323,75 +301,69 @@ function OrderListSection({ orders, label }: { orders: OrderSummary[]; label: st
 
 function VoidedItemsListSection({ items }: { items: VoidedItemSummary[] }) {
   if (items.length === 0) {
-    return <p className="text-xs text-muted-foreground py-2 text-center">Sin anulaciones</p>;
+    return <p className="dash-empty">Sin anulaciones</p>;
   }
 
   return (
-    <div className="rounded-md border overflow-x-auto mt-2">
-      <table className="w-full text-xs" data-testid="table-voided-items-list">
-        <thead>
-          <tr className="border-b bg-muted/50">
-            <th className="text-left p-2 font-medium">Producto</th>
-            <th className="text-left p-2 font-medium">Mesa</th>
-            <th className="text-right p-2 font-medium">Cant</th>
-            <th className="text-right p-2 font-medium">Total</th>
-            <th className="text-left p-2 font-medium">Razón</th>
-            <th className="text-left p-2 font-medium">Anuló</th>
-            <th className="text-left p-2 font-medium">Hora</th>
+    <table className="top-table" data-testid="table-voided-items-list">
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Mesa</th>
+          <th style={{ textAlign: 'right' }}>Cant</th>
+          <th style={{ textAlign: 'right' }}>Total</th>
+          <th>Razón</th>
+          <th>Anuló</th>
+          <th>Hora</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map(v => (
+          <tr key={v.id} data-testid={`row-voided-${v.id}`}>
+            <td style={{ fontWeight: 500 }}>{v.productName}</td>
+            <td>{v.tableName}</td>
+            <td style={{ textAlign: 'right' }}>{v.qtyVoided}</td>
+            <td style={{ textAlign: 'right' }}>{formatCurrency(v.total)}</td>
+            <td style={{ color: 'var(--text3)' }}>{v.reason || v.notes || "—"}</td>
+            <td data-testid={`text-voided-by-${v.id}`}>{v.voidedBy}</td>
+            <td style={{ color: 'var(--text3)' }}>{formatTime(v.voidedAt)}</td>
           </tr>
-        </thead>
-        <tbody>
-          {items.map(v => (
-            <tr key={v.id} className="border-b last:border-b-0" data-testid={`row-voided-${v.id}`}>
-              <td className="p-2 font-medium">{v.productName}</td>
-              <td className="p-2">{v.tableName}</td>
-              <td className="p-2 text-right">{v.qtyVoided}</td>
-              <td className="p-2 text-right">₡{v.total.toLocaleString()}</td>
-              <td className="p-2 text-muted-foreground">{v.reason || v.notes || "—"}</td>
-              <td className="p-2" data-testid={`text-voided-by-${v.id}`}>{v.voidedBy}</td>
-              <td className="p-2 text-muted-foreground">{formatTime(v.voidedAt)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
 function LedgerDetailTable({ items }: { items: LedgerDetail[] }) {
   if (items.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground py-2 text-center">
-        Sin detalles
-      </p>
-    );
+    return <p className="dash-empty">Sin detalles</p>;
   }
   return (
-    <div className="mt-2 rounded-md border overflow-x-auto">
-      <table className="w-full text-xs" data-testid="table-ledger-details">
+    <div style={{ marginTop: 8 }}>
+      <table className="top-table" data-testid="table-ledger-details">
         <thead>
-          <tr className="border-b bg-muted/50">
-            <th className="text-left p-2 font-medium">Mesa</th>
-            <th className="text-right p-2 font-medium">Cant</th>
-            <th className="text-right p-2 font-medium">P. Unit</th>
-            <th className="text-right p-2 font-medium">Subtotal</th>
-            <th className="text-left p-2 font-medium">Origen</th>
-            <th className="text-left p-2 font-medium">Hora Pago</th>
+          <tr>
+            <th>Mesa</th>
+            <th style={{ textAlign: 'right' }}>Cant</th>
+            <th style={{ textAlign: 'right' }}>P. Unit</th>
+            <th style={{ textAlign: 'right' }}>Subtotal</th>
+            <th>Origen</th>
+            <th>Hora Pago</th>
           </tr>
         </thead>
         <tbody>
           {items.map((item, idx) => (
-            <tr key={idx} className="border-b last:border-b-0">
-              <td className="p-2">{item.tableNameSnapshot || "—"}</td>
-              <td className="p-2 text-right">{item.qty}</td>
-              <td className="p-2 text-right">
-                ₡{item.unitPrice.toLocaleString()}
+            <tr key={idx}>
+              <td>{item.tableNameSnapshot || "—"}</td>
+              <td style={{ textAlign: 'right' }}>{item.qty}</td>
+              <td style={{ textAlign: 'right', fontFamily: 'var(--f-mono)', color: 'var(--text2)' }}>
+                {formatCurrency(item.unitPrice)}
               </td>
-              <td className="p-2 text-right">
-                ₡{item.lineSubtotal.toLocaleString()}
+              <td style={{ textAlign: 'right' }}>
+                {formatCurrency(item.lineSubtotal)}
               </td>
-              <td className="p-2">{item.origin || "—"}</td>
-              <td className="p-2">{formatTime(item.paidAt)}</td>
+              <td>{item.origin || "—"}</td>
+              <td>{formatTime(item.paidAt)}</td>
             </tr>
           ))}
         </tbody>
@@ -421,25 +393,21 @@ function ExpandableRow({
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
         <button
-          className="w-full flex items-center justify-between py-1.5 rounded-md hover-elevate cursor-pointer"
+          className="expand-row"
           data-testid={`${testIdPrefix}-row-${index}`}
         >
-          <div className="flex items-center gap-2 min-w-0">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             {open ? (
-              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+              <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--text3)', flexShrink: 0 }} />
             ) : (
-              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+              <ChevronRight className="w-3.5 h-3.5" style={{ color: 'var(--text3)', flexShrink: 0 }} />
             )}
-            <span className="text-xs text-muted-foreground w-5 text-right">
-              {index + 1}.
-            </span>
-            <span className="text-sm font-medium truncate">{name}</span>
+            <span className="expand-idx">{index + 1}.</span>
+            <span className="expand-name">{name}</span>
           </div>
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <span className="text-xs text-muted-foreground">{qty} uds</span>
-            <span className="text-sm font-medium">
-              ₡{amount.toLocaleString()}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+            <span className="expand-qty">{qty} uds</span>
+            <span className="expand-amount">{formatCurrency(amount)}</span>
           </div>
         </button>
       </CollapsibleTrigger>
@@ -560,6 +528,8 @@ export default function DashboardPage() {
     return Object.entries(totals).sort((a, b) => Number(b[1]) - Number(a[1]));
   })();
 
+  const maxPayment = paymentTotals.length > 0 ? Math.max(...paymentTotals.map(([, a]) => Number(a))) : 1;
+
   const toggleCard = (key: string) => {
     setExpandedCard(prev => prev === key ? null : key);
   };
@@ -593,13 +563,15 @@ export default function DashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="p-3 md:p-4 max-w-5xl mx-auto">
-        <h1 className="text-xl md:text-2xl font-bold mb-4 flex items-center gap-2">
-          <LayoutDashboard className="w-6 h-6" /> Dashboard
-        </h1>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-28 rounded-md" />
+      <div className="dash-layout">
+        <style>{dashStyles}</style>
+        <div className="dash-header">
+          <LayoutDashboard size={22} />
+          <span className="dash-title">Dashboard</span>
+        </div>
+        <div className="kpi-grid">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="kpi-card" style={{ height: 100, background: 'var(--s2)', animation: 'pulse 2s infinite' }} />
           ))}
         </div>
       </div>
@@ -607,519 +579,764 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-3 md:p-4 max-w-5xl mx-auto">
-      <div className="mb-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1
-            className="text-xl md:text-2xl font-bold flex items-center gap-2"
-            data-testid="text-page-title"
-          >
-            <LayoutDashboard className="w-6 h-6" /> Dashboard
-          </h1>
+    <div className="dash-layout">
+      <style>{dashStyles}</style>
+
+      <div className="dash-header">
+        <LayoutDashboard size={22} />
+        <span className="dash-title" data-testid="text-page-title">Dashboard</span>
+        <div className="dash-date-controls">
           {!historicalMode ? (
-            <Button
-              variant="outline"
+            <button
+              className="btn-secondary"
               onClick={() => { setHistoricalMode(true); handlePeriodChange("day"); }}
               data-testid="button-historical"
             >
-              <History className="w-4 h-4 mr-2" />
+              <History className="w-4 h-4" />
               Histórico
-            </Button>
+            </button>
           ) : (
-            <Button
-              variant="outline"
+            <button
+              className="btn-secondary"
               onClick={() => setHistoricalMode(false)}
               data-testid="button-back-today"
             >
-              <ArrowLeft className="w-4 h-4 mr-2" />
+              <ArrowLeft className="w-4 h-4" />
               Volver a Hoy
-            </Button>
+            </button>
           )}
         </div>
-        {!historicalMode ? (
-          <p className="text-sm text-muted-foreground mt-1">Resumen del día</p>
-        ) : (
-          <div className="mt-3 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <CalendarDays className="w-4 h-4 text-muted-foreground" />
-              <Select value={period} onValueChange={(v) => handlePeriodChange(v as PeriodType)}>
-                <SelectTrigger className="w-[140px]" data-testid="select-period">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="day">Por Día</SelectItem>
-                  <SelectItem value="month">Por Mes</SelectItem>
-                  <SelectItem value="year">Por Año</SelectItem>
-                  <SelectItem value="hour">Por Hora</SelectItem>
-                  <SelectItem value="range">Rango</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {period === "day" && (
-                <Input
-                  type="date"
-                  value={dateValue}
-                  onChange={(e) => setDateValue(e.target.value)}
-                  className="w-[180px]"
-                  data-testid="input-date-day"
-                />
-              )}
-
-              {period === "month" && (
-                <Input
-                  type="month"
-                  value={dateValue}
-                  onChange={(e) => setDateValue(e.target.value)}
-                  className="w-[180px]"
-                  data-testid="input-date-month"
-                />
-              )}
-
-              {period === "year" && (
-                <Select value={dateValue} onValueChange={setDateValue}>
-                  <SelectTrigger className="w-[120px]" data-testid="select-year">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {currentYears.map(y => (
-                      <SelectItem key={y} value={y}>{y}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-
-              {period === "hour" && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Input
-                    type="date"
-                    value={dateValue}
-                    onChange={(e) => setDateValue(e.target.value)}
-                    className="w-[160px]"
-                    data-testid="input-date-hour"
-                  />
-                  <span className="text-sm text-muted-foreground">De:</span>
-                  <Select value={String(hourFrom)} onValueChange={(v) => setHourFrom(Number(v))}>
-                    <SelectTrigger className="w-[90px]" data-testid="select-hour-from">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Array.from({ length: 24 }, (_, i) => (
-                        <SelectItem key={i} value={String(i)}>{String(i).padStart(2, "0")}:00</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <span className="text-sm text-muted-foreground">A:</span>
-                  <Select value={String(hourTo)} onValueChange={(v) => setHourTo(Number(v))}>
-                    <SelectTrigger className="w-[90px]" data-testid="select-hour-to">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Array.from({ length: 24 }, (_, i) => (
-                        <SelectItem key={i} value={String(i)}>{String(i).padStart(2, "0")}:59</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              {period === "range" && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-muted-foreground">Desde:</span>
-                  <Input
-                    type="date"
-                    value={rangeFrom}
-                    onChange={(e) => setRangeFrom(e.target.value)}
-                    className="w-[160px]"
-                    data-testid="input-range-from"
-                  />
-                  <span className="text-sm text-muted-foreground">Hasta:</span>
-                  <Input
-                    type="date"
-                    value={rangeTo}
-                    onChange={(e) => setRangeTo(e.target.value)}
-                    className="w-[160px]"
-                    data-testid="input-range-to"
-                  />
-                </div>
-              )}
-            </div>
-            <p className="text-sm text-muted-foreground" data-testid="text-period-label">
-              {period === "range"
-                ? `${rangeFrom} al ${rangeTo}`
-                : period === "hour"
-                  ? `${dateValue} de ${String(hourFrom).padStart(2, "0")}:00 a ${String(hourTo).padStart(2, "0")}:59`
-                  : formatPeriodLabel(period, dateValue)}
-            </p>
-          </div>
-        )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-        <Card
+      {!historicalMode ? (
+        <div style={{ padding: '0 18px 8px' }}>
+          <span className="dash-meta">Resumen del día</span>
+        </div>
+      ) : (
+        <div style={{ padding: '0 18px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            <CalendarDays className="w-4 h-4" style={{ color: 'var(--text3)' }} />
+            <select
+              className="dash-field"
+              value={period}
+              onChange={(e) => handlePeriodChange(e.target.value as PeriodType)}
+              data-testid="select-period"
+            >
+              <option value="day">Por Día</option>
+              <option value="month">Por Mes</option>
+              <option value="year">Por Año</option>
+              <option value="hour">Por Hora</option>
+              <option value="range">Rango</option>
+            </select>
+
+            {period === "day" && (
+              <input
+                type="date"
+                className="dash-field date-input"
+                value={dateValue}
+                onChange={(e) => setDateValue(e.target.value)}
+                data-testid="input-date-day"
+              />
+            )}
+
+            {period === "month" && (
+              <input
+                type="month"
+                className="dash-field date-input"
+                value={dateValue}
+                onChange={(e) => setDateValue(e.target.value)}
+                data-testid="input-date-month"
+              />
+            )}
+
+            {period === "year" && (
+              <select
+                className="dash-field"
+                value={dateValue}
+                onChange={(e) => setDateValue(e.target.value)}
+                data-testid="select-year"
+              >
+                {currentYears.map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            )}
+
+            {period === "hour" && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  type="date"
+                  className="dash-field date-input"
+                  value={dateValue}
+                  onChange={(e) => setDateValue(e.target.value)}
+                  data-testid="input-date-hour"
+                />
+                <span className="dash-meta">De:</span>
+                <select
+                  className="dash-field"
+                  value={String(hourFrom)}
+                  onChange={(e) => setHourFrom(Number(e.target.value))}
+                  data-testid="select-hour-from"
+                >
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={String(i)}>{String(i).padStart(2, "0")}:00</option>
+                  ))}
+                </select>
+                <span className="dash-meta">A:</span>
+                <select
+                  className="dash-field"
+                  value={String(hourTo)}
+                  onChange={(e) => setHourTo(Number(e.target.value))}
+                  data-testid="select-hour-to"
+                >
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={String(i)}>{String(i).padStart(2, "0")}:59</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {period === "range" && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span className="dash-meta">Desde:</span>
+                <input
+                  type="date"
+                  className="dash-field date-input"
+                  value={rangeFrom}
+                  onChange={(e) => setRangeFrom(e.target.value)}
+                  data-testid="input-range-from"
+                />
+                <span className="dash-meta">Hasta:</span>
+                <input
+                  type="date"
+                  className="dash-field date-input"
+                  value={rangeTo}
+                  onChange={(e) => setRangeTo(e.target.value)}
+                  data-testid="input-range-to"
+                />
+              </div>
+            )}
+          </div>
+          <span className="dash-meta" data-testid="text-period-label">
+            {period === "range"
+              ? `${rangeFrom} al ${rangeTo}`
+              : period === "hour"
+                ? `${dateValue} de ${String(hourFrom).padStart(2, "0")}:00 a ${String(hourTo).padStart(2, "0")}:59`
+                : formatPeriodLabel(period, dateValue)}
+          </span>
+        </div>
+      )}
+
+      <div className="kpi-grid">
+        <div
+          className="kpi-card amber"
           data-testid="card-open-orders"
-          className="cursor-pointer hover-elevate"
           onClick={() => toggleCard("open")}
         >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-sm text-muted-foreground">
-                Órdenes Abiertas
-              </span>
-              <Clock className="w-4 h-4 text-muted-foreground" />
-            </div>
-            <p className="text-2xl font-bold">
-              {data?.openOrders.count || 0}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              ₡{(data?.openOrders.amount || 0).toLocaleString()}
-            </p>
-            {expandedCard === "open" && (
-              <ChevronDown className="w-4 h-4 text-muted-foreground mx-auto mt-1" />
-            )}
-          </CardContent>
-        </Card>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="kpi-label">Órdenes Abiertas</span>
+            <Clock className="w-4 h-4" style={{ color: 'var(--text3)' }} />
+          </div>
+          <span className="kpi-value">{data?.openOrders.count || 0}</span>
+          <span className="kpi-sub">{formatCurrency(data?.openOrders.amount || 0)}</span>
+          {expandedCard === "open" && (
+            <ChevronDown className="w-4 h-4" style={{ color: 'var(--text3)', alignSelf: 'center' }} />
+          )}
+        </div>
 
-        <Card
+        <div
+          className="kpi-card green"
           data-testid="card-paid-orders"
-          className="cursor-pointer hover-elevate"
           onClick={() => toggleCard("paid")}
         >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-sm text-muted-foreground">
-                Órdenes Pagadas
-              </span>
-              <DollarSign className="w-4 h-4 text-green-500" />
-            </div>
-            <p className="text-2xl font-bold text-green-600">
-              {data?.paidOrders.count || 0}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              ₡{(data?.paidOrders.amount || 0).toLocaleString()}
-            </p>
-            {expandedCard === "paid" && (
-              <ChevronDown className="w-4 h-4 text-muted-foreground mx-auto mt-1" />
-            )}
-          </CardContent>
-        </Card>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="kpi-label">Órdenes Pagadas</span>
+            <DollarSign className="w-4 h-4" style={{ color: 'var(--green)' }} />
+          </div>
+          <span className="kpi-value" style={{ color: 'var(--green)' }}>{data?.paidOrders.count || 0}</span>
+          <span className="kpi-sub">{formatCurrency(data?.paidOrders.amount || 0)}</span>
+          {expandedCard === "paid" && (
+            <ChevronDown className="w-4 h-4" style={{ color: 'var(--text3)', alignSelf: 'center' }} />
+          )}
+        </div>
 
-        <Card data-testid="card-total-projected">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-sm text-muted-foreground">
-                Venta Neta Proyectada
-              </span>
-              <Calculator className="w-4 h-4 text-blue-500" />
-            </div>
-            <p className="text-2xl font-bold text-blue-600">
-              ₡{((data?.openOrders.amount || 0) + (data?.paidOrders.amount || 0) - (data?.totalDiscounts || 0) - (data?.totalTaxes || 0)).toLocaleString()}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Abiertas + Pagadas - Descuentos - Impuestos
-            </p>
-          </CardContent>
-        </Card>
+        <div className="kpi-card blue" data-testid="card-total-projected">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="kpi-label">Venta Neta Proyectada</span>
+            <Calculator className="w-4 h-4" style={{ color: 'var(--blue)' }} />
+          </div>
+          <span className="kpi-value" style={{ color: 'var(--blue)' }}>
+            {formatCurrency((data?.openOrders.amount || 0) + (data?.paidOrders.amount || 0) - (data?.totalDiscounts || 0) - (data?.totalTaxes || 0))}
+          </span>
+          <span className="kpi-sub" style={{ fontSize: 10 }}>Abiertas + Pagadas - Desc - Imp</span>
+        </div>
 
-        <Card
+        <div
+          className="kpi-card purple"
           data-testid="card-taxes"
-          className="cursor-pointer hover-elevate"
           onClick={() => toggleCard("taxes")}
         >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-sm text-muted-foreground">
-                Impuestos
-              </span>
-              <Receipt className="w-4 h-4 text-purple-500" />
-            </div>
-            <p className="text-2xl font-bold text-purple-600">
-              ₡{(data?.totalTaxes || 0).toLocaleString()}
-            </p>
-            {expandedCard === "taxes" && (
-              <ChevronDown className="w-4 h-4 text-muted-foreground mx-auto mt-1" />
-            )}
-          </CardContent>
-        </Card>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="kpi-label">Impuestos</span>
+            <Receipt className="w-4 h-4" style={{ color: 'var(--purple, #a855f7)' }} />
+          </div>
+          <span className="kpi-value" style={{ color: 'var(--purple, #a855f7)' }}>{formatCurrency(data?.totalTaxes || 0)}</span>
+          {expandedCard === "taxes" && (
+            <ChevronDown className="w-4 h-4" style={{ color: 'var(--text3)', alignSelf: 'center' }} />
+          )}
+        </div>
 
-        <Card data-testid="card-discounts">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-sm text-muted-foreground">
-                Descuentos
-              </span>
-              <Percent className="w-4 h-4 text-orange-500" />
-            </div>
-            <p className="text-2xl font-bold text-orange-600">
-              ₡{(data?.totalDiscounts || 0).toLocaleString()}
-            </p>
-          </CardContent>
-        </Card>
+        <div className="kpi-card amber" data-testid="card-discounts">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="kpi-label">Descuentos</span>
+            <Percent className="w-4 h-4" style={{ color: 'var(--amber)' }} />
+          </div>
+          <span className="kpi-value" style={{ color: 'var(--amber)' }}>{formatCurrency(data?.totalDiscounts || 0)}</span>
+        </div>
 
-        <Card
+        <div
+          className="kpi-card red"
           data-testid="card-voided-items"
-          className="cursor-pointer hover-elevate"
           onClick={() => toggleCard("voided")}
         >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-sm text-muted-foreground">
-                Items Anulados
-              </span>
-              <XCircle className="w-4 h-4 text-destructive" />
-            </div>
-            <p className="text-2xl font-bold">
-              {data?.voidedItemsSummary?.count || 0}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              ₡{(data?.voidedItemsSummary?.amount || 0).toLocaleString()}
-            </p>
-            {expandedCard === "voided" && (
-              <ChevronDown className="w-4 h-4 text-muted-foreground mx-auto mt-1" />
-            )}
-          </CardContent>
-        </Card>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="kpi-label">Items Anulados</span>
+            <XCircle className="w-4 h-4" style={{ color: 'var(--red)' }} />
+          </div>
+          <span className="kpi-value">{data?.voidedItemsSummary?.count || 0}</span>
+          <span className="kpi-sub">{formatCurrency(data?.voidedItemsSummary?.amount || 0)}</span>
+          {expandedCard === "voided" && (
+            <ChevronDown className="w-4 h-4" style={{ color: 'var(--text3)', alignSelf: 'center' }} />
+          )}
+        </div>
       </div>
 
       {expandedCard === "open" && (
-        <Card className="mb-6" data-testid="card-open-orders-detail">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <Clock className="w-5 h-5" />
-            <h3 className="font-bold">Órdenes Abiertas</h3>
-          </CardHeader>
-          <CardContent>
+        <div className="voided-section" data-testid="card-open-orders-detail">
+          <div className="dash-section-title" style={{ padding: '14px 16px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Clock className="w-5 h-5" /> Órdenes Abiertas
+          </div>
+          <div style={{ padding: '0 16px 14px' }}>
             <OrderListSection orders={data?.openOrders.orders || []} label="Órdenes Abiertas" />
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {expandedCard === "paid" && (
-        <Card className="mb-6" data-testid="card-paid-orders-detail">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <DollarSign className="w-5 h-5" />
-            <h3 className="font-bold">Órdenes Pagadas</h3>
-          </CardHeader>
-          <CardContent>
+        <div className="voided-section" data-testid="card-paid-orders-detail">
+          <div className="dash-section-title" style={{ padding: '14px 16px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <DollarSign className="w-5 h-5" /> Órdenes Pagadas
+          </div>
+          <div style={{ padding: '0 16px 14px' }}>
             <OrderListSection orders={data?.paidOrders.orders || []} label="Órdenes Pagadas" />
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {expandedCard === "taxes" && (
-        <Card className="mb-6" data-testid="card-taxes-detail">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <Receipt className="w-5 h-5" />
-            <h3 className="font-bold">Desglose de Impuestos</h3>
-          </CardHeader>
-          <CardContent>
+        <div className="voided-section" data-testid="card-taxes-detail">
+          <div className="dash-section-title" style={{ padding: '14px 16px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Receipt className="w-5 h-5" /> Desglose de Impuestos
+          </div>
+          <div style={{ padding: '0 16px 14px' }}>
             {(!data?.taxBreakdown || data.taxBreakdown.length === 0) ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">
-                Sin impuestos registrados en este período
-              </p>
+              <p className="dash-empty">Sin impuestos registrados en este período</p>
             ) : (
-              <div className="space-y-3">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {data.taxBreakdown.map((tax, i) => (
                   <div
                     key={i}
-                    className="flex items-center justify-between"
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
                     data-testid={`tax-breakdown-${i}`}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Badge variant="secondary" className="text-xs">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <span className="badge-ds badge-muted">
                         {tax.taxName} ({tax.taxRate}%)
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
+                      </span>
+                      <span style={{ fontFamily: 'var(--f-mono)', fontSize: 11, color: 'var(--text3)' }}>
                         {tax.inclusive ? "Incluido" : "Aditivo"}
                       </span>
                     </div>
-                    <span className="text-sm font-medium flex-shrink-0">
-                      ₡{tax.totalAmount.toLocaleString()}
+                    <span className="expand-amount" style={{ flexShrink: 0 }}>
+                      {formatCurrency(tax.totalAmount)}
                     </span>
                   </div>
                 ))}
-                <div className="border-t pt-2 flex items-center justify-between">
-                  <span className="text-sm font-bold">Total Impuestos</span>
-                  <span className="text-sm font-bold" data-testid="text-tax-grand-total">
-                    ₡{(data?.totalTaxes || 0).toLocaleString()}
+                <div style={{ borderTop: '1px solid var(--border-ds)', paddingTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span className="dash-section-title" style={{ marginBottom: 0 }}>Total Impuestos</span>
+                  <span className="expand-amount" style={{ color: 'var(--green)' }} data-testid="text-tax-grand-total">
+                    {formatCurrency(data?.totalTaxes || 0)}
                   </span>
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {expandedCard === "voided" && (
-        <Card className="mb-6" data-testid="card-voided-items-detail">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <XCircle className="w-5 h-5" />
-            <h3 className="font-bold">Items Anulados</h3>
-          </CardHeader>
-          <CardContent>
+        <div className="voided-section" data-testid="card-voided-items-detail">
+          <div className="dash-section-title" style={{ padding: '14px 16px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <XCircle className="w-5 h-5" /> Items Anulados
+          </div>
+          <div style={{ padding: '0 16px 14px', overflowX: 'auto' }}>
             <VoidedItemsListSection items={data?.voidedItemsSummary?.items || []} />
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-        <Card data-testid="card-top-products">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <ShoppingBag className="w-5 h-5" />
-            <h3 className="font-bold">Top Productos</h3>
-          </CardHeader>
-          <CardContent>
-            {!data?.topProducts || data.topProducts.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">
-                Sin datos para este período
-              </p>
-            ) : (
-              <div className="space-y-1">
-                {data.topProducts.map((item, i) => {
-                  const details = ledgerDetails.filter(
-                    (d) => d.productNameSnapshot === item.name
-                  );
-                  return (
-                    <ExpandableRow
-                      key={i}
-                      index={i}
-                      name={item.name}
-                      qty={item.qty}
-                      amount={item.amount}
-                      details={details}
-                      testIdPrefix="product"
-                    />
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      <div className="dash-two-col">
+        <div className="dash-section" data-testid="card-top-products">
+          <div className="dash-section-label">
+            <ShoppingBag className="w-4 h-4" />
+            Top Productos
+          </div>
+          {!data?.topProducts || data.topProducts.length === 0 ? (
+            <p className="dash-empty">Sin datos para este período</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {data.topProducts.map((item, i) => {
+                const details = ledgerDetails.filter(
+                  (d) => d.productNameSnapshot === item.name
+                );
+                return (
+                  <ExpandableRow
+                    key={i}
+                    index={i}
+                    name={item.name}
+                    qty={item.qty}
+                    amount={item.amount}
+                    details={details}
+                    testIdPrefix="product"
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
 
-        <Card data-testid="card-top-categories">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <TrendingUp className="w-5 h-5" />
-            <h3 className="font-bold">Top Categorías</h3>
-          </CardHeader>
-          <CardContent>
-            {!data?.topCategories || data.topCategories.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">
-                Sin datos para este período
-              </p>
-            ) : (
-              <div className="space-y-1">
-                {data.topCategories.map((item, i) => {
-                  const details = ledgerDetails.filter(
-                    (d) => d.categoryNameSnapshot === item.name
-                  );
-                  return (
-                    <ExpandableRow
-                      key={i}
-                      index={i}
-                      name={item.name}
-                      qty={item.qty}
-                      amount={item.amount}
-                      details={details}
-                      testIdPrefix="category"
-                    />
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <div className="dash-section" data-testid="card-top-categories">
+          <div className="dash-section-label">
+            <TrendingUp className="w-4 h-4" />
+            Top Categorías
+          </div>
+          {!data?.topCategories || data.topCategories.length === 0 ? (
+            <p className="dash-empty">Sin datos para este período</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {data.topCategories.map((item, i) => {
+                const details = ledgerDetails.filter(
+                  (d) => d.categoryNameSnapshot === item.name
+                );
+                return (
+                  <ExpandableRow
+                    key={i}
+                    index={i}
+                    name={item.name}
+                    qty={item.qty}
+                    amount={item.amount}
+                    details={details}
+                    testIdPrefix="category"
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-        <Card data-testid="card-payment-totals">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <CreditCard className="w-5 h-5" />
-            <h3 className="font-bold">Totales por Método de Pago</h3>
-          </CardHeader>
-          <CardContent>
-            {paymentTotals.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">
-                Sin pagos registrados en este período
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {paymentTotals.map(([method, amount]) => (
-                  <div
-                    key={method}
-                    className="flex items-center justify-between"
-                    data-testid={`payment-method-${method}`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Badge variant="secondary" className="text-xs">
-                        {method}
-                      </Badge>
-                    </div>
-                    <span className="text-sm font-medium flex-shrink-0">
-                      ₡{Number(amount).toLocaleString()}
-                    </span>
-                  </div>
-                ))}
-                <div className="border-t pt-2 flex items-center justify-between">
-                  <span className="text-sm font-bold">Total</span>
-                  <span
-                    className="text-sm font-bold"
-                    data-testid="text-payment-grand-total"
-                  >
-                    ₡
-                    {paymentTotals
-                      .reduce((sum, [, a]) => sum + Number(a), 0)
-                      .toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card data-testid="card-qbo-export">
-          <CardHeader className="pb-2 flex flex-row items-center gap-2">
-            <FileText className="w-5 h-5" />
-            <h3 className="font-bold">Reporte QBO</h3>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
-              Exportar las ventas del día al formato QBO.
-            </p>
-            <Button
-              onClick={() => qboMutation.mutate()}
-              disabled={qboMutation.isPending}
-              data-testid="button-export-qbo"
-            >
-              {qboMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Exportando...
-                </>
-              ) : (
-                "Exportar a QBO"
-              )}
-            </Button>
-            {qboStatus && (
-              <div className="mt-4" data-testid="qbo-export-status">
-                <Badge
-                  variant={
-                    qboStatus.status === "error" ? "destructive" : "secondary"
-                  }
+      <div className="dash-two-col">
+        <div className="dash-section" data-testid="card-payment-totals">
+          <div className="dash-section-label">
+            <CreditCard className="w-4 h-4" />
+            Totales por Método de Pago
+          </div>
+          {paymentTotals.length === 0 ? (
+            <p className="dash-empty">Sin pagos registrados en este período</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {paymentTotals.map(([method, amount]) => (
+                <div
+                  key={method}
+                  className="payment-row"
+                  data-testid={`payment-method-${method}`}
                 >
-                  {qboStatus.status === "error"
-                    ? "Error"
-                    : qboStatus.status === "success"
-                      ? "Completado"
-                      : qboStatus.status}
-                </Badge>
-                {qboStatus.message && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {qboStatus.message}
-                  </p>
-                )}
+                  <span className="pr-method">{method}</span>
+                  <div className="pr-bar-wrap">
+                    <div className="pr-bar" style={{ width: `${(Number(amount) / maxPayment) * 100}%` }} />
+                  </div>
+                  <span className="pr-amount">{formatCurrency(Number(amount))}</span>
+                </div>
+              ))}
+              <div style={{ borderTop: '1px solid var(--border-ds)', paddingTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span className="dash-section-title" style={{ marginBottom: 0 }}>Total</span>
+                <span
+                  className="expand-amount"
+                  style={{ color: 'var(--green)' }}
+                  data-testid="text-payment-grand-total"
+                >
+                  {formatCurrency(paymentTotals.reduce((sum, [, a]) => sum + Number(a), 0))}
+                </span>
               </div>
+            </div>
+          )}
+        </div>
+
+        <div className="dash-section" data-testid="card-qbo-export">
+          <div className="dash-section-label">
+            <FileText className="w-4 h-4" />
+            Reporte QBO
+          </div>
+          <p className="dash-meta" style={{ marginBottom: 12 }}>
+            Exportar las ventas del día al formato QBO.
+          </p>
+          <button
+            className="btn-primary"
+            onClick={() => qboMutation.mutate()}
+            disabled={qboMutation.isPending}
+            data-testid="button-export-qbo"
+            style={{ width: '100%' }}
+          >
+            {qboMutation.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Exportando...
+              </>
+            ) : (
+              "Exportar a QBO"
             )}
-          </CardContent>
-        </Card>
+          </button>
+          {qboStatus && (
+            <div style={{ marginTop: 12 }} data-testid="qbo-export-status">
+              <span className={`badge-ds ${qboStatus.status === "error" ? "badge-red" : "badge-green"}`}>
+                {qboStatus.status === "error"
+                  ? "Error"
+                  : qboStatus.status === "success"
+                    ? "Completado"
+                    : qboStatus.status}
+              </span>
+              {qboStatus.message && (
+                <p className="dash-meta" style={{ marginTop: 6 }}>
+                  {qboStatus.message}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
+
+const dashStyles = `
+  .dash-layout {
+    background: var(--bg);
+    min-height: 100dvh;
+    font-family: var(--f-body);
+    color: var(--text);
+    padding-bottom: 24px;
+  }
+
+  .dash-header {
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    background: var(--s0);
+    border-bottom: 1px solid var(--border-ds);
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+
+  .dash-title {
+    font-family: var(--f-disp);
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text);
+  }
+
+  .dash-date-controls {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-left: auto;
+  }
+
+  .dash-meta {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--text3);
+  }
+
+  .dash-field {
+    background: var(--s2);
+    border: 1.5px solid var(--border-ds);
+    border-radius: var(--r-sm);
+    color: var(--text);
+    padding: 8px 12px;
+    font-family: var(--f-body);
+    font-size: 14px;
+    outline: none;
+  }
+  .dash-field:focus {
+    border-color: var(--green-m);
+  }
+
+  .date-input {
+    max-width: 160px;
+    font-family: var(--f-mono);
+    font-size: 12px;
+    padding: 7px 10px;
+  }
+
+  .dash-empty {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--text3);
+    text-align: center;
+    padding: 16px 0;
+    margin: 0;
+  }
+
+  .dash-section-title {
+    font-family: var(--f-disp);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+
+  /* KPI Grid */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 14px 18px;
+  }
+  @media (min-width: 768px) {
+    .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+
+  .kpi-card {
+    background: var(--s1);
+    border: 1.5px solid var(--border-ds);
+    border-radius: var(--r-md);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    cursor: pointer;
+    transition: all var(--t-fast);
+  }
+  .kpi-card:active { background: var(--s2); }
+  .kpi-card.green  { border-top: 3px solid var(--green); }
+  .kpi-card.blue   { border-top: 3px solid var(--blue); }
+  .kpi-card.red    { border-top: 3px solid var(--red); }
+  .kpi-card.amber  { border-top: 3px solid var(--amber); }
+  .kpi-card.purple { border-top: 3px solid var(--purple, #a855f7); }
+
+  .kpi-value {
+    font-family: var(--f-mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .kpi-label {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .kpi-sub {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  /* Expanded detail panels */
+  .voided-section {
+    background: var(--s1);
+    border: 1px solid var(--border-ds);
+    border-radius: var(--r-md);
+    overflow: hidden;
+    margin: 0 18px 16px;
+  }
+
+  /* Two-column layout */
+  .dash-two-col {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 0 18px 14px;
+  }
+  @media (min-width: 768px) {
+    .dash-two-col { grid-template-columns: 1fr 1fr; }
+  }
+
+  .dash-section {
+    background: var(--s1);
+    border: 1.5px solid var(--border-ds);
+    border-radius: var(--r-md);
+    padding: 14px;
+  }
+
+  .dash-section-label {
+    font-family: var(--f-disp);
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+  }
+
+  /* Payment bars */
+  .payment-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .pr-method {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    color: var(--text3);
+    width: 70px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex-shrink: 0;
+  }
+  .pr-bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: var(--s3);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .pr-bar {
+    height: 100%;
+    background: var(--green);
+    border-radius: 4px;
+    transition: width 0.8s ease;
+  }
+  .pr-amount {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--text);
+    width: 90px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  /* Top tables */
+  .top-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .top-table th {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text3);
+    padding: 6px 4px;
+    border-bottom: 1px solid var(--border-ds);
+    text-align: left;
+    font-weight: 500;
+  }
+  .top-table td {
+    padding: 9px 4px;
+    border-bottom: 1px solid var(--border-ds);
+    font-size: 13px;
+    color: var(--text);
+  }
+  .top-table td:last-child {
+    font-family: var(--f-mono);
+    color: var(--green);
+    text-align: right;
+  }
+  .top-table tbody tr:hover {
+    background: var(--s2);
+  }
+
+  /* Expandable rows */
+  .expand-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 4px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    background: none;
+    border: none;
+    color: var(--text);
+    transition: background var(--t-fast);
+  }
+  .expand-row:hover { background: var(--s2); }
+  .expand-idx {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    color: var(--text3);
+    width: 20px;
+    text-align: right;
+  }
+  .expand-name {
+    font-family: var(--f-body);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .expand-qty {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    color: var(--text3);
+  }
+  .expand-amount {
+    font-family: var(--f-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--green);
+  }
+
+  /* Dialog overlay */
+  .ds-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .ds-dialog {
+    background: var(--s1);
+    border: 1.5px solid var(--border-ds);
+    border-radius: var(--r-lg);
+    padding: 20px;
+    max-width: 560px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .ds-dialog-title {
+    font-family: var(--f-disp);
+    font-size: 18px;
+    font-weight: 800;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+`;

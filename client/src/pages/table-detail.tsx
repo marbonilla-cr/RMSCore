@@ -2,22 +2,18 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useRoute, useLocation } from "wouter";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { wsManager } from "@/lib/ws";
+import { formatCurrency, timeAgo } from "@/lib/utils";
 import {
   ArrowLeft, Plus, Send, Check, Trash2, Loader2,
   ShoppingBag, AlertCircle, ChefHat, Minus, Search, X,
   ClipboardList, Ban, ChevronDown, ChevronRight, Clock,
   Settings2, Receipt, Split, ArrowRight, FileText,
 } from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
 import type { Product, Category } from "@shared/schema";
 import { printReceipt } from "@/lib/print-receipt";
 
@@ -301,7 +297,7 @@ export default function TableDetailPage() {
     ghost.style.cssText = `
       position:fixed;z-index:9999;pointer-events:none;
       width:40px;height:40px;border-radius:50%;
-      background:hsl(var(--primary));opacity:0.85;
+      background:var(--green);opacity:0.85;
       left:${sourceRect.left + sourceRect.width / 2 - 20}px;
       top:${sourceRect.top + sourceRect.height / 2 - 20}px;
     `;
@@ -506,13 +502,22 @@ export default function TableDetailPage() {
   const cartCount = cart.reduce((s, c) => s + c.qty, 0);
   const lastChips = cart.slice(-5);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusClass = (status: string) => {
     switch (status) {
-      case "PENDING": return <Badge variant="secondary">Pendiente</Badge>;
-      case "SENT": return <Badge>En Cocina</Badge>;
-      case "PREPARING": return <Badge className="bg-blue-600 dark:bg-blue-700 text-white">Preparando</Badge>;
-      case "READY": return <Badge className="bg-green-600 dark:bg-green-700 text-white">Listo</Badge>;
-      default: return <Badge variant="secondary">{status}</Badge>;
+      case "PENDING": return "badge-muted";
+      case "SENT": return "badge-blue";
+      case "PREPARING": return "badge-amber";
+      case "READY": return "badge-green";
+      default: return "badge-muted";
+    }
+  };
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case "PENDING": return "Pendiente";
+      case "SENT": return "Cocina";
+      case "PREPARING": return "Preparando";
+      case "READY": return "Listo";
+      default: return status;
     }
   };
 
@@ -637,107 +642,129 @@ export default function TableDetailPage() {
 
   if (isLoadingCurrent) {
     return (
-      <div className="p-4 max-w-lg mx-auto">
-        <div className="flex items-center gap-2 mb-4">
-          <Button size="icon" variant="ghost" onClick={() => navigate("/tables")} data-testid="button-back">
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div>
-            <Skeleton className="h-7 w-36 mb-1" />
-            <Skeleton className="h-4 w-24" />
+      <div className="td-screen">
+        <style>{tdStyles}</style>
+        <div className="td-header">
+          <button className="back-btn" onClick={() => navigate("/tables")} data-testid="button-back">
+            <ArrowLeft size={18} />
+          </button>
+          <div style={{ flex: 1 }}>
+            <div className="td-skeleton" style={{ width: 140, height: 24, marginBottom: 6 }} />
+            <div className="td-skeleton" style={{ width: 100, height: 14 }} />
           </div>
         </div>
-        <Skeleton className="h-28 w-full mb-3" />
-        <Skeleton className="h-20 w-full mb-3" />
-        <Skeleton className="h-12 w-full" />
+        <div style={{ padding: 18 }}>
+          <div className="td-skeleton" style={{ height: 100, marginBottom: 12 }} />
+          <div className="td-skeleton" style={{ height: 60, marginBottom: 12 }} />
+          <div className="td-skeleton" style={{ height: 44 }} />
+        </div>
       </div>
     );
   }
 
+  const orderStatusColor = activeOrder?.status === "PAID" ? "var(--text3)"
+    : activeOrder?.status === "READY" ? "var(--green)"
+    : activeOrder?.status === "IN_KITCHEN" ? "var(--blue)"
+    : activeOrder?.status === "PREPARING" ? "var(--amber)"
+    : "var(--green)";
+
+  const orderStatusLabel = activeOrder?.status === "PAID" ? "Pagada"
+    : activeOrder?.status === "READY" ? "Lista"
+    : activeOrder?.status === "IN_KITCHEN" ? "En Cocina"
+    : activeOrder?.status === "PREPARING" ? "Preparando"
+    : activeOrder ? "Abierta" : "Sin orden";
+
+  const elapsedTime = activeOrder?.createdAt ? timeAgo(activeOrder.createdAt) : "";
+
   return (
-    <div className="flex flex-col" style={{ minHeight: "100dvh", overscrollBehavior: "contain" }}>
-      <div className="sticky top-0 z-[9] bg-background border-b px-3 py-2 flex items-center gap-2">
-        <Button size="icon" variant="ghost" onClick={() => navigate("/tables")} data-testid="button-back">
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold leading-tight truncate" data-testid="text-table-name">
+    <div className="td-screen">
+      <style>{tdStyles}</style>
+
+      <div className="td-header">
+        <button className="back-btn" onClick={() => navigate("/tables")} data-testid="button-back">
+          <ArrowLeft size={18} />
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 className="header-title" data-testid="text-table-name">
             {tableData?.tableName || `Mesa ${tableId}`}
           </h1>
-          <p className="text-xs text-muted-foreground">
+          <p className="header-sub">
             {activeOrder ? `Orden #${activeOrder.id}` : "Sin orden abierta"}
+            {elapsedTime && <> &middot; {elapsedTime}</>}
+            {activeOrder && (
+              <> &middot; <span style={{ color: orderStatusColor }}>{orderStatusLabel}</span></>
+            )}
           </p>
-        </div>
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={viewMode === "order" ? "default" : "ghost"}
-            onClick={() => setViewMode("order")}
-            data-testid="button-view-order"
-          >
-            <ClipboardList className="w-4 h-4 mr-1" />
-            <span className="hidden sm:inline">Orden</span>
-          </Button>
-          <Button
-            size="sm"
-            variant={viewMode === "menu" ? "default" : "ghost"}
-            onClick={() => setViewMode("menu")}
-            data-testid="button-view-menu"
-          >
-            <Plus className="w-4 h-4 mr-1" />
-            <span className="hidden sm:inline">Menu</span>
-          </Button>
-          {activeOrder && activeItems.length > 0 && (
-            <Button
-              size="sm"
-              variant={viewMode === "split" ? "default" : "ghost"}
-              onClick={enterSplitMode}
-              data-testid="button-view-split"
-            >
-              <Split className="w-4 h-4 mr-1" />
-              <span className="hidden sm:inline">Dividir</span>
-            </Button>
-          )}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto" style={{ paddingBottom: cart.length > 0 && viewMode !== "split" ? "80px" : "16px" }}>
+      <div className="view-tabs">
+        <button
+          className={`view-tab ${viewMode === "order" ? "active-order" : ""}`}
+          onClick={() => setViewMode("order")}
+          data-testid="button-view-order"
+        >
+          <ClipboardList size={15} />
+          Orden
+          {orderItems.filter((i: any) => i.status !== "VOIDED").length > 0 && (
+            <span className="tab-badge">{orderItems.filter((i: any) => i.status !== "VOIDED").length}</span>
+          )}
+        </button>
+        <button
+          className={`view-tab ${viewMode === "menu" ? "active-menu" : ""}`}
+          onClick={() => setViewMode("menu")}
+          data-testid="button-view-menu"
+        >
+          <Plus size={15} />
+          Menu
+        </button>
+        {activeOrder && activeItems.length > 0 && (
+          <button
+            className={`view-tab ${viewMode === "split" ? "active-order" : ""}`}
+            onClick={enterSplitMode}
+            data-testid="button-view-split"
+          >
+            <Split size={15} />
+            Dividir
+          </button>
+        )}
+      </div>
+
+      <div className="td-content" style={{ paddingBottom: cart.length > 0 && viewMode !== "split" ? 80 : 16 }}>
         {viewMode === "split" ? (
-          <div className="p-3 max-w-lg mx-auto">
-            <h2 className="font-bold text-lg flex items-center gap-2 mb-3">
-              <Split className="w-5 h-5" /> Dividir Cuenta
+          <div className="td-section">
+            <h2 className="td-section-title">
+              <Split size={18} /> Dividir Cuenta
             </h2>
 
-            <div className="flex gap-2 mb-3 flex-wrap">
+            <div className="split-tabs">
               {splitAccounts.map((sa) => (
-                <Button
+                <button
                   key={sa.id}
-                  size="sm"
-                  variant={activeSplitId === sa.id ? "default" : "outline"}
+                  className={`split-tab ${activeSplitId === sa.id ? "active" : ""}`}
                   onClick={() => setActiveSplitId(sa.id)}
                   data-testid={`button-split-tab-${sa.id}`}
                 >
                   {sa.label} ({sa.items.length})
-                </Button>
+                </button>
               ))}
-              <Button
-                size="sm"
-                variant="outline"
+              <button
+                className="split-tab"
                 onClick={createSplitAccount}
                 disabled={splitLoading}
                 data-testid="button-create-split"
               >
-                <Plus className="w-4 h-4 mr-1" /> Nueva
-              </Button>
+                <Plus size={14} /> Nueva
+              </button>
             </div>
 
-            <Card className="mb-3">
-              <CardHeader className="pb-2">
-                <h3 className="font-semibold text-sm text-muted-foreground">Items sin asignar ({unassignedItems.length})</h3>
-              </CardHeader>
-              <CardContent className="space-y-1">
+            <div className="card-ds" style={{ marginBottom: 12 }}>
+              <div className="card-ds-header">
+                <span className="td-label">Items sin asignar ({unassignedItems.length})</span>
+              </div>
+              <div>
                 {unassignedItems.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-2">Todos los items asignados</p>
+                  <p className="td-empty-text">Todos los items asignados</p>
                 ) : (
                   unassignedItems.map((item: any) => {
                     const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
@@ -745,43 +772,44 @@ export default function TableDetailPage() {
                     return (
                       <div
                         key={item.id}
-                        className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${splitSelectedItems.has(item.id) ? "bg-primary/10 ring-1 ring-primary" : "hover-elevate"}`}
+                        className={`split-item ${splitSelectedItems.has(item.id) ? "selected" : ""}`}
                         onClick={() => toggleSplitItem(item.id)}
                         data-testid={`split-item-${item.id}`}
                       >
                         <Checkbox checked={splitSelectedItems.has(item.id)} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium">{item.qty}x {item.productNameSnapshot}</p>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span className="oi-name">{item.qty}x {item.productNameSnapshot}</span>
                           {item.customerNameSnapshot && (
-                            <p className="text-xs text-muted-foreground">{item.customerNameSnapshot}</p>
+                            <span className="oi-customer">{item.customerNameSnapshot}</span>
                           )}
                           {item.modifiers && item.modifiers.length > 0 && (
-                            <p className="text-xs text-muted-foreground">
+                            <span className="oi-mods">
                               {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
-                            </p>
+                            </span>
                           )}
                         </div>
-                        <span className="text-sm font-medium">₡{(unitPrice * item.qty).toLocaleString()}</span>
+                        <span className="oi-price">{formatCurrency(unitPrice * item.qty)}</span>
                       </div>
                     );
                   })
                 )}
                 {splitSelectedItems.size > 0 && activeSplitId && (
-                  <Button
-                    className="w-full mt-2"
+                  <button
+                    className="btn-primary"
+                    style={{ width: "100%", marginTop: 8 }}
                     onClick={moveItemsToSplit}
                     disabled={splitLoading}
                     data-testid="button-move-to-split"
                   >
-                    {splitLoading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <ArrowRight className="w-4 h-4 mr-1" />}
+                    {splitLoading ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
                     Mover {splitSelectedItems.size} items a {splitAccounts.find(s => s.id === activeSplitId)?.label}
-                  </Button>
+                  </button>
                 )}
                 {splitSelectedItems.size > 0 && !activeSplitId && (
-                  <p className="text-xs text-muted-foreground text-center mt-2">Seleccione o cree una subcuenta primero</p>
+                  <p className="td-empty-text" style={{ marginTop: 8 }}>Seleccione o cree una subcuenta primero</p>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
 
             {splitAccounts.map((sa) => {
               const splitItems = sa.items.map(si => activeItems.find((i: any) => i.id === si.orderItemId)).filter(Boolean);
@@ -790,268 +818,265 @@ export default function TableDetailPage() {
                 return sum + (Number(item.productPriceSnapshot) + modDelta) * item.qty;
               }, 0);
               return (
-                <Card key={sa.id} className={`mb-2 ${activeSplitId === sa.id ? "ring-1 ring-primary" : ""}`} data-testid={`split-account-${sa.id}`}>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <h3 className="font-semibold text-sm">{sa.label}</h3>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold">₡{splitTotal.toLocaleString()}</span>
-                        <Button size="icon" variant="ghost" onClick={() => removeSplitAccount(sa.id)} data-testid={`button-remove-split-${sa.id}`}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
+                <div key={sa.id} className={`card-ds ${activeSplitId === sa.id ? "card-active" : ""}`} style={{ marginBottom: 8 }} data-testid={`split-account-${sa.id}`}>
+                  <div className="card-ds-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <span className="oi-name" style={{ fontWeight: 600 }}>{sa.label}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span className="oi-price">{formatCurrency(splitTotal)}</span>
+                      <button className="btn-icon-sm" onClick={() => removeSplitAccount(sa.id)} data-testid={`button-remove-split-${sa.id}`}>
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    {splitItems.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-1">Sin items</p>
-                    ) : (
-                      splitItems.map((item: any) => {
-                        const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
-                        const unitPrice = Number(item.productPriceSnapshot) + modDelta;
-                        return (
-                          <div key={item.id} className="flex items-center justify-between py-1 text-sm gap-1" data-testid={`split-assigned-item-${item.id}`}>
-                            <div className="flex-1 min-w-0">
-                              <span className="truncate block">{item.qty}x {item.productNameSnapshot}</span>
-                              {item.customerNameSnapshot && (
-                                <span className="text-xs text-muted-foreground">{item.customerNameSnapshot}</span>
-                              )}
-                            </div>
-                            <span className="flex-shrink-0">₡{(unitPrice * item.qty).toLocaleString()}</span>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="flex-shrink-0"
-                              onClick={() => returnItemToUnassigned(item.id, sa.id)}
-                              disabled={splitLoading}
-                              data-testid={`button-return-item-${item.id}`}
-                            >
-                              <X className="w-3 h-3" />
-                            </Button>
+                  </div>
+                  {splitItems.length === 0 ? (
+                    <p className="td-empty-text">Sin items</p>
+                  ) : (
+                    splitItems.map((item: any) => {
+                      const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
+                      const unitPrice = Number(item.productPriceSnapshot) + modDelta;
+                      return (
+                        <div key={item.id} className="order-item" data-testid={`split-assigned-item-${item.id}`}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span className="oi-name">{item.qty}x {item.productNameSnapshot}</span>
+                            {item.customerNameSnapshot && (
+                              <span className="oi-customer">{item.customerNameSnapshot}</span>
+                            )}
                           </div>
-                        );
-                      })
-                    )}
-                  </CardContent>
-                </Card>
+                          <span className="oi-price">{formatCurrency(unitPrice * item.qty)}</span>
+                          <button
+                            className="btn-icon-sm"
+                            onClick={() => returnItemToUnassigned(item.id, sa.id)}
+                            disabled={splitLoading}
+                            data-testid={`button-return-item-${item.id}`}
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               );
             })}
 
-            <div className="flex gap-2 mt-4 pb-4">
-              <Button variant="outline" className="flex-1" onClick={() => setViewMode("order")} data-testid="button-cancel-split">
+            <div style={{ display: "flex", gap: 8, marginTop: 16, paddingBottom: 16 }}>
+              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setViewMode("order")} data-testid="button-cancel-split">
                 Cancelar
-              </Button>
-              <Button
-                className="flex-1"
+              </button>
+              <button
+                className="btn-primary"
+                style={{ flex: 1 }}
                 onClick={executeSplit}
                 disabled={splitLoading || splitAccounts.filter(s => s.items.length > 0).length === 0}
                 data-testid="button-execute-split"
               >
-                {splitLoading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Check className="w-4 h-4 mr-1" />}
-                Confirmar División
-              </Button>
+                {splitLoading ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                Confirmar Division
+              </button>
             </div>
           </div>
         ) : viewMode === "order" ? (
-          <div className="p-3 max-w-lg mx-auto space-y-3">
+          <div className="td-section">
             {pendingSubmissions.length > 0 && (
-              <Card>
-                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5 text-orange-500" />
-                    <h2 className="font-bold text-base" data-testid="text-pending-qr-title">Solicitudes QR pendientes</h2>
-                  </div>
-                  <Badge variant="secondary">{pendingSubmissions.length}</Badge>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {pendingSubmissions.map((sub: any) => {
-                    const rawPayload = sub.payloadSnapshot || sub.payload_snapshot;
-                    const payloadItems = rawPayload?.items || (Array.isArray(rawPayload) ? rawPayload : []);
-                    const firstItem = payloadItems[0] || null;
-                    const customerName = firstItem?.customerName || "Cliente";
-                    const createdAt = sub.createdAt ? new Date(sub.createdAt) : new Date();
-                    const timeStr = createdAt.toLocaleTimeString("es-CR", { hour: "numeric", minute: "2-digit", hour12: true });
-                    const isExpanded = expandedSubmissionId === sub.id;
-                    
-                    return (
-                      <div key={sub.id} className="border rounded-md p-3" data-testid={`pending-submission-${sub.id}`}>
-                        <div
-                          className="flex items-start justify-between gap-2 cursor-pointer"
-                          onClick={() => setExpandedSubmissionId(isExpanded ? null : sub.id)}
-                          data-testid={`button-toggle-qr-${sub.id}`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm text-muted-foreground">{timeStr}</span>
-                              <span className="font-medium">{customerName}</span>
-                              <Badge variant="secondary">{payloadItems.length} {payloadItems.length === 1 ? "item" : "items"}</Badge>
-                            </div>
-                          </div>
-                          <ChevronRight className={`w-5 h-5 text-muted-foreground transition-transform shrink-0 ${isExpanded ? "rotate-90" : ""}`} />
-                        </div>
-                        {isExpanded && (
-                          <div className="mt-3 space-y-3">
-                            <div className="space-y-1 pl-1">
-                              {payloadItems.map((item: any, idx: number) => (
-                                <div key={idx} className="flex items-center justify-between text-sm py-1 border-b last:border-b-0">
-                                  <span>{item.qty}x {item.productName || `Producto #${item.productId}`}</span>
-                                </div>
-                              ))}
-                            </div>
-                            <Button
-                              className="w-full"
-                              onClick={() => acceptSubmissionMutation.mutate(sub.id)}
-                              disabled={acceptSubmissionMutation.isPending}
-                              data-testid={`button-accept-qr-${sub.id}`}
-                            >
-                              {acceptSubmissionMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
-                              Enviar a cocina
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {pendingSubmissions.length > 1 && (
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => acceptAllMutation.mutate(pendingSubmissions.map((s: any) => s.id))}
-                      disabled={acceptAllMutation.isPending}
-                      data-testid="button-accept-all-qr"
-                    >
-                      {acceptAllMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Check className="w-4 h-4 mr-2" />}
-                      Aceptar todas
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
+              <div className="qr-banner">
+                <AlertCircle size={22} className="qr-banner-icon" style={{ color: "var(--amber)" }} />
+                <div className="qr-banner-text">
+                  <p className="qr-banner-title" data-testid="text-pending-qr-title">
+                    {pendingSubmissions.length} pedido{pendingSubmissions.length > 1 ? "s" : ""} QR pendiente{pendingSubmissions.length > 1 ? "s" : ""}
+                  </p>
+                </div>
+                {pendingSubmissions.length > 1 && (
+                  <button
+                    className="qr-banner-btn"
+                    onClick={() => acceptAllMutation.mutate(pendingSubmissions.map((s: any) => s.id))}
+                    disabled={acceptAllMutation.isPending}
+                    data-testid="button-accept-all-qr"
+                  >
+                    {acceptAllMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : "Aceptar todas"}
+                  </button>
+                )}
+              </div>
             )}
 
-            {Object.keys(groupedItems).length > 0 && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <h2 className="font-bold flex items-center gap-2 text-base">
-                    <ChefHat className="w-5 h-5" /> Items de la Orden
-                  </h2>
-                </CardHeader>
-                <CardContent>
-                  {Object.entries(groupedItems)
-                    .sort(([a], [b]) => Number(a) - Number(b))
-                    .map(([round, items]) => (
-                      <div key={round} className="mb-4 last:mb-0">
-                        <p className="text-xs font-medium text-muted-foreground mb-2">
-                          Ronda {round} {(items as any[])[0]?.origin === "QR" ? "(QR)" : ""}
-                        </p>
-                        {(items as any[]).map((item: any) => (
-                          <div key={item.id} className="flex items-center justify-between py-2 border-b last:border-0 gap-2" data-testid={`order-item-${item.id}`}>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-base font-medium">{item.qty}x {item.productNameSnapshot}</p>
-                              {item.modifiers && item.modifiers.length > 0 && (
-                                <p className="text-xs text-muted-foreground">
-                                  {item.modifiers.map((m: any) => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")}
-                                </p>
-                              )}
-                              {item.notes && !(item.modifiers && item.modifiers.length > 0) && <p className="text-sm text-muted-foreground">{item.notes}</p>}
-                            </div>
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <span className="text-sm">₡{Number((Number(item.productPriceSnapshot) + (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0)) * item.qty).toLocaleString()}</span>
-                              {getStatusBadge(item.status)}
-                              {activeOrder?.status !== "PAID" && (
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="text-destructive"
-                                  onClick={() => { setVoidDialogItem(item); setVoidReason(""); setVoidQty(item.qty); }}
-                                  data-testid={`button-void-item-${item.id}`}
-                                >
-                                  <Ban className="w-4 h-4" />
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+            {pendingSubmissions.length > 0 && pendingSubmissions.map((sub: any) => {
+              const rawPayload = sub.payloadSnapshot || sub.payload_snapshot;
+              const payloadItems = rawPayload?.items || (Array.isArray(rawPayload) ? rawPayload : []);
+              const firstItem = payloadItems[0] || null;
+              const customerName = firstItem?.customerName || "Cliente";
+              const createdAt = sub.createdAt ? new Date(sub.createdAt) : new Date();
+              const timeStr = createdAt.toLocaleTimeString("es-CR", { hour: "numeric", minute: "2-digit", hour12: true });
+              const isExpanded = expandedSubmissionId === sub.id;
+
+              return (
+                <div key={sub.id} className="card-ds" style={{ marginBottom: 8 }} data-testid={`pending-submission-${sub.id}`}>
+                  <div
+                    className="qr-submission-header"
+                    onClick={() => setExpandedSubmissionId(isExpanded ? null : sub.id)}
+                    data-testid={`button-toggle-qr-${sub.id}`}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span className="oi-mods">{timeStr}</span>
+                        <span className="oi-name">{customerName}</span>
+                        <span className="badge-ds badge-muted">{payloadItems.length} {payloadItems.length === 1 ? "item" : "items"}</span>
                       </div>
-                    ))}
-                  {activeOrder?.totalAmount && (
-                    <div className="pt-3 border-t mt-3 space-y-2">
-                      <div className="flex items-center justify-between font-bold text-base">
-                        <span>Total</span>
-                        <span>₡{Number(activeOrder.totalAmount).toLocaleString()}</span>
-                      </div>
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => {
-                          const cfg = businessCfg || {};
-                          const allItems = orderItems.filter((i: any) => i.status !== "VOIDED");
-                          const grouped = new Map<string, { name: string; qty: number; price: number; total: number }>();
-                          for (const item of allItems) {
-                            const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
-                            const modLabel = (item.modifiers && item.modifiers.length > 0) ? ` (${item.modifiers.map((m: any) => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
-                            const unitPrice = Number(item.productPriceSnapshot) + modDelta;
-                            const modSig = (item.modifiers || []).map((m: any) => `${m.nameSnapshot}:${m.priceDeltaSnapshot}`).sort().join("|");
-                            const key = `${item.productNameSnapshot}::${item.productPriceSnapshot}::${modSig}`;
-                            const existing = grouped.get(key);
-                            if (existing) {
-                              existing.qty += item.qty;
-                              existing.total += unitPrice * item.qty;
-                            } else {
-                              grouped.set(key, { name: item.productNameSnapshot + modLabel, qty: item.qty, price: unitPrice, total: unitPrice * item.qty });
-                            }
-                          }
-                          const receiptItems = Array.from(grouped.values());
-                          const orderNum = activeOrder.globalNumber ? `G-${activeOrder.globalNumber}` : (activeOrder.dailyNumber ? `D-${activeOrder.dailyNumber}` : `#${activeOrder.id}`);
-                          printReceipt({
-                            businessName: cfg.businessName || "",
-                            legalName: cfg.legalName || "",
-                            taxId: cfg.taxId || "",
-                            address: cfg.address || "",
-                            phone: cfg.phone || "",
-                            email: cfg.email || "",
-                            legalNote: cfg.legalNote || "",
-                            orderNumber: orderNum,
-                            tableName: currentView?.table?.tableName || "",
-                            items: receiptItems,
-                            totalAmount: Number(activeOrder.totalAmount),
-                            totalDiscounts: Number(activeOrder.totalDiscounts || 0),
-                            totalTaxes: Number(activeOrder.totalTaxes || 0),
-                            taxBreakdown: activeOrder.taxBreakdown || [],
-                            paymentMethod: "PRE-CUENTA",
-                            date: new Date().toLocaleString("es-CR"),
-                          });
-                        }}
-                        data-testid="button-pre-cuenta"
+                    </div>
+                    <ChevronRight size={18} style={{ color: "var(--text3)", transition: "transform var(--t-fast)", transform: isExpanded ? "rotate(90deg)" : "none", flexShrink: 0 }} />
+                  </div>
+                  {isExpanded && (
+                    <div style={{ marginTop: 10 }}>
+                      {payloadItems.map((item: any, idx: number) => (
+                        <div key={idx} className="order-item">
+                          <span className="oi-name">{item.qty}x {item.productName || `Producto #${item.productId}`}</span>
+                        </div>
+                      ))}
+                      <button
+                        className="btn-primary"
+                        style={{ width: "100%", marginTop: 8 }}
+                        onClick={() => acceptSubmissionMutation.mutate(sub.id)}
+                        disabled={acceptSubmissionMutation.isPending}
+                        data-testid={`button-accept-qr-${sub.id}`}
                       >
-                        <Receipt className="w-4 h-4 mr-1" /> Pre-cuenta
-                      </Button>
+                        {acceptSubmissionMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                        Enviar a cocina
+                      </button>
                     </div>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+              );
+            })}
+
+            {Object.keys(groupedItems).length > 0 && (
+              <div className="card-ds" style={{ marginBottom: 12 }}>
+                {Object.entries(groupedItems)
+                  .sort(([a], [b]) => Number(a) - Number(b))
+                  .map(([round, items]) => (
+                    <div key={round} className="round-section">
+                      <div className="round-header">
+                        <span className="round-pill">
+                          Ronda {round} {(items as any[])[0]?.origin === "QR" ? "(QR)" : ""}
+                        </span>
+                        <div className="round-line" />
+                        {(items as any[])[0]?.createdAt && (
+                          <span className="round-time">{timeAgo((items as any[])[0].createdAt)}</span>
+                        )}
+                      </div>
+                      {(items as any[]).map((item: any) => {
+                        const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
+                        const unitPrice = Number(item.productPriceSnapshot) + modDelta;
+                        return (
+                          <div key={item.id} className="order-item" data-testid={`order-item-${item.id}`}>
+                            <div className="oi-qty">{item.qty}</div>
+                            <div className="oi-info">
+                              <div className="oi-name">{item.productNameSnapshot}</div>
+                              {item.modifiers && item.modifiers.length > 0 && (
+                                <div className="oi-mods">
+                                  {item.modifiers.map((m: any) => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(m.priceDeltaSnapshot)}` : "")).join(", ")}
+                                </div>
+                              )}
+                              {item.notes && !(item.modifiers && item.modifiers.length > 0) && <div className="oi-mods">{item.notes}</div>}
+                            </div>
+                            <div className="oi-right">
+                              <div className="oi-price">{formatCurrency(unitPrice * item.qty)}</div>
+                              <span className={`oi-status ${item.status === "SENT" ? "kitchen" : item.status === "READY" ? "ready" : item.status === "PREPARING" ? "preparing" : ""}`}>
+                                {getStatusText(item.status)}
+                              </span>
+                            </div>
+                            {activeOrder?.status !== "PAID" && (
+                              <button
+                                className="btn-icon-sm"
+                                style={{ color: "var(--red)" }}
+                                onClick={() => { setVoidDialogItem(item); setVoidReason(""); setVoidQty(item.qty); }}
+                                data-testid={`button-void-item-${item.id}`}
+                              >
+                                <Ban size={14} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+
+                {activeOrder?.totalAmount && (
+                  <div className="order-totals">
+                    <div className="ot-sep" />
+                    <div className="ot-row ot-total">
+                      <span className="label">Total</span>
+                      <span className="val">{formatCurrency(activeOrder.totalAmount)}</span>
+                    </div>
+                    <button
+                      className="btn-secondary"
+                      style={{ width: "100%", marginTop: 10 }}
+                      onClick={() => {
+                        const cfg = businessCfg || {};
+                        const allItems = orderItems.filter((i: any) => i.status !== "VOIDED");
+                        const grouped = new Map<string, { name: string; qty: number; price: number; total: number }>();
+                        for (const item of allItems) {
+                          const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
+                          const modLabel = (item.modifiers && item.modifiers.length > 0) ? ` (${item.modifiers.map((m: any) => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(m.priceDeltaSnapshot)}` : "")).join(", ")})` : "";
+                          const unitPrice = Number(item.productPriceSnapshot) + modDelta;
+                          const modSig = (item.modifiers || []).map((m: any) => `${m.nameSnapshot}:${m.priceDeltaSnapshot}`).sort().join("|");
+                          const key = `${item.productNameSnapshot}::${item.productPriceSnapshot}::${modSig}`;
+                          const existing = grouped.get(key);
+                          if (existing) {
+                            existing.qty += item.qty;
+                            existing.total += unitPrice * item.qty;
+                          } else {
+                            grouped.set(key, { name: item.productNameSnapshot + modLabel, qty: item.qty, price: unitPrice, total: unitPrice * item.qty });
+                          }
+                        }
+                        const receiptItems = Array.from(grouped.values());
+                        const orderNum = activeOrder.globalNumber ? `G-${activeOrder.globalNumber}` : (activeOrder.dailyNumber ? `D-${activeOrder.dailyNumber}` : `#${activeOrder.id}`);
+                        printReceipt({
+                          businessName: cfg.businessName || "",
+                          legalName: cfg.legalName || "",
+                          taxId: cfg.taxId || "",
+                          address: cfg.address || "",
+                          phone: cfg.phone || "",
+                          email: cfg.email || "",
+                          legalNote: cfg.legalNote || "",
+                          orderNumber: orderNum,
+                          tableName: currentView?.table?.tableName || "",
+                          items: receiptItems,
+                          totalAmount: Number(activeOrder.totalAmount),
+                          totalDiscounts: Number(activeOrder.totalDiscounts || 0),
+                          totalTaxes: Number(activeOrder.totalTaxes || 0),
+                          taxBreakdown: activeOrder.taxBreakdown || [],
+                          paymentMethod: "PRE-CUENTA",
+                          date: new Date().toLocaleString("es-CR"),
+                        });
+                      }}
+                      data-testid="button-pre-cuenta"
+                    >
+                      <Receipt size={16} /> Pre-cuenta
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
 
             {orderBySubaccount && orderBySubaccount.groups && orderBySubaccount.groups.length > 0 && (
-              <Card>
-                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 flex-wrap">
-                  <h2 className="font-bold flex items-center gap-2 text-base">
-                    <Split className="w-5 h-5" /> Orden actual por subcuenta
-                  </h2>
+              <div className="card-ds" style={{ marginBottom: 12 }}>
+                <div className="card-ds-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="td-section-title" style={{ margin: 0 }}>
+                    <Split size={16} /> Por subcuenta
+                  </span>
                   <select
-                    className="text-sm border rounded-md px-2 py-1 bg-background"
+                    className="td-select"
                     value={subaccountFilter}
                     onChange={(e) => setSubaccountFilter(e.target.value)}
                     data-testid="select-subaccount-filter"
                   >
-                    <option value="all">Todas las subcuentas</option>
+                    <option value="all">Todas</option>
                     {orderBySubaccount.groups.map((g: any) => (
                       <option key={g.subaccount?.id || 'none'} value={g.subaccount?.code || 'none'}>
                         {g.subaccount?.label || g.subaccount?.code || 'Sin subcuenta'}
                       </option>
                     ))}
                   </select>
-                </CardHeader>
-                <CardContent className="space-y-2">
+                </div>
+                <div>
                   {orderBySubaccount.groups
                     .filter((g: any) => subaccountFilter === "all" || (g.subaccount?.code || 'none') === subaccountFilter)
                     .map((group: any) => {
@@ -1074,37 +1099,39 @@ export default function TableDetailPage() {
                       }, 0);
 
                       return (
-                        <div key={subKey} className="border rounded-md" data-testid={`subaccount-group-${subKey}`}>
+                        <div key={subKey} className="subaccount-group" data-testid={`subaccount-group-${subKey}`}>
                           <button
                             type="button"
-                            className="w-full flex items-center justify-between p-3 text-left hover-elevate rounded-md"
+                            className="subaccount-toggle"
                             onClick={toggleExpanded}
                             data-testid={`button-toggle-subaccount-${subKey}`}
                           >
-                            <div className="flex items-center gap-2">
-                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                              <span className="font-bold">{group.subaccount?.label || `Mesa ${subCode}`}</span>
-                              <span className="text-sm text-muted-foreground">{itemCount} items</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              <span className="oi-name" style={{ fontWeight: 700 }}>{group.subaccount?.label || `Mesa ${subCode}`}</span>
+                              <span className="oi-mods">{itemCount} items</span>
                             </div>
-                            <span className="font-medium">₡{subtotal.toLocaleString()}</span>
+                            <span className="oi-price">{formatCurrency(subtotal)}</span>
                           </button>
                           {isExpanded && (
-                            <div className="px-3 pb-3 space-y-2">
+                            <div style={{ padding: "0 12px 12px" }}>
                               {items.map((item: any) => (
-                                <div key={item.id} className="flex items-center justify-between py-1 text-sm border-b last:border-0" data-testid={`subaccount-item-${item.id}`}>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="font-medium">
+                                <div key={item.id} className="order-item" data-testid={`subaccount-item-${item.id}`}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div className="oi-name">
                                       {item.customerNameSnapshot ? `${item.customerNameSnapshot} pidio. ` : ""}{item.productNameSnapshot}
-                                    </p>
+                                    </div>
                                     {item.modifiers && item.modifiers.length > 0 && (
-                                      <p className="text-xs text-muted-foreground">
+                                      <div className="oi-mods">
                                         + {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
-                                      </p>
+                                      </div>
                                     )}
                                   </div>
-                                  <div className="flex items-center gap-1 flex-shrink-0">
-                                    <span className="text-muted-foreground">Qty: {item.qty}</span>
-                                    {getStatusBadge(item.status)}
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                                    <span className="oi-mods">Qty: {item.qty}</span>
+                                    <span className={`oi-status ${getStatusClass(item.status).replace("badge-", "")}`}>
+                                      {getStatusText(item.status)}
+                                    </span>
                                   </div>
                                 </div>
                               ))}
@@ -1113,97 +1140,96 @@ export default function TableDetailPage() {
                         </div>
                       );
                     })}
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             )}
 
             {voidedItemsList.length > 0 && (
-              <Card className="border-dashed">
-                <CardHeader className="pb-2">
-                  <button
-                    className="flex items-center gap-2 w-full text-left"
-                    onClick={() => setShowVoidedSection(!showVoidedSection)}
-                    data-testid="button-toggle-voided"
-                  >
-                    {showVoidedSection ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                    <h2 className="font-bold text-base text-muted-foreground">
+              <div className="card-ds" style={{ marginBottom: 12, borderStyle: "dashed" }}>
+                <button
+                  className="subaccount-toggle"
+                  onClick={() => setShowVoidedSection(!showVoidedSection)}
+                  data-testid="button-toggle-voided"
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {showVoidedSection ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    <span className="oi-name" style={{ color: "var(--text3)" }}>
                       Anulaciones ({voidedItemsList.length})
-                    </h2>
-                  </button>
-                </CardHeader>
+                    </span>
+                  </div>
+                </button>
                 {showVoidedSection && (
-                  <CardContent>
+                  <div style={{ padding: "0 12px 12px" }}>
                     {voidedItemsList.map((vi: any) => (
-                      <div key={vi.id} className="py-2 border-b last:border-0" data-testid={`voided-item-${vi.id}`}>
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-base line-through text-muted-foreground">{vi.qtyVoided}x {vi.productNameSnapshot}</p>
-                            {vi.notes && <p className="text-xs text-muted-foreground italic">{vi.notes}</p>}
-                            {vi.voidReason && <p className="text-xs text-muted-foreground">Motivo: {vi.voidReason}</p>}
-                          </div>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <span className="text-sm text-muted-foreground line-through">
-                              ₡{Number(Number(vi.unitPriceSnapshot) * vi.qtyVoided).toLocaleString()}
+                      <div key={vi.id} className="order-item" style={{ flexDirection: "column", gap: 4 }} data-testid={`voided-item-${vi.id}`}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span className="oi-name" style={{ textDecoration: "line-through", color: "var(--text3)" }}>
+                              {vi.qtyVoided}x {vi.productNameSnapshot}
                             </span>
-                            <Badge variant="secondary">Anulado</Badge>
+                            {vi.notes && <span className="oi-mods" style={{ fontStyle: "italic" }}>{vi.notes}</span>}
+                            {vi.voidReason && <span className="oi-mods">Motivo: {vi.voidReason}</span>}
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                            <span className="oi-price" style={{ textDecoration: "line-through", color: "var(--text3)" }}>
+                              {formatCurrency(Number(vi.unitPriceSnapshot) * vi.qtyVoided)}
+                            </span>
+                            <span className="badge-ds badge-muted">Anulado</span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                          <Clock className="w-3 h-3" />
-                          <span>{vi.voidedByName}</span>
-                          <span>{vi.voidedAt ? new Date(vi.voidedAt).toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <Clock size={12} style={{ color: "var(--text3)" }} />
+                          <span className="oi-mods">{vi.voidedByName}</span>
+                          <span className="oi-mods">{vi.voidedAt ? new Date(vi.voidedAt).toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" }) : ""}</span>
                         </div>
                         {isManager && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive mt-1"
+                          <button
+                            className="btn-danger"
+                            style={{ marginTop: 4, padding: "6px 12px", fontSize: 12 }}
                             onClick={() => {
-                              if (confirm("Eliminar definitivamente este ítem? Esta acción no se puede deshacer.")) {
+                              if (confirm("Eliminar definitivamente este item? Esta accion no se puede deshacer.")) {
                                 hardDeleteMutation.mutate({ orderId: vi.orderId, itemId: vi.orderItemId });
                               }
                             }}
                             data-testid={`button-hard-delete-${vi.id}`}
                           >
-                            <Trash2 className="w-3 h-3 mr-1" /> Eliminar definitivo
-                          </Button>
+                            <Trash2 size={12} /> Eliminar definitivo
+                          </button>
                         )}
                       </div>
                     ))}
-                  </CardContent>
+                  </div>
                 )}
-              </Card>
+              </div>
             )}
 
             {Object.keys(groupedItems).length === 0 && pendingSubmissions.length === 0 && voidedItemsList.length === 0 && (
-              <div className="text-center py-12 text-muted-foreground">
-                <ShoppingBag className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p className="text-base">No hay items en la orden</p>
-                <Button variant="outline" className="mt-4 min-h-[44px] text-base" onClick={() => setViewMode("menu")} data-testid="button-start-adding">
-                  <Plus className="w-5 h-5 mr-2" /> Agregar Items
-                </Button>
+              <div className="td-empty">
+                <ShoppingBag size={48} style={{ opacity: 0.2, color: "var(--text3)" }} />
+                <p className="oi-name" style={{ marginTop: 12 }}>No hay items en la orden</p>
+                <button className="btn-secondary" style={{ marginTop: 16 }} onClick={() => setViewMode("menu")} data-testid="button-start-adding">
+                  <Plus size={18} /> Agregar Items
+                </button>
               </div>
             )}
           </div>
         ) : (
-          <div className="flex flex-col h-full">
-            <div className="sticky top-0 z-[9] bg-background px-3 py-2 border-b space-y-2">
+          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <div className="menu-sticky-header">
               {hasTopSystem && !isSearching && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1">
-                    <div className="flex-1 grid gap-2" style={{ gridTemplateColumns: `repeat(${topCategories.length}, 1fr)` }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div className="top-cats">
                       {topCategories.map((top) => {
                         const isActive = selectedTopCode === top.categoryCode;
-                        const colorMap: Record<string, string> = {
-                          "TOP-COMIDAS": isActive ? "bg-emerald-600 text-white border-emerald-600 dark:bg-emerald-500 dark:border-emerald-500" : "bg-background border-border",
-                          "TOP-BEBIDAS": isActive ? "bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500" : "bg-background border-border",
-                          "TOP-POSTRES": isActive ? "bg-rose-600 text-white border-rose-600 dark:bg-rose-500 dark:border-rose-500" : "bg-background border-border",
-                        };
+                        const colorClass = top.categoryCode === "TOP-COMIDAS" ? "active-emerald"
+                          : top.categoryCode === "TOP-BEBIDAS" ? "active-blue"
+                          : top.categoryCode === "TOP-POSTRES" ? "active-rose"
+                          : "active-emerald";
                         return (
                           <button
                             key={top.categoryCode}
-                            className={`text-center text-sm font-semibold transition-colors rounded-md border truncate ${colorMap[top.categoryCode] || (isActive ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border")}`}
-                            style={{ height: "48px" }}
+                            className={`top-cat ${isActive ? colorClass : ""}`}
                             onClick={() => setSelectedTopCode(top.categoryCode)}
                             data-testid={`button-top-${top.categoryCode}`}
                           >
@@ -1212,26 +1238,21 @@ export default function TableDetailPage() {
                         );
                       })}
                     </div>
-                    <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search">
-                      <Search className="w-4 h-4" />
-                    </Button>
+                    <button className="btn-icon-sm" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search">
+                      <Search size={16} />
+                    </button>
                   </div>
                   {sortedCategoryIds.length > 0 && (
-                    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${sortedCategoryIds.length <= 3 ? sortedCategoryIds.length : 2}, 1fr)` }}>
+                    <div className="sub-cats">
                       {sortedCategoryIds.map((catId) => {
                         const cat = categories.find(c => c.id === Number(catId));
-                        const catName = cat?.name || "Categoría";
+                        const catName = cat?.name || "Categoria";
                         const isActive = selectedCategoryId === catId;
                         const count = (productsByCategory[catId] || []).length;
                         return (
                           <button
                             key={catId}
-                            className={`text-center text-sm font-medium transition-colors rounded-md border truncate ${
-                              isActive
-                                ? "bg-foreground text-background border-foreground"
-                                : "bg-background border-border hover-elevate"
-                            }`}
-                            style={{ height: "48px" }}
+                            className={`sub-cat ${isActive ? "active" : ""}`}
                             onClick={() => setSelectedCategoryId(catId)}
                             data-testid={`chip-category-${catId}`}
                           >
@@ -1245,28 +1266,23 @@ export default function TableDetailPage() {
               )}
 
               {!hasTopSystem && !isSearching && (
-                <div className="flex items-center gap-1">
-                  <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search-flat">
-                    <Search className="w-4 h-4" />
-                  </Button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <button className="btn-icon-sm" onClick={() => { setSearchSheetOpen(true); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-open-search-flat">
+                    <Search size={16} />
+                  </button>
                 </div>
               )}
 
               {!hasTopSystem && !isSearching && sortedCategoryIds.length > 0 && (
-                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${sortedCategoryIds.length <= 3 ? sortedCategoryIds.length : 2}, 1fr)` }}>
+                <div className="sub-cats">
                   {sortedCategoryIds.map((catId) => {
                     const cat = categories.find(c => c.id === Number(catId));
-                    const catName = catId === "sin-categoria" ? "Sin Categoría" : cat?.name || "Categoría";
+                    const catName = catId === "sin-categoria" ? "Sin Categoria" : cat?.name || "Categoria";
                     const isActive = selectedCategoryId === catId;
                     return (
                       <button
                         key={catId}
-                        className={`text-center text-sm font-medium transition-colors rounded-md border truncate ${
-                          isActive
-                            ? "bg-foreground text-background border-foreground"
-                            : "bg-background border-border hover-elevate"
-                        }`}
-                        style={{ height: "48px" }}
+                        className={`sub-cat ${isActive ? "active" : ""}`}
                         onClick={() => setSelectedCategoryId(catId)}
                         data-testid={`chip-category-${catId}`}
                       >
@@ -1278,42 +1294,46 @@ export default function TableDetailPage() {
               )}
             </div>
 
-            <div className="px-3 pb-4 pt-2 flex-1 overflow-y-auto">
+            <div className="menu-products-area">
               {(() => {
                 const displayProducts = isSearching ? filteredProducts : (selectedCategoryId ? (productsByCategory[selectedCategoryId] || []) : []);
                 return (
                   <>
-                    <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+                    <div className="products-grid">
                       {displayProducts.map((p) => {
                         const inCartQty = cart.filter(c => c.productId === p.id).reduce((s, c) => s + c.qty, 0);
+                        const isUnavailable = p.availablePortions !== null && p.availablePortions <= 0;
                         return (
                           <div
                             key={p.id}
-                            className={`flex flex-col p-3 rounded-md border card-3d cursor-pointer ${p.availablePortions !== null && p.availablePortions <= 0 ? "opacity-50 pointer-events-none" : ""}`}
-                            onClick={(e) => addToCart(p, e)}
+                            className={`product-card ${isUnavailable ? "unavailable" : ""}`}
+                            onClick={(e) => !isUnavailable && addToCart(p, e)}
                             data-testid={`menu-item-${p.id}`}
                           >
-                            <p className="font-medium text-sm leading-tight truncate">{p.name}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">₡{Number(p.price).toLocaleString()}</p>
-                            <div className="flex items-center gap-1 mt-1 flex-wrap">
-                              {p.availablePortions !== null && p.availablePortions <= 0 && (
-                                <Badge variant="secondary" className="text-xs">Agotado</Badge>
-                              )}
-                              {p.availablePortions !== null && p.availablePortions > 0 && (
-                                <Badge variant="secondary" className="text-xs">{p.availablePortions}</Badge>
-                              )}
-                              {inCartQty > 0 && (
-                                <Badge className="bg-primary text-primary-foreground text-xs">{inCartQty}</Badge>
-                              )}
-                            </div>
+                            <div className="pc-name">{p.name}</div>
+                            <div className="pc-price">{formatCurrency(p.price)}</div>
+                            {isUnavailable && (
+                              <span className="pc-agotado">Agotado</span>
+                            )}
+                            {p.availablePortions !== null && p.availablePortions > 0 && (
+                              <span className="pc-portions">{p.availablePortions}</span>
+                            )}
+                            {inCartQty > 0 && (
+                              <span className="pc-in-cart">{inCartQty}</span>
+                            )}
+                            {!isUnavailable && (
+                              <span className="pc-add"><Plus size={16} /></span>
+                            )}
                           </div>
                         );
                       })}
                     </div>
                     {displayProducts.length === 0 && (
-                      <div className="text-center py-12 text-muted-foreground">
-                        <Search className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                        <p className="text-base">{isSearching ? `Sin resultados para "${debouncedSearch}"` : "Seleccione una categoría"}</p>
+                      <div className="td-empty">
+                        <Search size={40} style={{ opacity: 0.2, color: "var(--text3)" }} />
+                        <p className="oi-name" style={{ marginTop: 12 }}>
+                          {isSearching ? `Sin resultados para "${debouncedSearch}"` : "Seleccione una categoria"}
+                        </p>
                       </div>
                     )}
                   </>
@@ -1322,48 +1342,49 @@ export default function TableDetailPage() {
             </div>
 
             {searchSheetOpen && (
-              <div className="fixed inset-0 z-[100] bg-black/50" onClick={() => setSearchSheetOpen(false)} data-testid="overlay-search">
-                <div className="absolute bottom-0 left-0 right-0 bg-background rounded-t-xl p-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="relative flex-1">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        placeholder="Buscar ítems..."
+              <div className="td-overlay" onClick={() => setSearchSheetOpen(false)} data-testid="overlay-search">
+                <div className="td-bottom-sheet" onClick={(e) => e.stopPropagation()}>
+                  <div className="sheet-drag-handle" />
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <div className="search-bar" style={{ flex: 1 }}>
+                      <Search size={14} className="search-icon" />
+                      <input
+                        placeholder="Buscar items..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-9"
                         data-testid="input-search-menu"
+                        autoFocus
                       />
                     </div>
-                    <Button size="icon" variant="ghost" onClick={() => { setSearchSheetOpen(false); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-close-search">
-                      <X className="w-4 h-4" />
-                    </Button>
+                    <button className="btn-icon-sm" onClick={() => { setSearchSheetOpen(false); setSearchTerm(""); setDebouncedSearch(""); }} data-testid="button-close-search">
+                      <X size={16} />
+                    </button>
                   </div>
-                  <div className="flex-1 overflow-y-auto">
+                  <div style={{ flex: 1, overflowY: "auto" }}>
                     {debouncedSearch.length > 0 && (
-                      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
+                      <div className="products-grid">
                         {filteredProducts.filter(p => p.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || p.productCode.toLowerCase().includes(debouncedSearch.toLowerCase())).map((p) => {
                           const inCartQty = cart.filter(c => c.productId === p.id).reduce((s, c) => s + c.qty, 0);
                           return (
                             <div
                               key={p.id}
-                              className={`flex flex-col p-2.5 rounded-md border card-3d cursor-pointer ${p.availablePortions !== null && p.availablePortions <= 0 ? "opacity-50 pointer-events-none" : ""}`}
+                              className={`product-card ${p.availablePortions !== null && p.availablePortions <= 0 ? "unavailable" : ""}`}
                               onClick={(e) => { addToCart(p, e); setSearchSheetOpen(false); setSearchTerm(""); setDebouncedSearch(""); }}
                               data-testid={`search-item-${p.id}`}
                             >
-                              <p className="font-medium text-sm truncate">{p.name}</p>
-                              <p className="text-xs text-muted-foreground">₡{Number(p.price).toLocaleString()}</p>
-                              {inCartQty > 0 && <Badge className="bg-primary text-primary-foreground text-xs mt-1 self-start">{inCartQty}</Badge>}
+                              <div className="pc-name">{p.name}</div>
+                              <div className="pc-price">{formatCurrency(p.price)}</div>
+                              {inCartQty > 0 && <span className="pc-in-cart">{inCartQty}</span>}
                             </div>
                           );
                         })}
                       </div>
                     )}
                     {debouncedSearch.length > 0 && filteredProducts.filter(p => p.name.toLowerCase().includes(debouncedSearch.toLowerCase())).length === 0 && (
-                      <p className="text-center py-8 text-muted-foreground">Sin resultados</p>
+                      <p className="td-empty-text" style={{ padding: "32px 0" }}>Sin resultados</p>
                     )}
                     {debouncedSearch.length === 0 && (
-                      <p className="text-center py-8 text-muted-foreground text-sm">Escriba para buscar</p>
+                      <p className="td-empty-text" style={{ padding: "32px 0" }}>Escriba para buscar</p>
                     )}
                   </div>
                 </div>
@@ -1376,126 +1397,125 @@ export default function TableDetailPage() {
       {cart.length > 0 && !rondaSheetOpen && (
         <div
           ref={bottomBarRef}
-          className="fixed bottom-0 left-0 right-0 z-[9] bg-card border-t"
-          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+          className="cart-fab-bar"
           data-testid="bottom-order-bar"
         >
-          <div className="max-w-lg mx-auto px-3 py-2 flex items-center gap-2">
-            <Button className="flex-1" onClick={() => setRondaSheetOpen(true)} data-testid="button-open-ronda">
-              <ShoppingBag className="w-4 h-4 mr-2" />
-              <span
-                ref={badgeRef}
-                className={`transition-transform duration-200 ${badgePop ? "scale-[1.2]" : "scale-100"}`}
-                data-testid="badge-cart-count"
-              >
-                Ronda ({cartCount})
-              </span>
-              <span className="ml-auto font-bold">₡{cartTotal.toLocaleString()}</span>
-            </Button>
-            <Button size="icon" onClick={() => sendRoundMutation.mutate()} disabled={sendRoundMutation.isPending} data-testid="button-send-round">
-              {sendRoundMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-            </Button>
-          </div>
+          <button className="cart-fab" onClick={() => setRondaSheetOpen(true)} data-testid="button-open-ronda">
+            <ShoppingBag size={16} />
+            <span
+              ref={badgeRef}
+              style={{ transition: "transform 0.2s", transform: badgePop ? "scale(1.2)" : "scale(1)" }}
+              data-testid="badge-cart-count"
+            >
+              Ronda ({cartCount})
+            </span>
+            <span className="cart-fab-total">{formatCurrency(cartTotal)}</span>
+          </button>
+          <button
+            className="cart-send-btn"
+            onClick={() => sendRoundMutation.mutate()}
+            disabled={sendRoundMutation.isPending}
+            data-testid="button-send-round"
+          >
+            {sendRoundMutation.isPending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
+          </button>
         </div>
       )}
 
       {rondaSheetOpen && (
-        <div className="fixed inset-0 z-[100] flex flex-col justify-end" data-testid="ronda-sheet">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setRondaSheetOpen(false)} />
-          <div className="relative bg-background rounded-t-xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-center pt-2 pb-1">
-              <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+        <div className="td-overlay" data-testid="ronda-sheet">
+          <div className="td-overlay-bg" onClick={() => setRondaSheetOpen(false)} />
+          <div className="td-bottom-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-drag-handle" />
+            <div style={{ padding: "0 16px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <h3 className="td-section-title" style={{ margin: 0 }}>Nueva Ronda ({cartCount} items)</h3>
+              <span className="oi-price" style={{ fontSize: 16 }}>{formatCurrency(cartTotal)}</span>
             </div>
-            <div className="px-4 pb-2 flex items-center justify-between gap-2">
-              <h3 className="font-bold text-base">Nueva Ronda ({cartCount} items)</h3>
-              <span className="font-bold text-base">₡{cartTotal.toLocaleString()}</span>
-            </div>
-            <div className="flex-1 overflow-y-auto px-4 pb-2">
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 8px" }}>
               {cart.map((item) => (
-                <div key={item.cartKey} className="flex items-center gap-2 py-1.5 border-b border-border/50 last:border-0" data-testid={`cart-item-${item.cartKey}`} style={{ minHeight: "50px", maxHeight: "70px" }}>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1">
-                      <span className="font-medium text-sm truncate">{item.name}</span>
-                      <span className="text-xs text-muted-foreground flex-shrink-0">₡{Number(item.price).toLocaleString()}</span>
+                <div key={item.cartKey} className="cart-sheet-item" data-testid={`cart-item-${item.cartKey}`}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span className="oi-name">{item.name}</span>
+                      <span className="oi-mods">{formatCurrency(item.price)}</span>
                     </div>
                     {(item.modifiers.length > 0 || item.notes) && (
-                      <p className="text-xs text-muted-foreground truncate">
+                      <div className="oi-mods" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {item.modifiers.length > 0 && `Mods: ${item.modifiers.map(m => m.name).join(", ")}`}
                         {item.modifiers.length > 0 && item.notes && " | "}
                         {item.notes && `Nota: ${item.notes}`}
-                      </p>
+                      </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-0.5 flex-shrink-0">
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => updateCartQty(item.cartKey, item.qty - 1)} data-testid={`button-qty-minus-${item.cartKey}`}>
-                      <Minus className="w-3 h-3" />
-                    </Button>
-                    <span className="w-6 text-center text-sm font-bold">{item.qty}</span>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => updateCartQty(item.cartKey, item.qty + 1)} data-testid={`button-qty-plus-${item.cartKey}`}>
-                      <Plus className="w-3 h-3" />
-                    </Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setNoteDialogItem(item); setNoteText(item.notes); }} data-testid={`button-note-${item.cartKey}`}>
-                      <FileText className="w-3 h-3" style={{ color: item.notes ? "hsl(var(--primary))" : undefined }} />
-                    </Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => removeFromCart(item.cartKey)} data-testid={`button-remove-${item.cartKey}`}>
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
+                  <div className="cart-qty-controls">
+                    <button className="qty-btn" onClick={() => updateCartQty(item.cartKey, item.qty - 1)} data-testid={`button-qty-minus-${item.cartKey}`}>
+                      <Minus size={12} />
+                    </button>
+                    <span className="qty-val">{item.qty}</span>
+                    <button className="qty-btn" onClick={() => updateCartQty(item.cartKey, item.qty + 1)} data-testid={`button-qty-plus-${item.cartKey}`}>
+                      <Plus size={12} />
+                    </button>
+                    <button className="qty-btn" onClick={() => { setNoteDialogItem(item); setNoteText(item.notes); }} data-testid={`button-note-${item.cartKey}`}>
+                      <FileText size={12} style={{ color: item.notes ? "var(--green)" : undefined }} />
+                    </button>
+                    <button className="qty-btn" onClick={() => removeFromCart(item.cartKey)} data-testid={`button-remove-${item.cartKey}`}>
+                      <Trash2 size={12} />
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="border-t px-4 py-3 flex gap-2" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom, 12px))" }}>
-              <Button variant="outline" className="flex-1" onClick={() => { setRondaSheetOpen(false); setViewMode("menu"); }} data-testid="button-add-more-from-sheet">
-                <Plus className="w-4 h-4 mr-1" /> Agregar Más
-              </Button>
-              <Button className="flex-1" onClick={() => { sendRoundMutation.mutate(); setRondaSheetOpen(false); }} disabled={sendRoundMutation.isPending} data-testid="button-send-round-sheet">
-                {sendRoundMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Send className="w-4 h-4 mr-1" />}
+            <div className="sheet-actions">
+              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => { setRondaSheetOpen(false); setViewMode("menu"); }} data-testid="button-add-more-from-sheet">
+                <Plus size={16} /> Agregar Mas
+              </button>
+              <button className="btn-primary" style={{ flex: 1 }} onClick={() => { sendRoundMutation.mutate(); setRondaSheetOpen(false); }} disabled={sendRoundMutation.isPending} data-testid="button-send-round-sheet">
+                {sendRoundMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                 Enviar a Cocina
-              </Button>
+              </button>
             </div>
           </div>
         </div>
       )}
 
       {modifierDialogProduct && (
-        <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50" data-testid="modifier-dialog-overlay" onClick={() => { setModifierDialogProduct(null); setModifierGroups([]); setSelectedModifiers({}); setPendingClickEvent(null); }}>
-          <Card className="w-full sm:w-[90%] sm:max-w-md mx-0 sm:mx-4 rounded-t-xl sm:rounded-xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <CardHeader className="pb-2 flex-shrink-0">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <h3 className="font-bold text-base">{modifierDialogProduct.name}</h3>
-                <span className="text-sm text-muted-foreground">₡{Number(modifierDialogProduct.price).toLocaleString()}</span>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4 overflow-y-auto flex-1">
+        <div className="td-overlay" data-testid="modifier-dialog-overlay" onClick={() => { setModifierDialogProduct(null); setModifierGroups([]); setSelectedModifiers({}); setPendingClickEvent(null); }}>
+          <div className="td-bottom-sheet td-dialog-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-drag-handle" />
+            <div style={{ padding: "0 16px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <span className="td-section-title" style={{ margin: 0 }}>{modifierDialogProduct.name}</span>
+              <span className="oi-price">{formatCurrency(modifierDialogProduct.price)}</span>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 8px" }}>
               {modifierGroups.map((group) => (
-                <div key={group.id} data-testid={`modifier-group-${group.id}`}>
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className="font-semibold text-sm">{group.name}</span>
-                    {group.required && <Badge variant="secondary">Requerido</Badge>}
-                    {group.multiSelect && <span className="text-xs text-muted-foreground">(varias opciones)</span>}
+                <div key={group.id} style={{ marginBottom: 16 }} data-testid={`modifier-group-${group.id}`}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                    <span className="oi-name" style={{ fontWeight: 600 }}>{group.name}</span>
+                    {group.required && <span className="badge-ds badge-amber">Requerido</span>}
+                    {group.multiSelect && <span className="oi-mods">(varias opciones)</span>}
                   </div>
-                  <div className="space-y-1">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {group.options.map((opt) => {
                       const isSelected = (selectedModifiers[group.id] || []).includes(opt.id);
                       return (
                         <div
                           key={opt.id}
-                          className={`flex items-center justify-between p-3 rounded-md border cursor-pointer min-h-[44px] transition-colors ${isSelected ? "bg-primary/10 border-primary" : "hover-elevate"}`}
+                          className={`modifier-option ${isSelected ? "selected" : ""}`}
                           onClick={() => toggleModifierOption(group.id, opt.id, group.multiSelect)}
                           data-testid={`modifier-option-${opt.id}`}
                         >
-                          <div className="flex items-center gap-2">
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             {group.multiSelect ? (
                               <Checkbox checked={isSelected} className="pointer-events-none" />
                             ) : (
-                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isSelected ? "border-primary" : "border-muted-foreground"}`}>
-                                {isSelected && <div className="w-2 h-2 rounded-full bg-primary" />}
+                              <div className={`radio-dot ${isSelected ? "selected" : ""}`}>
+                                {isSelected && <div className="radio-dot-inner" />}
                               </div>
                             )}
-                            <span className="text-sm">{opt.name}</span>
+                            <span className="oi-name">{opt.name}</span>
                           </div>
                           {Number(opt.priceDelta) > 0 && (
-                            <span className="text-sm text-muted-foreground">+₡{Number(opt.priceDelta).toLocaleString()}</span>
+                            <span className="oi-mods">+{formatCurrency(opt.priceDelta)}</span>
                           )}
                         </div>
                       );
@@ -1503,92 +1523,86 @@ export default function TableDetailPage() {
                   </div>
                 </div>
               ))}
-              <div className="flex gap-2 pt-2 pb-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => { setModifierDialogProduct(null); setModifierGroups([]); setSelectedModifiers({}); setPendingClickEvent(null); }}
-                  data-testid="button-cancel-modifiers"
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  className="flex-1"
-                  onClick={confirmModifierSelection}
-                  data-testid="button-confirm-modifiers"
-                >
-                  <Plus className="w-4 h-4 mr-1" /> Agregar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="sheet-actions">
+              <button
+                className="btn-secondary"
+                style={{ flex: 1 }}
+                onClick={() => { setModifierDialogProduct(null); setModifierGroups([]); setSelectedModifiers({}); setPendingClickEvent(null); }}
+                data-testid="button-cancel-modifiers"
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn-primary"
+                style={{ flex: 1 }}
+                onClick={confirmModifierSelection}
+                data-testid="button-confirm-modifiers"
+              >
+                <Plus size={16} /> Agregar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {voidDialogItem && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50" data-testid="void-dialog-overlay">
-          <Card className="w-[90%] max-w-sm mx-4">
-            <CardHeader className="pb-2">
-              <h3 className="font-bold text-base">Ajustar / Anular Ítem</h3>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm font-medium">
-                <strong>{voidDialogItem.productNameSnapshot}</strong>
-              </p>
-              <div className="flex items-center justify-between gap-2 p-3 rounded-md bg-muted/50">
-                <span className="text-sm text-muted-foreground">Cantidad a anular</span>
-                <div className="flex items-center gap-3">
-                  <Button
-                    size="icon"
-                    variant="outline"
+        <div className="td-overlay" data-testid="void-dialog-overlay">
+          <div className="td-dialog-center" onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: 16 }}>
+              <h3 className="td-section-title" style={{ margin: "0 0 12px" }}>Ajustar / Anular Item</h3>
+              <p className="oi-name" style={{ fontWeight: 700, marginBottom: 12 }}>{voidDialogItem.productNameSnapshot}</p>
+              <div className="void-qty-row">
+                <span className="oi-mods">Cantidad a anular</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <button
+                    className="qty-btn"
                     onClick={() => setVoidQty(q => Math.max(1, q - 1))}
                     disabled={voidQty <= 1}
                     data-testid="button-void-qty-minus"
                   >
-                    <Minus className="w-4 h-4" />
-                  </Button>
-                  <span className="text-lg font-bold w-8 text-center" data-testid="text-void-qty">{voidQty}</span>
-                  <Button
-                    size="icon"
-                    variant="outline"
+                    <Minus size={14} />
+                  </button>
+                  <span className="qty-val" style={{ fontSize: 18, width: 32 }} data-testid="text-void-qty">{voidQty}</span>
+                  <button
+                    className="qty-btn"
                     onClick={() => setVoidQty(q => Math.min(voidDialogItem.qty, q + 1))}
                     disabled={voidQty >= voidDialogItem.qty}
                     data-testid="button-void-qty-plus"
                   >
-                    <Plus className="w-4 h-4" />
-                  </Button>
+                    <Plus size={14} />
+                  </button>
                 </div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                <span className="oi-mods">
                   {voidQty < voidDialogItem.qty
                     ? `Quedan: ${voidDialogItem.qty - voidQty} unidad${(voidDialogItem.qty - voidQty) !== 1 ? "es" : ""}`
-                    : "Anulación total"}
+                    : "Anulacion total"}
                 </span>
-                <span className="font-medium">
-                  ₡{Number(Number(voidDialogItem.productPriceSnapshot) * voidQty).toLocaleString()}
-                </span>
+                <span className="oi-price">{formatCurrency(Number(voidDialogItem.productPriceSnapshot) * voidQty)}</span>
               </div>
-              <Textarea
-                placeholder="Motivo de anulación (opcional)"
+              <textarea
+                className="field-input"
+                placeholder="Motivo de anulacion (opcional)"
                 value={voidReason}
                 onChange={(e) => setVoidReason(e.target.value)}
-                className="text-base"
                 rows={2}
+                style={{ width: "100%", marginBottom: 12, resize: "none" }}
                 data-testid="input-void-reason"
               />
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="btn-secondary"
+                  style={{ flex: 1 }}
                   onClick={() => { setVoidDialogItem(null); setVoidReason(""); setVoidQty(1); }}
                   data-testid="button-cancel-void"
                 >
                   Cancelar
-                </Button>
-                <Button
-                  variant="destructive"
-                  className="flex-1"
+                </button>
+                <button
+                  className="btn-danger"
+                  style={{ flex: 1 }}
                   disabled={voidItemMutation.isPending}
                   onClick={() => {
                     if (activeOrder) {
@@ -1597,60 +1611,772 @@ export default function TableDetailPage() {
                   }}
                   data-testid="button-confirm-void"
                 >
-                  {voidItemMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Ban className="w-4 h-4 mr-1" />}
+                  {voidItemMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
                   {voidQty < voidDialogItem.qty ? `Anular ${voidQty}` : "Anular todo"}
-                </Button>
+                </button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       )}
 
       {noteDialogItem && (
-        <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/50" data-testid="note-dialog-overlay" onClick={() => { setNoteDialogItem(null); setNoteText(""); }}>
-          <Card className="w-full sm:w-[90%] sm:max-w-sm mx-0 sm:mx-4 rounded-t-xl sm:rounded-xl" onClick={(e) => e.stopPropagation()}>
-            <CardHeader className="pb-2">
-              <h3 className="font-bold text-base">Nota para {noteDialogItem.name}</h3>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Textarea
+        <div className="td-overlay" data-testid="note-dialog-overlay" onClick={() => { setNoteDialogItem(null); setNoteText(""); }}>
+          <div className="td-bottom-sheet td-dialog-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-drag-handle" />
+            <div style={{ padding: "0 16px" }}>
+              <h3 className="td-section-title" style={{ margin: "0 0 12px" }}>Nota para {noteDialogItem.name}</h3>
+              <textarea
+                className="field-input"
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value.slice(0, 200))}
                 placeholder="Escribe una nota..."
-                className="text-base"
                 rows={3}
-                maxLength={200}
+                style={{ width: "100%", resize: "none", marginBottom: 4 }}
                 data-testid="input-note-text"
               />
-              <p className="text-xs text-muted-foreground text-right">{noteText.length}/200</p>
-              <div className="flex gap-2">
+              <p className="oi-mods" style={{ textAlign: "right", marginBottom: 12 }}>{noteText.length}/200</p>
+              <div style={{ display: "flex", gap: 8, paddingBottom: 16 }}>
                 {noteDialogItem.notes && (
-                  <Button variant="ghost" className="text-destructive" onClick={() => {
+                  <button className="btn-danger" style={{ padding: "8px 12px", fontSize: 12 }} onClick={() => {
                     setCart(cart.map(c => c.cartKey === noteDialogItem.cartKey ? { ...c, notes: "" } : c));
                     setNoteDialogItem(null);
                     setNoteText("");
                     toast({ title: "Nota eliminada" });
                   }} data-testid="button-delete-note">
-                    <Trash2 className="w-4 h-4 mr-1" /> Borrar
-                  </Button>
+                    <Trash2 size={12} /> Borrar
+                  </button>
                 )}
-                <div className="flex-1" />
-                <Button variant="outline" onClick={() => { setNoteDialogItem(null); setNoteText(""); }} data-testid="button-cancel-note">
+                <div style={{ flex: 1 }} />
+                <button className="btn-secondary" onClick={() => { setNoteDialogItem(null); setNoteText(""); }} data-testid="button-cancel-note">
                   Cancelar
-                </Button>
-                <Button onClick={() => {
+                </button>
+                <button className="btn-primary" onClick={() => {
                   setCart(cart.map(c => c.cartKey === noteDialogItem.cartKey ? { ...c, notes: noteText } : c));
                   setNoteDialogItem(null);
                   setNoteText("");
                   toast({ title: "Nota guardada" });
                 }} data-testid="button-save-note">
                   Guardar
-                </Button>
+                </button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+const tdStyles = `
+  .td-screen {
+    min-height: 100dvh;
+    background: var(--s0);
+    display: flex;
+    flex-direction: column;
+    font-family: var(--f-body);
+    color: var(--text);
+    overscroll-behavior: contain;
+  }
+
+  .td-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: var(--s0);
+    border-bottom: 1px solid var(--border-ds);
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+
+  .td-content {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .td-section {
+    padding: 12px 18px;
+  }
+
+  .td-section-title {
+    font-family: var(--f-disp);
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .td-label {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    color: var(--text3);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .td-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 0;
+    text-align: center;
+  }
+
+  .td-empty-text {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--text3);
+    text-align: center;
+    padding: 8px 0;
+  }
+
+  .td-skeleton {
+    background: var(--s2);
+    border-radius: var(--r-sm);
+    animation: skeleton-pulse 1.5s infinite;
+  }
+  @keyframes skeleton-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.7; }
+  }
+
+  .td-select {
+    background: var(--s2);
+    border: 1px solid var(--border-ds);
+    border-radius: var(--r-sm);
+    padding: 6px 10px;
+    color: var(--text2);
+    font-family: var(--f-mono);
+    font-size: 11px;
+    outline: none;
+  }
+
+  .td-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+  .td-overlay-bg {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+  }
+
+  .td-bottom-sheet {
+    position: relative;
+    background: var(--s0);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border-ds);
+    z-index: 1;
+  }
+  .td-dialog-sheet {
+    max-height: 80vh;
+  }
+
+  .td-dialog-center {
+    position: relative;
+    background: var(--s1);
+    border: 1.5px solid var(--border-ds);
+    border-radius: var(--r-md);
+    width: 90%;
+    max-width: 380px;
+    margin: auto;
+    z-index: 1;
+  }
+
+  .sheet-drag-handle {
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--s3);
+    margin: 8px auto;
+  }
+
+  .sheet-actions {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+    border-top: 1px solid var(--border-ds);
+  }
+
+  /* ── HEADER ── */
+  .back-btn {
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--s2);
+    border: 1px solid var(--border-ds);
+    color: var(--text);
+    cursor: pointer;
+    transition: all var(--t-fast);
+    flex-shrink: 0;
+  }
+  .back-btn:active { background: var(--s3); }
+
+  .header-title {
+    font-family: var(--f-disp);
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .header-sub {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    color: var(--text2);
+    margin-top: 2px;
+  }
+
+  /* ── VIEW TABS ── */
+  .view-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-ds);
+    background: var(--s0);
+    position: sticky;
+    top: 55px;
+    z-index: 19;
+  }
+  .view-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 12px 0;
+    font-family: var(--f-body);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text3);
+    cursor: pointer;
+    border: none;
+    background: none;
+    border-bottom: 2px solid transparent;
+    transition: all var(--t-fast);
+  }
+  .view-tab.active-order { color: var(--text); border-bottom-color: var(--green); }
+  .view-tab.active-menu  { color: var(--text); border-bottom-color: var(--blue); }
+  .tab-badge {
+    background: var(--green-d);
+    color: var(--green);
+    font-family: var(--f-mono);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 20px;
+  }
+
+  /* ── CARDS ── */
+  .card-ds {
+    background: var(--s1);
+    border: 1.5px solid var(--border-ds);
+    border-radius: var(--r-md);
+    padding: 14px;
+    transition: all var(--t-fast);
+  }
+  .card-ds.card-active {
+    border-color: var(--green-m);
+  }
+  .card-ds-header {
+    margin-bottom: 10px;
+  }
+
+  /* ── BADGES ── */
+  .badge-ds {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-family: var(--f-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .badge-green  { background: var(--green-d); color: var(--green); border: 1px solid var(--green-m); }
+  .badge-blue   { background: var(--blue-d);  color: var(--blue); }
+  .badge-amber  { background: var(--amber-d); color: var(--amber); }
+  .badge-red    { background: var(--red-d);   color: var(--red); }
+  .badge-muted  { background: var(--s2); color: var(--text3); }
+
+  /* ── BUTTONS ── */
+  .btn-primary {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 12px 24px;
+    background: var(--green); color: #050f08;
+    font-family: var(--f-disp); font-size: 15px; font-weight: 800;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    border: none; border-radius: var(--r-sm); cursor: pointer;
+    transition: all var(--t-fast); min-height: 48px;
+  }
+  .btn-primary:active:not(:disabled) { transform: scale(0.97); }
+  .btn-primary:disabled { background: var(--s3); color: var(--text3); cursor: not-allowed; }
+
+  .btn-secondary {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 10px 20px;
+    background: var(--s2); color: var(--text2);
+    font-family: var(--f-body); font-size: 14px; font-weight: 500;
+    border: 1px solid var(--border-ds); border-radius: var(--r-sm); cursor: pointer;
+    transition: all var(--t-fast); min-height: 44px;
+  }
+  .btn-secondary:active:not(:disabled) { background: var(--s3); }
+
+  .btn-danger {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 10px 20px;
+    background: var(--red-d); color: var(--red);
+    font-family: var(--f-body); font-size: 14px; font-weight: 500;
+    border: 1px solid rgba(239,68,68,0.2); border-radius: var(--r-sm); cursor: pointer;
+    transition: all var(--t-fast); min-height: 44px;
+  }
+
+  .btn-icon-sm {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    background: var(--s2); color: var(--text2);
+    border: 1px solid var(--border-ds); border-radius: var(--r-xs);
+    cursor: pointer; transition: all var(--t-fast);
+  }
+  .btn-icon-sm:active { background: var(--s3); }
+
+  /* ── QR BANNER ── */
+  .qr-banner {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--amber-d);
+    border: 1px solid rgba(243,156,18,0.25);
+    border-radius: var(--r-md);
+    padding: 12px 16px;
+    margin-bottom: 12px;
+  }
+  .qr-banner-text { flex: 1; }
+  .qr-banner-title {
+    font-family: var(--f-disp); font-size: 14px; font-weight: 700; color: var(--amber);
+  }
+  .qr-banner-btn {
+    padding: 8px 16px; border-radius: var(--r-sm);
+    background: var(--amber); color: #1a0f00;
+    font-family: var(--f-disp); font-size: 13px; font-weight: 700;
+    border: none; cursor: pointer; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+
+  .qr-submission-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+
+  /* ── ROUND SECTIONS ── */
+  .round-section { padding: 0; margin-bottom: 4px; }
+  .round-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 14px 0 8px;
+  }
+  .round-pill {
+    background: var(--s2);
+    border: 1px solid var(--border-ds);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-family: var(--f-disp);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text2);
+    white-space: nowrap;
+  }
+  .round-line { flex: 1; height: 1px; background: var(--border-ds); }
+  .round-time {
+    font-family: var(--f-mono); font-size: 10px; color: var(--text3);
+  }
+
+  /* ── ORDER ITEMS ── */
+  .order-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-ds);
+  }
+  .order-item:last-child { border-bottom: none; }
+  .oi-qty {
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--s2); border: 1px solid var(--border-ds);
+    border-radius: var(--r-xs);
+    font-family: var(--f-mono); font-size: 12px; font-weight: 600;
+    color: var(--text); flex-shrink: 0;
+  }
+  .oi-info { flex: 1; min-width: 0; }
+  .oi-name {
+    font-family: var(--f-body); font-size: 14px;
+    font-weight: 500; color: var(--text);
+    display: block;
+  }
+  .oi-mods {
+    font-family: var(--f-mono); font-size: 11px;
+    color: var(--text3); margin-top: 2px;
+    display: block;
+  }
+  .oi-customer {
+    font-family: var(--f-mono); font-size: 10px;
+    color: var(--text3); margin-top: 2px;
+    display: block;
+  }
+  .oi-right { text-align: right; flex-shrink: 0; }
+  .oi-price {
+    font-family: var(--f-mono); font-size: 13px;
+    font-weight: 600; color: var(--text);
+  }
+  .oi-status {
+    font-family: var(--f-mono); font-size: 9px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin-top: 3px; padding: 2px 6px; border-radius: 4px;
+    display: inline-block;
+  }
+  .oi-status.kitchen { background: var(--blue-d); color: var(--blue); }
+  .oi-status.ready   { background: var(--green-d); color: var(--green); }
+  .oi-status.preparing { background: var(--amber-d); color: var(--amber); }
+
+  /* ── ORDER TOTALS ── */
+  .order-totals {
+    padding: 12px 0 0;
+    border-top: 1px solid var(--border-ds);
+    margin-top: 8px;
+  }
+  .ot-row {
+    display: flex; justify-content: space-between; padding: 4px 0;
+  }
+  .ot-row .label {
+    font-family: var(--f-mono); font-size: 12px; color: var(--text3);
+  }
+  .ot-row .val {
+    font-family: var(--f-mono); font-size: 12px; color: var(--text2);
+  }
+  .ot-sep { height: 1px; background: var(--border-ds); margin: 6px 0; }
+  .ot-total .label {
+    font-family: var(--f-disp); font-size: 16px;
+    font-weight: 800; color: var(--text);
+  }
+  .ot-total .val {
+    font-family: var(--f-mono); font-size: 18px;
+    font-weight: 600; color: var(--green);
+  }
+
+  /* ── SPLIT MODE ── */
+  .split-tabs {
+    display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .split-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px;
+    background: var(--s2); color: var(--text2);
+    border: 1px solid var(--border-ds); border-radius: var(--r-sm);
+    font-family: var(--f-body); font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all var(--t-fast);
+  }
+  .split-tab.active {
+    background: var(--green-d); color: var(--green);
+    border-color: var(--green-m);
+  }
+  .split-tab:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .split-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: all var(--t-fast);
+    margin-bottom: 4px;
+  }
+  .split-item:hover { background: var(--s2); }
+  .split-item.selected {
+    background: var(--green-d);
+    border: 1px solid var(--green-m);
+    border-radius: var(--r-sm);
+  }
+
+  .subaccount-group {
+    border: 1px solid var(--border-ds);
+    border-radius: var(--r-sm);
+    margin-bottom: 8px;
+  }
+  .subaccount-toggle {
+    width: 100%;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px;
+    background: none; border: none;
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+  }
+  .subaccount-toggle:active { background: var(--s2); }
+
+  /* ── MENU VIEW ── */
+  .menu-sticky-header {
+    position: sticky; top: 0; z-index: 9;
+    background: var(--s0);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-ds);
+  }
+  .menu-products-area {
+    padding: 12px 14px 16px;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .top-cats {
+    display: flex; gap: 6px; flex: 1;
+  }
+  .top-cat {
+    flex: 1;
+    display: flex; align-items: center; justify-content: center;
+    height: 44px;
+    border-radius: var(--r-sm);
+    border: 1.5px solid var(--border-ds);
+    background: var(--s2);
+    color: var(--text3);
+    font-family: var(--f-disp); font-size: 14px; font-weight: 700;
+    cursor: pointer; transition: all var(--t-fast);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 0 8px;
+  }
+  .top-cat.active-emerald {
+    background: rgba(16,185,129,0.12);
+    border-color: rgba(16,185,129,0.35);
+    color: #10b981;
+  }
+  .top-cat.active-blue {
+    background: var(--blue-d);
+    border-color: rgba(59,130,246,0.35);
+    color: var(--blue);
+  }
+  .top-cat.active-rose {
+    background: var(--red-d);
+    border-color: rgba(239,68,68,0.35);
+    color: var(--red);
+  }
+
+  .sub-cats {
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .sub-cat {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border-ds);
+    background: transparent;
+    color: var(--text3);
+    font-family: var(--f-mono); font-size: 11px;
+    cursor: pointer; transition: all var(--t-fast);
+    white-space: nowrap;
+  }
+  .sub-cat.active {
+    border-color: var(--border2);
+    background: var(--s3);
+    color: var(--text2);
+  }
+
+  /* ── PRODUCTS GRID ── */
+  .products-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .product-card {
+    background: var(--s1);
+    border: 1.5px solid var(--border-ds);
+    border-radius: var(--r-md);
+    padding: 12px;
+    cursor: pointer;
+    transition: all var(--t-fast);
+    position: relative;
+    min-height: 90px;
+    display: flex;
+    flex-direction: column;
+  }
+  .product-card:active:not(.unavailable) {
+    transform: scale(0.96);
+    border-color: var(--border2);
+  }
+  .product-card.unavailable { opacity: 0.45; cursor: not-allowed; }
+  .pc-name {
+    font-family: var(--f-body); font-size: 13px;
+    font-weight: 500; color: var(--text);
+    line-height: 1.3;
+  }
+  .pc-price {
+    font-family: var(--f-mono); font-size: 13px;
+    font-weight: 600; color: var(--green);
+    margin-top: 4px;
+  }
+  .pc-add {
+    position: absolute; bottom: 10px; right: 10px;
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    background: var(--green); color: #050f08;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .pc-in-cart {
+    position: absolute; top: 8px; right: 8px;
+    background: var(--green); color: #050f08;
+    font-family: var(--f-mono); font-size: 10px; font-weight: 700;
+    padding: 2px 7px; border-radius: 20px;
+  }
+  .pc-agotado {
+    position: absolute; top: 8px; right: 8px;
+    background: var(--red-d); color: var(--red);
+    border: 1px solid rgba(239,68,68,0.3);
+    font-family: var(--f-mono); font-size: 9px; font-weight: 600;
+    padding: 2px 7px; border-radius: 20px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .pc-portions {
+    position: absolute; top: 8px; right: 8px;
+    background: var(--s2); color: var(--text3);
+    font-family: var(--f-mono); font-size: 10px; font-weight: 600;
+    padding: 2px 7px; border-radius: 20px;
+  }
+
+  /* ── CART FAB ── */
+  .cart-fab-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+    background: var(--s0);
+    border-top: 1px solid var(--border-ds);
+    padding: 10px 18px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 10px));
+    display: flex; gap: 8px; align-items: center;
+  }
+  .cart-fab {
+    flex: 1;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--green); color: #050f08;
+    border-radius: var(--r-sm); padding: 12px 16px;
+    font-family: var(--f-disp); font-size: 15px; font-weight: 800;
+    border: none; cursor: pointer;
+    transition: all var(--t-fast);
+  }
+  .cart-fab:active { transform: scale(0.97); }
+  .cart-fab-total {
+    margin-left: auto;
+    font-family: var(--f-mono); font-weight: 700;
+  }
+  .cart-send-btn {
+    width: 48px; height: 48px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--green); color: #050f08;
+    border: none; border-radius: var(--r-sm);
+    cursor: pointer; flex-shrink: 0;
+    transition: all var(--t-fast);
+  }
+  .cart-send-btn:active { transform: scale(0.95); }
+  .cart-send-btn:disabled { background: var(--s3); color: var(--text3); cursor: not-allowed; }
+
+  /* ── CART SHEET ITEMS ── */
+  .cart-sheet-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-ds);
+    min-height: 50px;
+  }
+  .cart-sheet-item:last-child { border-bottom: none; }
+
+  .cart-qty-controls {
+    display: flex; align-items: center; gap: 2px; flex-shrink: 0;
+  }
+  .qty-btn {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--s2); color: var(--text2);
+    border: 1px solid var(--border-ds); border-radius: var(--r-xs);
+    cursor: pointer; transition: all var(--t-fast);
+  }
+  .qty-btn:active { background: var(--s3); }
+  .qty-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .qty-val {
+    width: 24px; text-align: center;
+    font-family: var(--f-mono); font-size: 13px; font-weight: 700;
+    color: var(--text);
+  }
+
+  /* ── MODIFIER OPTIONS ── */
+  .modifier-option {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px;
+    border: 1px solid var(--border-ds);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: all var(--t-fast);
+    min-height: 44px;
+  }
+  .modifier-option:hover { background: var(--s2); }
+  .modifier-option.selected {
+    background: var(--green-d);
+    border-color: var(--green-m);
+  }
+
+  .radio-dot {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--text3);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .radio-dot.selected { border-color: var(--green); }
+  .radio-dot-inner {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  /* ── VOID DIALOG ── */
+  .void-qty-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px;
+    background: var(--s2);
+    border-radius: var(--r-sm);
+    margin-bottom: 12px;
+  }
+
+  /* ── FIELD INPUT ── */
+  .field-input {
+    background: var(--s2);
+    border: 1px solid var(--border-ds);
+    border-radius: var(--r-sm);
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: var(--f-body);
+    font-size: 14px;
+    outline: none;
+    transition: border-color var(--t-fast);
+  }
+  .field-input:focus { border-color: var(--border2); }
+  .field-input::placeholder { color: var(--text3); }
+
+  /* ── SEARCH BAR ── */
+  .search-bar {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--s2); border: 1px solid var(--border-ds);
+    border-radius: var(--r-sm); padding: 0 14px;
+    flex: 1;
+  }
+  .search-bar input {
+    flex: 1; background: none; border: none;
+    color: var(--text); font-family: var(--f-body); font-size: 14px;
+    padding: 10px 0; outline: none;
+  }
+  .search-bar input::placeholder { color: var(--text3); }
+  .search-icon { color: var(--text3); flex-shrink: 0; }
+`;

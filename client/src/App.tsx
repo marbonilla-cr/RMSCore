@@ -79,10 +79,10 @@ function canAccessRouteByPermissions(perms: string[], path: string): boolean {
 
 function NoAccess() {
   return (
-    <div className="flex items-center justify-center h-full p-8">
-      <div className="text-center">
-        <h2 className="text-lg font-semibold mb-2">Sin acceso</h2>
-        <p className="text-muted-foreground text-sm">No tiene permisos para acceder a este módulo.</p>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", padding: 32 }}>
+      <div style={{ textAlign: "center" }}>
+        <h2 style={{ fontFamily: "var(--f-disp)", fontSize: 18, fontWeight: 800, marginBottom: 8, color: "var(--text)" }}>Sin acceso</h2>
+        <p style={{ fontFamily: "var(--f-body)", fontSize: 14, color: "var(--text3)" }}>No tiene permisos para acceder a este módulo.</p>
       </div>
     </div>
   );
@@ -168,11 +168,41 @@ function AuthenticatedLayout() {
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
+      <style>{`
+        .app-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 8px 16px;
+          background: var(--s0);
+          border-bottom: 1px solid var(--border-ds);
+          position: sticky;
+          top: 0;
+          z-index: 9;
+        }
+        .app-header-left,
+        .app-header-right {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .app-header-user {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          color: var(--text3);
+          letter-spacing: 0.03em;
+        }
+        @media (max-width: 640px) {
+          .app-header-user-name,
+          .app-header-logout-text { display: none; }
+        }
+      `}</style>
       <div className="flex h-screen w-full">
         <AppSidebar />
         <div className="flex flex-col flex-1 min-w-0">
-          <header className="flex items-center justify-between gap-2 p-2 border-b sticky top-0 bg-background z-[9]">
-            <div className="flex items-center gap-1">
+          <header className="app-header">
+            <div className="app-header-left">
               <SidebarTrigger data-testid="button-sidebar-toggle" />
               <Button
                 variant="ghost"
@@ -183,10 +213,10 @@ function AuthenticatedLayout() {
                 <RefreshCw className="w-4 h-4" />
               </Button>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="app-header-right">
               <ThemeToggle />
               {user && (
-                <span className="text-xs text-muted-foreground hidden sm:inline" data-testid="text-current-user">
+                <span className="app-header-user app-header-user-name" data-testid="text-current-user">
                   {user.displayName}
                 </span>
               )}
@@ -196,8 +226,8 @@ function AuthenticatedLayout() {
                 data-testid="button-switch-user"
                 onClick={logout}
               >
-                <LogOut className="w-4 h-4 mr-1" />
-                <span className="hidden sm:inline">Cambiar usuario</span>
+                <LogOut className="w-4 h-4" />
+                <span className="app-header-logout-text">Cambiar usuario</span>
               </Button>
             </div>
           </header>
