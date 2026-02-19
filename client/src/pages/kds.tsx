@@ -16,6 +16,7 @@ interface KDSTicketItem {
   status: string;
   prepStartedAt: string | null;
   readyAt: string | null;
+  customerNameSnapshot?: string | null;
   modifiers?: { id: number; nameSnapshot: string; priceDeltaSnapshot: string; qty: number }[];
 }
 
@@ -375,6 +376,9 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
                                 <span className="font-bold mr-1">{item.qty}x</span>
                                 {item.productNameSnapshot}
                               </p>
+                              {item.customerNameSnapshot && (
+                                <p className="text-xs text-muted-foreground" data-testid={`kds-item-customer-${item.id}`}>{item.customerNameSnapshot}</p>
+                              )}
                               {item.modifiers && item.modifiers.length > 0 && (
                                 <p className="text-xs font-medium opacity-90">
                                   {item.modifiers.map((m: any) => m.nameSnapshot).join(", ")}
@@ -426,8 +430,13 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
                   <CardContent>
                     {group.items.map((item) => (
                       <div key={item.id} className="flex items-center justify-between py-1 text-sm">
-                        <span>{item.qty}x {item.productNameSnapshot}</span>
-                        <Badge variant="secondary" className="text-xs">LISTO</Badge>
+                        <div className="min-w-0">
+                          <span>{item.qty}x {item.productNameSnapshot}</span>
+                          {item.customerNameSnapshot && (
+                            <p className="text-xs text-muted-foreground">{item.customerNameSnapshot}</p>
+                          )}
+                        </div>
+                        <Badge variant="secondary" className="text-xs flex-shrink-0">LISTO</Badge>
                       </div>
                     ))}
                   </CardContent>

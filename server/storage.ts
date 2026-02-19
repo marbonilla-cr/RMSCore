@@ -674,7 +674,21 @@ export async function getKitchenTicketItems(ticketId: number) {
 
 export async function getKitchenTicketItemsByTicketIds(ticketIds: number[]) {
   if (ticketIds.length === 0) return [];
-  return db.select().from(kitchenTicketItems).where(inArray(kitchenTicketItems.kitchenTicketId, ticketIds));
+  return db.select({
+    id: kitchenTicketItems.id,
+    kitchenTicketId: kitchenTicketItems.kitchenTicketId,
+    orderItemId: kitchenTicketItems.orderItemId,
+    productNameSnapshot: kitchenTicketItems.productNameSnapshot,
+    qty: kitchenTicketItems.qty,
+    notes: kitchenTicketItems.notes,
+    status: kitchenTicketItems.status,
+    prepStartedAt: kitchenTicketItems.prepStartedAt,
+    readyAt: kitchenTicketItems.readyAt,
+    customerNameSnapshot: orderItems.customerNameSnapshot,
+  })
+    .from(kitchenTicketItems)
+    .leftJoin(orderItems, eq(kitchenTicketItems.orderItemId, orderItems.id))
+    .where(inArray(kitchenTicketItems.kitchenTicketId, ticketIds));
 }
 
 export async function updateKitchenTicketItem(id: number, data: any) {

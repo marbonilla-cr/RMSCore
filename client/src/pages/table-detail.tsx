@@ -1046,7 +1046,7 @@ export default function TableDetailPage() {
                     <option value="all">Todas las subcuentas</option>
                     {orderBySubaccount.groups.map((g: any) => (
                       <option key={g.subaccount?.id || 'none'} value={g.subaccount?.code || 'none'}>
-                        Mesa {g.subaccount?.code || 'Sin subcuenta'}
+                        {g.subaccount?.label || g.subaccount?.code || 'Sin subcuenta'}
                       </option>
                     ))}
                   </select>
@@ -1083,7 +1083,7 @@ export default function TableDetailPage() {
                           >
                             <div className="flex items-center gap-2">
                               {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                              <span className="font-bold">Mesa {subCode}</span>
+                              <span className="font-bold">{group.subaccount?.label || `Mesa ${subCode}`}</span>
                               <span className="text-sm text-muted-foreground">{itemCount} items</span>
                             </div>
                             <span className="font-medium">₡{subtotal.toLocaleString()}</span>
