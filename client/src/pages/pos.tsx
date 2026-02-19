@@ -1620,7 +1620,17 @@ export default function POSPage() {
                           key={m.id}
                           variant={isSelected ? "default" : "outline"}
                           className={`flex flex-col items-center gap-1 h-auto py-3 ${isSelected ? "ring-2 ring-primary" : ""}`}
-                          onClick={() => { setPaymentMethodId(m.id.toString()); setCashStep(null); }}
+                          onClick={() => {
+                        setPaymentMethodId(m.id.toString());
+                        const isCash = code.includes("CASH") || code.includes("EFECT");
+                        if (isCash) {
+                          setCashReceived(0);
+                          setCustomCashInput("");
+                          setCashStep("select");
+                        } else {
+                          setCashStep(null);
+                        }
+                      }}
                           data-testid={`button-pm-${m.id}`}
                         >
                           <Icon className="w-5 h-5" />
@@ -1658,29 +1668,23 @@ export default function POSPage() {
                     Enviar Ticket por Email
                   </Button>
                 )}
-                <Button
-                  className="w-full"
-                  onClick={() => {
-                    if (isCashPayment) {
-                      setCashReceived(0);
-                      setCustomCashInput("");
-                      setCashStep("select");
-                    } else {
+                {!isCashPayment && (
+                  <Button
+                    className="w-full"
+                    onClick={() => {
                       payingSplitId ? paySplitMutation.mutate() : payMutation.mutate();
-                    }
-                  }}
-                  disabled={!paymentMethodId || payMutation.isPending || paySplitMutation.isPending}
-                  data-testid="button-process-payment"
-                >
-                  {(payMutation.isPending || paySplitMutation.isPending) ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                  ) : isCashPayment ? (
-                    <Banknote className="w-4 h-4 mr-1" />
-                  ) : (
-                    <DollarSign className="w-4 h-4 mr-1" />
-                  )}
-                  {isCashPayment ? "Cobrar en Efectivo" : "Procesar Pago"}
-                </Button>
+                    }}
+                    disabled={!paymentMethodId || payMutation.isPending || paySplitMutation.isPending}
+                    data-testid="button-process-payment"
+                  >
+                    {(payMutation.isPending || paySplitMutation.isPending) ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                    ) : (
+                      <DollarSign className="w-4 h-4 mr-1" />
+                    )}
+                    Procesar Pago
+                  </Button>
+                )}
               </>
             )}
 
