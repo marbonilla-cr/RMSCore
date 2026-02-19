@@ -1,0 +1,410 @@
+# PROMPT PARA REPLIT AGENT — POS Diálogos Unificados
+# Copia y pega esto COMPLETO en el chat de Replit Agent
+
+---
+
+## INSTRUCCIÓN PRINCIPAL
+
+Construye exactamente los dos componentes que se describen a continuación.
+No tomes decisiones de diseño propias. No uses librerías de UI externas (no Material UI, no Ant Design, no Chakra).
+Todo el diseño visual está especificado en el código de referencia que se incluye al final de este prompt.
+Tu única tarea es convertir ese prototipo HTML en componentes React modulares.
+
+---
+
+## LO QUE DEBES CONSTRUIR
+
+### Componente 1: `<PayDialog />`
+Un diálogo de pago con 3 paneles que se muestran SIMULTÁNEAMENTE en tablet/desktop
+y como pasos deslizantes en mobile.
+
+**Paneles:**
+- Panel izquierdo (fijo): Resumen de la orden — lista de items, subtotal, impuestos, descuentos, total
+- Panel central (fijo): Selección de método de pago (CASH / CARD / SINPE) + campos nombre y email del cliente
+- Panel derecho (condicional): Se activa visualmente cuando el método es CASH — muestra grid de denominaciones, campo monto libre, cálculo de vuelto en tiempo real, botón COBRAR
+
+**Regla crítica:** Ningún panel abre una ventana nueva ni navega a otra ruta.
+Todo ocurre dentro del mismo diálogo. En mobile los paneles se deslizan con CSS transform.
+
+---
+
+### Componente 2: `<SplitDialog />`
+Un diálogo de división de cuenta con 3 paneles SIMULTÁNEOS en tablet/desktop
+y pasos deslizantes en mobile.
+
+**Paneles:**
+- Panel izquierdo: Lista de todos los items de la orden. Cada item tiene botón → para moverlo a la subcuenta activa. Los items movidos quedan visibles pero deshabilitados (opacidad reducida, borde punteado).
+- Panel central: Subcuenta activa con tabs para cambiar entre subcuentas. Cada item asignado tiene botón ← para devolverlo a la cuenta principal. Botón "+ Nueva Subcuenta". Botón "SEPARAR TIQUETES".
+- Panel derecho: Cards resumen de todas las subcuentas con sus totales. Botón "Pagar esta cuenta" por subcuenta. Botón "PAGAR TODO".
+
+**Comportamiento del botón SEPARAR:**
+1. Los paneles central y derecho vibran (animación CSS de 0.4s)
+2. El diálogo hace flash verde (0.7s)
+3. Se cierra SplitDialog
+4. Se abre PayDialog automáticamente (setTimeout 320ms)
+
+---
+
+## BREAKPOINTS — COMPORTAMIENTO OBLIGATORIO
+
+| Ancho        | Comportamiento                                                      |
+|--------------|---------------------------------------------------------------------|
+| < 640px      | Bottom sheet desde abajo. Step tabs en header. Paneles deslizantes con CSS transform translateX. Botón "Continuar →" al pie de cada paso. |
+| 640px–959px  | Diálogo centrado. 2 columnas simultáneas. Sin step tabs. Sin sticky bottom. |
+| ≥ 960px      | Diálogo centrado. 3 columnas simultáneas. Sin step tabs. PayDialog: 880px ancho. SplitDialog: 1060px ancho. |
+| ≥ 1280px     | Igual a desktop. PayDialog: 980px. SplitDialog: 1140px. |
+
+**IMPORTANTE:** El cambio entre 1 columna (mobile) y múltiples columnas (tablet/desktop)
+se hace EXCLUSIVAMENTE con CSS media queries. No con JavaScript. No con estados de React.
+El DOM siempre tiene los 3 paneles montados. En mobile se ocultan visualmente con transform.
+
+---
+
+## ANIMACIONES REQUERIDAS
+
+```css
+/* Vibración al separar tiquetes */
+@keyframes vibrate {
+  0%,100% { transform: translateX(0) rotate(0); }
+  10%     { transform: translateX(-5px) rotate(-0.7deg); }
+  20%     { transform: translateX(5px)  rotate(0.7deg); }
+  30%     { transform: translateX(-4px) rotate(-0.4deg); }
+  40%     { transform: translateX(4px); }
+  50%     { transform: translateX(-3px); }
+  60%     { transform: translateX(3px); }
+  70%     { transform: translateX(-2px); }
+  80%     { transform: translateX(2px); }
+  90%     { transform: translateX(-1px); }
+}
+
+/* Flash verde de confirmación */
+@keyframes flash-success {
+  0%   { box-shadow: 0 0 0 0 rgba(46,204,113,0); }
+  30%  { box-shadow: 0 0 0 8px rgba(46,204,113,0.45); }
+  100% { box-shadow: 0 0 0 16px rgba(46,204,113,0); }
+}
+
+/* Slide mobile */
+.step-panels { display: flex; overflow: hidden; }
+.step-panel  { min-width: 100%; transition: transform 0.3s cubic-bezier(.4,0,.2,1); }
+
+.slide-to-1 .step-panel:nth-child(1) { transform: translateX(0%); }
+.slide-to-1 .step-panel:nth-child(2) { transform: translateX(100%); }
+.slide-to-1 .step-panel:nth-child(3) { transform: translateX(200%); }
+
+.slide-to-2 .step-panel:nth-child(1) { transform: translateX(-100%); }
+.slide-to-2 .step-panel:nth-child(2) { transform: translateX(0%); }
+.slide-to-2 .step-panel:nth-child(3) { transform: translateX(100%); }
+
+.slide-to-3 .step-panel:nth-child(1) { transform: translateX(-200%); }
+.slide-to-3 .step-panel:nth-child(2) { transform: translateX(-100%); }
+.slide-to-3 .step-panel:nth-child(3) { transform: translateX(0%); }
+```
+
+---
+
+## DESIGN TOKENS — USA EXACTAMENTE ESTOS VALORES
+
+```css
+:root {
+  --c-bg:      #0a0c0f;
+  --c-s0:      #111318;
+  --c-s1:      #181c22;
+  --c-s2:      #1f242d;
+  --c-s3:      #262c38;
+  --c-border:  #2a3040;
+  --c-border2: #333d50;
+
+  --c-green:   #2ecc71;
+  --c-green-d: rgba(46,204,113,0.10);
+  --c-green-m: rgba(46,204,113,0.25);
+  --c-amber:   #f39c12;
+  --c-amber-d: rgba(243,156,18,0.10);
+  --c-blue:    #3498db;
+  --c-blue-d:  rgba(52,152,219,0.10);
+  --c-red:     #e74c3c;
+  --c-red-d:   rgba(231,76,60,0.10);
+
+  --c-text:    #eef0f4;
+  --c-text2:   #8a95a8;
+  --c-text3:   #4a5568;
+
+  --f-display: "Barlow Condensed", sans-serif;
+  --f-body:    "Barlow", sans-serif;
+  --f-mono:    "JetBrains Mono", monospace;
+
+  --r-sm: 8px;  --r-md: 12px;  --r-lg: 16px;  --r-xl: 20px;
+  --shadow-dialog: 0 32px 80px rgba(0,0,0,0.75), 0 0 0 1px var(--c-border);
+}
+```
+
+Fuentes: importar de Google Fonts.
+```html
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+```
+
+---
+
+## ESTRUCTURA DE ARCHIVOS A CREAR
+
+```
+src/
+├── components/
+│   └── pos/
+│       ├── PayDialog.jsx
+│       ├── PayPanelOrder.jsx
+│       ├── PayPanelMethod.jsx
+│       ├── PayPanelCash.jsx
+│       ├── SplitDialog.jsx
+│       ├── SplitPanelItems.jsx
+│       ├── SplitPanelActive.jsx
+│       └── SplitPanelSummary.jsx
+├── hooks/
+│   ├── usePayDialog.js
+│   └── useSplitDialog.js
+├── styles/
+│   └── pos.css
+└── App.jsx  ← demo con botones "PAGAR" y "DIVIDIR"
+```
+
+---
+
+## ESTADO (hooks de React)
+
+### usePayDialog.js
+```javascript
+export function usePayDialog() {
+  const [isOpen, setIsOpen]     = useState(false);
+  const [method, setMethod]     = useState(null);   // null | "CASH" | "CARD" | "SINPE"
+  const [received, setReceived] = useState(0);
+  const [mobileStep, setStep]   = useState(1);      // 1 | 2 | 3 (solo mobile)
+  const [order, setOrder]       = useState(null);
+
+  const total  = order?.total ?? 0;
+  const change = received - total;
+  const canPay = method === "CASH" ? change >= 0 : !!method;
+
+  const open  = (orderData) => { setOrder(orderData); setIsOpen(true); reset(); };
+  const close = () => setIsOpen(false);
+  const reset = () => { setMethod(null); setReceived(0); setStep(1); };
+
+  return { isOpen, method, received, mobileStep, total, change, canPay,
+           open, close, setMethod, setReceived, setStep };
+}
+```
+
+### useSplitDialog.js
+```javascript
+export function useSplitDialog() {
+  const [isOpen, setIsOpen]       = useState(false);
+  const [items, setItems]         = useState([]);
+  const [subs, setSubs]           = useState([]);
+  const [activeSub, setActiveSub] = useState(1);
+  const [mobileStep, setStep]     = useState(1);
+
+  const open = (orderItems) => {
+    setItems(orderItems.map(i => ({ ...i, moved: false })));
+    setSubs([{ id:1, name:"Sub #1", items:[] }, { id:2, name:"Sub #2", items:[] }]);
+    setActiveSub(1); setStep(1); setIsOpen(true);
+  };
+
+  const moveToSub = (itemId) => {
+    const item = items.find(i => i.id === itemId);
+    if (!item || item.moved) return;
+    setItems(p => p.map(i => i.id === itemId ? {...i, moved:true} : i));
+    setSubs(p => p.map(s => s.id === activeSub
+      ? { ...s, items: [...s.items, item] } : s));
+  };
+
+  const moveBack = (subId, itemId) => {
+    setSubs(p => p.map(s => s.id === subId
+      ? { ...s, items: s.items.filter(i => i.id !== itemId) } : s));
+    setItems(p => p.map(i => i.id === itemId ? {...i, moved:false} : i));
+  };
+
+  const addSub = () => {
+    const n = subs.length + 1;
+    setSubs(p => [...p, { id:n, name:`Sub #${n}`, items:[] }]);
+    setActiveSub(n);
+  };
+
+  return { isOpen, items, subs, activeSub, mobileStep,
+           open, close: () => setIsOpen(false),
+           moveToSub, moveBack, addSub, setActiveSub, setStep };
+}
+```
+
+---
+
+## LÓGICA DEL PANEL DE EFECTIVO
+
+El Panel 3 (PayPanelCash) siempre está montado en el DOM.
+Se activa/desactiva con CSS, no montando/desmontando el componente:
+
+```jsx
+// En PayDialog.jsx
+<PayPanelCash
+  active={method === "CASH"}   // controla opacity + pointer-events
+  total={total}
+  received={received}
+  onReceivedChange={setReceived}
+  onPay={handlePay}
+/>
+```
+
+```css
+/* En pos.css */
+.cash-panel          { opacity: 0.35; pointer-events: none; transition: all 0.3s; }
+.cash-panel.active   { opacity: 1;    pointer-events: all; }
+```
+
+Denominaciones disponibles (Costa Rica):
+```javascript
+const DENOMINATIONS = [1000, 2000, 5000, 10000, 20000, 50000];
+```
+
+Cálculo de vuelto (en tiempo real, sin submit):
+```javascript
+const change = received - total;
+const isValid = change >= 0;
+// Si isValid → vuelto en verde (#2ecc71), botón COBRAR habilitado
+// Si !isValid → vuelto en gris (#4a5568), botón deshabilitado
+```
+
+---
+
+## LÓGICA DE SEPARACIÓN DE CUENTA
+
+```javascript
+// En SplitDialog.jsx
+function handleSeparate() {
+  const hasAnyItems = subs.some(s => s.items.length > 0);
+  if (!hasAnyItems) return;
+
+  // 1. Vibrar panels central y derecho
+  const panelCentral = document.getElementById("split-panel-active");
+  const panelDerecho = document.getElementById("split-panel-summary");
+
+  [panelCentral, panelDerecho].forEach(el => {
+    el.classList.remove("vibrating");
+    void el.offsetWidth; // fuerza reflow para reiniciar animación
+    el.classList.add("vibrating");
+  });
+
+  // 2. Después de 420ms → flash verde en el diálogo
+  setTimeout(() => {
+    [panelCentral, panelDerecho].forEach(el => el.classList.remove("vibrating"));
+    document.getElementById("split-dialog").classList.add("flash-green");
+
+    // 3. Después de 750ms → cerrar split, abrir pago
+    setTimeout(() => {
+      closeSplit();
+      setTimeout(() => openPay(currentOrder), 320);
+    }, 750);
+  }, 420);
+}
+```
+
+---
+
+## API CALLS (conectar cuando el backend esté listo)
+
+Por ahora usar datos mock. Cuando el backend esté disponible, reemplazar con fetch:
+
+```javascript
+// Pago completo
+POST /api/pos/pay
+Body: { orderId, method, customerName?, customerEmail?, received?, change? }
+
+// Pago de subcuenta
+POST /api/pos/pay-split
+Body: { splitId, method, received?, change? }
+
+// Separar en tiquetes
+POST /api/pos/split-order
+Body: { orderId, splits: [{ name, itemIds }] }
+
+// Abrir gaveta (solo después de pago CASH)
+POST /api/pos/open-drawer
+
+// Mover item a subcuenta
+POST /api/pos/split-items/move
+Body: { itemId, targetSplitId }
+
+// Devolver item a cuenta principal
+POST /api/pos/split-items/move
+Body: { itemId, targetSplitId: null }
+```
+
+---
+
+## DATOS MOCK PARA DESARROLLO
+
+```javascript
+// Orden de ejemplo para testear
+export const MOCK_ORDER = {
+  id: "ord-001",
+  table: "T-04",
+  items: [
+    { id: 1, qty: 2, name: "Casado Tradicional", price: 4600 },
+    { id: 2, qty: 1, name: "Arroz con Pollo",    price: 3800 },
+    { id: 3, qty: 1, name: "Refresco Natural",   price: 1500 },
+    { id: 4, qty: 1, name: "Café Negro",         price: 800  },
+    { id: 5, qty: 1, name: "Ensalada Verde",     price: 2200 },
+    { id: 6, qty: 2, name: "Agua Mineral",       price: 1400 },
+    { id: 7, qty: 1, name: "Postre del Día",     price: 1900 },
+    { id: 8, qty: 1, name: "Jugo Natural",       price: 1300 },
+  ],
+  subtotal: 15546,
+  tax: 2021,       // IVA 13%
+  service: 1555,   // Servicio 10%
+  discount: 622,
+  total: 18500,
+};
+```
+
+---
+
+## REGLAS QUE NO PUEDES ROMPER
+
+1. NO abrir ventanas nuevas ni navegar a rutas nuevas para el pago o la división.
+2. NO usar librerías de componentes UI externas. Solo CSS custom + React.
+3. NO montar/desmontar el Panel 3 de efectivo. Siempre en DOM, controlado con CSS.
+4. NO usar display:none para ocultar paneles en mobile. Usar transform translateX.
+5. NO cambiar los design tokens. Los colores, fuentes y radios son exactamente los de la Sección "Design Tokens".
+6. SÍ mantener los 3 paneles en el DOM en todo momento (desktop y mobile).
+7. SÍ aplicar la animación de vibración exactamente como está en el código de referencia.
+8. SÍ cerrar SplitDialog y abrir PayDialog automáticamente al separar tiquetes.
+9. SÍ deshabilitar el botón COBRAR cuando el monto recibido es menor al total.
+10. SÍ permitir devolver items desde subcuenta a cuenta principal (botón ←).
+
+---
+
+## PROTOTIPO DE REFERENCIA VISUAL
+
+El archivo `pos-unified-responsive.html` es la fuente de verdad visual.
+Abre ese archivo en el navegador y replica exactamente lo que ves.
+Si hay diferencia entre este texto y el HTML, el HTML tiene prioridad.
+
+Aspectos clave a replicar del HTML:
+- El diálogo en mobile abre desde abajo (bottom sheet) con border-radius arriba
+- El "drag handle" (barra gris arriba del bottom sheet)
+- Los step tabs tienen un número circular que se vuelve ✓ al completarse
+- Los items movidos quedan visibles con opacidad reducida y borde punteado (NO desaparecen)
+- El botón "←" en subcuenta devuelve el item a la lista principal (NO lo elimina)
+- El badge en esquina inferior derecha muestra el breakpoint activo (útil en desarrollo)
+
+---
+
+## ORDEN DE CONSTRUCCIÓN SUGERIDO
+
+1. Crear `pos.css` con todos los tokens y clases base del prototipo
+2. Crear `usePayDialog.js` y `useSplitDialog.js`  
+3. Crear `PayDialog.jsx` con los 3 paneles hardcodeados (sin lógica aún)
+4. Agregar lógica de método de pago y activación de Panel 3
+5. Agregar cálculo de vuelto en tiempo real
+6. Crear `SplitDialog.jsx` con los 3 paneles
+7. Agregar lógica moveToSub y moveBack
+8. Agregar animación de vibración y transición a PayDialog
+9. Conectar ambos en `App.jsx` con los datos mock
+10. Verificar en mobile (DevTools → modo responsivo < 640px)

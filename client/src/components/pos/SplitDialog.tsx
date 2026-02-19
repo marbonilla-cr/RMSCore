@@ -2,8 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-import { Loader2, X, ArrowRight, ChevronLeft, Plus, ArrowLeft } from "lucide-react";
 import "./pos-dialogs.css";
 
 interface POSItemModifier {
@@ -53,14 +51,15 @@ interface SplitDialogProps {
 
 export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSeparated }: SplitDialogProps) {
   const { toast } = useToast();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const dropAreaRef = useRef<HTMLDivElement>(null);
+  const subCardsRef = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState(1);
   const [activeSub, setActiveSub] = useState<number | null>(null);
-  const [vibrating, setVibrating] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
 
   const orderId = table?.orderId;
 
-  const { data: splits = [], isLoading: splitsLoading } = useQuery<SplitAccountData[]>({
+  const { data: splits = [] } = useQuery<SplitAccountData[]>({
     queryKey: ["/api/pos/orders", orderId, "splits"],
     enabled: !!orderId && open,
   });
@@ -102,7 +101,7 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
     mutationFn: async () => {
       const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
       const idx = splits.length;
-      const label = `Subcuenta ${letters[idx % letters.length]}`;
+      const label = `Sub #${idx + 1}`;
       return apiRequest("POST", `/api/pos/orders/${orderId}/splits`, { label, orderItemIds: [] });
     },
     onSuccess: async () => {
@@ -133,34 +132,37 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
     },
     onSuccess: async (res: any) => {
       const data = await res.json();
-      setVibrating(true);
-      setTimeout(() => setVibrating(false), 500);
 
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      [dropAreaRef.current, subCardsRef.current].forEach(el => {
+        if (el) {
+          el.classList.remove("pos-vibrating");
+          void el.offsetWidth;
+          el.classList.add("pos-vibrating");
+        }
+      });
 
-      const childIds = data.childOrderIds || [];
       setTimeout(() => {
-        onSeparated(childIds);
-        onClose();
-      }, 800);
+        [dropAreaRef.current, subCardsRef.current].forEach(el => {
+          if (el) el.classList.remove("pos-vibrating");
+        });
+        if (dialogRef.current) {
+          dialogRef.current.classList.add("pos-flash-green");
+        }
 
-      toast({ title: "Cuenta separada en tiquetes independientes" });
+        queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+
+        const childIds = data.childOrderIds || [];
+
+        setTimeout(() => {
+          onSeparated(childIds);
+          onClose();
+          toast({ title: "Cuenta separada en tiquetes independientes" });
+        }, 750);
+      }, 420);
     },
     onError: (err: any) => {
       toast({ title: "Error al separar", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const deleteSplitMutation = useMutation({
-    mutationFn: async (splitId: number) => {
-      return apiRequest("DELETE", `/api/pos/splits/${splitId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", orderId, "splits"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
 
@@ -170,27 +172,30 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
   const activeSplitTotal = activeSplit ? getSplitTotal(activeSplit) : 0;
   const remainingTotal = unassignedItems.reduce((s, i) => s + getItemUnitPrice(i) * i.qty, 0);
   const hasSplitsWithItems = splits.some(s => s.items.length > 0);
+  const allItems = table.items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
 
   return (
-    <div className={`pos-overlay ${open ? "open" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} data-testid="split-dialog-overlay">
-      <div className={`pos-dialog pos-dialog-split ${vibrating ? "pos-vibrating" : ""}`} data-testid="split-dialog">
+    <div
+      className={`pos-overlay ${open ? "open" : ""}`}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      data-testid="split-dialog-overlay"
+    >
+      <div className="pos-dialog pos-dialog-split" ref={dialogRef} data-testid="split-dialog">
         <div className="pos-drag-handle" />
 
         {/* HEADER */}
         <div className="pos-dlg-header">
           <span className="pos-dlg-tag">División</span>
           <span className="pos-dlg-title" data-testid="split-dialog-title">{table.tableName}</span>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono px-2 py-0.5 rounded-full border" style={{ borderColor: "hsl(217 91% 60% / 0.3)", color: "hsl(217 91% 60%)", background: "hsl(217 91% 60% / 0.1)" }} data-testid="split-remaining-chip">
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="pos-chip pos-chip-blue" data-testid="split-remaining-chip">
               {unassignedItems.length} sin asignar
             </span>
-            <button className="pos-dlg-close" onClick={onClose} data-testid="button-close-split-dialog">
-              <X className="w-3.5 h-3.5" />
-            </button>
+            <button className="pos-dlg-close" onClick={onClose} data-testid="button-close-split-dialog">✕</button>
           </div>
         </div>
 
-        {/* STEP NAV (mobile) */}
+        {/* STEP TABS (mobile) */}
         <div className="pos-step-nav" data-testid="split-step-nav">
           {["Items", "Subcuenta", "Resumen"].map((label, i) => {
             const n = i + 1;
@@ -205,19 +210,19 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
         </div>
 
         {/* PANELS */}
-        <div className={`pos-step-panels slide-${step}`} ref={panelRef} data-testid="split-panels">
+        <div className={`pos-step-panels slide-${step}`} data-testid="split-panels">
 
-          {/* PANEL 1: Main Items */}
+          {/* ── PANEL 1: Main Items ── */}
           <div className="pos-step-panel">
             <div className="pos-col-header">
               <span className="pos-col-h-tag">Principal</span>
               <span className="pos-col-h-title">Items disponibles</span>
             </div>
 
-            <span className="pos-sect-lbl">Toca → para mover a subcuenta activa</span>
+            <div className="pos-sect-lbl">Toca → para mover a subcuenta activa</div>
 
-            <div className="flex flex-col gap-1.5" data-testid="split-main-items">
-              {table.items.filter(i => i.status !== "VOIDED" && i.status !== "PAID").map((item) => {
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }} data-testid="split-main-items">
+              {allItems.map((item) => {
                 const isMoved = assignedItemIds.includes(item.id);
                 return (
                   <div
@@ -226,14 +231,12 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
                     data-testid={`split-item-${item.id}`}
                   >
                     <div className="pos-si-check">{isMoved ? "✓" : ""}</div>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="text-sm truncate" style={{ color: "hsl(var(--foreground))" }}>{item.productNameSnapshot}</div>
-                      {item.customerNameSnapshot && <div className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>{item.customerNameSnapshot}</div>}
-                      <div className="text-xs font-mono" style={{ color: "hsl(var(--muted-foreground))" }}>×{item.qty}</div>
+                    <div className="pos-si-info">
+                      <div className="pos-si-name">{item.productNameSnapshot}</div>
+                      {item.customerNameSnapshot && <div className="pos-si-sub">{item.customerNameSnapshot}</div>}
+                      <div className="pos-si-qty">×{item.qty}</div>
                     </div>
-                    <span className="font-mono text-xs" style={{ color: "hsl(var(--muted-foreground))", whiteSpace: "nowrap" }}>
-                      ₡{(getItemUnitPrice(item) * item.qty).toLocaleString()}
-                    </span>
+                    <span className="pos-si-price">₡{(getItemUnitPrice(item) * item.qty).toLocaleString()}</span>
                     <button
                       className="pos-si-move-btn"
                       onClick={() => {
@@ -251,33 +254,31 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
               })}
             </div>
 
+            <div className="pos-mobile-only">
+              <button className="pos-primary-btn" onClick={() => setStep(2)} data-testid="split-mobile-continue-1">
+                VER SUBCUENTA →
+              </button>
+            </div>
             <div className="pos-desktop-only">
-              <div className="text-xs font-mono" style={{ color: "hsl(var(--muted-foreground))" }}>
+              <div style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--c-text3)" }}>
                 {unassignedItems.length} items sin asignar
               </div>
             </div>
-
-            <div className="pos-mobile-only" style={{ marginTop: "auto" }}>
-              <Button className="w-full" onClick={() => setStep(2)} data-testid="split-mobile-continue-1">
-                VER SUBCUENTA <ArrowRight className="w-4 h-4 ml-1" />
-              </Button>
-            </div>
           </div>
 
-          {/* PANEL 2: Active Subcuenta */}
-          <div className="pos-step-panel">
+          {/* ── PANEL 2: Active Subcuenta ── */}
+          <div className="pos-step-panel" id="split-panel-active">
             <div className="pos-col-header">
               <span className="pos-col-h-tag">Subcuenta</span>
               <span className="pos-col-h-title" data-testid="split-active-title">{activeSplit?.label || "—"}</span>
-              <Button
-                size="sm"
-                variant="outline"
+              <button
+                className="pos-add-sub-btn"
                 onClick={() => createSplitMutation.mutate()}
                 disabled={createSplitMutation.isPending}
                 data-testid="split-add-sub-desktop"
               >
-                <Plus className="w-3 h-3 mr-1" /> Nueva
-              </Button>
+                + Nueva
+              </button>
             </div>
 
             {/* Sub tabs */}
@@ -289,7 +290,7 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
                   onClick={() => setActiveSub(s.id)}
                   data-testid={`split-sub-tab-${s.id}`}
                 >
-                  {s.label} ({s.items.length})
+                  {s.label}{s.items.length ? ` (${s.items.length})` : ""}
                 </button>
               ))}
               <button
@@ -302,33 +303,39 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
               </button>
             </div>
 
+            {/* Mobile: + Nueva Subcuenta btn */}
+            <div className="pos-mobile-only">
+              <button
+                className="pos-secondary-btn"
+                onClick={() => createSplitMutation.mutate()}
+                disabled={createSplitMutation.isPending}
+                style={{ fontSize: 13, padding: 10 }}
+              >
+                + Nueva Subcuenta
+              </button>
+            </div>
+
             {/* Drop area */}
-            <div className={`pos-sub-drop ${activeSplit && activeSplit.items.length > 0 ? "has-items" : ""}`} data-testid="split-drop-area">
+            <div
+              className={`pos-sub-drop ${activeSplit && activeSplit.items.length > 0 ? "has-items" : ""}`}
+              ref={dropAreaRef}
+              data-testid="split-drop-area"
+            >
               {!activeSplit || activeSplit.items.length === 0 ? (
-                <div className="text-center py-5 text-xs font-mono" style={{ color: "hsl(var(--muted-foreground))" }}>
-                  Sin items asignados. Usa → desde la lista.
-                </div>
+                <div className="pos-sub-empty-msg">Sin items asignados. Usa → desde la lista.</div>
               ) : (
                 activeSplit.items.map(si => {
                   const oi = table.items.find(i => i.id === si.orderItemId);
                   if (!oi) return null;
                   return (
                     <div key={si.id} className="pos-sub-item-card" data-testid={`split-sub-item-${si.orderItemId}`}>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs truncate" style={{ color: "hsl(var(--foreground))" }}>
-                          {oi.qty}× {oi.productNameSnapshot}
-                        </div>
-                        {oi.customerNameSnapshot && (
-                          <div className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>{oi.customerNameSnapshot}</div>
-                        )}
-                      </div>
-                      <span className="font-mono text-xs" style={{ color: "hsl(var(--muted-foreground))", whiteSpace: "nowrap" }}>
-                        ₡{(getItemUnitPrice(oi) * oi.qty).toLocaleString()}
-                      </span>
+                      <div className="pos-sic-name">×{oi.qty} {oi.productNameSnapshot}</div>
+                      <div className="pos-sic-price">₡{(getItemUnitPrice(oi) * oi.qty).toLocaleString()}</div>
                       <button
-                        className="pos-sub-item-back"
+                        className="pos-sic-back"
                         onClick={() => moveItemMutation.mutate({ orderItemId: oi.id, fromSplitId: activeSplit.id, toSplitId: null })}
                         disabled={moveItemMutation.isPending}
+                        title="Devolver"
                         data-testid={`split-return-item-${oi.id}`}
                       >
                         ←
@@ -339,114 +346,105 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
               )}
             </div>
 
-            {/* Subtotal + Separate */}
+            {/* Desktop: subtotal + separate */}
             <div className="pos-desktop-only" style={{ gap: 8 }}>
-              <div className="flex justify-between items-center">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span className="pos-sect-lbl">Subtotal</span>
-                <span className="font-mono text-base" style={{ color: "hsl(142 76% 36%)" }} data-testid="split-sub-total">
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 16, color: "var(--c-green)" }} data-testid="split-sub-total">
                   ₡{activeSplitTotal.toLocaleString()}
                 </span>
               </div>
-              <Button
-                variant="outline"
-                className={`w-full ${hasSplitsWithItems ? "" : "opacity-50"}`}
+              <button
+                className={`pos-separate-btn ${hasSplitsWithItems ? "ready" : ""}`}
                 onClick={() => splitOrderMutation.mutate()}
                 disabled={!hasSplitsWithItems || splitOrderMutation.isPending}
                 data-testid="split-separate-desktop"
               >
-                {splitOrderMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                SEPARAR TIQUETES
-              </Button>
+                {splitOrderMutation.isPending ? "Procesando..." : "SEPARAR TIQUETES"}
+              </button>
             </div>
 
+            {/* Mobile: subtotal + separate + nav */}
             <div className="pos-mobile-only" style={{ marginTop: "auto", gap: 8 }}>
-              <div className="flex justify-between items-center px-1">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 2px" }}>
                 <span className="pos-sect-lbl">Subtotal subcuenta</span>
-                <span className="font-mono text-sm" style={{ color: "hsl(142 76% 36%)" }}>₡{activeSplitTotal.toLocaleString()}</span>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 15, color: "var(--c-green)" }}>
+                  ₡{activeSplitTotal.toLocaleString()}
+                </span>
               </div>
-              <Button
-                variant="outline"
-                className="w-full"
+              <button
+                className={`pos-separate-btn ${hasSplitsWithItems ? "ready" : ""}`}
                 onClick={() => splitOrderMutation.mutate()}
                 disabled={!hasSplitsWithItems || splitOrderMutation.isPending}
                 data-testid="split-separate-mobile"
               >
-                {splitOrderMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                SEPARAR TIQUETES
-              </Button>
-              <Button variant="outline" className="w-full" onClick={() => setStep(3)} data-testid="split-mobile-to-summary">
-                VER RESUMEN <ArrowRight className="w-4 h-4 ml-1" />
-              </Button>
-              <Button variant="ghost" className="w-full" onClick={() => setStep(1)} data-testid="split-mobile-back-1">
-                <ChevronLeft className="w-4 h-4 mr-1" /> Items
-              </Button>
+                {splitOrderMutation.isPending ? "Procesando..." : "SEPARAR TIQUETES"}
+              </button>
+              <button className="pos-secondary-btn" onClick={() => setStep(3)} data-testid="split-mobile-to-summary">
+                VER RESUMEN →
+              </button>
             </div>
           </div>
 
-          {/* PANEL 3: Summary */}
-          <div className="pos-step-panel">
+          {/* ── PANEL 3: Summary ── */}
+          <div className="pos-step-panel" id="split-panel-summary">
             <div className="pos-col-header">
               <span className="pos-col-h-tag">Resumen</span>
               <span className="pos-col-h-title">Todas las subcuentas</span>
             </div>
 
-            <div className="flex flex-col gap-2" data-testid="split-sub-cards">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }} ref={subCardsRef} data-testid="split-sub-cards">
               {splits.map(s => {
                 const sTotal = getSplitTotal(s);
+                const hasItems = s.items.length > 0;
                 return (
-                  <div key={s.id} className={`pos-sub-card ${s.items.length > 0 ? "filled" : ""}`} data-testid={`split-summary-card-${s.id}`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-sm font-bold">{s.label}</span>
-                      <span className="font-mono text-sm font-semibold" style={{ color: "hsl(142 76% 36%)" }}>
-                        ₡{sTotal.toLocaleString()}
-                      </span>
+                  <div key={s.id} className={`pos-sub-card ${hasItems ? "filled" : ""}`} data-testid={`split-summary-card-${s.id}`}>
+                    <div className="pos-sc-head">
+                      <div className="pos-sc-name">{s.label}</div>
+                      <div className="pos-sc-total">{hasItems ? `₡${sTotal.toLocaleString()}` : "—"}</div>
                     </div>
-                    <div className="text-xs mb-2" style={{ color: "hsl(var(--muted-foreground))" }}>
-                      {s.items.length} item{s.items.length !== 1 ? "s" : ""}
-                    </div>
-                    {s.items.length > 0 && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => onPaySplit(s.id, s.label, sTotal)}
-                        data-testid={`split-pay-sub-${s.id}`}
-                      >
-                        Pagar esta cuenta
-                      </Button>
-                    )}
+                    <div className="pos-sc-meta">{s.items.length} item{s.items.length !== 1 ? "s" : ""}</div>
+                    <button
+                      className="pos-sc-pay-btn"
+                      disabled={!hasItems}
+                      onClick={() => onPaySplit(s.id, s.label, sTotal)}
+                      data-testid={`split-pay-sub-${s.id}`}
+                    >
+                      {hasItems ? "PAGAR ESTA CUENTA →" : "Sin items asignados"}
+                    </button>
                   </div>
                 );
               })}
             </div>
 
+            {/* Desktop: remaining + pay all */}
             <div className="pos-desktop-only" style={{ gap: 8, marginTop: "auto" }}>
               <div className="pos-info-box">
-                <div className="flex-1">
-                  <div className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>Pendiente cuenta principal</div>
-                  <div className="font-mono text-sm" style={{ color: "hsl(var(--foreground))" }} data-testid="split-remaining-total">
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: "var(--c-text3)" }}>Pendiente cuenta principal</div>
+                  <div style={{ fontFamily: "var(--f-mono)", fontSize: 14, color: "var(--c-text)" }} data-testid="split-remaining-total">
                     ₡{remainingTotal.toLocaleString()}
                   </div>
                 </div>
               </div>
-              <Button className="w-full" onClick={onPayAll} data-testid="split-pay-all-desktop">
+              <button className="pos-primary-btn" onClick={onPayAll} data-testid="split-pay-all-desktop">
                 PAGAR TODO — ₡{Number(table.totalAmount).toLocaleString()}
-              </Button>
+              </button>
             </div>
 
+            {/* Mobile: remaining + pay all */}
             <div className="pos-mobile-only" style={{ marginTop: "auto", gap: 8 }}>
               <div className="pos-info-box">
-                <div className="flex-1">
-                  <div className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>Pendiente principal</div>
-                  <div className="font-mono text-sm" style={{ color: "hsl(var(--foreground))" }}>₡{remainingTotal.toLocaleString()}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: "var(--c-text3)" }}>Pendiente principal</div>
+                  <div style={{ fontFamily: "var(--f-mono)", fontSize: 14, color: "var(--c-text)" }}>
+                    ₡{remainingTotal.toLocaleString()}
+                  </div>
                 </div>
               </div>
-              <Button className="w-full" onClick={onPayAll} data-testid="split-pay-all-mobile">
-                PAGAR TODO <ArrowRight className="w-4 h-4 ml-1" />
-              </Button>
-              <Button variant="ghost" className="w-full" onClick={() => setStep(2)} data-testid="split-mobile-back-2">
-                <ChevronLeft className="w-4 h-4 mr-1" /> Subcuenta
-              </Button>
+              <button className="pos-primary-btn" onClick={onPayAll} data-testid="split-pay-all-mobile">
+                PAGAR TODO →
+              </button>
             </div>
           </div>
 

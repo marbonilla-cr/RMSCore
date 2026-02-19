@@ -64,15 +64,16 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 -   **Origin marker:** All imported records have `origin = 'LOYVERSE'` to distinguish from system-generated records (`origin = 'SYSTEM'`).
 
 ### POS Unified Dialog Redesign (February 19, 2026)
--   **Status:** COMPLETED — Unified 3-panel payment and split dialogs replacing old multi-step flow.
+-   **Status:** COMPLETED v2 — Faithful port of HTML prototype `pos-unified-responsive.html`. No shadcn components; pure custom CSS + native HTML elements.
+-   **Design system:** Dark theme with own tokens (#0a0c0f bg, #111318/#181c22 surfaces, green #2ecc71, blue #3498db, amber #f39c12). Typography: Barlow Condensed (titles, 800), Barlow (body, 400/500), JetBrains Mono (numbers/tags).
 -   **New components:**
-    -   `client/src/components/pos/pos-dialogs.css` — Responsive CSS (mobile bottom-sheet, tablet 2-col, desktop 3-col)
-    -   `client/src/components/pos/PayDialog.tsx` — Unified payment dialog (Order Summary | Method & Client | Cash Denominations)
-    -   `client/src/components/pos/SplitDialog.tsx` — Unified split dialog (Items | Active Subcuenta | Summary)
--   **Layout:** Mobile uses step-tab navigation with sliding panels; tablet shows 2 columns; desktop shows full 3-column grid.
--   **Old dialogs:** The old payment `<Dialog>` and `splitMode` view in pos.tsx were replaced. Old mutations (payMutation, paySplitMutation) are kept for backwards compatibility but new dialogs handle their own API calls.
+    -   `client/src/components/pos/pos-dialogs.css` — Full CSS with design tokens, responsive breakpoints (<640 mobile bottom-sheet, 640-959 tablet 2-col, ≥960 desktop 3-col, ≥1280 wide), animations, method color-coding (CASH=green, CARD=blue, SINPE=amber).
+    -   `client/src/components/pos/PayDialog.tsx` — 3-panel payment (Order Summary | Method & Client | Cash Denominations). Cash panel always in DOM, controlled by CSS opacity/pointer-events. Denomination grid, real-time change calculation.
+    -   `client/src/components/pos/SplitDialog.tsx` — 3-panel split (Items | Active Subcuenta | Summary). Item move/return with visual states (dashed border + opacity for moved items). Vibrate + flash animations on separation.
+-   **Layout:** Mobile: bottom sheet with drag handle, step tabs with numbered circles (checkmarks when done), sliding panels via CSS transform translateX. Tablet: 2-column grid, no step tabs. Desktop: 3 columns, 880px (pay) / 1060px (split).
+-   **API integration preserved:** POST /api/pos/pay, POST /api/pos/pay-split, POST /api/pos/split-order, POST /api/pos/split-items/move, POST /api/pos/send-ticket.
 -   **Receipt printing:** Handled via `handlePayDialogSuccess` callback in pos.tsx which receives payment method info and triggers `triggerReceiptPrint` + auto-print + drawer open.
--   **Animations:** `pos-vibrate` (split separation) and `pos-flash-success` (payment confirmation) CSS keyframes.
+-   **Animations:** `pos-vibrate` (split separation vibration, 0.4s), `pos-flash-success` (green glow confirmation, 0.7s) CSS keyframes. Applied via class toggling with setTimeout sequencing.
 
 ## External Dependencies
 -   **PostgreSQL:** Primary database.
