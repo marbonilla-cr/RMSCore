@@ -1,0 +1,189 @@
+/* ════════════════════════════════════
+   LINEN DESIGN SYSTEM — tokens.css
+   ════════════════════════════════════ */
+
+/* ── Tipografía (igual en ambos modos) ── */
+:root {
+  --f-disp: 'Outfit', sans-serif;
+  --f-body: 'IBM Plex Sans', sans-serif;
+  --f-mono: 'IBM Plex Mono', monospace;
+
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+
+  --t-fast: 0.14s ease;
+  --t-mid:  0.24s ease;
+  --t-slow: 0.38s cubic-bezier(.22,.68,0,1.2);
+}
+
+/* ── LIGHT MODE (default) ── */
+:root,
+[data-theme="light"] {
+
+  /* Fondos */
+  --bg:   #f7f3ee;
+  --s0:   #ffffff;
+  --s1:   #f0ebe3;
+  --s2:   #e6dfd5;
+  --s3:   #d9d0c4;
+
+  /* Bordes */
+  --border:  #ddd5c8;
+  --border2: #cfc5b6;
+  --border-ds: #ddd5c8;
+
+  /* Acento principal — azul marino */
+  --acc:   #1d4ed8;
+  --acc-d: rgba(29,78,216,0.07);
+  --acc-m: rgba(29,78,216,0.18);
+  --acc-t: rgba(29,78,216,0.35);
+
+  /* Coral — alertas QR, acciones destructivas, urgencia */
+  --coral:   #e05e3a;
+  --coral-d: rgba(224,94,58,0.08);
+  --coral-m: rgba(224,94,58,0.20);
+
+  /* Sage — estado listo, confirmaciones positivas */
+  --sage:   #4a7c59;
+  --sage-d: rgba(74,124,89,0.09);
+  --sage-m: rgba(74,124,89,0.20);
+
+  /* Amber — advertencias, preparando */
+  --amber:   #c9841a;
+  --amber-d: rgba(201,132,26,0.09);
+  --amber-m: rgba(201,132,26,0.20);
+
+  /* Rojo — errores, anulaciones */
+  --red:   #dc2626;
+  --red-d: rgba(220,38,38,0.08);
+  --red-m: rgba(220,38,38,0.18);
+
+  /* Legacy aliases for pages that use --green/--blue */
+  --green:   var(--sage);
+  --green-d: var(--sage-d);
+  --green-m: var(--sage-m);
+  --blue:    var(--acc);
+  --blue-d:  var(--acc-d);
+
+  /* Texto */
+  --text:  #1a1208;
+  --text2: #5a4e40;
+  --text3: #9c8e7e;
+  --text4: #c4b9ac;
+
+  /* Rail lateral (siempre oscuro independiente del modo) */
+  --rail-bg:     #1a1208;
+  --rail-text:   rgba(255,255,255,0.40);
+  --rail-active: rgba(255,255,255,0.12);
+  --rail-accent: #e05e3a;
+
+  /* Sombras */
+  --shadow-xs: 0 1px 2px rgba(26,18,8,0.06);
+  --shadow-sm: 0 2px 8px rgba(26,18,8,0.08);
+  --shadow-md: 0 4px 16px rgba(26,18,8,0.10);
+  --shadow-lg: 0 8px 32px rgba(26,18,8,0.12);
+  --shadow-card: 0 2px 8px rgba(26,18,8,0.08);
+  --shadow-dialog: 0 20px 60px rgba(26,18,8,0.18), 0 0 0 1px var(--border);
+  --shadow-green: 0 8px 32px rgba(74,124,89,0.20);
+}
+
+/* ── DARK MODE ── */
+[data-theme="dark"] {
+
+  --bg:   #1c1711;
+  --s0:   #252017;
+  --s1:   #2e2820;
+  --s2:   #3a332a;
+  --s3:   #453e34;
+
+  --border:  #3a332a;
+  --border2: #453e34;
+  --border-ds: #3a332a;
+
+  --acc:   #4f83f5;
+  --acc-d: rgba(79,131,245,0.12);
+  --acc-m: rgba(79,131,245,0.25);
+  --acc-t: rgba(79,131,245,0.40);
+
+  --coral:   #f07653;
+  --coral-d: rgba(240,118,83,0.12);
+  --coral-m: rgba(240,118,83,0.25);
+
+  --sage:   #68b07a;
+  --sage-d: rgba(104,176,122,0.12);
+  --sage-m: rgba(104,176,122,0.25);
+
+  --amber:   #e6a535;
+  --amber-d: rgba(230,165,53,0.12);
+  --amber-m: rgba(230,165,53,0.25);
+
+  --red:   #f87171;
+  --red-d: rgba(248,113,113,0.12);
+  --red-m: rgba(248,113,113,0.25);
+
+  --green:   var(--sage);
+  --green-d: var(--sage-d);
+  --green-m: var(--sage-m);
+  --blue:    var(--acc);
+  --blue-d:  var(--acc-d);
+
+  --text:  #f5ede3;
+  --text2: #c4b5a5;
+  --text3: #8a7d6e;
+  --text4: #5a4e40;
+
+  --rail-bg:     #141009;
+  --rail-text:   rgba(255,255,255,0.35);
+  --rail-active: rgba(255,255,255,0.10);
+  --rail-accent: #f07653;
+
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.6);
+  --shadow-card: 0 2px 8px rgba(0,0,0,0.4);
+  --shadow-dialog: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px var(--border);
+  --shadow-green: 0 8px 32px rgba(104,176,122,0.20);
+}
+
+/* ════════════════════════════════════
+   BRIDGE shadcn ← tokens Linen
+   ════════════════════════════════════ */
+
+:root,
+[data-theme="light"],
+[data-theme="dark"] {
+  --background:              var(--bg);
+  --foreground:              var(--text);
+  --card:                    var(--s0);
+  --card-foreground:         var(--text);
+  --popover:                 var(--s0);
+  --popover-foreground:      var(--text);
+  --primary:                 var(--acc);
+  --primary-foreground:      #ffffff;
+  --secondary:               var(--s1);
+  --secondary-foreground:    var(--text2);
+  --muted:                   var(--s1);
+  --muted-foreground:        var(--text3);
+  --accent:                  var(--s2);
+  --accent-foreground:       var(--text);
+  --destructive:             var(--red);
+  --destructive-foreground:  #ffffff;
+  --border:                  var(--border);
+  --input:                   var(--s1);
+  --ring:                    var(--acc);
+  --radius:                  var(--r-sm);
+
+  /* Sidebar shadcn */
+  --sidebar-background:           var(--rail-bg);
+  --sidebar-foreground:           var(--rail-text);
+  --sidebar-primary:              var(--rail-accent);
+  --sidebar-primary-foreground:   #ffffff;
+  --sidebar-accent:               var(--rail-active);
+  --sidebar-accent-foreground:    #ffffff;
+  --sidebar-border:               rgba(255,255,255,0.08);
+  --sidebar-ring:                 var(--rail-accent);
+}

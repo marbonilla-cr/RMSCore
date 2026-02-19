@@ -162,8 +162,8 @@ function AuthenticatedLayout() {
   const { user, logout } = useAuth();
   useShortageAlerts();
   const style = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
+    "--sidebar-width": "64px",
+    "--sidebar-width-icon": "64px",
   };
 
   return (
@@ -176,7 +176,7 @@ function AuthenticatedLayout() {
           gap: 8px;
           padding: 8px 16px;
           background: var(--s0);
-          border-bottom: 1px solid var(--border-ds);
+          border-bottom: 1px solid var(--border);
           position: sticky;
           top: 0;
           z-index: 9;

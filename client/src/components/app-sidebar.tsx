@@ -12,8 +12,6 @@ import {
   SidebarMenuButton,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   LayoutDashboard,
   ChefHat,
@@ -135,11 +133,8 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarContent>
-        <div style={{ padding: "16px 16px 8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <img src={logoImg} alt="La Antigua Lechería" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} data-testid="img-sidebar-logo" />
-            <span style={{ fontFamily: "var(--f-disp)", fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "0.02em" }}>La Antigua Lechería</span>
-          </div>
+        <div style={{ padding: "14px 0 8px", display: "flex", justifyContent: "center" }}>
+          <img src={logoImg} alt="La Antigua Lechería" className="rail-logo-img" data-testid="img-sidebar-logo" />
         </div>
 
         {showTables && (
@@ -354,17 +349,18 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="flex items-center gap-2 p-2">
-          <Avatar className="w-8 h-8">
-            <AvatarFallback className="text-xs">{initials}</AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate" data-testid="text-user-name">{user?.displayName}</p>
-            <p className="text-xs text-muted-foreground" data-testid="text-user-role">{user?.role}</p>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "8px 0" }}>
+          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--f-mono)", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.6)" }} data-testid="text-user-name" title={user?.displayName}>
+            {initials}
           </div>
-          <Button size="icon" variant="ghost" onClick={logout} data-testid="button-logout">
-            <LogOut className="w-4 h-4" />
-          </Button>
+          <button
+            onClick={logout}
+            data-testid="button-logout"
+            style={{ width: 30, height: 30, borderRadius: "var(--r-sm)", background: "transparent", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            title="Salir"
+          >
+            <LogOut size={14} />
+          </button>
         </div>
       </SidebarFooter>
     </Sidebar>
