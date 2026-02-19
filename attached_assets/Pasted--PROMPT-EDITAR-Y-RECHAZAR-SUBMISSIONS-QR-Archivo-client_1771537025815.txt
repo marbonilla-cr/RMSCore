@@ -1,0 +1,396 @@
+# PROMPT — EDITAR Y RECHAZAR SUBMISSIONS QR
+# Archivo: `client/src/pages/table-detail.tsx`
+# PREREQUISITO: No romper nada del diseño existente. Usar exactamente las
+# mismas clases CSS y patrones que ya usa el archivo.
+
+---
+
+## CONTEXTO
+
+Cuando un cliente ordena por QR, el mesero ve la submission en la vista
+de orden con un botón "Enviar a cocina". El problema es que no hay forma
+de corregir errores antes de enviar.
+
+Se necesitan **dos acciones nuevas** además del botón existente:
+- **Editar** — ajustar cantidades o eliminar ítems del submission antes
+  de aceptarlo
+- **Rechazar** — descartar el submission sin enviarlo a cocina
+
+---
+
+## PARTE 1 — ESTADO NUEVO (agregar junto a los useState existentes)
+
+```tsx
+// Estado de edición del submission QR
+const [editingSubmissionId, setEditingSubmissionId] = useState<number | null>(null);
+const [editedPayloadItems, setEditedPayloadItems] = useState<any[]>([]);
+```
+
+---
+
+## PARTE 2 — MUTATIONS NUEVAS (agregar junto a las mutations existentes)
+
+### Rechazar submission
+```tsx
+const rejectSubmissionMutation = useMutation({
+  mutationFn: async (submissionId: number) => {
+    return apiRequest("DELETE", `/api/waiter/qr-submissions/${submissionId}`);
+  },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+    toast({ title: "Pedido QR rechazado" });
+  },
+  onError: (err: any) => {
+    toast({ title: "Error", description: err.message, variant: "destructive" });
+  },
+});
+```
+
+### Aceptar submission con payload editado
+La función `acceptSubmissionMutation` existente llama a `accept-v2` sin body.
+Agregar una mutation separada que envíe el payload modificado:
+
+```tsx
+const acceptEditedSubmissionMutation = useMutation({
+  mutationFn: async ({ submissionId, items }: { submissionId: number; items: any[] }) => {
+    const res = await apiRequest(
+      "POST",
+      `/api/waiter/qr-submissions/${submissionId}/accept-v2`,
+      { editedItems: items }   // El backend puede ignorarlo si no lo implementa aún,
+    );                          // pero el frontend lo envía para cuando esté listo.
+    return res.json();
+  },
+  onSuccess: (data: any) => {
+    setEditingSubmissionId(null);
+    setEditedPayloadItems([]);
+    setExpandedSubmissionId(null);
+    if (data.activeOrder) {
+      queryClient.setQueryData(["/api/tables", tableId, "current"], {
+        table: data.table || currentView?.table,
+        activeOrder: data.activeOrder,
+        orderItems: data.orderItems || [],
+        pendingQrSubmissions: data.pendingQrSubmissions || [],
+      });
+    } else {
+      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+    }
+    queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+    toast({ title: "Pedido QR aceptado y enviado a cocina" });
+  },
+  onError: (err: any) => {
+    toast({ title: "Error", description: err.message, variant: "destructive" });
+  },
+});
+```
+
+---
+
+## PARTE 3 — REEMPLAZAR EL BLOQUE DE SUBMISSIONS QR (líneas ~901–947)
+
+Localizar el bloque que empieza con:
+```tsx
+{pendingSubmissions.length > 0 && pendingSubmissions.map((sub: any) => {
+```
+y termina con:
+```tsx
+            })}
+```
+justo antes de `{Object.keys(groupedItems).length > 0 && (`.
+
+Reemplazarlo completo por el siguiente bloque.
+
+**REGLAS DE DISEÑO — leer antes de escribir el JSX:**
+- Usar exactamente las mismas clases que ya existen: `card-ds`, `order-item`,
+  `oi-name`, `oi-mods`, `oi-qty`, `btn-primary`, `btn-secondary`, `btn-danger`,
+  `badge-ds`, `badge-muted`, `badge-amber`, `badge-red`, `qty-btn`, `qty-val`
+- Los botones de acción van en un `div` con `display: flex, gap: 8, marginTop: 8`
+- El botón principal (Enviar a cocina) usa `btn-primary` con `flex: 1`
+- El botón secundario (Editar) usa `btn-secondary`
+- El botón de rechazo usa `btn-danger`
+- Los controles de cantidad (+/-) del modo edición usan `qty-btn` y `qty-val`,
+  igual que el void dialog existente
+- NO agregar clases CSS nuevas — solo usar las que ya existen en `tdStyles`
+
+```tsx
+{pendingSubmissions.length > 0 && pendingSubmissions.map((sub: any) => {
+  const rawPayload = sub.payloadSnapshot || sub.payload_snapshot;
+  const payloadItems = rawPayload?.items || (Array.isArray(rawPayload) ? rawPayload : []);
+  const firstItem = payloadItems[0] || null;
+  const customerName = firstItem?.customerName || "Cliente";
+  const createdAt = sub.createdAt ? new Date(sub.createdAt) : new Date();
+  const timeStr = createdAt.toLocaleTimeString("es-CR", { hour: "numeric", minute: "2-digit", hour12: true });
+  const isExpanded = expandedSubmissionId === sub.id;
+  const isEditing = editingSubmissionId === sub.id;
+
+  // Ítems que se muestran: los editados si está en modo edición, los originales si no
+  const displayItems = isEditing ? editedPayloadItems : payloadItems;
+  const itemCount = displayItems.length;
+
+  return (
+    <div key={sub.id} className="card-ds" style={{ marginBottom: 8 }} data-testid={`pending-submission-${sub.id}`}>
+
+      {/* ── Header colapsable (igual que antes) ── */}
+      <div
+        className="qr-submission-header"
+        onClick={() => {
+          if (isEditing) return; // No colapsar mientras se edita
+          setExpandedSubmissionId(isExpanded ? null : sub.id);
+        }}
+        data-testid={`button-toggle-qr-${sub.id}`}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span className="oi-mods">{timeStr}</span>
+            <span className="oi-name">{customerName}</span>
+            <span className="badge-ds badge-muted">
+              {itemCount} {itemCount === 1 ? "item" : "items"}
+            </span>
+            {isEditing && (
+              <span className="badge-ds badge-amber">Editando</span>
+            )}
+          </div>
+        </div>
+        {!isEditing && (
+          <ChevronRight
+            size={18}
+            style={{
+              color: "var(--text3)",
+              transition: "transform var(--t-fast)",
+              transform: isExpanded ? "rotate(90deg)" : "none",
+              flexShrink: 0,
+            }}
+          />
+        )}
+      </div>
+
+      {/* ── Contenido expandido ── */}
+      {(isExpanded || isEditing) && (
+        <div style={{ marginTop: 10 }}>
+
+          {/* Lista de ítems */}
+          {displayItems.map((item: any, idx: number) => (
+            <div key={idx} className="order-item" data-testid={`qr-item-${sub.id}-${idx}`}>
+
+              {/* Modo edición: controles de cantidad */}
+              {isEditing ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                  <button
+                    className="qty-btn"
+                    onClick={() => {
+                      const next = [...editedPayloadItems];
+                      if (next[idx].qty <= 1) {
+                        next.splice(idx, 1); // Eliminar ítem si qty llega a 0
+                      } else {
+                        next[idx] = { ...next[idx], qty: next[idx].qty - 1 };
+                      }
+                      setEditedPayloadItems(next);
+                    }}
+                    data-testid={`button-qr-item-minus-${idx}`}
+                  >
+                    <Minus size={14} />
+                  </button>
+                  <span className="qty-val">{item.qty}</span>
+                  <button
+                    className="qty-btn"
+                    onClick={() => {
+                      const next = [...editedPayloadItems];
+                      next[idx] = { ...next[idx], qty: next[idx].qty + 1 };
+                      setEditedPayloadItems(next);
+                    }}
+                    data-testid={`button-qr-item-plus-${idx}`}
+                  >
+                    <Plus size={14} />
+                  </button>
+                  <span className="oi-name" style={{ flex: 1 }}>
+                    {item.productName || `Producto #${item.productId}`}
+                  </span>
+                  <button
+                    className="btn-icon-sm"
+                    style={{ color: "var(--red)" }}
+                    onClick={() => {
+                      setEditedPayloadItems(editedPayloadItems.filter((_, i) => i !== idx));
+                    }}
+                    data-testid={`button-qr-item-remove-${idx}`}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                // Modo lectura: igual que antes
+                <span className="oi-name">
+                  {item.qty}x {item.productName || `Producto #${item.productId}`}
+                </span>
+              )}
+            </div>
+          ))}
+
+          {/* Aviso si se eliminaron todos los ítems en modo edición */}
+          {isEditing && editedPayloadItems.length === 0 && (
+            <p className="oi-mods" style={{ textAlign: "center", padding: "8px 0", color: "var(--red)" }}>
+              Sin ítems — rechaza el pedido en su lugar
+            </p>
+          )}
+
+          {/* ── Botones de acción ── */}
+          {isEditing ? (
+            // Modo edición: Cancelar edición | Confirmar y enviar a cocina
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                className="btn-secondary"
+                style={{ flex: 1 }}
+                onClick={() => {
+                  setEditingSubmissionId(null);
+                  setEditedPayloadItems([]);
+                }}
+                data-testid={`button-cancel-edit-qr-${sub.id}`}
+              >
+                <X size={15} /> Cancelar
+              </button>
+              <button
+                className="btn-primary"
+                style={{ flex: 1 }}
+                disabled={
+                  editedPayloadItems.length === 0 ||
+                  acceptEditedSubmissionMutation.isPending
+                }
+                onClick={() =>
+                  acceptEditedSubmissionMutation.mutate({
+                    submissionId: sub.id,
+                    items: editedPayloadItems,
+                  })
+                }
+                data-testid={`button-confirm-edit-qr-${sub.id}`}
+              >
+                {acceptEditedSubmissionMutation.isPending ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Send size={16} />
+                )}
+                Enviar a cocina
+              </button>
+            </div>
+          ) : (
+            // Modo normal: Rechazar | Editar | Enviar a cocina
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                className="btn-danger"
+                onClick={() => rejectSubmissionMutation.mutate(sub.id)}
+                disabled={rejectSubmissionMutation.isPending}
+                data-testid={`button-reject-qr-${sub.id}`}
+                style={{ minWidth: 44 }}
+                title="Rechazar pedido"
+              >
+                {rejectSubmissionMutation.isPending ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Trash2 size={15} />
+                )}
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  setEditingSubmissionId(sub.id);
+                  // Clonar los ítems originales para editar sin mutar el payload
+                  setEditedPayloadItems(
+                    payloadItems.map((i: any) => ({ ...i }))
+                  );
+                }}
+                data-testid={`button-edit-qr-${sub.id}`}
+                style={{ minWidth: 44 }}
+                title="Editar pedido"
+              >
+                <Settings2 size={15} />
+              </button>
+              <button
+                className="btn-primary"
+                style={{ flex: 1 }}
+                onClick={() => acceptSubmissionMutation.mutate(sub.id)}
+                disabled={acceptSubmissionMutation.isPending}
+                data-testid={`button-accept-qr-${sub.id}`}
+              >
+                {acceptSubmissionMutation.isPending ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Send size={16} />
+                )}
+                Enviar a cocina
+              </button>
+            </div>
+          )}
+
+        </div>
+      )}
+    </div>
+  );
+})}
+```
+
+---
+
+## PARTE 4 — IMPORTS (verificar que estén todos)
+
+Confirmar que estas líneas ya están en los imports de lucide-react.
+Si falta alguna, añadirla:
+
+```tsx
+import {
+  // ... los que ya están ...
+  Trash2,    // para el botón rechazar — probablemente ya importado
+  Settings2, // para el botón editar — puede que no esté
+  X,         // para cerrar edición y eliminar ítem — probablemente ya importado
+  Minus,     // para restar cantidad — ya importado (se usa en void dialog)
+} from "lucide-react";
+```
+
+---
+
+## PARTE 5 — BACKEND (instrucción lógica para el agente)
+
+El frontend hace dos llamadas que el backend debe soportar:
+
+### DELETE `/api/waiter/qr-submissions/:id`
+- Buscar el submission por ID
+- Verificar que su estado sea PENDING (no se puede rechazar uno ya aceptado)
+- Eliminar o marcar como REJECTED el registro
+- Retornar 200 OK
+- Invalidar el conteo de submissions pendientes de la mesa
+
+### POST `/api/waiter/qr-submissions/:id/accept-v2` con body `{ editedItems }`
+- El endpoint `accept-v2` ya existe y funciona
+- Si llega `editedItems` en el body (array no vacío), usar esos ítems
+  en lugar del `payloadSnapshot` original al crear los order items
+- Si no llega `editedItems` o llega vacío, comportarse exactamente igual
+  que antes (compatibilidad hacia atrás garantizada)
+- Esto permite que el frontend editado funcione sin romper el flujo normal
+
+---
+
+## COMPORTAMIENTO FINAL
+
+**Vista normal (expandida):**
+```
+[🗑 Rechazar]  [⚙ Editar]  [→ Enviar a cocina ──────]
+```
+
+**Vista en edición:**
+- Badge "Editando" en ámbar en el header
+- Header no colapsa mientras se edita
+- Cada ítem muestra: [−] qty [+] nombre [✕]
+- Si qty baja a 0 el ítem desaparece de la lista
+- Si se eliminan todos los ítems: mensaje en rojo + botón "Enviar" deshabilitado
+- Botones: [✕ Cancelar]  [→ Enviar a cocina]
+
+**Rechazo:**
+- Botón 🗑 dispara directamente sin confirmación adicional
+  (el submission es pequeño, el error es reversible volviendo a pedir)
+
+---
+
+## LO QUE NO CAMBIAR
+
+- El banner superior `.qr-banner` con "Aceptar todas" — no se toca
+- `acceptAllMutation` — no se toca
+- El resto de la vista de orden (rondas, totales, pre-cuenta)
+- Los estilos de `tdStyles` — no agregar ni modificar nada
+- Todas las demás mutations y funciones del archivo
