@@ -94,6 +94,8 @@ export default function TableDetailPage() {
   const [pendingClickEvent, setPendingClickEvent] = useState<HTMLElement | null>(null);
   const [splitSelectedItems, setSplitSelectedItems] = useState<Set<number>>(new Set());
   const [expandedSubmissionId, setExpandedSubmissionId] = useState<number | null>(null);
+  const [editingSubmissionId, setEditingSubmissionId] = useState<number | null>(null);
+  const [editedPayloadItems, setEditedPayloadItems] = useState<any[]>([]);
   const [splitAccounts, setSplitAccounts] = useState<SplitAccount[]>([]);
   const [activeSplitId, setActiveSplitId] = useState<number | null>(null);
   const [splitLoading, setSplitLoading] = useState(false);
@@ -216,6 +218,51 @@ export default function TableDetailPage() {
       return res.json();
     },
     onSuccess: (data: any) => {
+      setExpandedSubmissionId(null);
+      if (data.activeOrder) {
+        queryClient.setQueryData(["/api/tables", tableId, "current"], {
+          table: data.table || currentView?.table,
+          activeOrder: data.activeOrder,
+          orderItems: data.orderItems || [],
+          pendingQrSubmissions: data.pendingQrSubmissions || [],
+        });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      toast({ title: "Pedido QR aceptado y enviado a cocina" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const rejectSubmissionMutation = useMutation({
+    mutationFn: async (submissionId: number) => {
+      return apiRequest("DELETE", `/api/waiter/qr-submissions/${submissionId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      toast({ title: "Pedido QR rechazado" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const acceptEditedSubmissionMutation = useMutation({
+    mutationFn: async ({ submissionId, items }: { submissionId: number; items: any[] }) => {
+      const res = await apiRequest(
+        "POST",
+        `/api/waiter/qr-submissions/${submissionId}/accept-v2`,
+        { editedItems: items }
+      );
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setEditingSubmissionId(null);
+      setEditedPayloadItems([]);
       setExpandedSubmissionId(null);
       if (data.activeOrder) {
         queryClient.setQueryData(["/api/tables", tableId, "current"], {
@@ -906,40 +953,197 @@ export default function TableDetailPage() {
               const createdAt = sub.createdAt ? new Date(sub.createdAt) : new Date();
               const timeStr = createdAt.toLocaleTimeString("es-CR", { hour: "numeric", minute: "2-digit", hour12: true });
               const isExpanded = expandedSubmissionId === sub.id;
+              const isEditing = editingSubmissionId === sub.id;
+
+              const displayItems = isEditing ? editedPayloadItems : payloadItems;
+              const itemCount = displayItems.length;
 
               return (
                 <div key={sub.id} className="card-ds" style={{ marginBottom: 8 }} data-testid={`pending-submission-${sub.id}`}>
+
                   <div
                     className="qr-submission-header"
-                    onClick={() => setExpandedSubmissionId(isExpanded ? null : sub.id)}
+                    onClick={() => {
+                      if (isEditing) return;
+                      setExpandedSubmissionId(isExpanded ? null : sub.id);
+                    }}
                     data-testid={`button-toggle-qr-${sub.id}`}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span className="oi-mods">{timeStr}</span>
                         <span className="oi-name">{customerName}</span>
-                        <span className="badge-ds badge-muted">{payloadItems.length} {payloadItems.length === 1 ? "item" : "items"}</span>
+                        <span className="badge-ds badge-muted">
+                          {itemCount} {itemCount === 1 ? "item" : "items"}
+                        </span>
+                        {isEditing && (
+                          <span className="badge-ds badge-amber">Editando</span>
+                        )}
                       </div>
                     </div>
-                    <ChevronRight size={18} style={{ color: "var(--text3)", transition: "transform var(--t-fast)", transform: isExpanded ? "rotate(90deg)" : "none", flexShrink: 0 }} />
+                    {!isEditing && (
+                      <ChevronRight
+                        size={18}
+                        style={{
+                          color: "var(--text3)",
+                          transition: "transform var(--t-fast)",
+                          transform: isExpanded ? "rotate(90deg)" : "none",
+                          flexShrink: 0,
+                        }}
+                      />
+                    )}
                   </div>
-                  {isExpanded && (
+
+                  {(isExpanded || isEditing) && (
                     <div style={{ marginTop: 10 }}>
-                      {payloadItems.map((item: any, idx: number) => (
-                        <div key={idx} className="order-item">
-                          <span className="oi-name">{item.qty}x {item.productName || `Producto #${item.productId}`}</span>
+
+                      {displayItems.map((item: any, idx: number) => (
+                        <div key={idx} className="order-item" data-testid={`qr-item-${sub.id}-${idx}`}>
+
+                          {isEditing ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                              <button
+                                className="qty-btn"
+                                onClick={() => {
+                                  const next = [...editedPayloadItems];
+                                  if (next[idx].qty <= 1) {
+                                    next.splice(idx, 1);
+                                  } else {
+                                    next[idx] = { ...next[idx], qty: next[idx].qty - 1 };
+                                  }
+                                  setEditedPayloadItems(next);
+                                }}
+                                data-testid={`button-qr-item-minus-${idx}`}
+                              >
+                                <Minus size={14} />
+                              </button>
+                              <span className="qty-val">{item.qty}</span>
+                              <button
+                                className="qty-btn"
+                                onClick={() => {
+                                  const next = [...editedPayloadItems];
+                                  next[idx] = { ...next[idx], qty: next[idx].qty + 1 };
+                                  setEditedPayloadItems(next);
+                                }}
+                                data-testid={`button-qr-item-plus-${idx}`}
+                              >
+                                <Plus size={14} />
+                              </button>
+                              <span className="oi-name" style={{ flex: 1 }}>
+                                {item.productName || `Producto #${item.productId}`}
+                              </span>
+                              <button
+                                className="btn-icon-sm"
+                                style={{ color: "var(--red)" }}
+                                onClick={() => {
+                                  setEditedPayloadItems(editedPayloadItems.filter((_, i) => i !== idx));
+                                }}
+                                data-testid={`button-qr-item-remove-${idx}`}
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="oi-name">
+                              {item.qty}x {item.productName || `Producto #${item.productId}`}
+                            </span>
+                          )}
                         </div>
                       ))}
-                      <button
-                        className="btn-primary"
-                        style={{ width: "100%", marginTop: 8 }}
-                        onClick={() => acceptSubmissionMutation.mutate(sub.id)}
-                        disabled={acceptSubmissionMutation.isPending}
-                        data-testid={`button-accept-qr-${sub.id}`}
-                      >
-                        {acceptSubmissionMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                        Enviar a cocina
-                      </button>
+
+                      {isEditing && editedPayloadItems.length === 0 && (
+                        <p className="oi-mods" style={{ textAlign: "center", padding: "8px 0", color: "var(--red)" }}>
+                          Sin ítems — rechaza el pedido en su lugar
+                        </p>
+                      )}
+
+                      {isEditing ? (
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button
+                            className="btn-secondary"
+                            style={{ flex: 1 }}
+                            onClick={() => {
+                              setEditingSubmissionId(null);
+                              setEditedPayloadItems([]);
+                            }}
+                            data-testid={`button-cancel-edit-qr-${sub.id}`}
+                          >
+                            <X size={15} /> Cancelar
+                          </button>
+                          <button
+                            className="btn-primary"
+                            style={{ flex: 1 }}
+                            disabled={
+                              editedPayloadItems.length === 0 ||
+                              acceptEditedSubmissionMutation.isPending
+                            }
+                            onClick={() =>
+                              acceptEditedSubmissionMutation.mutate({
+                                submissionId: sub.id,
+                                items: editedPayloadItems,
+                              })
+                            }
+                            data-testid={`button-confirm-edit-qr-${sub.id}`}
+                          >
+                            {acceptEditedSubmissionMutation.isPending ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <Send size={16} />
+                            )}
+                            Enviar a cocina
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button
+                            className="btn-danger"
+                            onClick={() => rejectSubmissionMutation.mutate(sub.id)}
+                            disabled={rejectSubmissionMutation.isPending}
+                            data-testid={`button-reject-qr-${sub.id}`}
+                            style={{ minWidth: 44 }}
+                            title="Rechazar pedido"
+                          >
+                            {rejectSubmissionMutation.isPending ? (
+                              <Loader2 size={15} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={15} />
+                            )}
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            onClick={() => {
+                              if (editingSubmissionId && editingSubmissionId !== sub.id) {
+                                setEditingSubmissionId(null);
+                                setEditedPayloadItems([]);
+                              }
+                              setEditingSubmissionId(sub.id);
+                              setEditedPayloadItems(
+                                payloadItems.map((i: any) => ({ ...i }))
+                              );
+                            }}
+                            data-testid={`button-edit-qr-${sub.id}`}
+                            style={{ minWidth: 44 }}
+                            title="Editar pedido"
+                          >
+                            <Settings2 size={15} />
+                          </button>
+                          <button
+                            className="btn-primary"
+                            style={{ flex: 1 }}
+                            onClick={() => acceptSubmissionMutation.mutate(sub.id)}
+                            disabled={acceptSubmissionMutation.isPending}
+                            data-testid={`button-accept-qr-${sub.id}`}
+                          >
+                            {acceptSubmissionMutation.isPending ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <Send size={16} />
+                            )}
+                            Enviar a cocina
+                          </button>
+                        </div>
+                      )}
+
                     </div>
                   )}
                 </div>

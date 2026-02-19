@@ -268,7 +268,14 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         return res.status(400).json({ message: "Payload inválido" });
       }
 
-      const payloadItems = payload.items as Array<{
+      const editedItems = req.body?.editedItems;
+      const useEdited = Array.isArray(editedItems) && editedItems.length > 0;
+
+      if (Array.isArray(editedItems) && editedItems.length === 0) {
+        return res.status(400).json({ message: "No se puede aceptar un pedido sin ítems" });
+      }
+
+      const payloadItems = (useEdited ? editedItems : payload.items) as Array<{
         productId: number;
         qty: number;
         customerName?: string;
@@ -467,6 +474,40 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
   });
 
   app.post("/api/waiter/qr-submissions/:id/reject", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const subId = parseInt(req.params.id as string);
+      const userId = req.session.userId!;
+
+      const sub = await storage.getSubmission(subId);
+      if (!sub || sub.status !== "SUBMITTED") {
+        return res.status(400).json({ message: "Submission no válida o ya procesada" });
+      }
+
+      await storage.updateSubmission(subId, {
+        status: "REJECTED",
+        acceptedByUserId: userId,
+        acceptedAt: new Date(),
+      });
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: "WAITER_REJECTED_QR",
+        entityType: "qr_submission",
+        entityId: subId,
+        tableId: sub.tableId,
+        metadata: { submissionId: subId },
+      });
+
+      broadcast("order_updated", { tableId: sub.tableId, orderId: sub.orderId });
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/waiter/qr-submissions/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const subId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
