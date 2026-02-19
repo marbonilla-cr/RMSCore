@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
+import { setOnUnauthorized, queryClient } from "./queryClient";
 
 interface AuthUser {
   id: number;
@@ -26,6 +27,19 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const loggingOut = useRef(false);
+
+  const forceLogout = useCallback(() => {
+    if (loggingOut.current) return;
+    loggingOut.current = true;
+    setUser(null);
+    queryClient.clear();
+    setTimeout(() => { loggingOut.current = false; }, 1000);
+  }, []);
+
+  useEffect(() => {
+    setOnUnauthorized(forceLogout);
+  }, [forceLogout]);
 
   useEffect(() => {
     let mounted = true;
@@ -98,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setUser(null);
+    queryClient.clear();
     setLocation("/");
   };
 

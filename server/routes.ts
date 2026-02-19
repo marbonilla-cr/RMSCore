@@ -154,7 +154,7 @@ export async function registerRoutes(
 ): Promise<Server> {
   // Session setup
   const sessionSecret = process.env.SESSION_SECRET || "restaurant-secret-key-dev";
-  const MemoryStore = (await import("memorystore")).default(session);
+  const pgSession = (await import("connect-pg-simple")).default(session);
 
   app.set("trust proxy", 1);
 
@@ -163,13 +163,18 @@ export async function registerRoutes(
       secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
-      store: new MemoryStore({ checkPeriod: 86400000 }),
+      store: new pgSession({
+        conString: process.env.DATABASE_URL,
+        tableName: "session",
+        pruneSessionInterval: 60 * 15,
+        createTableIfMissing: true,
+      }),
       proxy: true,
       cookie: {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+        secure: true,
+        sameSite: "none" as const,
       },
     })
   );
