@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
   CreditCard, DollarSign, Loader2, Receipt,
-  Banknote, ArrowLeft, Lock, Unlock, Wallet,
+  Banknote, ArrowLeft, Lock, Unlock, Wallet, Coins,
   Split, Trash2, XCircle, Mail, Printer, ArrowRight, ArrowLeftRight,
   Percent, X, Plus, Minus, Save, SendHorizontal,
 } from "lucide-react";
@@ -123,6 +123,10 @@ export default function POSPage() {
   const [closeOpen, setCloseOpen] = useState(false);
   const [countedCash, setCountedCash] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
+
+  const [cashStep, setCashStep] = useState<"select" | "change" | null>(null);
+  const [cashReceived, setCashReceived] = useState<number>(0);
+  const [customCashInput, setCustomCashInput] = useState("");
 
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [splitLabel, setSplitLabel] = useState("");
@@ -319,6 +323,12 @@ export default function POSPage() {
           .catch(() => {});
       }
 
+      const pmUsed = paymentMethods.find(m => m.id.toString() === paymentMethodId);
+      const wasCash = pmUsed ? (pmUsed.paymentCode.toUpperCase().includes("CASH") || pmUsed.paymentCode.toUpperCase().includes("EFECT")) : false;
+      if (wasCash) {
+        apiRequest("POST", "/api/pos/open-drawer", {}).catch(() => {});
+      }
+
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
@@ -327,6 +337,9 @@ export default function POSPage() {
       setDetailView(false);
       setClientName("");
       setClientEmail("");
+      setCashStep(null);
+      setCashReceived(0);
+      setCustomCashInput("");
       toast({ title: "Pago procesado" });
     },
     onError: (err: any) => {
@@ -363,6 +376,12 @@ export default function POSPage() {
       const orderNum = tbl?.globalNumber ? `G-${tbl.globalNumber}` : (tbl?.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl?.orderId}`);
       triggerReceiptPrint(receiptItems, total, pm?.paymentName || "", tbl?.tableName || "", `${orderNum} (${split?.label || ""})`, clientName || undefined);
 
+      const pmUsed = paymentMethods.find(m => m.id.toString() === paymentMethodId);
+      const wasCash = pmUsed ? (pmUsed.paymentCode.toUpperCase().includes("CASH") || pmUsed.paymentCode.toUpperCase().includes("EFECT")) : false;
+      if (wasCash) {
+        apiRequest("POST", "/api/pos/open-drawer", {}).catch(() => {});
+      }
+
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
@@ -371,6 +390,9 @@ export default function POSPage() {
       setPayingSplitId(null);
       setClientName("");
       setClientEmail("");
+      setCashStep(null);
+      setCashReceived(0);
+      setCustomCashInput("");
       toast({ title: "Subcuenta pagada" });
     },
     onError: (err: any) => {
@@ -873,6 +895,21 @@ export default function POSPage() {
 
   const payingAmount = Number(selectedTable?.totalAmount || 0);
   const payingLabel = selectedTable?.tableName || "";
+
+  const selectedPm = paymentMethods.find(m => m.id.toString() === paymentMethodId);
+  const isCashPayment = selectedPm ? (selectedPm.paymentCode.toUpperCase().includes("CASH") || selectedPm.paymentCode.toUpperCase().includes("EFECT")) : false;
+
+  const getCashDenominations = (total: number): number[] => {
+    const bills = [1000, 2000, 5000, 10000, 20000];
+    const suggestions = new Set<number>();
+    suggestions.add(total);
+    for (const bill of bills) {
+      const rounded = Math.ceil(total / bill) * bill;
+      if (rounded >= total) suggestions.add(rounded);
+    }
+    const sorted = Array.from(suggestions).sort((a, b) => a - b);
+    return sorted.slice(0, 6);
+  };
 
   return (
     <div className="p-3 md:p-4 max-w-5xl mx-auto">
@@ -1528,110 +1565,216 @@ export default function POSPage() {
         </Tabs>
       )}
 
-      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+      <Dialog open={paymentOpen} onOpenChange={(open) => { setPaymentOpen(open); if (!open) { setCashStep(null); setCashReceived(0); setCustomCashInput(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Cobrar - {payingLabel}
+              {cashStep === "select" ? "Monto Recibido" : cashStep === "change" ? "Vuelto" : `Cobrar - ${payingLabel}`}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="text-center py-4">
-              <p className="text-3xl font-bold" data-testid="text-payment-total">
-                ₡{payingAmount.toLocaleString()}
-              </p>
-              {selectedTable && (
-                <div className="text-left mt-2 space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Subtotal</span>
-                    <span>₡{getOrderSubtotal(selectedTable).toLocaleString()}</span>
-                  </div>
-                  {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
-                    selectedTable.taxBreakdown.map((tb, idx) => (
-                      <div key={idx} className="flex justify-between text-muted-foreground">
-                        <span>{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
-                        <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
+            {!cashStep && (
+              <>
+                <div className="text-center py-4">
+                  <p className="text-3xl font-bold" data-testid="text-payment-total">
+                    ₡{payingAmount.toLocaleString()}
+                  </p>
+                  {selectedTable && (
+                    <div className="text-left mt-2 space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Subtotal</span>
+                        <span>₡{getOrderSubtotal(selectedTable).toLocaleString()}</span>
                       </div>
-                    ))
-                  ) : (
-                    <div className="flex justify-between text-muted-foreground">
-                      <span>Impuestos</span>
-                      <span>₡0</span>
+                      {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
+                        selectedTable.taxBreakdown.map((tb, idx) => (
+                          <div key={idx} className="flex justify-between text-muted-foreground">
+                            <span>{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
+                            <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Impuestos</span>
+                          <span>₡0</span>
+                        </div>
+                      )}
+                      <div className={`flex justify-between ${Number(selectedTable.totalDiscounts || 0) > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
+                        <span>Descuentos</span>
+                        <span>{Number(selectedTable.totalDiscounts || 0) > 0 ? `-₡${Number(selectedTable.totalDiscounts).toLocaleString()}` : "₡0"}</span>
+                      </div>
                     </div>
                   )}
-                  <div className={`flex justify-between ${Number(selectedTable.totalDiscounts || 0) > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
-                    <span>Descuentos</span>
-                    <span>{Number(selectedTable.totalDiscounts || 0) > 0 ? `-₡${Number(selectedTable.totalDiscounts).toLocaleString()}` : "₡0"}</span>
+                </div>
+                <div className="space-y-2">
+                  <Label>Método de Pago</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {activePaymentMethods.map((m) => {
+                      const isSelected = paymentMethodId === m.id.toString();
+                      const code = m.paymentCode.toUpperCase();
+                      const icon = code.includes("CASH") || code.includes("EFECT") ? Banknote
+                        : code.includes("CARD") || code.includes("TARJ") ? CreditCard
+                        : Wallet;
+                      const Icon = icon;
+                      return (
+                        <Button
+                          key={m.id}
+                          variant={isSelected ? "default" : "outline"}
+                          className={`flex flex-col items-center gap-1 h-auto py-3 ${isSelected ? "ring-2 ring-primary" : ""}`}
+                          onClick={() => { setPaymentMethodId(m.id.toString()); setCashStep(null); }}
+                          data-testid={`button-pm-${m.id}`}
+                        >
+                          <Icon className="w-5 h-5" />
+                          <span className="text-xs">{m.paymentName}</span>
+                        </Button>
+                      );
+                    })}
                   </div>
                 </div>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>Método de Pago</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {activePaymentMethods.map((m) => {
-                  const isSelected = paymentMethodId === m.id.toString();
-                  const code = m.paymentCode.toUpperCase();
-                  const icon = code.includes("CASH") || code.includes("EFECT") ? Banknote
-                    : code.includes("CARD") || code.includes("TARJ") ? CreditCard
-                    : Wallet;
-                  const Icon = icon;
-                  return (
-                    <Button
-                      key={m.id}
-                      variant={isSelected ? "default" : "outline"}
-                      className={`flex flex-col items-center gap-1 h-auto py-3 ${isSelected ? "ring-2 ring-primary" : ""}`}
-                      onClick={() => setPaymentMethodId(m.id.toString())}
-                      data-testid={`button-pm-${m.id}`}
-                    >
-                      <Icon className="w-5 h-5" />
-                      <span className="text-xs">{m.paymentName}</span>
-                    </Button>
-                  );
-                })}
-              </div>
-            </div>
-            {canEditCustomerPrepay && (
-              <>
-                <div className="space-y-2">
-                  <Label>Nombre del Cliente (opcional)</Label>
-                  <Input data-testid="input-client-name" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nombre" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Email (opcional)</Label>
-                  <Input data-testid="input-client-email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="email@example.com" type="email" />
-                </div>
+                {canEditCustomerPrepay && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Nombre del Cliente (opcional)</Label>
+                      <Input data-testid="input-client-name" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nombre" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Email (opcional)</Label>
+                      <Input data-testid="input-client-email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="email@example.com" type="email" />
+                    </div>
+                  </>
+                )}
+                {canEmailTicket && clientEmail && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => sendTicketMutation.mutate()}
+                    disabled={!clientEmail || sendTicketMutation.isPending}
+                    data-testid="button-send-ticket"
+                  >
+                    {sendTicketMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                    ) : (
+                      <Mail className="w-4 h-4 mr-1" />
+                    )}
+                    Enviar Ticket por Email
+                  </Button>
+                )}
+                <Button
+                  className="w-full"
+                  onClick={() => {
+                    if (isCashPayment) {
+                      setCashReceived(0);
+                      setCustomCashInput("");
+                      setCashStep("select");
+                    } else {
+                      payingSplitId ? paySplitMutation.mutate() : payMutation.mutate();
+                    }
+                  }}
+                  disabled={!paymentMethodId || payMutation.isPending || paySplitMutation.isPending}
+                  data-testid="button-process-payment"
+                >
+                  {(payMutation.isPending || paySplitMutation.isPending) ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                  ) : isCashPayment ? (
+                    <Banknote className="w-4 h-4 mr-1" />
+                  ) : (
+                    <DollarSign className="w-4 h-4 mr-1" />
+                  )}
+                  {isCashPayment ? "Cobrar en Efectivo" : "Procesar Pago"}
+                </Button>
               </>
             )}
-            {canEmailTicket && clientEmail && (
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => sendTicketMutation.mutate()}
-                disabled={!clientEmail || sendTicketMutation.isPending}
-                data-testid="button-send-ticket"
-              >
-                {sendTicketMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                ) : (
-                  <Mail className="w-4 h-4 mr-1" />
-                )}
-                Enviar Ticket por Email
-              </Button>
+
+            {cashStep === "select" && (
+              <>
+                <div className="text-center py-2">
+                  <p className="text-sm text-muted-foreground">Total a cobrar</p>
+                  <p className="text-2xl font-bold" data-testid="text-cash-total">₡{payingAmount.toLocaleString()}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Seleccione el monto recibido</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {getCashDenominations(payingAmount).map((amount) => (
+                      <Button
+                        key={amount}
+                        variant={cashReceived === amount ? "default" : "outline"}
+                        className={`h-auto py-3 text-base font-semibold ${cashReceived === amount ? "ring-2 ring-primary" : ""}`}
+                        onClick={() => { setCashReceived(amount); setCustomCashInput(""); setCashStep("change"); }}
+                        data-testid={`button-cash-${amount}`}
+                      >
+                        ₡{amount.toLocaleString()}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Otro monto</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      data-testid="input-custom-cash"
+                      type="number"
+                      placeholder="Monto recibido"
+                      value={customCashInput}
+                      onChange={(e) => setCustomCashInput(e.target.value)}
+                    />
+                    <Button
+                      disabled={!customCashInput || Number(customCashInput) < payingAmount}
+                      onClick={() => { setCashReceived(Number(customCashInput)); setCashStep("change"); }}
+                      data-testid="button-custom-cash-confirm"
+                    >
+                      Aplicar
+                    </Button>
+                  </div>
+                  {customCashInput && Number(customCashInput) < payingAmount && (
+                    <p className="text-sm text-destructive">El monto debe ser igual o mayor al total</p>
+                  )}
+                </div>
+                <Button variant="outline" className="w-full" onClick={() => setCashStep(null)} data-testid="button-cash-back">
+                  <ArrowLeft className="w-4 h-4 mr-1" />
+                  Volver
+                </Button>
+              </>
             )}
-            <Button
-              className="w-full"
-              onClick={() => payMutation.mutate()}
-              disabled={!paymentMethodId || payMutation.isPending}
-              data-testid="button-process-payment"
-            >
-              {payMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1" />
-              ) : (
-                <DollarSign className="w-4 h-4 mr-1" />
-              )}
-              Procesar Pago
-            </Button>
+
+            {cashStep === "change" && (
+              <>
+                <div className="text-center py-4 space-y-3">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total</p>
+                    <p className="text-xl font-semibold">₡{payingAmount.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Recibido</p>
+                    <p className="text-xl font-semibold">₡{cashReceived.toLocaleString()}</p>
+                  </div>
+                  <div className="border-t pt-3">
+                    <p className="text-sm text-muted-foreground">Vuelto a entregar</p>
+                    <p className="text-4xl font-bold text-green-600 dark:text-green-400" data-testid="text-cash-change">
+                      ₡{(cashReceived - payingAmount).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  className="w-full"
+                  onClick={() => {
+                    setCashStep(null);
+                    payingSplitId ? paySplitMutation.mutate() : payMutation.mutate();
+                  }}
+                  disabled={payMutation.isPending || paySplitMutation.isPending}
+                  data-testid="button-cash-continue"
+                >
+                  {(payMutation.isPending || paySplitMutation.isPending) ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                  ) : (
+                    <Coins className="w-4 h-4 mr-1" />
+                  )}
+                  Continuar
+                </Button>
+                <Button variant="outline" className="w-full" onClick={() => setCashStep("select")} data-testid="button-change-back">
+                  <ArrowLeft className="w-4 h-4 mr-1" />
+                  Cambiar monto
+                </Button>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>

@@ -19,6 +19,7 @@ const CMD = {
   PARTIAL_CUT: Buffer.from([GS, 0x56, 0x01]),
   FEED_LINES: (n: number) => Buffer.from([ESC, 0x64, n]),
   LINE: Buffer.from([LF]),
+  OPEN_DRAWER: Buffer.from([ESC, 0x70, 0x00, 0x19, 0xFA]),
 };
 
 const CP858_MAP: Record<number, number> = {
@@ -234,6 +235,10 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
   parts.push(CMD.PARTIAL_CUT);
 
   return Buffer.concat(parts);
+}
+
+export function buildDrawerKickData(): Buffer {
+  return Buffer.concat([CMD.INIT, CMD.OPEN_DRAWER]);
 }
 
 export function sendToPrinter(

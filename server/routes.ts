@@ -2965,6 +2965,23 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== POS: OPEN CASH DRAWER ====================
+  app.post("/api/pos/open-drawer", requirePermission("POS_PAY"), async (_req, res) => {
+    try {
+      const { buildDrawerKickData, sendToPrinter } = await import("./escpos");
+      const printersList = await storage.getAllPrinters();
+      const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
+      if (!cajaPrinter) {
+        return res.json({ ok: false, message: "No hay impresora de caja configurada" });
+      }
+      const drawerData = buildDrawerKickData();
+      await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, drawerData);
+      res.json({ ok: true, printer: cajaPrinter.name });
+    } catch (err: any) {
+      res.json({ ok: false, message: err.message });
+    }
+  });
+
   // ==================== POS: SEND TICKET (email) ====================
   app.post("/api/pos/send-ticket", requirePermission("POS_EMAIL_TICKET"), async (req, res) => {
     try {
