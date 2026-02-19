@@ -1,0 +1,270 @@
+RMS (Restaurante Management System) — Documento Madre de Lineamientos (v1)
+
+Propósito: Este documento define los lineamientos funcionales, de UX/UI, datos, auditoría y operación del RMS tal como está concebido/implementado hasta hoy. Es el “contrato” para cualquier cambio futuro: qué existe, cómo debe comportarse y qué no se debe romper.
+
+⸻
+
+1) Alcance y principios
+
+1.1 Objetivo del RMS
+
+Sistema interno tipo PWA (web app) desarrollado en Replit para operación de restaurante pequeño/mediano (20–30 órdenes simultáneas como pico). Debe centralizar:
+	•	Toma de pedidos (salonero y cliente QR)
+	•	Flujo cocina (KDS)
+	•	Cobro (POS/Caja) con división de cuentas y pagos por método
+	•	Reportería y auditoría (ventas por ítem y métricas)
+	•	Preparación para export diario a QuickBooks Online (QBO)
+
+1.2 Principios no negociables
+	•	Una sola plataforma: todo corre desde Replit (evitar mezclar herramientas).
+	•	Mobile-first para operación en piso (saloneros) y para cliente QR.
+	•	Simple, rápido, robusto: evitar UI recargada, evitar flujos con muchos taps.
+	•	No romper datos financieros: ledger/auditoría son fuente de verdad para reportes y QBO.
+	•	Estado manda por ítem (no se permite “devolver” estados).
+	•	Pull-to-refresh deshabilitado en todo el sistema: refresco solo con botón.
+	•	Minimizar uso de teclado: el teclado solo aparece cuando es estrictamente necesario.
+
+⸻
+
+2) Arquitectura (alto nivel)
+
+2.1 Cliente
+	•	PWA única con módulos por rutas.
+	•	UI responsiva con grid adaptativo.
+	•	Tema: Light/Dark Mode (toggle persistente + respeta prefers-color-scheme).
+
+2.2 Servidor
+	•	API central (mismo proyecto) para autenticación, órdenes, KDS, POS, admin, auditoría, reportes.
+
+2.3 Persistencia
+
+Base de datos relacional (fuente de verdad). Todos los cambios críticos generan registros auditables.
+
+⸻
+
+3) Módulos del sistema
+
+3.1 Autenticación y acceso
+	•	Login inicial con usuario/contraseña.
+	•	Acceso operativo por PIN de 4 dígitos (ya implementado) para agilidad.
+	•	Gestión de roles/permisos (ya implementada). Cada usuario ve solo módulos y acciones permitidas.
+
+3.2 Admin — Mesas
+	•	Lista editable de nombres de mesas (no grid complejo).
+	•	Al crear mesa: se genera QR de mesa.
+	•	El nombre de mesa debe verse consistente en POS, KDS y registros.
+
+3.3 Admin — Menú / Productos
+	•	Productos con:
+	•	nombre
+	•	descripción obligatoria
+	•	precio
+	•	activo/inactivo (inactivo no se muestra en menús)
+	•	cantidad disponible (porciones) opcional: si llega a 0, se auto-desactiva
+	•	categoría/subcategoría
+
+3.4 Admin — Modificadores
+	•	Modificadores tipo “grupo” con opciones:
+	•	opción + precio delta (puede ser 0)
+	•	orden/reorden (drag)
+	•	Se asignan a productos.
+
+3.5 Admin — Descuentos
+	•	Descuentos aplicables:
+	•	por ítem o por toda la orden (según configuración)
+	•	Deben quedar auditados (quién lo aplicó, cuándo, a qué).
+	•	Restricciones por rol (descuentos “restringidos”).
+
+3.6 Salonero — Mesas y toma de pedido
+	•	Vista Mesas: listado + indicadores (salonero, items, monto, tiempos por etapa seleccionables).
+	•	En una mesa:
+	•	Puede crear pedido, agregar ítems, editar pedido del cliente QR.
+	•	Cliente QR puede agregar adicionales con confirmación consciente (swipe) antes de enviar a cocina.
+	•	Solo existe 1 cuenta abierta por mesa.
+	•	Flujo QR:
+	•	Cliente crea/actualiza solicitud.
+	•	Saloneros reciben notificación (sonido + popup).
+	•	Salonero debe aceptar (puede editar) y entonces se envía a KDS.
+
+3.7 KDS (Cocina)
+	•	Pantalla en tiempo real con sonido al entrar orden.
+	•	Estados por ítem: NEW → PREPARING → READY.
+	•	Se registra timestamp por etapa.
+	•	Historial de órdenes cerradas accesible.
+	•	Botón “Clear” limpia la vista del historial sin borrar DB.
+
+3.8 POS / Caja
+	•	Cobro de órdenes, división de cuentas y pagos.
+	•	División de cuenta: se divide por ítems (99% de casos).
+	•	Las subcuentas se reflejan como Mesa X-1, X-2…
+	•	Conservan hora de apertura/cierre y trazabilidad.
+	•	División de pagos: una misma cuenta pagada con múltiples métodos (cash/card/SINPE/etc.).
+	•	Cierre de caja con:
+	•	apertura/cierre
+	•	arqueo
+	•	expected vs actual
+	•	totales por método
+	•	Ticket:
+	•	imprimir / reimprimir
+	•	enviar por email (captura datos cliente)
+	•	edición post-pago solo por gerente
+
+3.9 Dashboard / Gerencia
+	•	Totales del día: órdenes abiertas, pagadas, canceladas (cantidad y monto).
+	•	Top productos y categorías (qty y monto) con drill-down.
+
+⸻
+
+4) UX/UI — lineamientos globales
+
+4.1 Sin pull-to-refresh
+	•	Deshabilitar recarga por gesto “pull down” en iOS/Android.
+	•	Refresco solo con botón.
+
+4.2 Teclado minimizado
+	•	No usar inputs para mostrar información.
+	•	Notas por ítem con botón 📝 y modal.
+	•	Búsqueda colapsada (icono 🔍), sin autofocus.
+
+4.3 Catálogo de productos (Mesas)
+	•	Navegación en 2 niveles:
+	•	TOP: Comidas / Bebidas / Postres (3 botones iguales)
+	•	Subcategorías: solo del TOP seleccionado; sin scroll y sin wrap; si no caben en 1 fila → 2 filas fijas.
+	•	Productos en grid full-width; columnas auto-fit por ancho.
+	•	Tocar producto suma +1 al cart con la lógica existente.
+
+4.4 Ronda / Cart compacto
+	•	Lista compacta por ítem (máximo 2 líneas).
+	•	Notas via modal.
+
+4.5 Dark mode
+	•	Variables de color y toggle persistente.
+	•	Contraste consistente.
+
+⸻
+
+5) Roles y permisos (alto nivel)
+
+Roles no customizables, pero permisos sí se asignan por rol.
+
+5.1 Gerente
+	•	Acceso total.
+	•	Puede reabrir cuenta para corregir método de pago solo antes del cierre de caja.
+	•	Puede hard-delete (si existe) y anular ítems enviados a cocina (según permiso).
+
+5.2 Salonero
+	•	Mesas + tomar orden.
+	•	Puede mover ítems a “anulación” (soft delete) desde Mesas.
+	•	No puede cambiar método de pago de una cuenta ya pagada.
+
+5.3 Cajero (salonero con permiso adicional)
+	•	Debe ver Mesas + POS.
+	•	Puede dividir cuentas, cobrar, imprimir/enviar ticket (según permisos).
+	•	No puede reabrir/cambiar método post-pago (solo gerente).
+
+5.4 Cocina/Bar
+	•	KDS + (si aplica) Mesas (solo lectura/seguimiento).
+
+5.5 Cliente QR
+	•	Solo su mesa.
+	•	Puede crear orden y solicitar adicionales (con confirmación swipe).
+	•	No puede editar ítems ya aceptados/enviados.
+
+⸻
+
+6) Datos y auditoría (fuente de verdad)
+
+6.1 Principio
+
+El sistema debe ser reportable desde v1. Toda venta se registra por ítem con trazabilidad completa.
+
+6.2 Tablas clave (conceptual)
+	•	audit_events: acciones (quién, qué, cuándo, antes/después).
+	•	sales_ledger_items: 1 fila por ítem vendido con:
+	•	mesa, timestamps, producto, categoría, qty, price snapshot
+	•	origen (QR/salonero), created_by, responsible_waiter
+	•	status: OPEN/PAID/VOIDED
+	•	paid_method_code, payment_id, paid_at, business_date
+	•	incluye modificadores y descuentos en subtotal (lineSubtotal correcto)
+	•	payments: pagos por orden/subcuenta (método, monto, status, paid_at).
+	•	cash_sessions: apertura/cierre, arqueo, totales por método.
+
+6.3 Anulaciones
+	•	Eliminar ítem por salonero = mover a orden “Anulación” con:
+	•	mesa origen
+	•	quién anuló
+	•	motivo (opcional)
+	•	timestamp
+	•	Gerente puede eliminar definitivo.
+	•	Si se anula ítem, regresa porciones (si aplica).
+
+⸻
+
+7) Reglas de negocio críticas
+
+7.1 Porciones y QR
+	•	QR puede “reservar” porciones por 10 minutos.
+	•	Notificación obligatoria al salonero al entrar QR.
+
+7.2 Estados
+	•	El estado por ítem manda.
+	•	No se permite “regresar” estados (ni por orden ni por ítem).
+
+7.3 Reabrir pagos
+	•	Solo gerente.
+	•	Solo antes del cierre de caja.
+	•	La razón principal: corregir método de pago para que cierre cuadre.
+
+⸻
+
+8) Preparación para QuickBooks Online (QBO)
+
+8.1 Objetivo
+
+Export diario al cerrar caja:
+	•	ventas por categoría (match plan de cuentas)
+	•	separado por método de pago
+	•	total diario
+
+8.2 Proceso (conceptual)
+	•	qbo_export_jobs: business_date, cash_session_id, status, qbo_refs, retries.
+	•	Validaciones:
+	•	sum(ledger PAID) == sum(payments PAID)
+	•	por método también.
+	•	Crear en QBO:
+	•	1 SalesReceipt por método por día (DocNumber POS-YYYYMMDD-METHOD)
+	•	líneas por categoría.
+
+⸻
+
+9) QA y operación
+
+9.1 Checklist mínimo diario
+	•	Mesas cargan y refrescan solo con botón.
+	•	QR notifica a salonero.
+	•	Aceptación QR envía a KDS.
+	•	POS cobra y cierre de caja cuadra.
+	•	Ticket email se envía desde la cuenta definida.
+
+9.2 Rendimiento
+	•	Evitar render de listas enormes (solo categoría activa).
+	•	Evitar dependencias pesadas.
+
+⸻
+
+10) Glosario rápido
+	•	Cuenta: orden abierta de una mesa.
+	•	Subcuenta: resultado de dividir cuenta por ítems (Mesa X-1, X-2…).
+	•	División de pagos: múltiples métodos para una misma cuenta.
+	•	Ledger: libro de ventas por ítem (fuente de reportes/QBO).
+	•	KDS: pantalla de cocina.
+
+⸻
+
+11) Control de cambios
+	•	Cualquier cambio debe indicar:
+	•	módulo afectado
+	•	qué se modifica
+	•	qué no se toca
+	•	casos de QA
+	•	impacto en ledger/pagos/caja

@@ -1,0 +1,109 @@
+PROMPT ÚNICO PARA REPLIT — MENÚ QR (CLIENTE EN MESA) NUEVO DISEÑO + PERFORMANCE
+
+OBJETIVO
+Rediseñar e implementar el MENÚ que ve el cliente en la pantalla “Cliente QR (ordena desde la mesa)” para que:
+- Sea agradable, rápido y legible.
+- Permita navegar 3 niveles: TOP → Subcategoría → Producto.
+- Muestre productos en grilla de 3–4 ítems por línea (responsive).
+- Al dar click/tap en un producto, abra un modal/drawer con la descripción completa.
+- Use colores de marca: Amarillo + Rojo Caoba.
+- Soporte imágenes sin volver pesado el menú (thumbnails + lazy load + full solo en modal).
+- Mantenga intacto el comportamiento actual del carrito (sumar cantidades en el formato existente) y el flujo de envío a cocina (swipe/confirmación, etc.).
+
+RESTRICCIÓN IMPORTANTE (NO ASUMIR CATEGORÍAS)
+- No asumir categorías/subcategorías “por defecto”.
+- Todo el árbol TOP/Subcat/Producto viene del import/parametrización actual.
+- Si un TOP tiene muchas subcategorías, se debe acomodar sin scroll horizontal (preferible grilla paginada o 2 niveles visibles con “Más…”), pero sin romper la navegación.
+
+WIREFRAME (REFERENCIA DE UI)
+1) Header caoba:
+- Logo + “La Antigua Lechería”
+- Indicador de mesa
+- Icono de carrito con contador
+
+2) Bloque TOP (grid 3 móvil / 4 tablet-desktop)
+- Cards/botones del mismo tamaño
+- Estado seleccionado resaltado
+
+3) Subcategorías (grid 3 móvil / 4 tablet-desktop)
+- Cards/botones del mismo tamaño
+- Estado seleccionado resaltado
+
+4) Productos (grid 3 móvil / 4 tablet-desktop)
+- Cards uniformes con:
+  - Thumbnail (opcional)
+  - Nombre (máx 2 líneas)
+  - Precio
+- Tap abre modal/drawer con:
+  - Nombre + precio
+  - Imagen grande (solo aquí, lazy)
+  - Descripción completa (obligatoria)
+  - Control cantidad [-] [n] [+]
+  - Botón “Agregar al carrito”
+
+5) Footer sticky:
+- Breadcrumb: TOP > Subcat
+- Botón “Ver carrito” / “Enviar” según el flujo actual (NO cambiar el flujo)
+
+PALETA / ESTILO
+- Amarillo principal (CTA/selección): #F2C94C (o muy cercano)
+- Rojo caoba (header/bordes): #7A1F1B
+- Fondo cálido claro: #FAF7F2
+- Texto oscuro: #1F1F1F
+- Tipografía: legible, mínimo 16px en móvil.
+- Botones con alto mínimo 44px.
+
+RESPONSIVE (3–4 POR LÍNEA)
+- Implementar CSS grid:
+  - móvil: preferir 3 columnas si cabe sin hacer texto ilegible; si no, 2 columnas.
+  - tablet/desktop: 4 columnas.
+- Cards con tamaño consistente (mismo alto y ancho visual).
+- Evitar scroll horizontal. Si falta espacio, usar wrap con grid.
+
+IMÁGENES — PERFORMANCE (CLAVE)
+Se debe soportar imagen por producto sin hacer el menú pesado:
+
+1) Dos tamaños de imagen:
+- thumbnail_url (grid): 200–320px ancho aprox, objetivo 20–60KB.
+- image_full_url (modal): 800–1200px ancho, objetivo 80–200KB.
+
+2) Carga diferida:
+- En grid: cargar SOLO thumbnails con lazy loading (loading="lazy" + IntersectionObserver si es necesario).
+- Imagen full: NO cargar hasta que el usuario abra el modal.
+
+3) Formato y compresión:
+- Preferir WebP/AVIF.
+- Implementar compresión automática al subir (server-side) o pipeline que genere thumb+full.
+
+4) Caché:
+- Configurar Cache-Control/ETag para evitar descargas repetidas.
+
+5) Placeholders:
+- Si no hay imagen, mostrar placeholder consistente.
+- Si está cargando, skeleton loader.
+
+DATA / BACKEND (SIN ROMPER LO EXISTENTE)
+- El menú ya existe en Admin Menú con productos y descripciones obligatorias.
+- Para el listado:
+  - devolver solo campos necesarios + thumbnail_url.
+- Para el detalle del producto (modal):
+  - endpoint opcional on-demand: /api/products/:id para traer description + image_full_url.
+- No romper:
+  - porciones/available quantity (si existe)
+  - active/inactive
+  - reducción de inventario al enviar a cocina
+  - 1 orden por mesa / rounds / confirmación swipe (mantener tal cual)
+
+UX REGLAS
+- El usuario debe poder:
+  - Cambiar TOP y Subcat rápidamente.
+  - Ver claramente qué está seleccionado.
+  - Abrir descripción con un tap.
+  - Agregar al carrito con 1 acción clara.
+- Mantener el carrito visible (badge) y accesible.
+
+ENTREGA ESPERADA
+- Menú QR implementado con look & feel nuevo (amarillo + caoba), 3 niveles, grilla 3–4, modal con descripción.
+- Imágenes implementadas de forma optimizada (thumb grid + full modal).
+- Performance: carga inicial rápida incluso con muchos productos.
+- No se rompe el flujo actual de orden/cocina y el formato del carrito.
