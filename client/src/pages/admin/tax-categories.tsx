@@ -78,14 +78,14 @@ export default function AdminTaxCategoriesPage() {
   };
 
   return (
-    <div className="p-3 md:p-4 max-w-lg mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="admin-page-title flex items-center gap-2" data-testid="text-page-title">
             <Receipt className="w-6 h-6" />
             Impuestos
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Configure casillas de impuestos para productos</p>
+          <p className="admin-page-sub">Configure casillas de impuestos para productos</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>

@@ -94,8 +94,8 @@ function stockBadge(onHand: string, reorderPoint: string) {
   const qty = parseFloat(onHand);
   const reorder = parseFloat(reorderPoint);
   if (qty <= 0) return <Badge variant="destructive" data-testid="badge-stock-red">Sin stock</Badge>;
-  if (qty <= reorder) return <Badge className="bg-yellow-500 text-white" data-testid="badge-stock-yellow">Bajo</Badge>;
-  return <Badge className="bg-green-600 text-white" data-testid="badge-stock-green">OK</Badge>;
+  if (qty <= reorder) return <Badge className="text-white" style={{ background: 'var(--amber)' }} data-testid="badge-stock-yellow">Bajo</Badge>;
+  return <Badge className="text-white" style={{ background: 'var(--sage)' }} data-testid="badge-stock-green">OK</Badge>;
 }
 
 function parseImportText(text: string) {
@@ -211,7 +211,7 @@ export default function InventoryItems() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-4 space-y-4">
+    <div className="admin-page">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap">
           <CardTitle className="text-lg" data-testid="text-page-title">Insumos</CardTitle>

@@ -233,10 +233,10 @@ export default function SalesCubePage() {
         />
       ) : (
         <>
-          <div className="sticky top-0 z-30 bg-background border-b p-3 space-y-3">
-            <div className="flex items-center gap-2 flex-wrap">
+          <div className="sticky top-0 z-30 border-b p-3 space-y-3" style={{ background: 'var(--bg)' }}>
+            <div className="admin-page-header">
               <BarChart3 className="w-5 h-5 text-muted-foreground" />
-              <h1 className="text-lg font-semibold" data-testid="text-page-title">Cubo de Ventas</h1>
+              <h1 className="admin-page-title" data-testid="text-page-title">Cubo de Ventas</h1>
               <div className="ml-auto flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -711,13 +711,13 @@ function HeatmapView({ rows, metric }: { rows: CubeRow[]; metric: string }) {
   }, [rows, heatMetric]);
 
   const getColor = (val: number) => {
-    if (val === 0 || grid.maxVal === 0) return "bg-muted";
+    if (val === 0 || grid.maxVal === 0) return { className: "bg-muted", style: {} };
     const intensity = val / grid.maxVal;
-    if (intensity > 0.8) return "bg-red-500 text-white";
-    if (intensity > 0.6) return "bg-orange-400 text-white";
-    if (intensity > 0.4) return "bg-yellow-400 text-black dark:text-black";
-    if (intensity > 0.2) return "bg-green-300 text-black dark:text-black";
-    return "bg-green-100 text-black dark:bg-green-900 dark:text-green-100";
+    if (intensity > 0.8) return { className: "text-white", style: { background: 'var(--red)' } };
+    if (intensity > 0.6) return { className: "text-white", style: { background: 'var(--amber)' } };
+    if (intensity > 0.4) return { className: "text-black dark:text-black", style: { background: 'var(--sage)' } };
+    if (intensity > 0.2) return { className: "text-black dark:text-black", style: { background: 'var(--sage)', opacity: 0.6 } };
+    return { className: "text-black dark:text-black", style: { background: 'var(--sage)', opacity: 0.3 } };
   };
 
   return (
@@ -759,10 +759,12 @@ function HeatmapView({ rows, metric }: { rows: CubeRow[]; metric: string }) {
                 <td className="p-1 font-medium whitespace-nowrap">{dayLabel}</td>
                 {Array.from({ length: 24 }).map((_, h) => {
                   const val = grid.matrix[wd][h];
+                  const colorObj = getColor(val);
                   return (
                     <td
                       key={h}
-                      className={`p-1 text-center text-[10px] rounded-sm ${getColor(val)}`}
+                      className={`p-1 text-center text-[10px] rounded-sm ${colorObj.className}`}
+                      style={colorObj.style}
                       title={`${dayLabel} ${String(h).padStart(2, "0")}:00 - ${heatMetric === "subtotal" ? formatCurrency(val) : val}`}
                       data-testid={`cell-heat-${wd}-${h}`}
                     >
@@ -778,11 +780,11 @@ function HeatmapView({ rows, metric }: { rows: CubeRow[]; metric: string }) {
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>Bajo</span>
         <div className="flex gap-0.5">
-          <div className="w-4 h-4 rounded-sm bg-green-100 dark:bg-green-900" />
-          <div className="w-4 h-4 rounded-sm bg-green-300" />
-          <div className="w-4 h-4 rounded-sm bg-yellow-400" />
-          <div className="w-4 h-4 rounded-sm bg-orange-400" />
-          <div className="w-4 h-4 rounded-sm bg-red-500" />
+          <div className="w-4 h-4 rounded-sm" style={{ background: 'var(--sage)', opacity: 0.3 }} />
+          <div className="w-4 h-4 rounded-sm" style={{ background: 'var(--sage)', opacity: 0.6 }} />
+          <div className="w-4 h-4 rounded-sm" style={{ background: 'var(--sage)' }} />
+          <div className="w-4 h-4 rounded-sm" style={{ background: 'var(--amber)' }} />
+          <div className="w-4 h-4 rounded-sm" style={{ background: 'var(--red)' }} />
         </div>
         <span>Alto</span>
       </div>
@@ -805,12 +807,12 @@ function DrilldownView({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="sticky top-0 z-30 bg-background border-b p-3 space-y-2">
-        <div className="flex items-center gap-2">
+      <div className="sticky top-0 z-30 border-b p-3 space-y-2" style={{ background: 'var(--bg)' }}>
+        <div className="admin-page-header">
           <Button variant="ghost" size="icon" onClick={onBack} data-testid="button-drill-back">
             <ArrowLeft className="w-4 h-4" />
           </Button>
-          <h2 className="text-lg font-semibold" data-testid="text-drill-title">{product.name}</h2>
+          <h2 className="admin-page-title" data-testid="text-drill-title">{product.name}</h2>
           <Button
             variant="outline"
             size="sm"

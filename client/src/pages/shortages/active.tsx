@@ -82,9 +82,9 @@ function statusBadge(status: string) {
     case "OPEN":
       return <Badge variant="destructive" data-testid="badge-status-open">Abierto</Badge>;
     case "ACKNOWLEDGED":
-      return <Badge className="bg-amber-500 text-white" data-testid="badge-status-ack">Reconocido</Badge>;
+      return <Badge className="text-white" style={{ background: 'var(--amber)' }} data-testid="badge-status-ack">Reconocido</Badge>;
     case "RESOLVED":
-      return <Badge className="bg-green-600 text-white" data-testid="badge-status-resolved">Resuelto</Badge>;
+      return <Badge className="text-white" style={{ background: 'var(--sage)' }} data-testid="badge-status-resolved">Resuelto</Badge>;
     case "CLOSED":
       return <Badge variant="secondary" data-testid="badge-status-closed">Cerrado</Badge>;
     default:
@@ -95,7 +95,7 @@ function statusBadge(status: string) {
 function severityBadge(severity: string) {
   switch (severity) {
     case "LOW_STOCK":
-      return <Badge className="bg-amber-500 text-white" data-testid="badge-severity-low">Poco Stock</Badge>;
+      return <Badge className="text-white" style={{ background: 'var(--amber)' }} data-testid="badge-severity-low">Poco Stock</Badge>;
     case "NO_STOCK":
       return <Badge variant="destructive" data-testid="badge-severity-no">Sin Stock</Badge>;
     default:
@@ -108,7 +108,7 @@ function priorityBadge(priority: string) {
     case "HIGH":
       return <Badge variant="destructive" data-testid="badge-priority-high">Alta</Badge>;
     case "MEDIUM":
-      return <Badge className="bg-amber-500 text-white" data-testid="badge-priority-medium">Media</Badge>;
+      return <Badge className="text-white" style={{ background: 'var(--amber)' }} data-testid="badge-priority-medium">Media</Badge>;
     case "LOW":
       return <Badge variant="secondary" data-testid="badge-priority-low">Baja</Badge>;
     default:
@@ -327,7 +327,7 @@ export default function ActiveShortages() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4 space-y-4">
+    <div className="admin-page">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
@@ -368,7 +368,7 @@ export default function ActiveShortages() {
                         {severityBadge(s.severityReport)}
                         {priorityBadge(s.priority)}
                         {s.auditFlag && (
-                          <Badge className="bg-orange-500 text-white" data-testid={`badge-audit-${s.id}`}>
+                          <Badge className="text-white" style={{ background: 'var(--coral)' }} data-testid={`badge-audit-${s.id}`}>
                             <Shield className="h-3 w-3 mr-1" />
                             Revision de auditoria
                           </Badge>

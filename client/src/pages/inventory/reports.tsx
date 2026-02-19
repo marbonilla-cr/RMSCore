@@ -40,8 +40,8 @@ export default function InventoryReportsPage() {
   const [activeTab, setActiveTab] = useState<"value" | "lowstock">("value");
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <h1 className="text-2xl font-bold" data-testid="text-inv-reports-title">Reportes de Inventario</h1>
+    <div className="admin-page">
+      <h1 className="admin-page-title" data-testid="text-inv-reports-title">Reportes de Inventario</h1>
 
       <div className="flex gap-2">
         <Button
@@ -227,7 +227,8 @@ function LowStockTab() {
                       <TableCell data-testid={`badge-ls-severity-${item.sku}`}>
                         <Badge
                           variant="secondary"
-                          className={isZero ? "bg-red-600 text-white" : "bg-yellow-500 text-black"}
+                          className={isZero ? "text-white" : "text-black"}
+                          style={{ background: isZero ? 'var(--red)' : 'var(--amber)' }}
                         >
                           {isZero ? "Sin Stock" : "Bajo"}
                         </Badge>

@@ -3,39 +3,41 @@
    Mobile-first: <640px | 640–959px | ≥960px
 ════════════════════════════════════════════ */
 
-/* ── DESIGN TOKENS ── */
+/* ── DESIGN TOKENS — bridged to Linen dark palette ── */
 .pos-overlay {
-  --c-bg:      #0a0c0f;
-  --c-s0:      #111318;
-  --c-s1:      #181c22;
-  --c-s2:      #1f242d;
-  --c-s3:      #262c38;
-  --c-border:  #2a3040;
-  --c-border2: #333d50;
-  --c-green:   #2ecc71;
-  --c-green-d: rgba(46,204,113,0.10);
-  --c-green-m: rgba(46,204,113,0.25);
-  --c-amber:   #f39c12;
-  --c-amber-d: rgba(243,156,18,0.10);
-  --c-blue:    #3498db;
-  --c-blue-d:  rgba(52,152,219,0.10);
-  --c-red:     #e74c3c;
-  --c-red-d:   rgba(231,76,60,0.10);
-  --c-text:    #eef0f4;
-  --c-text2:   #8a95a8;
-  --c-text3:   #4a5568;
-  --c-text4:   #2d3748;
-  --f-display: 'Barlow Condensed', sans-serif;
-  --f-body:    'Barlow', sans-serif;
-  --f-mono:    'JetBrains Mono', monospace;
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
-  --r-xl: 20px;
+  --c-bg:      #141009;
+  --c-s0:      #1c1711;
+  --c-s1:      #252017;
+  --c-s2:      #2e2820;
+  --c-s3:      #3a332a;
+  --c-border:  #3a332a;
+  --c-border2: #453e34;
+  --c-green:   #68b07a;
+  --c-green-d: rgba(104,176,122,0.12);
+  --c-green-m: rgba(104,176,122,0.25);
+  --c-amber:   #e6a535;
+  --c-amber-d: rgba(230,165,53,0.12);
+  --c-amber-m: rgba(230,165,53,0.25);
+  --c-blue:    #4f83f5;
+  --c-blue-d:  rgba(79,131,245,0.12);
+  --c-blue-m:  rgba(79,131,245,0.25);
+  --c-red:     #f87171;
+  --c-red-d:   rgba(248,113,113,0.12);
+  --c-text:    #f5ede3;
+  --c-text2:   #c4b5a5;
+  --c-text3:   #8a7d6e;
+  --c-text4:   #5a4e40;
+  --f-display: var(--f-disp);
+  --f-body:    var(--f-body);
+  --f-mono:    var(--f-mono);
+  --r-sm: var(--r-sm);
+  --r-md: var(--r-md);
+  --r-lg: var(--r-lg);
+  --r-xl: var(--r-xl);
   --shadow-dialog: 0 32px 80px rgba(0,0,0,0.75), 0 0 0 1px var(--c-border);
-  --t-fast: 0.15s ease;
-  --t-mid:  0.25s ease;
-  --t-slow: 0.35s cubic-bezier(.22,.68,0,1.15);
+  --t-fast: var(--t-fast);
+  --t-mid:  var(--t-mid);
+  --t-slow: var(--t-slow);
 }
 
 /* ── Overlay ── */
@@ -196,7 +198,7 @@
 .pos-step-tab.active .pos-step-num {
   background: var(--c-green);
   border-color: var(--c-green);
-  color: #050a07;
+  color: var(--c-bg);
 }
 .pos-step-tab.done .pos-step-num {
   background: var(--c-green-d);
@@ -298,7 +300,7 @@
   -webkit-appearance: none;
   width: 100%;
 }
-.pos-field-input:focus { border-color: rgba(46,204,113,0.4); }
+.pos-field-input:focus { border-color: var(--c-green-m); }
 .pos-field-input::placeholder { color: var(--c-text3); }
 .pos-field-input.mono { font-family: var(--f-mono); }
 
@@ -336,8 +338,8 @@
   font-weight: 500;
 }
 .pos-chip-green { background: var(--c-green-d); color: var(--c-green); border: 1px solid var(--c-green-m); }
-.pos-chip-blue  { background: var(--c-blue-d);  color: var(--c-blue);  border: 1px solid rgba(52,152,219,0.25); }
-.pos-chip-amber { background: var(--c-amber-d); color: var(--c-amber); border: 1px solid rgba(243,156,18,0.25); }
+.pos-chip-blue  { background: var(--c-blue-d);  color: var(--c-blue);  border: 1px solid var(--c-blue-m); }
+.pos-chip-amber { background: var(--c-amber-d); color: var(--c-amber); border: 1px solid var(--c-amber-m); }
 
 /* ════════════════════════════════════════════
    ORDER SUMMARY (PayDialog panel 1)
@@ -602,7 +604,7 @@
   border-radius: var(--r-md);
   border: none;
   background: var(--c-green);
-  color: #050a07;
+  color: var(--c-bg);
   font-family: var(--f-display);
   font-size: 16px;
   font-weight: 800;
@@ -622,7 +624,7 @@
 .pos-primary-btn:hover {
   filter: brightness(1.08);
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(46,204,113,0.3);
+  box-shadow: 0 6px 20px var(--c-green-m);
 }
 .pos-primary-btn:active { transform: translateY(0); }
 .pos-primary-btn:disabled {
@@ -699,7 +701,7 @@
 .pos-split-item.moved .pos-si-check {
   background: var(--c-blue);
   border-color: var(--c-blue);
-  color: #fff;
+  color: var(--c-text);
 }
 
 .pos-si-info { min-width: 0; }
@@ -776,7 +778,7 @@
   color: var(--c-green);
 }
 .pos-sub-tab.add-tab {
-  border-color: rgba(46,204,113,0.2);
+  border-color: var(--c-green-d);
   color: var(--c-green);
 }
 .pos-sub-tab.add-tab:hover {

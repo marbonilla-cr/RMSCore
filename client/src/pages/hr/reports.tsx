@@ -70,8 +70,8 @@ export default function HrReportsPage() {
   const [activeTab, setActiveTab] = useState<"overtime" | "service">("overtime");
 
   return (
-    <div className="max-w-4xl mx-auto p-4 space-y-4">
-      <h1 className="text-2xl font-bold" data-testid="text-reports-title">Reportes HR</h1>
+    <div className="admin-page">
+      <h1 className="admin-page-title" data-testid="text-reports-title">Reportes HR</h1>
 
       <div className="flex gap-2">
         <Button
@@ -383,11 +383,10 @@ function ServiceChargeTab() {
                       <TableCell data-testid={`badge-payout-status-${p.id}`}>
                         <Badge
                           variant={p.status === "FINALIZED" ? "default" : "secondary"}
-                          className={
-                            p.status === "FINALIZED"
-                              ? "bg-green-600 text-white"
-                              : "bg-yellow-500 text-black"
-                          }
+                          style={{
+                            background: p.status === "FINALIZED" ? 'var(--sage)' : 'var(--amber)',
+                            color: p.status === "FINALIZED" ? 'white' : 'black'
+                          }}
                         >
                           {p.status}
                         </Badge>

@@ -148,7 +148,7 @@ export default function MiTurno() {
   }
 
   return (
-    <div className="max-w-lg mx-auto p-4 space-y-4">
+    <div className="admin-page">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
           <CardTitle className="text-lg">Mi Turno</CardTitle>

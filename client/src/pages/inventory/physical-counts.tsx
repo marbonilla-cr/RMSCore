@@ -127,9 +127,9 @@ export default function PhysicalCountsPage() {
   });
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h1 className="text-2xl font-bold" data-testid="text-physical-counts-title">
+    <div className="admin-page">
+      <div className="admin-page-header">
+        <h1 className="admin-page-title" data-testid="text-physical-counts-title">
           Conteos Físicos
         </h1>
         <Button data-testid="button-new-count" onClick={() => setCreateOpen(true)}>
@@ -162,9 +162,10 @@ export default function PhysicalCountsPage() {
                     variant={c.status === "FINALIZED" ? "default" : "secondary"}
                     className={
                       c.status === "FINALIZED"
-                        ? "bg-green-600 text-white"
-                        : "bg-yellow-500 text-black"
+                        ? "text-white"
+                        : "text-black"
                     }
+                    style={{ background: c.status === "FINALIZED" ? 'var(--sage)' : 'var(--amber)' }}
                     data-testid={`badge-count-status-${c.id}`}
                   >
                     {c.status}
@@ -386,15 +387,8 @@ function CountDetail({ countId, isFinalized }: { countId: number; isFinalized: b
                   )}
                 </TableCell>
                 <TableCell
-                  className={`text-right font-semibold ${
-                    delta != null
-                      ? delta < 0
-                        ? "text-red-600"
-                        : delta > 0
-                          ? "text-green-600"
-                          : ""
-                      : ""
-                  }`}
+                  className="text-right font-semibold"
+                  style={delta != null && delta !== 0 ? { color: delta < 0 ? 'var(--red)' : 'var(--sage)' } : undefined}
                   data-testid={`text-line-delta-${line.id}`}
                 >
                   {delta != null ? (delta > 0 ? "+" : "") + delta.toFixed(2) : "-"}

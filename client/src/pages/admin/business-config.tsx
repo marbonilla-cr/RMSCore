@@ -94,10 +94,12 @@ export default function AdminBusinessConfigPage() {
   }
 
   return (
-    <div className="p-4 max-w-2xl mx-auto">
-      <div className="flex items-center gap-2 mb-6">
-        <Building2 className="w-5 h-5" />
-        <h1 className="text-xl font-bold" data-testid="text-page-title">Configuración del Negocio</h1>
+    <div className="admin-page">
+      <div className="admin-page-header">
+        <div className="flex items-center gap-2">
+          <Building2 className="w-5 h-5" />
+          <h1 className="admin-page-title" data-testid="text-page-title">Configuración del Negocio</h1>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit}>
@@ -200,7 +202,7 @@ export default function AdminBusinessConfigPage() {
         </div>
       </form>
 
-      <Card className="mt-6 border-destructive/30">
+      <Card className="mt-6" style={{ borderColor: 'var(--red-m)' }}>
         <CardHeader>
           <h3 className="text-base font-semibold flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-destructive" />

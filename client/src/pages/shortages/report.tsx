@@ -199,7 +199,7 @@ export default function ShortageReport() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4 space-y-4">
+    <div className="admin-page">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap">
           <div className="flex items-center gap-2">
@@ -297,7 +297,8 @@ export default function ShortageReport() {
                               <div className="flex gap-2">
                                 <Button
                                   variant="outline"
-                                  className="flex-1 border-amber-500 text-amber-600 dark:text-amber-400 dark:border-amber-400"
+                                  className="flex-1 border-amber-500 dark:border-amber-400"
+                                  style={{ color: 'var(--amber)' }}
                                   disabled={reportMutation.isPending}
                                   onClick={() => handleReport("INV_ITEM", item.id, "LOW_STOCK", noteKey)}
                                   data-testid={`button-low-stock-inv-${item.id}`}
@@ -389,7 +390,8 @@ export default function ShortageReport() {
                               <div className="flex gap-2">
                                 <Button
                                   variant="outline"
-                                  className="flex-1 border-amber-500 text-amber-600 dark:text-amber-400 dark:border-amber-400"
+                                  className="flex-1 border-amber-500 dark:border-amber-400"
+                                  style={{ color: 'var(--amber)' }}
                                   disabled={reportMutation.isPending}
                                   onClick={() => handleReport("MENU_PRODUCT", prod.id, "LOW_STOCK", noteKey)}
                                   data-testid={`button-low-stock-prod-${prod.id}`}

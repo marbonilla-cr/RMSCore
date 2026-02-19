@@ -150,9 +150,9 @@ export default function SuppliersPage() {
   const dialogOpen = createOpen || !!editingSupplier;
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h1 className="text-2xl font-bold" data-testid="text-suppliers-title">Proveedores</h1>
+    <div className="admin-page">
+      <div className="admin-page-header">
+        <h1 className="admin-page-title" data-testid="text-suppliers-title">Proveedores</h1>
         <Button data-testid="button-create-supplier" onClick={openCreate}>
           <Plus className="mr-2 h-4 w-4" />
           Nuevo Proveedor

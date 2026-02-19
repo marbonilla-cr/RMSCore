@@ -263,7 +263,7 @@ export default function Schedules() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-4 space-y-4">
+    <div className="admin-page">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap">
           <CardTitle className="text-lg" data-testid="text-page-title">Horarios Semanales</CardTitle>

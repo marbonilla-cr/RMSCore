@@ -95,7 +95,7 @@ export default function EnrollPinPage() {
   const digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--bg)' }}>
       <div className="w-full max-w-xs">
         <div className="flex flex-col items-center mb-6">
           <img src={logoImg} alt="La Antigua Lechería" className="w-20 h-20 rounded-full object-cover mb-3" />

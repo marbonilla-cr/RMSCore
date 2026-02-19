@@ -103,11 +103,11 @@ export default function AdminPrintersPage() {
   };
 
   return (
-    <div className="p-4 max-w-3xl mx-auto">
-      <div className="flex items-center justify-between gap-2 mb-6 flex-wrap">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <div className="flex items-center gap-2">
           <Printer className="w-5 h-5" />
-          <h1 className="text-xl font-bold" data-testid="text-page-title">Impresoras</h1>
+          <h1 className="admin-page-title" data-testid="text-page-title">Impresoras</h1>
         </div>
 
         <Dialog open={open} onOpenChange={(o) => { if (!o) resetForm(); setOpen(o); }}>
@@ -228,7 +228,7 @@ export default function AdminPrintersPage() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${printer.enabled ? "bg-green-500" : "bg-muted-foreground"}`} />
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${printer.enabled ? "" : "bg-muted-foreground"}`} style={printer.enabled ? { background: 'var(--sage)' } : undefined} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium" data-testid={`text-printer-name-${printer.id}`}>{printer.name}</span>

@@ -52,14 +52,14 @@ export default function AdminUsersPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="admin-page-title flex items-center gap-2" data-testid="text-page-title">
             <Users className="w-6 h-6" />
             Usuarios
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Administre los usuarios del sistema</p>
+          <p className="admin-page-sub">Administre los usuarios del sistema</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>

@@ -186,14 +186,14 @@ export default function AdminEmployeesPage() {
   };
 
   return (
-    <div className="p-3 md:p-4 max-w-lg mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="admin-page-title flex items-center gap-2" data-testid="text-page-title">
             <Users className="w-6 h-6" />
             Empleados
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Administre los empleados del sistema</p>
+          <p className="admin-page-sub">Administre los empleados del sistema</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -394,7 +394,7 @@ export default function AdminEmployeesPage() {
                   <div className="flex items-center gap-2">
                     {emp.hasPin ? (
                       <div className="flex items-center gap-1.5">
-                        <ShieldCheck className="w-3.5 h-3.5 text-green-600" />
+                        <ShieldCheck className="w-3.5 h-3.5" style={{ color: 'var(--sage)' }} />
                         <span className="text-xs text-muted-foreground">PIN asignado</span>
                       </div>
                     ) : (

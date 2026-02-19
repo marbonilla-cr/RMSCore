@@ -28,7 +28,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--bg)' }}>
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
           <img src={logoImg} alt="La Antigua Lechería" className="w-28 h-28 rounded-full object-cover mb-4" data-testid="img-logo" />

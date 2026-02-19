@@ -42,14 +42,14 @@ export default function AdminPaymentMethodsPage() {
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); saveMutation.mutate(form); };
 
   return (
-    <div className="p-3 md:p-4 max-w-lg mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="admin-page-title flex items-center gap-2" data-testid="text-page-title">
             <Wallet className="w-6 h-6" />
             Métodos de Pago
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Configure los métodos de pago aceptados</p>
+          <p className="admin-page-sub">Configure los métodos de pago aceptados</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>

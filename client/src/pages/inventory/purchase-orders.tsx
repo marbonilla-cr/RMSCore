@@ -85,10 +85,19 @@ const statusConfig: Record<string, { label: string; variant: "secondary" | "defa
 
 function statusBadgeClass(status: string): string {
   switch (status) {
-    case "SENT": return "bg-blue-600 text-white no-default-hover-elevate";
-    case "PARTIAL": return "bg-yellow-500 text-white no-default-hover-elevate";
-    case "RECEIVED": return "bg-green-600 text-white no-default-hover-elevate";
+    case "SENT": return "text-white no-default-hover-elevate";
+    case "PARTIAL": return "text-white no-default-hover-elevate";
+    case "RECEIVED": return "text-white no-default-hover-elevate";
     default: return "";
+  }
+}
+
+function statusBadgeStyle(status: string): React.CSSProperties | undefined {
+  switch (status) {
+    case "SENT": return { background: 'var(--acc)' };
+    case "PARTIAL": return { background: 'var(--amber)' };
+    case "RECEIVED": return { background: 'var(--sage)' };
+    default: return undefined;
   }
 }
 
@@ -269,17 +278,17 @@ export default function PurchaseOrdersPage() {
 
   if (selectedPoId !== null) {
     return (
-      <div className="max-w-5xl mx-auto p-4 space-y-4">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="admin-page">
+        <div className="admin-page-header">
           <Button variant="outline" data-testid="button-back-to-list" onClick={() => setSelectedPoId(null)}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Volver
           </Button>
-          <h1 className="text-2xl font-bold" data-testid="text-po-detail-title">
+          <h1 className="admin-page-title" data-testid="text-po-detail-title">
             OC #{selectedPoId}
           </h1>
           {selectedPo && (
-            <Badge className={statusBadgeClass(selectedPo.status)} data-testid="badge-po-status">
+            <Badge className={statusBadgeClass(selectedPo.status)} style={statusBadgeStyle(selectedPo.status)} data-testid="badge-po-status">
               {statusConfig[selectedPo.status]?.label || selectedPo.status}
             </Badge>
           )}
@@ -541,9 +550,9 @@ export default function PurchaseOrdersPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h1 className="text-2xl font-bold" data-testid="text-po-title">Órdenes de Compra</h1>
+    <div className="admin-page">
+      <div className="admin-page-header">
+        <h1 className="admin-page-title" data-testid="text-po-title">Órdenes de Compra</h1>
         <Button data-testid="button-create-po" onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Nueva OC
@@ -588,7 +597,7 @@ export default function PurchaseOrdersPage() {
                         {po.supplierName || supplierMap.get(po.supplierId) || `ID ${po.supplierId}`}
                       </TableCell>
                       <TableCell data-testid={`badge-po-status-${po.id}`}>
-                        <Badge className={statusBadgeClass(po.status)}>
+                        <Badge className={statusBadgeClass(po.status)} style={statusBadgeStyle(po.status)}>
                           {statusConfig[po.status]?.label || po.status}
                         </Badge>
                       </TableCell>

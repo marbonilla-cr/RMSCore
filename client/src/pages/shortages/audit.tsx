@@ -44,7 +44,7 @@ function severityBadge(severity: string) {
     case "HIGH":
       return <Badge variant="destructive" data-testid="badge-severity-high">Alta</Badge>;
     case "MEDIUM":
-      return <Badge className="bg-amber-500 text-white" data-testid="badge-severity-medium">Media</Badge>;
+      return <Badge className="text-white" style={{ background: 'var(--amber)' }} data-testid="badge-severity-medium">Media</Badge>;
     default:
       return <Badge variant="secondary" data-testid="badge-severity-low">Baja</Badge>;
   }
@@ -60,9 +60,9 @@ function statusBadge(status: string) {
     case "OPEN":
       return <Badge variant="destructive" data-testid="badge-status-open">Abierta</Badge>;
     case "ACK":
-      return <Badge className="bg-amber-500 text-white" data-testid="badge-status-ack">Reconocida</Badge>;
+      return <Badge className="text-white" style={{ background: 'var(--amber)' }} data-testid="badge-status-ack">Reconocida</Badge>;
     case "CLOSED":
-      return <Badge className="bg-green-600 text-white" data-testid="badge-status-closed">Cerrada</Badge>;
+      return <Badge className="text-white" style={{ background: 'var(--sage)' }} data-testid="badge-status-closed">Cerrada</Badge>;
     default:
       return <Badge variant="secondary" data-testid="badge-status-other">{status}</Badge>;
   }
@@ -138,7 +138,7 @@ export default function AuditPage() {
 
   if (is403) {
     return (
-      <div className="max-w-3xl mx-auto p-4">
+      <div className="admin-page">
         <Card>
           <CardContent className="p-8 text-center">
             <Shield className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -160,7 +160,7 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4 space-y-4">
+    <div className="admin-page">
       <Card>
         <CardHeader>
           <CardTitle className="text-lg" data-testid="text-page-title">

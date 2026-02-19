@@ -150,14 +150,14 @@ export default function AdminCategoriesPage() {
   };
 
   return (
-    <div className="p-3 md:p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="admin-page-title flex items-center gap-2" data-testid="text-page-title">
             <Tag className="w-6 h-6" />
             Categorías
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Organice los productos del menú</p>
+          <p className="admin-page-sub">Organice los productos del menú</p>
         </div>
       </div>
 

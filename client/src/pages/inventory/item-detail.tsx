@@ -217,7 +217,7 @@ export default function ItemDetail() {
 
   if (!item) {
     return (
-      <div className="max-w-4xl mx-auto p-4">
+      <div className="admin-page">
         <p className="text-muted-foreground" data-testid="text-not-found">Insumo no encontrado</p>
       </div>
     );
@@ -227,12 +227,12 @@ export default function ItemDetail() {
   const reorder = parseFloat(item.reorderPointQtyBase);
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <div className="flex items-center gap-2 flex-wrap">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <Button variant="ghost" size="icon" onClick={() => navigate("/inventory/items")} data-testid="button-back">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-lg font-semibold flex-1" data-testid="text-item-name">{item.name}</h1>
+        <h1 className="admin-page-title flex-1" data-testid="text-item-name">{item.name}</h1>
         <Button variant="outline" onClick={openEdit} data-testid="button-edit-item">
           <Pencil className="h-4 w-4 mr-2" />
           Editar
@@ -265,9 +265,9 @@ export default function ItemDetail() {
                 {qty <= 0 ? (
                   <Badge variant="destructive" data-testid="badge-stock">Sin stock</Badge>
                 ) : qty <= reorder ? (
-                  <Badge className="bg-yellow-500 text-white" data-testid="badge-stock">Bajo</Badge>
+                  <Badge className="text-white" style={{ background: 'var(--amber)' }} data-testid="badge-stock">Bajo</Badge>
                 ) : (
-                  <Badge className="bg-green-600 text-white" data-testid="badge-stock">OK</Badge>
+                  <Badge className="text-white" style={{ background: 'var(--sage)' }} data-testid="badge-stock">OK</Badge>
                 )}
               </div>
             </div>
@@ -332,7 +332,7 @@ export default function ItemDetail() {
                                 {MOVEMENT_LABELS[mov.movementType] || mov.movementType}
                               </Badge>
                             </TableCell>
-                            <TableCell className={`text-right font-mono ${parseFloat(mov.qtyDeltaBase) >= 0 ? "text-green-600" : "text-red-600"}`}>
+                            <TableCell className="text-right font-mono" style={{ color: parseFloat(mov.qtyDeltaBase) >= 0 ? 'var(--sage)' : 'var(--red)' }}>
                               {parseFloat(mov.qtyDeltaBase) >= 0 ? "+" : ""}{parseFloat(mov.qtyDeltaBase).toFixed(2)}
                             </TableCell>
                             <TableCell className="text-right">

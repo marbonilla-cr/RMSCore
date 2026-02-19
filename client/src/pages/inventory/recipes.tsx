@@ -195,8 +195,8 @@ export default function RecipesPage() {
   });
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <h1 className="text-2xl font-bold" data-testid="text-recipes-title">Recetas / BOM</h1>
+    <div className="admin-page">
+      <h1 className="admin-page-title" data-testid="text-recipes-title">Recetas / BOM</h1>
 
       <Card>
         <CardHeader>
@@ -233,7 +233,7 @@ export default function RecipesPage() {
                 >
                   <span>{p.name} <span className="text-muted-foreground text-sm">({p.productCode})</span></span>
                   {p.inventoryControlEnabled && (
-                    <Badge className="bg-green-600 text-white" data-testid={`badge-inv-control-${p.id}`}>
+                    <Badge className="text-white" style={{ background: 'var(--sage)' }} data-testid={`badge-inv-control-${p.id}`}>
                       Inv
                     </Badge>
                   )}
@@ -292,7 +292,8 @@ export default function RecipesPage() {
                         <span className="font-semibold">v{r.version}</span>
                         <Badge
                           variant={r.isActive ? "default" : "secondary"}
-                          className={r.isActive ? "bg-green-600 text-white" : ""}
+                          className={r.isActive ? "text-white" : ""}
+                          style={r.isActive ? { background: 'var(--sage)' } : undefined}
                           data-testid={`badge-recipe-status-${r.id}`}
                         >
                           {r.isActive ? "Activa" : "Inactiva"}

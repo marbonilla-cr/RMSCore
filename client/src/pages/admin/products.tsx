@@ -157,14 +157,14 @@ export default function AdminProductsPage() {
   };
 
   return (
-    <div className="p-3 md:p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="admin-page-title flex items-center gap-2" data-testid="text-page-title">
             <ShoppingBag className="w-6 h-6" />
             Productos
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Administre el menú del restaurante</p>
+          <p className="admin-page-sub">Administre el menú del restaurante</p>
         </div>
         <Button onClick={openCreate} data-testid="button-add-product">
           <Plus className="w-4 h-4" />
@@ -172,7 +172,7 @@ export default function AdminProductsPage() {
         </Button>
       </div>
 
-      <div className="sticky top-0 z-[9] bg-background pb-3 space-y-3">
+      <div className="sticky top-0 z-[9] pb-3 space-y-3" style={{ background: 'var(--bg)' }}>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <Input
@@ -305,7 +305,7 @@ export default function AdminProductsPage() {
                     checked={p.easyMode}
                     onCheckedChange={(checked) => toggleMutation.mutate({ id: p.id, field: "easyMode", value: checked })}
                   />
-                  {p.easyMode && <Zap className="w-3 h-3 text-amber-500" />}
+                  {p.easyMode && <Zap className="w-3 h-3" style={{ color: 'var(--amber)' }} />}
                 </div>
                 <Button size="icon" variant="ghost" onClick={() => openEdit(p)} data-testid={`button-edit-product-${p.id}`}>
                   <Pencil className="w-4 h-4" />

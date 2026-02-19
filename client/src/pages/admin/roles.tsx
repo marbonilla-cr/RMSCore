@@ -118,14 +118,14 @@ export default function AdminRolesPage() {
   const isLoading = permLoading || rpLoading;
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-6">
+    <div className="admin-page">
+      <div className="admin-page-header">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="admin-page-title flex items-center gap-2" data-testid="text-page-title">
             <Shield className="w-6 h-6" />
             Roles y Permisos
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Configure los permisos para cada rol del sistema</p>
+          <p className="admin-page-sub">Configure los permisos para cada rol del sistema</p>
         </div>
       </div>
 

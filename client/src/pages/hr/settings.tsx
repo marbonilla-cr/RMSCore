@@ -114,8 +114,8 @@ export default function HrSettingsPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-4 space-y-6">
-      <h1 className="text-2xl font-bold" data-testid="text-settings-title">Configuración HR</h1>
+    <div className="admin-page">
+      <h1 className="admin-page-title" data-testid="text-settings-title">Configuración HR</h1>
 
       <Card>
         <CardHeader>
@@ -145,7 +145,7 @@ export default function HrSettingsPage() {
           {(typeof values.businessLat === 'number' && typeof values.businessLng === 'number') && (values.businessLat !== 0 || values.businessLng !== 0) ? (
             <div className="rounded-md border p-3 text-sm text-muted-foreground" data-testid="text-location-coords">
               <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-green-600 flex-shrink-0" />
+                <MapPin className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--sage)' }} />
                 <span>Ubicaci\u00f3n configurada: {Number(values.businessLat).toFixed(6)}, {Number(values.businessLng).toFixed(6)}</span>
               </div>
             </div>

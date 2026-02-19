@@ -181,8 +181,8 @@ export default function PunchesPage() {
   const isLoading = punchesLoading || employeesLoading;
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <h1 className="text-2xl font-bold" data-testid="text-punches-title">Gestión de Marcas</h1>
+    <div className="admin-page">
+      <h1 className="admin-page-title" data-testid="text-punches-title">Gestión de Marcas</h1>
 
       <Card>
         <CardHeader className="pb-2">
