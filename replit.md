@@ -63,6 +63,17 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 -   **Safety:** Import script (`scripts/import-historical-data.ts`) was deleted after successful import. No mechanism exists to re-run the import. The script had an idempotency check (abort if >50,000 rows exist) as an additional safeguard.
 -   **Origin marker:** All imported records have `origin = 'LOYVERSE'` to distinguish from system-generated records (`origin = 'SYSTEM'`).
 
+### POS Unified Dialog Redesign (February 19, 2026)
+-   **Status:** COMPLETED — Unified 3-panel payment and split dialogs replacing old multi-step flow.
+-   **New components:**
+    -   `client/src/components/pos/pos-dialogs.css` — Responsive CSS (mobile bottom-sheet, tablet 2-col, desktop 3-col)
+    -   `client/src/components/pos/PayDialog.tsx` — Unified payment dialog (Order Summary | Method & Client | Cash Denominations)
+    -   `client/src/components/pos/SplitDialog.tsx` — Unified split dialog (Items | Active Subcuenta | Summary)
+-   **Layout:** Mobile uses step-tab navigation with sliding panels; tablet shows 2 columns; desktop shows full 3-column grid.
+-   **Old dialogs:** The old payment `<Dialog>` and `splitMode` view in pos.tsx were replaced. Old mutations (payMutation, paySplitMutation) are kept for backwards compatibility but new dialogs handle their own API calls.
+-   **Receipt printing:** Handled via `handlePayDialogSuccess` callback in pos.tsx which receives payment method info and triggers `triggerReceiptPrint` + auto-print + drawer open.
+-   **Animations:** `pos-vibrate` (split separation) and `pos-flash-success` (payment confirmation) CSS keyframes.
+
 ## External Dependencies
 -   **PostgreSQL:** Primary database.
 -   **Vite:** Frontend build tool.

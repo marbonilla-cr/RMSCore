@@ -22,6 +22,8 @@ import type { PaymentMethod, Product, Category } from "@shared/schema";
 import { printReceipt } from "@/lib/print-receipt";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
+import { PayDialog } from "@/components/pos/PayDialog";
+import { SplitDialog } from "@/components/pos/SplitDialog";
 
 interface POSItemModifier {
   id: number;
@@ -117,6 +119,12 @@ export default function POSPage() {
   const [clientName, setClientName] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [payingSplitId, setPayingSplitId] = useState<number | null>(null);
+
+  const [payDialogOpen, setPayDialogOpen] = useState(false);
+  const [payDialogSplitId, setPayDialogSplitId] = useState<number | null>(null);
+  const [payDialogSplitLabel, setPayDialogSplitLabel] = useState("");
+  const [payDialogSplitTotal, setPayDialogSplitTotal] = useState(0);
+  const [splitDialogOpen, setSplitDialogOpen] = useState(false);
 
   const [cashOpen, setCashOpen] = useState(false);
   const [openingCash, setOpeningCash] = useState("");
@@ -219,7 +227,7 @@ export default function POSPage() {
 
   const { data: splits = [], isLoading: splitsLoading } = useQuery<SplitAccountData[]>({
     queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"],
-    enabled: !!selectedTable?.orderId && detailView,
+    enabled: !!selectedTable?.orderId && (detailView || splitDialogOpen || !!payDialogSplitId),
   });
 
   const { data: orderPayments = [] } = useQuery<any[]>({
@@ -893,6 +901,115 @@ export default function POSPage() {
     setMovingItemId(null);
   };
 
+  const openNewPayDialog = (table: POSTable, splitId?: number | null, splitLabel?: string, splitTotal?: number) => {
+    setSelectedTable(table);
+    setPayDialogSplitId(splitId || null);
+    setPayDialogSplitLabel(splitLabel || "");
+    setPayDialogSplitTotal(splitTotal || 0);
+    setPayDialogOpen(true);
+  };
+
+  const handlePayDialogSuccess = (pmId: string, clName: string, clEmail: string, wasCash: boolean) => {
+    if (!selectedTable) return;
+    const tbl = selectedTable;
+    const pm = paymentMethods.find(m => m.id.toString() === pmId);
+    const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
+
+    if (payDialogSplitId) {
+      const split = splits.find(s => s.id === payDialogSplitId);
+      let receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
+      let total = 0;
+      if (split && tbl) {
+        receiptItems = split.items.map(si => {
+          const oi = tbl.items.find(i => i.id === si.orderItemId);
+          if (!oi) return { name: "", qty: 0, price: 0, total: 0 };
+          const modDelta = (oi.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+          const modLabel = (oi.modifiers && oi.modifiers.length > 0) ? ` (${oi.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
+          const unitPrice = Number(oi.productPriceSnapshot) + modDelta;
+          return { name: oi.productNameSnapshot + modLabel, qty: oi.qty, price: unitPrice, total: unitPrice * oi.qty };
+        });
+        total = receiptItems.reduce((s, i) => s + i.total, 0);
+      }
+      triggerReceiptPrint(receiptItems, total, pm?.paymentName || "", tbl.tableName, `${orderNum} (${split?.label || ""})`, clName || undefined);
+    } else {
+      const receiptItems = tbl.items.filter(i => i.status !== "VOIDED").map(i => {
+        const modDelta = (i.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+        const modLabel = (i.modifiers && i.modifiers.length > 0) ? ` (${i.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
+        const unitPrice = Number(i.productPriceSnapshot) + modDelta;
+        return { name: i.productNameSnapshot + modLabel, qty: i.qty, price: unitPrice, total: unitPrice * i.qty };
+      });
+      const totalAmount = Number(tbl.totalAmount);
+      const totalDiscounts = Number(tbl.totalDiscounts || 0);
+      const totalTaxes = Number(tbl.totalTaxes || 0);
+      triggerReceiptPrint(receiptItems, totalAmount, pm?.paymentName || "", tbl.tableName, orderNum, clName || undefined, totalDiscounts, totalTaxes, tbl.taxBreakdown);
+
+      if (canPrint) {
+        apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId })
+          .then(r => r.json())
+          .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
+          .catch(() => {});
+      }
+    }
+
+    if (wasCash) {
+      apiRequest("POST", "/api/pos/open-drawer", {}).catch(() => {});
+    }
+
+    queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", tbl.orderId, "splits"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/pos/paid-orders"] });
+
+    if (!payDialogSplitId) {
+      setSelectedTable(null);
+      setDetailView(false);
+    }
+    toast({ title: payDialogSplitId ? "Subcuenta pagada" : "Pago procesado" });
+  };
+
+  const openSplitDialog = async (table: POSTable) => {
+    setSelectedTable(table);
+    setNormalizing(true);
+    try {
+      await apiRequest("POST", `/api/pos/orders/${table.orderId}/normalize-split`);
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", table.orderId, "splits"] });
+      const freshTables: POSTable[] = queryClient.getQueryData(["/api/pos/tables"]) || [];
+      const freshTable = freshTables.find(t => t.orderId === table.orderId);
+      if (freshTable) setSelectedTable(freshTable);
+      setSplitDialogOpen(true);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setNormalizing(false);
+    }
+  };
+
+  const handleSplitPaySub = (splitId: number, label: string, total: number) => {
+    setSplitDialogOpen(false);
+    setPayDialogSplitId(splitId);
+    setPayDialogSplitLabel(label);
+    setPayDialogSplitTotal(total);
+    setPayDialogOpen(true);
+  };
+
+  const handleSplitPayAll = () => {
+    setSplitDialogOpen(false);
+    setPayDialogSplitId(null);
+    setPayDialogSplitLabel("");
+    setPayDialogSplitTotal(0);
+    setPayDialogOpen(true);
+  };
+
+  const handleSplitSeparated = (childIds: number[]) => {
+    setSplitDialogOpen(false);
+    setDetailView(false);
+    setSelectedTable(null);
+    setHighlightedOrderIds(childIds);
+    setTimeout(() => setHighlightedOrderIds([]), 2500);
+  };
+
   const payingAmount = Number(selectedTable?.totalAmount || 0);
   const payingLabel = selectedTable?.tableName || "";
 
@@ -1110,7 +1227,7 @@ export default function POSPage() {
                       <Button
                         variant="outline"
                         className="w-full"
-                        onClick={enterSplitMode}
+                        onClick={() => openSplitDialog(selectedTable)}
                         disabled={normalizing}
                         data-testid="button-enter-split"
                       >
@@ -1133,7 +1250,7 @@ export default function POSPage() {
                     {canPay && (
                       <Button
                         className="w-full"
-                        onClick={openPaymentForFull}
+                        onClick={() => openNewPayDialog(selectedTable)}
                         disabled={!cashSession?.id || !!cashSession.closedAt}
                         data-testid="button-pay-full"
                       >
@@ -1367,8 +1484,7 @@ export default function POSPage() {
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setSelectedTable(t);
-                                openPaymentForFull();
+                                openNewPayDialog(t);
                               }}
                               disabled={!cashSession?.id || !!cashSession.closedAt}
                               data-testid={`button-pay-table-${t.id}-order-${t.orderId}`}
@@ -1380,27 +1496,9 @@ export default function POSPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={async (e) => {
+                              onClick={(e) => {
                                 e.stopPropagation();
-                                setSelectedTable(t);
-                                setDetailView(true);
-                                setSelectedItemIds([]);
-                                setSplitLabel("");
-                                setMovingItemId(null);
-                                setNormalizing(true);
-                                try {
-                                  await apiRequest("POST", `/api/pos/orders/${t.orderId}/normalize-split`);
-                                  await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
-                                  await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", t.orderId, "splits"] });
-                                  const freshTables: POSTable[] = queryClient.getQueryData(["/api/pos/tables"]) || [];
-                                  const freshTable = freshTables.find(ft => ft.orderId === t.orderId);
-                                  if (freshTable) setSelectedTable(freshTable);
-                                  setSplitMode(true);
-                                } catch (err: any) {
-                                  toast({ title: "Error", description: err.message, variant: "destructive" });
-                                } finally {
-                                  setNormalizing(false);
-                                }
+                                openSplitDialog(t);
                               }}
                               data-testid={`button-split-table-${t.id}`}
                             >
@@ -1565,223 +1663,28 @@ export default function POSPage() {
         </Tabs>
       )}
 
-      <Dialog open={paymentOpen} onOpenChange={(open) => { setPaymentOpen(open); if (!open) { setCashStep(null); setCashReceived(0); setCustomCashInput(""); } }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {cashStep === "select" ? "Monto Recibido" : cashStep === "change" ? "Vuelto" : `Cobrar - ${payingLabel}`}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            {!cashStep && (
-              <>
-                <div className="text-center py-4">
-                  <p className="text-3xl font-bold" data-testid="text-payment-total">
-                    ₡{payingAmount.toLocaleString()}
-                  </p>
-                  {selectedTable && (
-                    <div className="text-left mt-2 space-y-1 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Subtotal</span>
-                        <span>₡{getOrderSubtotal(selectedTable).toLocaleString()}</span>
-                      </div>
-                      {selectedTable.taxBreakdown && selectedTable.taxBreakdown.length > 0 ? (
-                        selectedTable.taxBreakdown.map((tb, idx) => (
-                          <div key={idx} className="flex justify-between text-muted-foreground">
-                            <span>{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
-                            <span>{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Impuestos</span>
-                          <span>₡0</span>
-                        </div>
-                      )}
-                      <div className={`flex justify-between ${Number(selectedTable.totalDiscounts || 0) > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
-                        <span>Descuentos</span>
-                        <span>{Number(selectedTable.totalDiscounts || 0) > 0 ? `-₡${Number(selectedTable.totalDiscounts).toLocaleString()}` : "₡0"}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label>Método de Pago</Label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {activePaymentMethods.map((m) => {
-                      const isSelected = paymentMethodId === m.id.toString();
-                      const code = m.paymentCode.toUpperCase();
-                      const icon = code.includes("CASH") || code.includes("EFECT") ? Banknote
-                        : code.includes("CARD") || code.includes("TARJ") ? CreditCard
-                        : Wallet;
-                      const Icon = icon;
-                      return (
-                        <Button
-                          key={m.id}
-                          variant={isSelected ? "default" : "outline"}
-                          className={`flex flex-col items-center gap-1 h-auto py-3 ${isSelected ? "ring-2 ring-primary" : ""}`}
-                          onClick={() => {
-                        setPaymentMethodId(m.id.toString());
-                        const isCash = code.includes("CASH") || code.includes("EFECT");
-                        if (isCash) {
-                          setCashReceived(0);
-                          setCustomCashInput("");
-                          setCashStep("select");
-                        } else {
-                          setCashStep(null);
-                        }
-                      }}
-                          data-testid={`button-pm-${m.id}`}
-                        >
-                          <Icon className="w-5 h-5" />
-                          <span className="text-xs">{m.paymentName}</span>
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-                {canEditCustomerPrepay && (
-                  <>
-                    <div className="space-y-2">
-                      <Label>Nombre del Cliente (opcional)</Label>
-                      <Input data-testid="input-client-name" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nombre" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Email (opcional)</Label>
-                      <Input data-testid="input-client-email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="email@example.com" type="email" />
-                    </div>
-                  </>
-                )}
-                {canEmailTicket && clientEmail && (
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => sendTicketMutation.mutate()}
-                    disabled={!clientEmail || sendTicketMutation.isPending}
-                    data-testid="button-send-ticket"
-                  >
-                    {sendTicketMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                    ) : (
-                      <Mail className="w-4 h-4 mr-1" />
-                    )}
-                    Enviar Ticket por Email
-                  </Button>
-                )}
-                {!isCashPayment && (
-                  <Button
-                    className="w-full"
-                    onClick={() => {
-                      payingSplitId ? paySplitMutation.mutate() : payMutation.mutate();
-                    }}
-                    disabled={!paymentMethodId || payMutation.isPending || paySplitMutation.isPending}
-                    data-testid="button-process-payment"
-                  >
-                    {(payMutation.isPending || paySplitMutation.isPending) ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                    ) : (
-                      <DollarSign className="w-4 h-4 mr-1" />
-                    )}
-                    Procesar Pago
-                  </Button>
-                )}
-              </>
-            )}
+      <PayDialog
+        open={payDialogOpen}
+        onClose={() => setPayDialogOpen(false)}
+        table={selectedTable}
+        paymentMethods={paymentMethods}
+        splitId={payDialogSplitId}
+        splitLabel={payDialogSplitLabel}
+        splitTotal={payDialogSplitTotal}
+        canEditCustomer={canEditCustomerPrepay}
+        canEmailTicket={canEmailTicket}
+        canPrint={canPrint}
+        onSuccess={handlePayDialogSuccess}
+      />
 
-            {cashStep === "select" && (
-              <>
-                <div className="text-center py-2">
-                  <p className="text-sm text-muted-foreground">Total a cobrar</p>
-                  <p className="text-2xl font-bold" data-testid="text-cash-total">₡{payingAmount.toLocaleString()}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label>Seleccione el monto recibido</Label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {getCashDenominations(payingAmount).map((amount) => (
-                      <Button
-                        key={amount}
-                        variant={cashReceived === amount ? "default" : "outline"}
-                        className={`h-auto py-3 text-base font-semibold ${cashReceived === amount ? "ring-2 ring-primary" : ""}`}
-                        onClick={() => { setCashReceived(amount); setCustomCashInput(""); setCashStep("change"); }}
-                        data-testid={`button-cash-${amount}`}
-                      >
-                        ₡{amount.toLocaleString()}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Otro monto</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      data-testid="input-custom-cash"
-                      type="number"
-                      placeholder="Monto recibido"
-                      value={customCashInput}
-                      onChange={(e) => setCustomCashInput(e.target.value)}
-                    />
-                    <Button
-                      disabled={!customCashInput || Number(customCashInput) < payingAmount}
-                      onClick={() => { setCashReceived(Number(customCashInput)); setCashStep("change"); }}
-                      data-testid="button-custom-cash-confirm"
-                    >
-                      Aplicar
-                    </Button>
-                  </div>
-                  {customCashInput && Number(customCashInput) < payingAmount && (
-                    <p className="text-sm text-destructive">El monto debe ser igual o mayor al total</p>
-                  )}
-                </div>
-                <Button variant="outline" className="w-full" onClick={() => setCashStep(null)} data-testid="button-cash-back">
-                  <ArrowLeft className="w-4 h-4 mr-1" />
-                  Volver
-                </Button>
-              </>
-            )}
-
-            {cashStep === "change" && (
-              <>
-                <div className="text-center py-4 space-y-3">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total</p>
-                    <p className="text-xl font-semibold">₡{payingAmount.toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Recibido</p>
-                    <p className="text-xl font-semibold">₡{cashReceived.toLocaleString()}</p>
-                  </div>
-                  <div className="border-t pt-3">
-                    <p className="text-sm text-muted-foreground">Vuelto a entregar</p>
-                    <p className="text-4xl font-bold text-green-600 dark:text-green-400" data-testid="text-cash-change">
-                      ₡{(cashReceived - payingAmount).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  className="w-full"
-                  onClick={() => {
-                    setCashStep(null);
-                    payingSplitId ? paySplitMutation.mutate() : payMutation.mutate();
-                  }}
-                  disabled={payMutation.isPending || paySplitMutation.isPending}
-                  data-testid="button-cash-continue"
-                >
-                  {(payMutation.isPending || paySplitMutation.isPending) ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                  ) : (
-                    <Coins className="w-4 h-4 mr-1" />
-                  )}
-                  Continuar
-                </Button>
-                <Button variant="outline" className="w-full" onClick={() => setCashStep("select")} data-testid="button-change-back">
-                  <ArrowLeft className="w-4 h-4 mr-1" />
-                  Cambiar monto
-                </Button>
-              </>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <SplitDialog
+        open={splitDialogOpen}
+        onClose={() => setSplitDialogOpen(false)}
+        table={selectedTable}
+        onPaySplit={handleSplitPaySub}
+        onPayAll={handleSplitPayAll}
+        onSeparated={handleSplitSeparated}
+      />
 
       <Dialog open={cashOpen} onOpenChange={setCashOpen}>
         <DialogContent>
