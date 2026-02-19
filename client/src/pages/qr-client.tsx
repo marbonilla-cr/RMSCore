@@ -59,6 +59,7 @@ interface Subaccount {
 interface CartItem {
   productId: number;
   productName: string;
+  unitPrice: string;
   qty: number;
   customerName: string;
   modifiers?: { modGroupId: number; optionId: number }[];
@@ -408,6 +409,7 @@ export default function QRClientPage() {
     const item: CartItem = {
       productId: product.id,
       productName: product.name,
+      unitPrice: product.price,
       qty: 1,
       customerName: name,
       modifiers: mods.length > 0 ? mods : undefined,
@@ -883,30 +885,48 @@ export default function QRClientPage() {
           </Card>
 
           {cartItems.length > 0 ? (
-            <div className="space-y-2">
-              {cartItems.map((item, idx) => (
-                <Card key={idx} data-testid={`easy-review-item-${idx}`}>
-                  <CardContent className="p-4 flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-lg">{item.qty}x {item.productName}</p>
-                      {item.modifiers && item.modifiers.length > 0 && (
-                        <p className="text-sm text-muted-foreground truncate">
-                          {item.modifiers.length} modificador{item.modifiers.length !== 1 ? "es" : ""}
+            <>
+              <div className="space-y-2">
+                {cartItems.map((item, idx) => (
+                  <Card key={idx} data-testid={`easy-review-item-${idx}`}>
+                    <CardContent className="p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-lg">{item.qty}x {item.productName}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {"\u20A1"}{Number(item.unitPrice).toLocaleString("es-CR")} c/u
                         </p>
-                      )}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeCartItem(idx)}
-                      data-testid={`button-easy-remove-item-${idx}`}
-                    >
-                      <X className="w-5 h-5" />
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                        {item.modifiers && item.modifiers.length > 0 && (
+                          <p className="text-sm text-muted-foreground truncate">
+                            {item.modifiers.length} modificador{item.modifiers.length !== 1 ? "es" : ""}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-base whitespace-nowrap" data-testid={`text-easy-item-subtotal-${idx}`}>
+                          {"\u20A1"}{(Number(item.unitPrice) * item.qty).toLocaleString("es-CR")}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeCartItem(idx)}
+                          data-testid={`button-easy-remove-item-${idx}`}
+                        >
+                          <X className="w-5 h-5" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              <Card>
+                <CardContent className="p-4 flex items-center justify-between gap-2">
+                  <span className="text-lg font-semibold">Total</span>
+                  <span className="text-xl font-bold" data-testid="text-easy-order-total">
+                    {"\u20A1"}{cartItems.reduce((sum, i) => sum + Number(i.unitPrice) * i.qty, 0).toLocaleString("es-CR")}
+                  </span>
+                </CardContent>
+              </Card>
+            </>
           ) : (
             <p className="text-center text-muted-foreground text-base py-6" data-testid="text-easy-empty-order">No hay items en tu pedido.</p>
           )}
@@ -1216,30 +1236,48 @@ export default function QRClientPage() {
           </Card>
 
           {cartItems.length > 0 ? (
-            <div className="space-y-2">
-              {cartItems.map((item, idx) => (
-                <Card key={idx} data-testid={`review-item-${idx}`}>
-                  <CardContent className="p-4 flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-lg">{item.qty}x {item.productName}</p>
-                      {item.modifiers && item.modifiers.length > 0 && (
-                        <p className="text-sm text-muted-foreground truncate">
-                          {item.modifiers.length} modificador{item.modifiers.length !== 1 ? "es" : ""}
+            <>
+              <div className="space-y-2">
+                {cartItems.map((item, idx) => (
+                  <Card key={idx} data-testid={`review-item-${idx}`}>
+                    <CardContent className="p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-lg">{item.qty}x {item.productName}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {"\u20A1"}{Number(item.unitPrice).toLocaleString("es-CR")} c/u
                         </p>
-                      )}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeCartItem(idx)}
-                      data-testid={`button-remove-item-${idx}`}
-                    >
-                      <X className="w-5 h-5" />
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                        {item.modifiers && item.modifiers.length > 0 && (
+                          <p className="text-sm text-muted-foreground truncate">
+                            {item.modifiers.length} modificador{item.modifiers.length !== 1 ? "es" : ""}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-base whitespace-nowrap" data-testid={`text-item-subtotal-${idx}`}>
+                          {"\u20A1"}{(Number(item.unitPrice) * item.qty).toLocaleString("es-CR")}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeCartItem(idx)}
+                          data-testid={`button-remove-item-${idx}`}
+                        >
+                          <X className="w-5 h-5" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              <Card>
+                <CardContent className="p-4 flex items-center justify-between gap-2">
+                  <span className="text-lg font-semibold">Total</span>
+                  <span className="text-xl font-bold" data-testid="text-order-total">
+                    {"\u20A1"}{cartItems.reduce((sum, i) => sum + Number(i.unitPrice) * i.qty, 0).toLocaleString("es-CR")}
+                  </span>
+                </CardContent>
+              </Card>
+            </>
           ) : (
             <p className="text-center text-muted-foreground text-base py-6" data-testid="text-empty-order">No hay items en tu pedido.</p>
           )}
