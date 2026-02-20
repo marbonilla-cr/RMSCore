@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -9,14 +9,14 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, QrCode, Grid3x3, Loader2, ExternalLink, Download } from "lucide-react";
-import type { Table as RestTable } from "@shared/schema";
+import { Plus, Pencil, QrCode, Grid3x3, Loader2, ExternalLink, Download, Clock, Save } from "lucide-react";
+import type { Table as RestTable, ReservationDurationConfig } from "@shared/schema";
 
 export default function AdminTablesPage() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<RestTable | null>(null);
-  const [form, setForm] = useState({ tableCode: "", tableName: "", active: true, sortOrder: 0 });
+  const [form, setForm] = useState({ tableCode: "", tableName: "", active: true, sortOrder: 0, capacity: 4 });
 
   const { data: tables = [], isLoading } = useQuery<RestTable[]>({
     queryKey: ["/api/admin/tables"],
@@ -42,7 +42,7 @@ export default function AdminTablesPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ tableCode: "", tableName: "", active: true, sortOrder: 0 });
+    setForm({ tableCode: "", tableName: "", active: true, sortOrder: 0, capacity: 4 });
     setOpen(true);
   };
 
@@ -53,6 +53,7 @@ export default function AdminTablesPage() {
       tableName: table.tableName,
       active: table.active,
       sortOrder: table.sortOrder,
+      capacity: table.capacity,
     });
     setOpen(true);
   };
@@ -104,14 +105,27 @@ export default function AdminTablesPage() {
                   required
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Orden</Label>
-                <Input
-                  type="number"
-                  data-testid="input-table-sort"
-                  value={form.sortOrder}
-                  onChange={(e) => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Orden</Label>
+                  <Input
+                    type="number"
+                    data-testid="input-table-sort"
+                    value={form.sortOrder}
+                    onChange={(e) => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Capacidad</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={50}
+                    data-testid="input-table-capacity"
+                    value={form.capacity}
+                    onChange={(e) => setForm({ ...form, capacity: parseInt(e.target.value) || 4 })}
+                  />
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <Switch
@@ -156,7 +170,7 @@ export default function AdminTablesPage() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{table.tableName}</p>
-                    <p className="text-xs text-muted-foreground">Código: {table.tableCode}</p>
+                    <p className="text-xs text-muted-foreground">Código: {table.tableCode} · Cap. {table.capacity}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -186,6 +200,105 @@ export default function AdminTablesPage() {
           ))}
         </div>
       )}
+
+      <DurationConfigSection />
     </div>
+  );
+}
+
+function DurationConfigSection() {
+  const { toast } = useToast();
+  const [configs, setConfigs] = useState<{ minPartySize: number; maxPartySize: number; durationMinutes: number }[]>([
+    { minPartySize: 1, maxPartySize: 2, durationMinutes: 60 },
+    { minPartySize: 3, maxPartySize: 4, durationMinutes: 90 },
+    { minPartySize: 5, maxPartySize: 8, durationMinutes: 120 },
+    { minPartySize: 9, maxPartySize: 99, durationMinutes: 150 },
+  ]);
+
+  const { data: savedConfigs = [] } = useQuery<ReservationDurationConfig[]>({
+    queryKey: ["/api/reservations/duration-config"],
+  });
+
+  useEffect(() => {
+    if (savedConfigs.length > 0) {
+      setConfigs(savedConfigs.map(c => ({ minPartySize: c.minPartySize, maxPartySize: c.maxPartySize, durationMinutes: c.durationMinutes })));
+    }
+  }, [savedConfigs]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("PUT", "/api/reservations/duration-config", { configs });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reservations/duration-config"] });
+      toast({ title: "Configuración de duración guardada" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const updateConfig = (index: number, field: string, value: number) => {
+    setConfigs(prev => prev.map((c, i) => i === index ? { ...c, [field]: value } : c));
+  };
+
+  const addRow = () => {
+    const last = configs[configs.length - 1];
+    setConfigs([...configs, { minPartySize: (last?.maxPartySize || 0) + 1, maxPartySize: (last?.maxPartySize || 0) + 4, durationMinutes: 90 }]);
+  };
+
+  const removeRow = (index: number) => {
+    if (configs.length <= 1) return;
+    setConfigs(prev => prev.filter((_, i) => i !== index));
+  };
+
+  return (
+    <Card className="mt-6" data-testid="card-duration-config">
+      <CardHeader className="pb-2">
+        <div className="flex items-center gap-2">
+          <Clock className="w-5 h-5" />
+          <h2 className="text-base font-semibold">Duración por Tamaño de Grupo</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">Define la duración de reserva según la cantidad de personas</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {configs.map((c, i) => (
+          <div key={i} className="flex items-center gap-2" data-testid={`row-duration-${i}`}>
+            <Input
+              type="number" min={1} className="w-16" value={c.minPartySize}
+              onChange={e => updateConfig(i, "minPartySize", parseInt(e.target.value) || 1)}
+              data-testid={`input-min-party-${i}`}
+            />
+            <span className="text-xs text-muted-foreground">a</span>
+            <Input
+              type="number" min={1} className="w-16" value={c.maxPartySize}
+              onChange={e => updateConfig(i, "maxPartySize", parseInt(e.target.value) || 1)}
+              data-testid={`input-max-party-${i}`}
+            />
+            <span className="text-xs text-muted-foreground">personas →</span>
+            <Input
+              type="number" min={15} step={15} className="w-20" value={c.durationMinutes}
+              onChange={e => updateConfig(i, "durationMinutes", parseInt(e.target.value) || 60)}
+              data-testid={`input-duration-${i}`}
+            />
+            <span className="text-xs text-muted-foreground">min</span>
+            {configs.length > 1 && (
+              <Button size="icon" variant="ghost" className="w-7 h-7" onClick={() => removeRow(i)} data-testid={`button-remove-duration-${i}`}>
+                ✕
+              </Button>
+            )}
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={addRow} data-testid="button-add-duration">
+            <Plus className="w-3 h-3 mr-1" /> Agregar rango
+          </Button>
+          <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save-duration">
+            {saveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Save className="w-3 h-3 mr-1" />}
+            Guardar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

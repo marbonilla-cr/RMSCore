@@ -9,6 +9,8 @@ import {
   numeric,
   jsonb,
   serial,
+  date,
+  time,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -34,6 +36,7 @@ export const tables = pgTable("tables", {
   tableName: text("table_name").notNull(),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  capacity: integer("capacity").notNull().default(4),
 });
 
 export const categories = pgTable("categories", {
@@ -955,3 +958,42 @@ export type InvShortageEvent = typeof invShortageEvents.$inferSelect;
 export type InsertInvShortageEvent = z.infer<typeof insertInvShortageEventSchema>;
 export type InvAuditAlert = typeof invAuditAlerts.$inferSelect;
 export type InsertInvAuditAlert = z.infer<typeof insertInvAuditAlertSchema>;
+
+// ==================== RESERVATIONS MODULE ====================
+export const reservations = pgTable("reservations", {
+  id: serial("id").primaryKey(),
+  reservationCode: varchar("reservation_code", { length: 20 }).notNull().unique(),
+  guestName: varchar("guest_name", { length: 200 }).notNull(),
+  guestPhone: varchar("guest_phone", { length: 50 }).notNull(),
+  guestEmail: varchar("guest_email", { length: 200 }),
+  partySize: integer("party_size").notNull(),
+  reservedDate: date("reserved_date").notNull(),
+  reservedTime: time("reserved_time").notNull(),
+  durationMinutes: integer("duration_minutes").notNull().default(90),
+  tableId: integer("table_id"),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  notes: text("notes"),
+  seatedAt: timestamp("seated_at"),
+  cancelledAt: timestamp("cancelled_at"),
+  cancellationReason: text("cancellation_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdBy: integer("created_by"),
+  confirmationSentAt: timestamp("confirmation_sent_at"),
+  reminderSentAt: timestamp("reminder_sent_at"),
+});
+
+export const reservationDurationConfig = pgTable("reservation_duration_config", {
+  id: serial("id").primaryKey(),
+  minPartySize: integer("min_party_size").notNull(),
+  maxPartySize: integer("max_party_size").notNull(),
+  durationMinutes: integer("duration_minutes").notNull(),
+});
+
+export const insertReservationSchema = createInsertSchema(reservations).omit({ id: true, createdAt: true, updatedAt: true, seatedAt: true, cancelledAt: true, confirmationSentAt: true, reminderSentAt: true });
+export const insertReservationDurationConfigSchema = createInsertSchema(reservationDurationConfig).omit({ id: true });
+
+export type Reservation = typeof reservations.$inferSelect;
+export type InsertReservation = z.infer<typeof insertReservationSchema>;
+export type ReservationDurationConfig = typeof reservationDurationConfig.$inferSelect;
+export type InsertReservationDurationConfig = z.infer<typeof insertReservationDurationConfigSchema>;

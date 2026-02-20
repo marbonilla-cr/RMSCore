@@ -22,6 +22,7 @@ import KDSBarPage from "@/pages/kds-bar";
 import POSPage from "@/pages/pos";
 import DashboardPage from "@/pages/dashboard";
 import QRClientPage from "@/pages/qr-client";
+import PublicReservePage from "@/pages/reserve";
 import AdminTablesPage from "@/pages/admin/tables";
 import AdminCategoriesPage from "@/pages/admin/categories";
 import AdminProductsPage from "@/pages/admin/products";
@@ -279,6 +280,7 @@ function AppRouter() {
   return (
     <Switch>
       <Route path="/qr/:tableCode" component={QRClientPage} />
+      <Route path="/reserve" component={PublicReservePage} />
       <Route component={AppContent} />
     </Switch>
   );

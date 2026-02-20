@@ -40,6 +40,7 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 -   **PWA Support:** `manifest.json`, service worker, and meta tags for installability.
 -   **Item Voiding System:** Soft-voids for waiters, hard-deletes for managers, with full audit trails.
 -   **POS Cash Report Permission:** Granular control over cash report visibility and data filtering.
+-   **Reservations Module:** Complete table reservation system with public booking page (/reserve), staff management (ReservationsSheet), conflict detection, duration configuration by party size, and email confirmations. Features: reservation codes (RES-YYYY-NNNN), status lifecycle (PENDING → CONFIRMED → SEATED → COMPLETED, CANCELLED, NO_SHOW), upcoming reservation badges on table cards, 30-minute time slots (11:00-22:00), and real-time WS updates.
 
 ## Data Milestones
 

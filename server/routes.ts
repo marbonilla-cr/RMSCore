@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
-import { sql } from "drizzle-orm";
+import { sql, and, eq, gte, lte, inArray, or, ne, asc, desc, count } from "drizzle-orm";
 import { db } from "./db";
 import * as storage from "./storage";
 import { registerInventoryRoutes } from "./inventory-routes";
@@ -11,7 +11,7 @@ import { registerShortageRoutes } from "./shortage-routes";
 import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, tables as tablesSchema } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -1275,10 +1275,21 @@ export async function registerRoutes(
     const orderIds = parentOrders.map(o => o.id);
     const waiterIds = Array.from(new Set(parentOrders.filter(o => o.responsibleWaiterId).map(o => o.responsibleWaiterId!)));
 
-    const [allItems, allSubs, waiters] = await Promise.all([
+    const now = new Date();
+    const crNow = new Date(now.toLocaleString("en-US", { timeZone: "America/Costa_Rica" }));
+    const todayStr = `${crNow.getFullYear()}-${String(crNow.getMonth() + 1).padStart(2, '0')}-${String(crNow.getDate()).padStart(2, '0')}`;
+    const tomorrowDate = new Date(crNow);
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowStr = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, '0')}-${String(tomorrowDate.getDate()).padStart(2, '0')}`;
+
+    const [allItems, allSubs, waiters, upcomingReservations] = await Promise.all([
       storage.getOrderItemsByOrderIds(orderIds),
       storage.getPendingSubmissionsByOrderIds(orderIds),
       storage.getUsersByIds(waiterIds),
+      db.select().from(reservations).where(and(
+        inArray(reservations.status, ['PENDING', 'CONFIRMED']),
+        or(eq(reservations.reservedDate, todayStr), eq(reservations.reservedDate, tomorrowStr)),
+      )),
     ]);
 
     const waiterMap = new Map(waiters.map(w => [w.id, w.displayName]));
@@ -1293,6 +1304,8 @@ export async function registerRoutes(
     for (const s of allSubs) {
       subsByOrder.set(s.orderId, (subsByOrder.get(s.orderId) || 0) + 1);
     }
+
+    const currentMinutes = crNow.getHours() * 60 + crNow.getMinutes();
 
     const result = allTables.map(t => {
       const order = orderByTable.get(t.id);
@@ -1314,6 +1327,37 @@ export async function registerRoutes(
         }
       }
 
+      let upcomingReservation: any = null;
+      const tableReservations = upcomingReservations
+        .filter(r => r.tableId === t.id)
+        .map(r => {
+          const rDate = r.reservedDate as string;
+          const rTime = r.reservedTime as string;
+          const [rh, rm] = rTime.split(':').map(Number);
+          let minutesUntil: number;
+          if (rDate === todayStr) {
+            minutesUntil = (rh * 60 + rm) - currentMinutes;
+          } else {
+            minutesUntil = (24 * 60 - currentMinutes) + (rh * 60 + rm);
+          }
+          return { ...r, minutesUntil };
+        })
+        .filter(r => r.minutesUntil > -30 && r.minutesUntil <= 24 * 60)
+        .sort((a, b) => a.minutesUntil - b.minutesUntil);
+
+      if (tableReservations.length > 0) {
+        const nearest = tableReservations[0];
+        upcomingReservation = {
+          id: nearest.id,
+          guestName: nearest.guestName,
+          partySize: nearest.partySize,
+          reservedDate: nearest.reservedDate,
+          reservedTime: nearest.reservedTime,
+          status: nearest.status,
+          minutesUntil: nearest.minutesUntil,
+        };
+      }
+
       return {
         id: t.id,
         tableCode: t.tableCode,
@@ -1328,6 +1372,7 @@ export async function registerRoutes(
         itemCount,
         totalAmount: order?.totalAmount || null,
         lastSentToKitchenAt,
+        upcomingReservation,
       };
     });
     res.json(result);
@@ -4266,6 +4311,474 @@ export async function registerRoutes(
         paymentRows: result2.rowCount,
         categoryCleanupRows: result3.rowCount
       });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== RESERVATIONS MODULE ====================
+
+  async function generateReservationCode(): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `RES-${year}-`;
+    const result = await db.select({ code: reservations.reservationCode })
+      .from(reservations)
+      .where(sql`reservation_code LIKE ${prefix + '%'}`)
+      .orderBy(desc(reservations.id))
+      .limit(1);
+    const lastNum = result.length > 0 ? parseInt(result[0].code.replace(prefix, ''), 10) : 0;
+    return `${prefix}${String((lastNum || 0) + 1).padStart(4, '0')}`;
+  }
+
+  async function getDurationForPartySize(partySize: number): Promise<number> {
+    const configs = await db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
+    for (const c of configs) {
+      if (partySize >= c.minPartySize && partySize <= c.maxPartySize) return c.durationMinutes;
+    }
+    return 90;
+  }
+
+  function timeToMinutes(t: string): number {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  }
+
+  function addMinutesToTime(t: string, mins: number): number {
+    return timeToMinutes(t) + mins;
+  }
+
+  async function checkReservationConflict(tableId: number, date: string, time: string, durationMinutes: number, excludeId?: number) {
+    const conditions = [
+      eq(reservations.tableId, tableId),
+      eq(reservations.reservedDate, date),
+      inArray(reservations.status, ['CONFIRMED', 'SEATED']),
+    ];
+    if (excludeId) conditions.push(ne(reservations.id, excludeId));
+    const existing = await db.select().from(reservations).where(and(...conditions));
+    const newStart = timeToMinutes(time);
+    const newEnd = addMinutesToTime(time, durationMinutes);
+    for (const r of existing) {
+      const rStart = timeToMinutes(r.reservedTime);
+      const rEnd = addMinutesToTime(r.reservedTime, r.durationMinutes);
+      if (newStart < rEnd && newEnd > rStart) {
+        return { conflict: true, with: r };
+      }
+    }
+    return { conflict: false, with: null };
+  }
+
+  async function sendReservationEmail(email: string, reservation: { reservationCode: string; guestName: string; reservedDate: string; reservedTime: string; partySize: number; notes: string | null }) {
+    try {
+      const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
+      const smtpUser = process.env.SMTP_USER;
+      const smtpPass = process.env.SMTP_PASS;
+      if (!smtpHost || !smtpUser || !smtpPass) return;
+      const nodemailer = await import("nodemailer");
+      const transporter = (nodemailer.default || nodemailer).createTransport({
+        host: smtpHost,
+        port: Number(process.env.SMTP_PORT || "587"),
+        secure: process.env.SMTP_SECURE === "true",
+        auth: { user: smtpUser, pass: smtpPass },
+      });
+      const config = await storage.getBusinessConfig();
+      const businessName = config?.businessName || "Restaurante";
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM || smtpUser,
+        to: email,
+        subject: `Reserva recibida - ${reservation.reservationCode} | ${businessName}`,
+        text: `Hola ${reservation.guestName},\n\nTu reserva ha sido recibida.\n\nCodigo: ${reservation.reservationCode}\nFecha: ${reservation.reservedDate}\nHora: ${reservation.reservedTime}\nPersonas: ${reservation.partySize}\n${reservation.notes ? `Notas: ${reservation.notes}\n` : ''}\nEl restaurante confirmara tu reserva pronto.\n\nGracias,\n${businessName}`,
+      });
+      await db.update(reservations).set({ confirmationSentAt: new Date() }).where(eq(reservations.reservationCode, reservation.reservationCode));
+    } catch (err) {
+      console.error("[Reservations] Failed to send confirmation email:", err);
+    }
+  }
+
+  // GET /api/reservations - List reservations by date
+  app.get("/api/reservations", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const { date, tableId, status } = req.query;
+      if (!date) return res.status(400).json({ message: "date es requerido" });
+      const conditions: any[] = [eq(reservations.reservedDate, date as string)];
+      if (tableId) conditions.push(eq(reservations.tableId, parseInt(tableId as string)));
+      if (status) conditions.push(eq(reservations.status, status as string));
+
+      const rows = await db.select().from(reservations)
+        .where(and(...conditions))
+        .orderBy(asc(reservations.reservedTime));
+
+      const allTables = await storage.getAllTables();
+      const tableMap = new Map(allTables.map(t => [t.id, { id: t.id, tableName: t.tableName, tableCode: t.tableCode }]));
+
+      const result = rows.map(r => ({
+        ...r,
+        table: r.tableId ? tableMap.get(r.tableId) || null : null,
+      }));
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/reservations/availability
+  app.get("/api/reservations/availability", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const { date, partySize } = req.query;
+      if (!date || !partySize) return res.status(400).json({ message: "date y partySize son requeridos" });
+      const ps = parseInt(partySize as string);
+      const allTables = await storage.getAllTables();
+      const activeTables = allTables.filter(t => t.active && t.capacity >= ps);
+
+      const dayReservations = await db.select().from(reservations)
+        .where(and(
+          eq(reservations.reservedDate, date as string),
+          inArray(reservations.status, ['CONFIRMED', 'SEATED']),
+        ));
+
+      const result = activeTables.map(t => {
+        const tableReservations = dayReservations.filter(r => r.tableId === t.id);
+        return {
+          id: t.id,
+          tableName: t.tableName,
+          tableCode: t.tableCode,
+          capacity: t.capacity,
+          reservations: tableReservations.map(r => ({
+            id: r.id,
+            guestName: r.guestName,
+            reservedTime: r.reservedTime,
+            durationMinutes: r.durationMinutes,
+            endTime: (() => {
+              const mins = timeToMinutes(r.reservedTime) + r.durationMinutes;
+              return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+            })(),
+          })),
+        };
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/reservations/:id
+  app.get("/api/reservations/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id as string);
+      const rows = await db.select().from(reservations).where(eq(reservations.id, id));
+      if (rows.length === 0) return res.status(404).json({ message: "Reserva no encontrada" });
+      res.json(rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/reservations - Create (authenticated, status = CONFIRMED)
+  app.post("/api/reservations", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, tableId, notes, durationMinutes } = req.body;
+      if (!guestName || !guestPhone || !partySize || !reservedDate || !reservedTime) {
+        return res.status(400).json({ message: "Faltan campos requeridos" });
+      }
+      const duration = durationMinutes || await getDurationForPartySize(partySize);
+
+      if (tableId) {
+        const conflict = await checkReservationConflict(tableId, reservedDate, reservedTime, duration);
+        if (conflict.conflict) {
+          return res.status(409).json({
+            message: `Conflicto con reserva existente de ${conflict.with!.guestName} (${conflict.with!.reservedTime})`,
+            conflictWith: conflict.with,
+          });
+        }
+      }
+
+      const code = await generateReservationCode();
+      const [created] = await db.insert(reservations).values({
+        reservationCode: code,
+        guestName,
+        guestPhone,
+        guestEmail: guestEmail || null,
+        partySize,
+        reservedDate,
+        reservedTime,
+        durationMinutes: duration,
+        tableId: tableId || null,
+        status: 'CONFIRMED',
+        notes: notes || null,
+        createdBy: req.session.userId || null,
+      }).returning();
+
+      broadcast("reservation_updated", { reservationId: created.id, tableId: created.tableId, status: created.status });
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/reservations/:id - Update
+  app.patch("/api/reservations/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id as string);
+      const rows = await db.select().from(reservations).where(eq(reservations.id, id));
+      if (rows.length === 0) return res.status(404).json({ message: "Reserva no encontrada" });
+      const existing = rows[0];
+      if (!['PENDING', 'CONFIRMED'].includes(existing.status)) {
+        return res.status(400).json({ message: "Solo se pueden editar reservas PENDING o CONFIRMED" });
+      }
+
+      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, tableId, notes, durationMinutes } = req.body;
+      const newTableId = tableId !== undefined ? tableId : existing.tableId;
+      const newDate = reservedDate || existing.reservedDate;
+      const newTime = reservedTime || existing.reservedTime;
+      const newDuration = durationMinutes || existing.durationMinutes;
+
+      if (newTableId && (newTableId !== existing.tableId || newDate !== existing.reservedDate || newTime !== existing.reservedTime)) {
+        const conflict = await checkReservationConflict(newTableId, newDate, newTime, newDuration, id);
+        if (conflict.conflict) {
+          return res.status(409).json({
+            message: `Conflicto con reserva existente de ${conflict.with!.guestName} (${conflict.with!.reservedTime})`,
+            conflictWith: conflict.with,
+          });
+        }
+      }
+
+      const updates: any = { updatedAt: new Date() };
+      if (guestName !== undefined) updates.guestName = guestName;
+      if (guestPhone !== undefined) updates.guestPhone = guestPhone;
+      if (guestEmail !== undefined) updates.guestEmail = guestEmail;
+      if (partySize !== undefined) updates.partySize = partySize;
+      if (reservedDate !== undefined) updates.reservedDate = reservedDate;
+      if (reservedTime !== undefined) updates.reservedTime = reservedTime;
+      if (tableId !== undefined) updates.tableId = tableId || null;
+      if (notes !== undefined) updates.notes = notes;
+      if (durationMinutes !== undefined) updates.durationMinutes = durationMinutes;
+
+      const [updated] = await db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
+      broadcast("reservation_updated", { reservationId: updated.id, tableId: updated.tableId, status: updated.status });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/reservations/:id/status - Status transitions
+  app.patch("/api/reservations/:id/status", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id as string);
+      const { status, reason } = req.body;
+      const rows = await db.select().from(reservations).where(eq(reservations.id, id));
+      if (rows.length === 0) return res.status(404).json({ message: "Reserva no encontrada" });
+      const existing = rows[0];
+
+      const validTransitions: Record<string, string[]> = {
+        PENDING: ['CONFIRMED', 'CANCELLED'],
+        CONFIRMED: ['SEATED', 'NO_SHOW', 'CANCELLED'],
+        WAITING: ['CONFIRMED', 'CANCELLED'],
+      };
+      const allowed = validTransitions[existing.status];
+      if (!allowed || !allowed.includes(status)) {
+        return res.status(400).json({ message: `Transicion invalida: ${existing.status} -> ${status}` });
+      }
+
+      const updates: any = { status, updatedAt: new Date() };
+      if (status === 'SEATED') updates.seatedAt = new Date();
+      if (status === 'CANCELLED') {
+        updates.cancelledAt = new Date();
+        updates.cancellationReason = reason || null;
+      }
+
+      const [updated] = await db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
+      broadcast("reservation_updated", { reservationId: updated.id, tableId: updated.tableId, status: updated.status });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/reservations/duration-config
+  app.get("/api/reservations/duration-config", requireRole("WAITER", "MANAGER"), async (_req, res) => {
+    const configs = await db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
+    res.json(configs);
+  });
+
+  // PUT /api/reservations/duration-config
+  app.put("/api/reservations/duration-config", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const { configs } = req.body;
+      if (!Array.isArray(configs)) return res.status(400).json({ message: "configs debe ser un array" });
+      await db.delete(reservationDurationConfig);
+      for (const c of configs) {
+        await db.insert(reservationDurationConfig).values({
+          minPartySize: c.minPartySize,
+          maxPartySize: c.maxPartySize,
+          durationMinutes: c.durationMinutes,
+        });
+      }
+      const result = await db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== PUBLIC RESERVATIONS ====================
+
+  const reservationRateLimits = new Map<string, { count: number; resetAt: number }>();
+
+  // POST /api/public/reservations
+  app.post("/api/public/reservations", async (req, res) => {
+    try {
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const now = Date.now();
+      const rateEntry = reservationRateLimits.get(ip);
+      if (rateEntry && rateEntry.resetAt > now) {
+        if (rateEntry.count >= 5) {
+          return res.status(429).json({ message: "Demasiadas solicitudes. Intenta de nuevo mas tarde." });
+        }
+        rateEntry.count++;
+      } else {
+        reservationRateLimits.set(ip, { count: 1, resetAt: now + 3600000 });
+      }
+
+      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, tableId, notes } = req.body;
+      if (!guestName || !guestPhone || !partySize || !reservedDate || !reservedTime) {
+        return res.status(400).json({ message: "Faltan campos requeridos" });
+      }
+      const duration = await getDurationForPartySize(partySize);
+
+      if (tableId) {
+        const conflict = await checkReservationConflict(tableId, reservedDate, reservedTime, duration);
+        if (conflict.conflict) {
+          return res.status(409).json({ message: "Esta mesa no esta disponible en ese horario." });
+        }
+      }
+
+      const code = await generateReservationCode();
+      const [created] = await db.insert(reservations).values({
+        reservationCode: code,
+        guestName,
+        guestPhone,
+        guestEmail: guestEmail || null,
+        partySize,
+        reservedDate,
+        reservedTime,
+        durationMinutes: duration,
+        tableId: tableId || null,
+        status: 'PENDING',
+        notes: notes || null,
+        createdBy: null,
+      }).returning();
+
+      broadcast("reservation_updated", { reservationId: created.id, tableId: created.tableId, status: created.status });
+
+      if (guestEmail) {
+        sendReservationEmail(guestEmail, {
+          reservationCode: code,
+          guestName,
+          reservedDate,
+          reservedTime,
+          partySize,
+          notes: notes || null,
+        });
+      }
+
+      res.status(201).json({ reservationCode: code, message: "Reserva recibida exitosamente" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/public/reservations/available-times
+  app.get("/api/public/reservations/available-times", async (req, res) => {
+    try {
+      const { date, partySize } = req.query;
+      if (!date || !partySize) return res.status(400).json({ message: "date y partySize son requeridos" });
+      const ps = parseInt(partySize as string);
+
+      const allTables = await storage.getAllTables();
+      const suitableTables = allTables.filter(t => t.active && t.capacity >= ps);
+
+      if (suitableTables.length === 0) {
+        return res.json([]);
+      }
+
+      const dayReservations = await db.select().from(reservations)
+        .where(and(
+          eq(reservations.reservedDate, date as string),
+          inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
+        ));
+
+      const slots: { time: string; available: boolean; tablesAvailable: number }[] = [];
+      for (let h = 11; h <= 21; h++) {
+        for (let m = 0; m < 60; m += 30) {
+          if (h === 22 && m > 0) break;
+          const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+          const duration = await getDurationForPartySize(ps);
+          const slotStart = timeToMinutes(timeStr);
+          const slotEnd = slotStart + duration;
+
+          let tablesAvailableCount = 0;
+          for (const table of suitableTables) {
+            const tableReservations = dayReservations.filter(r => r.tableId === table.id);
+            const hasConflict = tableReservations.some(r => {
+              const rStart = timeToMinutes(r.reservedTime);
+              const rEnd = rStart + r.durationMinutes;
+              return slotStart < rEnd && slotEnd > rStart;
+            });
+            if (!hasConflict) tablesAvailableCount++;
+          }
+
+          slots.push({ time: timeStr, available: tablesAvailableCount > 0, tablesAvailable: tablesAvailableCount });
+        }
+      }
+
+      const today = getBusinessDate();
+      if (date === today) {
+        const now = new Date();
+        const crTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Costa_Rica" }));
+        const currentMinutes = crTime.getHours() * 60 + crTime.getMinutes();
+        for (const slot of slots) {
+          if (timeToMinutes(slot.time) <= currentMinutes + 30) {
+            slot.available = false;
+          }
+        }
+      }
+
+      res.json(slots);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/public/reservations/available-tables
+  app.get("/api/public/reservations/available-tables", async (req, res) => {
+    try {
+      const { date, time, partySize } = req.query;
+      if (!date || !time || !partySize) return res.status(400).json({ message: "date, time y partySize son requeridos" });
+      const ps = parseInt(partySize as string);
+      const duration = await getDurationForPartySize(ps);
+
+      const allTables = await storage.getAllTables();
+      const suitableTables = allTables.filter(t => t.active && t.capacity >= ps);
+
+      const dayReservations = await db.select().from(reservations)
+        .where(and(
+          eq(reservations.reservedDate, date as string),
+          inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
+        ));
+
+      const slotStart = timeToMinutes(time as string);
+      const slotEnd = slotStart + duration;
+
+      const available = suitableTables.filter(table => {
+        const tableReservations = dayReservations.filter(r => r.tableId === table.id);
+        return !tableReservations.some(r => {
+          const rStart = timeToMinutes(r.reservedTime);
+          const rEnd = rStart + r.durationMinutes;
+          return slotStart < rEnd && slotEnd > rStart;
+        });
+      }).map(t => ({ id: t.id, tableName: t.tableName, tableCode: t.tableCode, capacity: t.capacity }));
+
+      res.json(available);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

@@ -3,9 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign } from "lucide-react";
+import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell } from "lucide-react";
 import { wsManager } from "@/lib/ws";
 import { formatCurrency, timeAgo } from "@/lib/utils";
+import { ReservationsSheet } from "@/components/reservations/ReservationsSheet";
 
 interface TableView {
   id: number;
@@ -21,6 +22,15 @@ interface TableView {
   itemCount: number;
   totalAmount: string | null;
   lastSentToKitchenAt: string | null;
+  upcomingReservation: {
+    id: number;
+    guestName: string;
+    partySize: number;
+    reservedDate: string;
+    reservedTime: string;
+    status: string;
+    minutesUntil: number;
+  } | null;
 }
 
 function formatElapsed(dateStr: string | null) {
@@ -74,6 +84,7 @@ export default function TablesPage() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const [reservationsOpen, setReservationsOpen] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     try {
       const saved = localStorage.getItem("tables_visible_columns");
@@ -121,6 +132,7 @@ export default function TablesPage() {
       wsManager.on("payment_completed", invalidate),
       wsManager.on("payment_voided", invalidate),
       wsManager.on("kitchen_item_status_changed", invalidate),
+      wsManager.on("reservation_updated", invalidate),
     ];
     return () => unsubs.forEach((u) => u());
   }, [toast]);
@@ -186,6 +198,33 @@ export default function TablesPage() {
         .table-card.ready { border-color: rgba(46,204,113,0.4); box-shadow: 0 0 16px rgba(46,204,113,0.12); }
         .table-card.preparing { border-color: rgba(243,156,18,0.3); }
         .table-card.open { border-color: rgba(46,204,113,0.2); }
+        .table-card.has-reservation-soon { border-color: rgba(243,156,18,0.4); box-shadow: 0 0 12px rgba(243,156,18,0.1); }
+
+        .reservation-badge {
+          font-family: var(--f-mono);
+          font-size: 10px;
+          font-weight: 600;
+          padding: 3px 8px;
+          border-radius: var(--r-xs);
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          margin-top: 4px;
+          margin-bottom: 2px;
+        }
+        .reservation-badge.soon {
+          background: rgba(243,156,18,0.15);
+          color: #b87a00;
+          animation: pulse-badge 2s ease-in-out infinite;
+        }
+        .reservation-badge.later {
+          background: var(--s2);
+          color: var(--text3);
+        }
+        @keyframes pulse-badge {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
+        }
 
         .tc-name {
           font-family: var(--f-disp);
@@ -339,12 +378,22 @@ export default function TablesPage() {
         </div>
         <button
           className="header-action"
+          onClick={() => setReservationsOpen(true)}
+          data-testid="button-reservations"
+          style={{ marginRight: 6 }}
+        >
+          <CalendarDays size={16} />
+        </button>
+        <button
+          className="header-action"
           onClick={() => setShowColumnPicker(!showColumnPicker)}
           data-testid="button-column-settings"
         >
           <Settings size={16} />
         </button>
       </div>
+
+      <ReservationsSheet open={reservationsOpen} onOpenChange={setReservationsOpen} />
 
       {showColumnPicker && (
         <>
@@ -398,13 +447,21 @@ export default function TablesPage() {
               {withOrder.map(table => {
                 const badge = getTableBadge(table);
                 const statusCls = getTableStatusClass(table);
+                const resSoon = table.upcomingReservation && table.upcomingReservation.minutesUntil <= 60;
+                const resCardCls = resSoon ? " has-reservation-soon" : "";
                 return (
-                  <Link key={table.id} href={`/tables/${table.id}`} className={`table-card ${statusCls}`} data-testid={`card-table-${table.id}`}>
+                  <Link key={table.id} href={`/tables/${table.id}`} className={`table-card ${statusCls}${resCardCls}`} data-testid={`card-table-${table.id}`}>
                     {table.pendingQrCount > 0 && (
                       <div className="qr-alert">{table.pendingQrCount}</div>
                     )}
                     <div className="tc-name" data-testid={`text-table-name-${table.id}`}>{table.tableName}</div>
                     <div className={badge.cls} data-testid={`badge-status-${table.id}`}>{badge.label}</div>
+                    {table.upcomingReservation && (
+                      <div className={`reservation-badge ${table.upcomingReservation.minutesUntil <= 60 ? 'soon' : 'later'}`} data-testid={`badge-reservation-${table.id}`}>
+                        {table.upcomingReservation.minutesUntil <= 60 ? <Bell size={10} /> : <CalendarDays size={10} />}
+                        {table.upcomingReservation.reservedTime.slice(0, 5)} — {table.upcomingReservation.guestName.split(' ')[0]}
+                      </div>
+                    )}
                     <div className="tc-meta">
                       {visibleColumns.has("waiter") && table.responsibleWaiterName && (
                         <div className="tc-meta-row" data-testid={`text-waiter-${table.id}`}>
@@ -447,9 +504,16 @@ export default function TablesPage() {
           {withoutOrder.length > 0 ? (
             <div className="tables-free-grid stagger-children">
               {withoutOrder.map(table => (
-                <Link key={table.id} href={`/tables/${table.id}`} className="table-card-free" data-testid={`card-table-${table.id}`}>
+                <Link key={table.id} href={`/tables/${table.id}`} className={`table-card-free${table.upcomingReservation && table.upcomingReservation.minutesUntil <= 60 ? ' has-reservation-soon' : ''}`} data-testid={`card-table-${table.id}`}>
                   <div className="tcf-name" data-testid={`text-table-name-${table.id}`}>{table.tableName}</div>
-                  <div className="tcf-sub">Libre</div>
+                  {table.upcomingReservation ? (
+                    <div className={`reservation-badge ${table.upcomingReservation.minutesUntil <= 60 ? 'soon' : 'later'}`} style={{ fontSize: 9, marginTop: 2 }} data-testid={`badge-reservation-${table.id}`}>
+                      {table.upcomingReservation.minutesUntil <= 60 ? <Bell size={9} /> : <CalendarDays size={9} />}
+                      {table.upcomingReservation.reservedTime.slice(0, 5)}
+                    </div>
+                  ) : (
+                    <div className="tcf-sub">Libre</div>
+                  )}
                 </Link>
               ))}
             </div>
