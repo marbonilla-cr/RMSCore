@@ -129,7 +129,9 @@
   font-family: var(--f-mono); font-size: 10px;
   color: var(--text3); letter-spacing: 0.12em;
   text-transform: uppercase;
+  justify-content: center;
 }
+.section-label::before,
 .section-label::after {
   content: ''; flex: 1; height: 1px;
   background: var(--border-ds);

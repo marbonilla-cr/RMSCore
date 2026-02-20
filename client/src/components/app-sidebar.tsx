@@ -144,9 +144,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {tablesItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
+                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -164,9 +164,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {kitchenItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
+                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -184,9 +184,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {cashierItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
+                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -204,9 +204,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {dashboardItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
+                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -223,9 +223,9 @@ export function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location === productsItem.url}>
+                  <SidebarMenuButton asChild isActive={location === productsItem.url} tooltip={productsItem.title}>
                     <Link href={productsItem.url} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
-                      <productsItem.icon className="w-4 h-4" />
+                      <productsItem.icon className="w-5 h-5" />
                       <span>{productsItem.title}</span>
                     </Link>
                   </SidebarMenuButton>
@@ -245,9 +245,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {showProducts && (
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location === productsItem.url}>
+                    <SidebarMenuButton asChild isActive={location === productsItem.url} tooltip={productsItem.title}>
                       <Link href={productsItem.url} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
-                        <productsItem.icon className="w-4 h-4" />
+                        <productsItem.icon className="w-5 h-5" />
                         <span>{productsItem.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -255,9 +255,9 @@ export function AppSidebar() {
                 )}
                 {adminItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
+                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -278,9 +278,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {invItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url || location.startsWith(item.url + "/")}>
+                    <SidebarMenuButton asChild isActive={location === item.url || location.startsWith(item.url + "/")} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -301,9 +301,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {shortageItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url || location.startsWith(item.url + "/")}>
+                    <SidebarMenuButton asChild isActive={location === item.url || location.startsWith(item.url + "/")} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -324,9 +324,9 @@ export function AppSidebar() {
               <SidebarMenu>
                 {hrSelfItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
+                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -334,9 +334,9 @@ export function AppSidebar() {
                 ))}
                 {showHRManage && hrManagerItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
+                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
                       <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-4 h-4" />
+                        <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>

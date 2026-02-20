@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Settings, Loader2 } from "lucide-react";
+import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign } from "lucide-react";
 import { wsManager } from "@/lib/ws";
 import { formatCurrency, timeAgo } from "@/lib/utils";
 
@@ -139,9 +139,11 @@ export default function TablesPage() {
   const filtered = search
     ? activeTables.filter(t => t.tableName.toLowerCase().includes(search.toLowerCase()) || t.tableCode.toLowerCase().includes(search.toLowerCase()))
     : activeTables;
-  const withOrder = filtered.filter(t => t.hasOpenOrder);
-  const withoutOrder = filtered.filter(t => !t.hasOpenOrder);
-  const occupiedCount = activeTables.filter(t => t.hasOpenOrder).length;
+  const isEffectivelyOpen = (t: TableView) =>
+    t.hasOpenOrder && (t.itemCount > 0 || Number(t.totalAmount || 0) > 0);
+  const withOrder = filtered.filter(t => isEffectivelyOpen(t));
+  const withoutOrder = filtered.filter(t => !isEffectivelyOpen(t));
+  const occupiedCount = activeTables.filter(t => isEffectivelyOpen(t)).length;
 
   const now = new Date();
   const dayName = now.toLocaleDateString("es-CR", { weekday: "long" });
@@ -192,10 +194,18 @@ export default function TablesPage() {
           margin-bottom: 6px;
         }
         .tc-meta {
-          display: flex;
-          flex-direction: column;
-          gap: 3px;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 4px 8px;
           margin-top: 8px;
+        }
+        @media (min-width: 640px) {
+          .tc-meta {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: 10px;
+          }
         }
         .tc-meta-row {
           font-family: var(--f-mono);
@@ -210,10 +220,15 @@ export default function TablesPage() {
         }
         .tc-amount {
           font-family: var(--f-mono);
-          font-size: 15px;
-          font-weight: 600;
+          font-size: 11px;
+          color: var(--text3);
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .tc-amount .val {
           color: var(--green);
-          margin-top: 4px;
+          font-weight: 600;
         }
 
         .tables-free-grid {
@@ -393,22 +408,26 @@ export default function TablesPage() {
                     <div className="tc-meta">
                       {visibleColumns.has("waiter") && table.responsibleWaiterName && (
                         <div className="tc-meta-row" data-testid={`text-waiter-${table.id}`}>
+                          <User size={11} />
                           <span className="val">{table.responsibleWaiterName}</span>
                         </div>
                       )}
                       {visibleColumns.has("items") && (
                         <div className="tc-meta-row" data-testid={`text-items-${table.id}`}>
+                          <UtensilsCrossed size={11} />
                           <span className="val">{table.itemCount} items</span>
                         </div>
                       )}
                       {visibleColumns.has("time") && (
                         <div className="tc-meta-row" data-testid={`text-time-open-${table.id}`}>
+                          <Clock size={11} />
                           <span className="val">{formatElapsed(table.openedAt)}</span>
                         </div>
                       )}
                       {visibleColumns.has("amount") && table.totalAmount && (
                         <div className="tc-amount" data-testid={`text-amount-${table.id}`}>
-                          {formatCurrency(table.totalAmount)}
+                          <DollarSign size={11} />
+                          <span className="val">{formatCurrency(table.totalAmount)}</span>
                         </div>
                       )}
                     </div>
