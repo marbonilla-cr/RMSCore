@@ -11,7 +11,7 @@ import { registerShortageRoutes } from "./shortage-routes";
 import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, tables as tablesSchema } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -4621,6 +4621,54 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/reservations/settings
+  app.get("/api/reservations/settings", requireRole("WAITER", "MANAGER"), async (_req, res) => {
+    const rows = await db.select().from(reservationSettings);
+    if (rows.length === 0) {
+      const [created] = await db.insert(reservationSettings).values({}).returning();
+      return res.json(created);
+    }
+    res.json(rows[0]);
+  });
+
+  // PUT /api/reservations/settings
+  app.put("/api/reservations/settings", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const { openTime, closeTime, slotIntervalMinutes, maxReservationsPerDay, enabled } = req.body;
+      const rows = await db.select().from(reservationSettings);
+      if (rows.length === 0) {
+        const [created] = await db.insert(reservationSettings).values({
+          openTime: openTime || "11:00",
+          closeTime: closeTime || "22:00",
+          slotIntervalMinutes: slotIntervalMinutes || 30,
+          maxReservationsPerDay: maxReservationsPerDay || 20,
+          enabled: enabled !== undefined ? enabled : true,
+        }).returning();
+        return res.json(created);
+      }
+      const [updated] = await db.update(reservationSettings)
+        .set({
+          openTime: openTime || rows[0].openTime,
+          closeTime: closeTime || rows[0].closeTime,
+          slotIntervalMinutes: slotIntervalMinutes !== undefined ? slotIntervalMinutes : rows[0].slotIntervalMinutes,
+          maxReservationsPerDay: maxReservationsPerDay !== undefined ? maxReservationsPerDay : rows[0].maxReservationsPerDay,
+          enabled: enabled !== undefined ? enabled : rows[0].enabled,
+        })
+        .where(eq(reservationSettings.id, rows[0].id))
+        .returning();
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/public/reservations/settings (public - limited info)
+  app.get("/api/public/reservations/settings", async (_req, res) => {
+    const rows = await db.select().from(reservationSettings);
+    const settings = rows.length > 0 ? rows[0] : { openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30, enabled: true };
+    res.json({ openTime: settings.openTime, closeTime: settings.closeTime, slotIntervalMinutes: settings.slotIntervalMinutes, enabled: settings.enabled });
+  });
+
   // ==================== PUBLIC RESERVATIONS ====================
 
   const reservationRateLimits = new Map<string, { count: number; resetAt: number }>();
@@ -4695,10 +4743,10 @@ export async function registerRoutes(
       if (!date || !partySize) return res.status(400).json({ message: "date y partySize son requeridos" });
       const ps = parseInt(partySize as string);
 
-      const allTables = await storage.getAllTables();
-      const suitableTables = allTables.filter(t => t.active && t.capacity >= ps);
+      const settingsRows = await db.select().from(reservationSettings);
+      const settings = settingsRows.length > 0 ? settingsRows[0] : { openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30, maxReservationsPerDay: 20, enabled: true };
 
-      if (suitableTables.length === 0) {
+      if (!settings.enabled) {
         return res.json([]);
       }
 
@@ -4708,28 +4756,40 @@ export async function registerRoutes(
           inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
         ));
 
+      if (dayReservations.length >= settings.maxReservationsPerDay) {
+        return res.json([]);
+      }
+
+      const allTables = await storage.getAllTables();
+      const suitableTables = allTables.filter(t => t.active && t.capacity >= ps);
+
+      if (suitableTables.length === 0) {
+        return res.json([]);
+      }
+
+      const openMinutes = timeToMinutes(settings.openTime);
+      const closeMinutes = timeToMinutes(settings.closeTime);
+      const interval = settings.slotIntervalMinutes;
+      const duration = await getDurationForPartySize(ps);
+
       const slots: { time: string; available: boolean; tablesAvailable: number }[] = [];
-      for (let h = 11; h <= 21; h++) {
-        for (let m = 0; m < 60; m += 30) {
-          if (h === 22 && m > 0) break;
-          const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-          const duration = await getDurationForPartySize(ps);
-          const slotStart = timeToMinutes(timeStr);
-          const slotEnd = slotStart + duration;
+      for (let mins = openMinutes; mins <= closeMinutes; mins += interval) {
+        const timeStr = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+        const slotStart = mins;
+        const slotEnd = slotStart + duration;
 
-          let tablesAvailableCount = 0;
-          for (const table of suitableTables) {
-            const tableReservations = dayReservations.filter(r => r.tableId === table.id);
-            const hasConflict = tableReservations.some(r => {
-              const rStart = timeToMinutes(r.reservedTime);
-              const rEnd = rStart + r.durationMinutes;
-              return slotStart < rEnd && slotEnd > rStart;
-            });
-            if (!hasConflict) tablesAvailableCount++;
-          }
-
-          slots.push({ time: timeStr, available: tablesAvailableCount > 0, tablesAvailable: tablesAvailableCount });
+        let tablesAvailableCount = 0;
+        for (const table of suitableTables) {
+          const tableReservations = dayReservations.filter(r => r.tableId === table.id);
+          const hasConflict = tableReservations.some(r => {
+            const rStart = timeToMinutes(r.reservedTime);
+            const rEnd = rStart + r.durationMinutes;
+            return slotStart < rEnd && slotEnd > rStart;
+          });
+          if (!hasConflict) tablesAvailableCount++;
         }
+
+        slots.push({ time: timeStr, available: tablesAvailableCount > 0, tablesAvailable: tablesAvailableCount });
       }
 
       const today = getBusinessDate();

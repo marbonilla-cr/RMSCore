@@ -9,8 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, QrCode, Grid3x3, Loader2, ExternalLink, Download, Clock, Save } from "lucide-react";
-import type { Table as RestTable, ReservationDurationConfig } from "@shared/schema";
+import { Plus, Pencil, QrCode, Grid3x3, Loader2, ExternalLink, Download, Clock, Save, Settings2 } from "lucide-react";
+import type { Table as RestTable, ReservationDurationConfig, ReservationSettings } from "@shared/schema";
 
 export default function AdminTablesPage() {
   const { toast } = useToast();
@@ -202,6 +202,7 @@ export default function AdminTablesPage() {
       )}
 
       <DurationConfigSection />
+      <ReservationSettingsSection />
     </div>
   );
 }
@@ -298,6 +299,122 @@ function DurationConfigSection() {
             Guardar
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReservationSettingsSection() {
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    openTime: "11:00",
+    closeTime: "22:00",
+    slotIntervalMinutes: 30,
+    maxReservationsPerDay: 20,
+    enabled: true,
+  });
+
+  const { data: settings, isLoading: settingsLoading } = useQuery<ReservationSettings>({
+    queryKey: ["/api/reservations/settings"],
+  });
+
+  useEffect(() => {
+    if (settings) {
+      setForm({
+        openTime: settings.openTime,
+        closeTime: settings.closeTime,
+        slotIntervalMinutes: settings.slotIntervalMinutes,
+        maxReservationsPerDay: settings.maxReservationsPerDay,
+        enabled: settings.enabled,
+      });
+    }
+  }, [settings]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("PUT", "/api/reservations/settings", form);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reservations/settings"] });
+      toast({ title: "Configuración de reservas guardada" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Card className="mt-6" data-testid="card-reservation-settings">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Settings2 className="w-5 h-5" />
+            <h2 className="text-base font-semibold">Configuración de Reservas</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="res-enabled" className="text-xs text-muted-foreground">Sistema activo</Label>
+            <Switch
+              id="res-enabled"
+              checked={form.enabled}
+              onCheckedChange={(c) => setForm({ ...form, enabled: c })}
+              data-testid="switch-reservations-enabled"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">Horario de operación, intervalos y límites diarios para reservas</p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {settingsLoading ? (
+          <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+        ) : <>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Hora Apertura</Label>
+            <Input
+              type="time"
+              value={form.openTime}
+              onChange={(e) => setForm({ ...form, openTime: e.target.value })}
+              data-testid="input-open-time"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Hora Cierre</Label>
+            <Input
+              type="time"
+              value={form.closeTime}
+              onChange={(e) => setForm({ ...form, closeTime: e.target.value })}
+              data-testid="input-close-time"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Intervalo de Slots (min)</Label>
+            <Input
+              type="number"
+              min={15}
+              step={15}
+              value={form.slotIntervalMinutes}
+              onChange={(e) => setForm({ ...form, slotIntervalMinutes: parseInt(e.target.value) || 30 })}
+              data-testid="input-slot-interval"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Máx. Reservas / Día</Label>
+            <Input
+              type="number"
+              min={1}
+              value={form.maxReservationsPerDay}
+              onChange={(e) => setForm({ ...form, maxReservationsPerDay: parseInt(e.target.value) || 20 })}
+              data-testid="input-max-daily"
+            />
+          </div>
+        </div>
+        <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save-settings">
+          {saveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Save className="w-3 h-3 mr-1" />}
+          Guardar Configuración
+        </Button>
+        </>}
       </CardContent>
     </Card>
   );

@@ -990,6 +990,15 @@ export const reservationDurationConfig = pgTable("reservation_duration_config", 
   durationMinutes: integer("duration_minutes").notNull(),
 });
 
+export const reservationSettings = pgTable("reservation_settings", {
+  id: serial("id").primaryKey(),
+  openTime: text("open_time").notNull().default("11:00"),
+  closeTime: text("close_time").notNull().default("22:00"),
+  slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(30),
+  maxReservationsPerDay: integer("max_reservations_per_day").notNull().default(20),
+  enabled: boolean("enabled").notNull().default(true),
+});
+
 export const insertReservationSchema = createInsertSchema(reservations).omit({ id: true, createdAt: true, updatedAt: true, seatedAt: true, cancelledAt: true, confirmationSentAt: true, reminderSentAt: true });
 export const insertReservationDurationConfigSchema = createInsertSchema(reservationDurationConfig).omit({ id: true });
 
@@ -997,3 +1006,4 @@ export type Reservation = typeof reservations.$inferSelect;
 export type InsertReservation = z.infer<typeof insertReservationSchema>;
 export type ReservationDurationConfig = typeof reservationDurationConfig.$inferSelect;
 export type InsertReservationDurationConfig = z.infer<typeof insertReservationDurationConfigSchema>;
+export type ReservationSettings = typeof reservationSettings.$inferSelect;

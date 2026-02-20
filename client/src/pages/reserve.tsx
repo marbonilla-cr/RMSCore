@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CalendarDays, Users, Clock, Phone, Mail, ChevronRight, ChevronLeft, Check, Loader2 } from "lucide-react";
 
@@ -6,6 +6,9 @@ function todayStr() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
+
+type TimeSlot = { time: string; available: boolean; tablesAvailable: number };
+type ResSettings = { openTime: string; closeTime: string; slotIntervalMinutes: number; enabled: boolean };
 
 const STEPS = ["Personas", "Fecha y Hora", "Datos", "Confirmar"];
 
@@ -20,15 +23,26 @@ export default function PublicReservePage() {
   const [notes, setNotes] = useState("");
   const [confirmation, setConfirmation] = useState<{ code: string; message: string } | null>(null);
 
-  const { data: availableTimes = [] } = useQuery<string[]>({
+  const { data: settings } = useQuery<ResSettings>({
+    queryKey: ["/api/public/reservations/settings"],
+    queryFn: async () => {
+      const res = await fetch("/api/public/reservations/settings");
+      if (!res.ok) return { openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30, enabled: true };
+      return res.json();
+    },
+  });
+
+  const { data: timeSlots = [], isLoading: timesLoading } = useQuery<TimeSlot[]>({
     queryKey: ["/api/public/reservations/available-times", reservedDate, partySize],
     queryFn: async () => {
       const res = await fetch(`/api/public/reservations/available-times?date=${reservedDate}&partySize=${partySize}`);
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!reservedDate && partySize > 0,
+    enabled: !!reservedDate && partySize > 0 && settings?.enabled !== false,
   });
+
+  const availableSlots = timeSlots.filter(s => s.available);
 
   const submitMutation = useMutation({
     mutationFn: async () => {
@@ -67,6 +81,23 @@ export default function PublicReservePage() {
     if (step < 3) setStep(step + 1);
     else submitMutation.mutate();
   };
+
+  if (settings && !settings.enabled) {
+    return (
+      <div className="reserve-page">
+        <ReserveStyles />
+        <div className="rp-container">
+          <div className="rp-header">
+            <CalendarDays size={24} className="rp-logo-icon" />
+            <h1 className="rp-title">Reservaciones</h1>
+          </div>
+          <div className="rp-panel" style={{ textAlign: "center", padding: 40 }}>
+            <p className="rp-empty">El sistema de reservaciones no está disponible en este momento.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (confirmation) {
     return (
@@ -149,13 +180,23 @@ export default function PublicReservePage() {
               {reservedDate && (
                 <>
                   <label className="rp-label" style={{ marginTop: 14 }}>Horarios disponibles</label>
-                  {availableTimes.length === 0 ? (
+                  {timesLoading ? (
+                    <div style={{ textAlign: "center", padding: 20 }}><Loader2 size={20} className="rp-spin" style={{ color: "var(--acc)" }} /></div>
+                  ) : timeSlots.length === 0 ? (
                     <p className="rp-empty">No hay horarios disponibles para esta fecha</p>
+                  ) : availableSlots.length === 0 ? (
+                    <p className="rp-empty">Todos los horarios están ocupados para esta fecha</p>
                   ) : (
                     <div className="rp-time-grid">
-                      {availableTimes.map(t => (
-                        <button key={t} className={`rp-time-btn ${reservedTime === t ? "selected" : ""}`} onClick={() => setReservedTime(t)} data-testid={`button-time-${t}`}>
-                          {t}
+                      {timeSlots.map(slot => (
+                        <button
+                          key={slot.time}
+                          className={`rp-time-btn ${reservedTime === slot.time ? "selected" : ""} ${!slot.available ? "disabled" : ""}`}
+                          onClick={() => slot.available && setReservedTime(slot.time)}
+                          disabled={!slot.available}
+                          data-testid={`button-time-${slot.time}`}
+                        >
+                          {slot.time}
                         </button>
                       ))}
                     </div>
@@ -215,13 +256,11 @@ export default function PublicReservePage() {
 function ReserveStyles() {
   return (
     <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Barlow:wght@400;500&family=JetBrains+Mono:wght@400;600&display=swap');
-
       .reserve-page {
         min-height: 100dvh;
-        background: #0a0c0f;
-        color: #e2e2e2;
-        font-family: 'Barlow', sans-serif;
+        background: var(--bg, #f7f3ee);
+        color: var(--text, #1a1208);
+        font-family: var(--f-body, 'IBM Plex Sans', sans-serif);
         display: flex;
         justify-content: center;
         padding: 20px;
@@ -237,12 +276,13 @@ function ReserveStyles() {
         text-align: center;
         padding: 20px 0 10px;
       }
-      .rp-logo-icon { color: #2ecc71; margin: 0 auto 8px; display: block; }
+      .rp-logo-icon { color: var(--acc, #1d4ed8); margin: 0 auto 8px; display: block; }
       .rp-title {
-        font-family: 'Barlow Condensed', sans-serif;
-        font-weight: 800;
+        font-family: var(--f-disp, 'Outfit', sans-serif);
+        font-weight: 700;
         font-size: 26px;
         margin: 0;
+        color: var(--text, #1a1208);
       }
       .rp-steps {
         display: flex;
@@ -257,92 +297,97 @@ function ReserveStyles() {
       .rp-step-num {
         width: 24px; height: 24px;
         border-radius: 50%;
-        background: #181c22;
-        border: 1.5px solid #2a2f38;
+        background: var(--s1, #f0ebe3);
+        border: 1.5px solid var(--border, #ddd5c8);
         display: flex;
         align-items: center;
         justify-content: center;
-        font-family: 'JetBrains Mono', monospace;
+        font-family: var(--f-mono, 'IBM Plex Mono', monospace);
         font-size: 11px;
         font-weight: 600;
-        color: #6b7280;
+        color: var(--text3, #9c8e7e);
         transition: all 0.2s;
       }
       .rp-step.active .rp-step-num {
-        background: #2ecc71;
-        border-color: #2ecc71;
-        color: #050f08;
+        background: var(--acc, #1d4ed8);
+        border-color: var(--acc, #1d4ed8);
+        color: #fff;
       }
       .rp-step.done .rp-step-num {
-        background: rgba(46,204,113,0.15);
-        border-color: #2ecc71;
-        color: #2ecc71;
+        background: var(--sage-d, rgba(74,124,89,0.09));
+        border-color: var(--sage, #4a7c59);
+        color: var(--sage, #4a7c59);
       }
       .rp-step-label {
-        font-family: 'JetBrains Mono', monospace;
+        font-family: var(--f-mono, 'IBM Plex Mono', monospace);
         font-size: 9px;
-        color: #6b7280;
+        color: var(--text3, #9c8e7e);
         display: none;
       }
       .rp-step.active .rp-step-label {
         display: inline;
-        color: #e2e2e2;
+        color: var(--text, #1a1208);
       }
       .rp-panel {
-        background: #111318;
-        border: 1px solid #1e2128;
-        border-radius: 12px;
+        background: var(--s0, #ffffff);
+        border: 1px solid var(--border, #ddd5c8);
+        border-radius: var(--r-md, 14px);
         padding: 20px;
         min-height: 200px;
       }
       .rp-step-content { display: flex; flex-direction: column; }
       .rp-label {
-        font-family: 'JetBrains Mono', monospace;
+        font-family: var(--f-mono, 'IBM Plex Mono', monospace);
         font-size: 10px;
         font-weight: 600;
-        color: #6b7280;
+        color: var(--text3, #9c8e7e);
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-bottom: 6px;
       }
       .rp-input {
-        background: #181c22;
-        border: 1px solid #2a2f38;
-        border-radius: 8px;
+        background: var(--s1, #f0ebe3);
+        border: 1px solid var(--border, #ddd5c8);
+        border-radius: var(--r-sm, 10px);
         padding: 10px 12px;
-        font-family: 'Barlow', sans-serif;
+        font-family: var(--f-body, 'IBM Plex Sans', sans-serif);
         font-size: 14px;
-        color: #e2e2e2;
+        color: var(--text, #1a1208);
         outline: none;
         width: 100%;
         box-sizing: border-box;
         transition: border-color 0.15s;
       }
-      .rp-input:focus { border-color: #2ecc71; }
-      .rp-input::placeholder { color: #4b5563; }
+      .rp-input:focus { border-color: var(--acc, #1d4ed8); }
+      .rp-input::placeholder { color: var(--text4, #c4b9ac); }
       .rp-time-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: 6px;
       }
       .rp-time-btn {
-        background: #181c22;
-        border: 1.5px solid #2a2f38;
-        border-radius: 8px;
+        background: var(--s0, #ffffff);
+        border: 1.5px solid var(--border, #ddd5c8);
+        border-radius: var(--r-sm, 10px);
         padding: 10px 0;
-        font-family: 'JetBrains Mono', monospace;
+        font-family: var(--f-mono, 'IBM Plex Mono', monospace);
         font-size: 13px;
         font-weight: 600;
-        color: #e2e2e2;
+        color: var(--text, #1a1208);
         cursor: pointer;
         text-align: center;
         transition: all 0.15s;
       }
-      .rp-time-btn:active { background: #1e2128; }
+      .rp-time-btn:active:not(:disabled) { background: var(--s1, #f0ebe3); }
       .rp-time-btn.selected {
-        background: rgba(46,204,113,0.12);
-        border-color: #2ecc71;
-        color: #2ecc71;
+        background: var(--acc-d, rgba(29,78,216,0.07));
+        border-color: var(--acc, #1d4ed8);
+        color: var(--acc, #1d4ed8);
+      }
+      .rp-time-btn.disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+        text-decoration: line-through;
       }
       .rp-party-selector {
         display: grid;
@@ -350,28 +395,28 @@ function ReserveStyles() {
         gap: 8px;
       }
       .rp-party-btn {
-        background: #181c22;
-        border: 1.5px solid #2a2f38;
-        border-radius: 10px;
+        background: var(--s0, #ffffff);
+        border: 1.5px solid var(--border, #ddd5c8);
+        border-radius: var(--r-sm, 10px);
         padding: 14px 0;
-        font-family: 'Barlow Condensed', sans-serif;
+        font-family: var(--f-disp, 'Outfit', sans-serif);
         font-size: 20px;
-        font-weight: 800;
-        color: #e2e2e2;
+        font-weight: 700;
+        color: var(--text, #1a1208);
         cursor: pointer;
         text-align: center;
         transition: all 0.15s;
       }
-      .rp-party-btn:active { background: #1e2128; }
+      .rp-party-btn:active { background: var(--s1, #f0ebe3); }
       .rp-party-btn.selected {
-        background: rgba(46,204,113,0.12);
-        border-color: #2ecc71;
-        color: #2ecc71;
+        background: var(--acc-d, rgba(29,78,216,0.07));
+        border-color: var(--acc, #1d4ed8);
+        color: var(--acc, #1d4ed8);
       }
       .rp-summary-card {
-        background: #181c22;
-        border: 1px solid #2a2f38;
-        border-radius: 10px;
+        background: var(--s1, #f0ebe3);
+        border: 1px solid var(--border, #ddd5c8);
+        border-radius: var(--r-sm, 10px);
         padding: 14px 16px;
         display: flex;
         flex-direction: column;
@@ -382,12 +427,12 @@ function ReserveStyles() {
         align-items: center;
         gap: 8px;
         font-size: 14px;
-        color: #c8c8c8;
+        color: var(--text2, #5a4e40);
       }
-      .rp-summary-row svg { color: #2ecc71; flex-shrink: 0; }
+      .rp-summary-row svg { color: var(--acc, #1d4ed8); flex-shrink: 0; }
       .rp-confirm-note {
         font-size: 12px;
-        color: #6b7280;
+        color: var(--text3, #9c8e7e);
         margin-top: 14px;
         text-align: center;
         line-height: 1.5;
@@ -401,17 +446,17 @@ function ReserveStyles() {
         align-items: center;
         gap: 6px;
         padding: 12px 20px;
-        border-radius: 10px;
-        font-family: 'Barlow Condensed', sans-serif;
-        font-weight: 700;
+        border-radius: var(--r-sm, 10px);
+        font-family: var(--f-disp, 'Outfit', sans-serif);
+        font-weight: 600;
         font-size: 14px;
         cursor: pointer;
         border: none;
         transition: all 0.15s;
       }
       .rp-btn.primary {
-        background: #2ecc71;
-        color: #050f08;
+        background: var(--acc, #1d4ed8);
+        color: #fff;
       }
       .rp-btn.primary:disabled {
         opacity: 0.3;
@@ -419,22 +464,22 @@ function ReserveStyles() {
       }
       .rp-btn.primary:active:not(:disabled) { opacity: 0.8; }
       .rp-btn.secondary {
-        background: #181c22;
-        border: 1px solid #2a2f38;
-        color: #c8c8c8;
+        background: var(--s1, #f0ebe3);
+        border: 1px solid var(--border, #ddd5c8);
+        color: var(--text2, #5a4e40);
       }
-      .rp-btn.secondary:active { background: #1e2128; }
+      .rp-btn.secondary:active { background: var(--s2, #e6dfd5); }
       .rp-error {
-        background: rgba(231,76,60,0.1);
-        border: 1px solid rgba(231,76,60,0.3);
-        border-radius: 8px;
+        background: var(--red-d, rgba(220,38,38,0.08));
+        border: 1px solid var(--red-m, rgba(220,38,38,0.18));
+        border-radius: var(--r-sm, 10px);
         padding: 10px 14px;
         font-size: 13px;
-        color: #e74c3c;
+        color: var(--red, #dc2626);
       }
       .rp-empty {
         font-size: 13px;
-        color: #6b7280;
+        color: var(--text3, #9c8e7e);
         text-align: center;
         padding: 20px;
       }
@@ -445,39 +490,40 @@ function ReserveStyles() {
       .rp-success-icon {
         width: 56px; height: 56px;
         border-radius: 50%;
-        background: rgba(46,204,113,0.15);
-        color: #2ecc71;
+        background: var(--sage-d, rgba(74,124,89,0.09));
+        color: var(--sage, #4a7c59);
         display: flex;
         align-items: center;
         justify-content: center;
         margin: 0 auto 16px;
       }
       .rp-success-title {
-        font-family: 'Barlow Condensed', sans-serif;
-        font-weight: 800;
+        font-family: var(--f-disp, 'Outfit', sans-serif);
+        font-weight: 700;
         font-size: 22px;
         margin: 0 0 4px;
+        color: var(--text, #1a1208);
       }
       .rp-success-sub {
         font-size: 14px;
-        color: #6b7280;
+        color: var(--text3, #9c8e7e);
         margin: 0 0 16px;
       }
       .rp-success-code {
-        font-family: 'JetBrains Mono', monospace;
+        font-family: var(--f-mono, 'IBM Plex Mono', monospace);
         font-size: 18px;
         font-weight: 600;
-        color: #2ecc71;
+        color: var(--acc, #1d4ed8);
         padding: 10px 20px;
-        background: rgba(46,204,113,0.1);
-        border: 1px solid rgba(46,204,113,0.2);
-        border-radius: 8px;
+        background: var(--acc-d, rgba(29,78,216,0.07));
+        border: 1px solid var(--acc-m, rgba(29,78,216,0.18));
+        border-radius: var(--r-sm, 10px);
         display: inline-block;
         margin-bottom: 20px;
       }
       .rp-success-note {
         font-size: 12px;
-        color: #6b7280;
+        color: var(--text3, #9c8e7e);
         margin-top: 16px;
       }
       @keyframes rp-spin {
