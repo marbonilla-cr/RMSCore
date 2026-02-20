@@ -927,7 +927,7 @@ export default function QRClientPage() {
               {sending ? (
                 <><Loader2 className="animate-spin" size={18} /> Enviando...</>
               ) : (
-                <>&checkmark; Confirmar y enviar</>
+                <><Check size={16} /> Confirmar y enviar</>
               )}
             </button>
           </div>
