@@ -1,0 +1,810 @@
+# Prompt — Módulo de Reservaciones (integrado en módulo de Mesas existente)
+
+## Principio guía
+**No crear módulos nuevos.** Todo se integra en las pantallas que el salonero ya usa a diario. El cambio debe sentirse como una extensión natural de `tables.tsx`, no como una funcionalidad separada.
+
+---
+
+## Contexto del sistema
+Stack: React + Vite, Tailwind CSS, shadcn/ui, wouter, Express.js + TypeScript, Drizzle ORM, PostgreSQL, WebSocket (`ws`). Timezone: `America/Costa_Rica` (UTC-6). Timestamps: UTC `timestamp without time zone`. Patrones: TanStack Query v5, `apiRequest()`, `wsManager`, polling 5s.
+
+---
+
+## Qué construir
+
+### 1. Base de datos
+### 2. Backend — rutas nuevas + modificación de ruta existente
+### 3. Frontend — modificaciones a `tables.tsx` únicamente
+### 4. Página pública de reserva para el cliente (ruta pública, sin auth)
+
+---
+
+## 1. BASE DE DATOS
+
+### Tabla: `reservations`
+```typescript
+{
+  id:                  serial primary key,
+  reservationCode:     varchar(20) not null unique,  // "RES-2026-0043"
+
+  // Cliente
+  guestName:           varchar(200) not null,
+  guestPhone:          varchar(50) not null,
+  guestEmail:          varchar(200),
+  partySize:           integer not null,
+
+  // Tiempo (fechas locales Costa Rica)
+  reservedDate:        date not null,
+  reservedTime:        time not null,          // "19:30"
+  durationMinutes:     integer not null default 90,
+
+  // Mesa asignada (puede ser null si el cliente no eligió)
+  tableId:             integer references tables(id),
+
+  // Estado
+  status:              varchar(20) not null default 'PENDING',
+  // PENDING | CONFIRMED | SEATED | NO_SHOW | CANCELLED | WAITING
+
+  notes:               text,
+
+  // Metadatos
+  seatedAt:            timestamp,
+  cancelledAt:         timestamp,
+  cancellationReason:  text,
+  createdAt:           timestamp default now(),
+  updatedAt:           timestamp default now(),
+  createdBy:           integer references users(id),  // null = cliente online
+
+  // Notificaciones
+  confirmationSentAt:  timestamp,
+  reminderSentAt:      timestamp,
+}
+```
+
+### Tabla: `reservation_duration_config`
+```typescript
+{
+  id:              serial primary key,
+  minPartySize:    integer not null,
+  maxPartySize:    integer not null,
+  durationMinutes: integer not null,
+}
+// Datos iniciales (seed):
+// 1-2 → 60 min | 3-4 → 90 min | 5-8 → 120 min | 9+ → 150 min
+```
+
+### Modificación a tabla `tables` existente
+Agregar columna:
+```sql
+ALTER TABLE tables ADD COLUMN capacity integer NOT NULL DEFAULT 4;
+```
+Exponer en `GET /api/admin/tables` y `PATCH /api/admin/tables/:id`.
+Agregar campo `capacity` al formulario en `admin/tables.tsx`.
+
+---
+
+## 2. BACKEND
+
+### 2.1 Modificar `GET /api/waiter/tables`
+
+Agregar en la respuesta de cada mesa el campo `upcomingReservation`:
+
+```typescript
+interface TableView {
+  // ... todos los campos existentes sin cambios ...
+
+  // NUEVO:
+  upcomingReservation: {
+    id:           number
+    guestName:    string
+    partySize:    number
+    reservedDate: string   // "2026-02-20"
+    reservedTime: string   // "19:30"
+    status:       string   // PENDING | CONFIRMED
+    minutesUntil: number   // minutos desde ahora hasta reservedDate+reservedTime
+  } | null
+  // Solo incluir la reserva más próxima con status PENDING o CONFIRMED
+  // Solo si está dentro de las próximas 24 horas
+}
+```
+
+**No romper ningún campo existente.**
+
+### 2.2 Nuevas rutas: `/api/reservations`
+
+Todas requieren autenticación (sesión activa).
+
+```
+GET    /api/reservations
+       Query params:
+         date     (YYYY-MM-DD, required)
+         tableId  (number, optional — filtrar por mesa)
+         status   (string, optional — filtrar por status)
+       Respuesta: Reservation[] con campo table: { id, tableName, tableCode }
+
+GET    /api/reservations/:id
+
+POST   /api/reservations
+       Body: { guestName, guestPhone, guestEmail?, partySize,
+               reservedDate, reservedTime, tableId?, notes?, durationMinutes? }
+       - Genera reservationCode automático: "RES-YYYY-NNNN"
+       - Calcula durationMinutes desde reservation_duration_config si no se envía
+       - Valida conflicto: no puede haber otra reserva CONFIRMED/SEATED en la
+         misma mesa cuyo intervalo [reservedTime, reservedTime+duration) se solape
+       - status inicial: CONFIRMED (salonero la crea ya confirmada)
+       - Emite WS: reservation_updated
+
+PATCH  /api/reservations/:id
+       Body parcial: { guestName?, guestPhone?, guestEmail?, partySize?,
+                       reservedDate?, reservedTime?, tableId?, notes?,
+                       durationMinutes? }
+       - Solo si status es PENDING o CONFIRMED
+       - Revalida conflictos si cambia mesa, fecha u hora
+       - Emite WS: reservation_updated
+
+PATCH  /api/reservations/:id/status
+       Body: { status: string, reason?: string }
+       Transiciones válidas:
+         PENDING    → CONFIRMED | CANCELLED
+         CONFIRMED  → SEATED | NO_SHOW | CANCELLED
+         SEATED     → (terminal, no puede cambiar)
+         WAITING    → CONFIRMED | CANCELLED
+       - Registra seatedAt si status → SEATED
+       - Registra cancelledAt + cancellationReason si → CANCELLED
+       - Emite WS: reservation_updated
+
+GET    /api/reservations/availability
+       Query: date (YYYY-MM-DD), partySize, tableId? (optional)
+       Respuesta: lista de mesas disponibles para esa fecha/partySize,
+                  considerando conflictos de reservas existentes y capacidad
+       Una mesa está disponible si:
+         capacity >= partySize
+         AND no tiene reserva CONFIRMED/SEATED en ese día sin tableId especificado,
+             o sin conflicto de horario si se pide disponibilidad por hora
+```
+
+### 2.3 Ruta pública (sin autenticación)
+
+```
+POST   /api/public/reservations
+       Body: { guestName, guestPhone, guestEmail?, partySize,
+               reservedDate, reservedTime, tableId?, notes? }
+       - status inicial: PENDING
+       - Valida conflictos igual que la ruta autenticada
+       - Rate limiting: 5 req/hour por IP
+       - Envía email de confirmación si guestEmail está presente
+         (usar Nodemailer ya configurado en el sistema)
+       - Responde: { reservationCode, message }
+
+GET    /api/public/reservations/available-times
+       Query: date (YYYY-MM-DD), partySize
+       Respuesta: slots de tiempo disponibles (cada 30min entre 11:00 y 22:00)
+                  con mesas sugeridas para cada slot
+```
+
+### 2.4 WebSocket — nuevo evento
+
+Emitir desde el backend cuando cambia cualquier reserva:
+```typescript
+{ type: "reservation_updated", data: { reservationId, tableId, status } }
+```
+
+---
+
+## 3. FRONTEND — Arquitectura de componentes
+
+### Principio de separación
+Los dos componentes nuevos se crean como archivos independientes y se **importan** en `tables.tsx`. Esto mantiene `tables.tsx` en ~380 líneas (solo +70 sobre las 310 actuales) y los componentes de reservas son lazy-loadable y testeables por separado.
+
+```
+client/src/components/reservations/
+  ReservationsSheet.tsx      ← sheet con lista de reservas del día
+  ReservationFormDialog.tsx  ← dialog de crear/editar reserva
+```
+
+`tables.tsx` solo agrega:
+1. Un campo `upcomingReservation` en el tipo `TableView`
+2. Badge en la tarjeta de mesa
+3. Un botón en el header que abre `ReservationsSheet`
+4. Los dos imports
+
+### 3.1 Modificaciones en `tables.tsx`
+
+#### Campo nuevo en `TableView`
+```typescript
+interface TableView {
+  // ... todos los campos existentes sin cambios ...
+  upcomingReservation: {
+    id:           number
+    guestName:    string
+    partySize:    number
+    reservedDate: string   // "2026-02-20"
+    reservedTime: string   // "19:30"
+    status:       string
+    minutesUntil: number
+  } | null
+}
+```
+
+#### Badge en tarjeta de mesa
+Si `upcomingReservation !== null`, mostrar badge en la esquina superior derecha de la tarjeta, sobre el badge de status actual:
+
+```
+Si minutesUntil <= 60:
+  Badge amber pulsante: "🔔 19:30 — Juan P."
+  Borde de la tarjeta: ring-2 ring-amber-400
+
+Si minutesUntil > 60 y <= 24h*60:
+  Badge gris pequeño: "📅 19:30"
+  Sin borde especial
+```
+
+#### Botón en el header
+En el header de la página (donde están los controles de columnas visibles), agregar:
+```tsx
+import { ReservationsSheet } from "@/components/reservations/ReservationsSheet"
+
+// estado local
+const [reservationsOpen, setReservationsOpen] = useState(false)
+
+// en el JSX del header:
+<Button variant="outline" size="sm" onClick={() => setReservationsOpen(true)}>
+  <CalendarDays className="h-4 w-4 mr-2" />
+  Reservas
+</Button>
+
+<ReservationsSheet
+  open={reservationsOpen}
+  onOpenChange={setReservationsOpen}
+/>
+```
+
+#### WebSocket en `tables.tsx`
+Agregar listener junto a los existentes:
+```typescript
+const unsubReservation = wsManager.on("reservation_updated", () => {
+  queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] })
+})
+// incluir en el cleanup del useEffect
+```
+
+---
+
+### 3.2 `ReservationsSheet.tsx`
+
+Archivo: `client/src/components/reservations/ReservationsSheet.tsx`
+
+```typescript
+interface ReservationsSheetProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+```
+
+Sheet usando `Sheet` de shadcn/ui.
+- En desktop (≥768px): `side="right"`, ancho 420px
+- En móvil: `side="bottom"`, altura 85vh
+
+**Solo hace fetch cuando `open === true`:**
+```typescript
+const { data: reservations } = useQuery({
+  queryKey: ["/api/reservations", { date: selectedDate }],
+  enabled: open,           // ← no consume nada cuando está cerrado
+  refetchInterval: open ? 30000 : false,
+})
+```
+
+**WebSocket:**
+```typescript
+useEffect(() => {
+  if (!open) return
+  const unsub = wsManager.on("reservation_updated", () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/reservations"] })
+  })
+  return unsub
+}, [open])
+```
+
+**Header del sheet:**
+- Título: "Reservas"
+- Selector de fecha: botones "Hoy" / "Mañana" + `<input type="date">` para otros días
+- Botón "+ Nueva reserva" → abre `ReservationFormDialog`
+
+**Cuerpo — lista agrupada:**
+
+**Sección "Próximas"** — status PENDING o CONFIRMED, ordenadas por hora
+**Sección "En mesa"** — status SEATED
+**Sección "Completadas / Canceladas"** — NO_SHOW, CANCELLED — colapsable con `<Collapsible>` de shadcn, cerrada por defecto
+
+Cada ítem:
+```
+┌─────────────────────────────────────────────────────────┐
+│  19:30   Juan Pérez             3 👤   Mesa 5           │
+│          📱 +506 8888-8888      [CONFIRMED]             │
+│          "Cumpleaños de María"                          │
+│                                 [Check-in] [···]        │
+└─────────────────────────────────────────────────────────┘
+```
+
+- Hora en bold, nombre, cantidad de personas, mesa asignada (o "Sin mesa")
+- Teléfono clickeable: `href="https://wa.me/${phone.replace(/\D/g,'')}"`
+- Badge de status: PENDING=yellow, CONFIRMED=blue, SEATED=green, NO_SHOW=red, CANCELLED=gray
+- Botón "Check-in" solo si status === 'CONFIRMED' → `PATCH /api/reservations/:id/status { status: 'SEATED' }`
+- `DropdownMenu` "···": Editar (abre `ReservationFormDialog` en modo edición), Cancelar (confirmación + razón), Marcar no-show
+
+Si lista vacía: empty state con texto "Sin reservas para este día" + botón "+ Crear reserva".
+
+---
+
+### 3.3 `ReservationFormDialog.tsx`
+
+Archivo: `client/src/components/reservations/ReservationFormDialog.tsx`
+
+```typescript
+interface ReservationFormDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  reservation?: Reservation   // si se pasa → modo edición; si no → modo creación
+  defaultDate?: string        // pre-llenar la fecha (viene del sheet)
+}
+```
+
+Dialog de shadcn/ui, ancho máximo 480px.
+
+**Campos:**
+- Nombre del cliente (required)
+- Teléfono / WhatsApp (required)
+- Email (opcional)
+- Cantidad de personas — input numérico min 1
+- Fecha — `<input type="date">` hasta 30 días adelante
+- Hora — `<select>` con slots cada 30min entre 11:00 y 22:00
+- Mesa — `<select>` con mesas activas + su capacidad. Opción "Sin mesa asignada".
+  - Al seleccionar mesa + fecha + hora: fetch `GET /api/reservations/availability?date=X&partySize=Y` para detectar conflictos. Si hay conflicto → advertencia inline roja: "Esta mesa tiene reserva de 18:00 a 19:30 (María G.)"
+- Notas (textarea, opcional)
+
+**Al guardar:**
+- Nueva: `POST /api/reservations` → status inicial CONFIRMED
+- Edición: `PATCH /api/reservations/:id`
+- On success: `queryClient.invalidateQueries(["/api/reservations"])` + `queryClient.invalidateQueries(["/api/waiter/tables"])` + cerrar dialog
+
+---
+
+## 4. PÁGINA PÚBLICA — `/reserve`
+
+Ruta pública en `App.tsx`, igual que `/qr/:tableCode`. Sin autenticación.
+
+### Sistema de diseño: LINEN
+
+La página usa exactamente el mismo sistema de diseño Linen que el resto de la plataforma. Los tokens ya existen en `src/styles/tokens.css`. Úsalos directamente — **no crear colores nuevos ni hardcodear valores hex**.
+
+```css
+/* Tokens a usar en esta página */
+--bg          /* fondo de página: crema cálido */
+--s0          /* cards y paneles: blanco */
+--s1          /* inputs, hover: crema suave */
+--border      /* bordes de inputs y cards */
+--border2     /* bordes más visibles */
+--acc         /* azul marino — botón CTA, elementos activos */
+--acc-d       /* fondo tenue azul — selección activa */
+--acc-m       /* borde azul semitransparente */
+--sage        /* confirmación, check final */
+--sage-d      /* fondo tenue verde */
+--amber       /* advertencia */
+--amber-d     /* fondo tenue amber */
+--text        /* texto principal */
+--text2       /* texto secundario */
+--text3       /* labels, hints, placeholders */
+--shadow-sm   /* sombra card */
+--shadow-dialog /* sombra modal */
+
+/* Fuentes */
+--f-disp      /* Outfit — títulos, botones CTA */
+--f-body      /* IBM Plex Sans — cuerpo, labels */
+--f-mono      /* IBM Plex Mono — fechas, horas, código de reserva */
+```
+
+### Layout general
+
+```
+max-width: 480px
+margin: 0 auto
+padding: 0 20px
+min-height: 100dvh
+background: var(--bg)
+font-family: var(--f-body)
+```
+
+En mobile ocupa pantalla completa. En desktop se ve como un card centrado con algo de padding arriba y abajo.
+
+### Progress bar
+
+Barra de progreso lineal en la parte superior (no dots, sino barra):
+```css
+.reserve-progress-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.reserve-progress-fill {
+  height: 100%;
+  background: var(--acc);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+/* S0=25% S1=50% S2=75% S3=100% */
+```
+
+### Componentes visuales compartidos entre pasos
+
+**Botón CTA principal:**
+```css
+.reserve-cta {
+  width: 100%;
+  padding: 16px 20px;
+  background: var(--acc);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-md);
+  font-family: var(--f-disp);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all var(--t-mid);
+  box-shadow: 0 4px 14px rgba(29,78,216,0.22);
+  min-height: 56px;
+}
+.reserve-cta:disabled {
+  background: var(--s2);
+  color: var(--text3);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.reserve-cta:active:not(:disabled) { transform: scale(0.98); }
+```
+
+**Botón volver:**
+```css
+.reserve-back {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--s0);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text2);
+  font-size: 20px;
+}
+```
+
+**Card de sección:**
+```css
+.reserve-card {
+  background: var(--s0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+}
+```
+
+**Input de texto:**
+```css
+.reserve-input {
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--s1);
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-family: var(--f-body);
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.reserve-input:focus {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 3px var(--acc-d);
+}
+.reserve-input.error {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-d);
+}
+```
+
+**Label de campo:**
+```css
+.reserve-label {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+```
+
+---
+
+### S0 — Fecha, hora y personas
+
+**Header:**
+- Logo o nombre del restaurante (fetch desde `GET /api/business-config`, campo `businessName`)
+- Título Outfit 28px: "Reservar una mesa"
+- Subtítulo IBM Plex 15px color `--text2`
+
+**Card fecha:**
+- Label: "FECHA"
+- `<input type="date">` estilizado con `.reserve-input`
+- Min: hoy. Max: hoy + 30 días.
+
+**Card personas:**
+- Label: "PERSONAS"
+- Control: botón `−` (circular 44px, borde `--border`) / número Outfit 28px bold / botón `+` (circular 44px, fondo `--acc`, texto blanco)
+- Min 1, max 20
+
+**Grilla de horarios disponibles:**
+- Label: "HORA DISPONIBLE"
+- Fetch `GET /api/public/reservations/available-times?date=X&partySize=Y`
+- Solo hacer el fetch cuando fecha y partySize estén seleccionados
+- Loading: skeleton de pills grises animados
+- Pills en grid `grid-cols-4` gap-2:
+
+```css
+.time-pill {
+  padding: 10px 6px;
+  border-radius: var(--r-sm);
+  border: 1.5px solid var(--border);
+  background: var(--s0);
+  color: var(--text2);
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.time-pill:hover:not(.disabled) {
+  border-color: var(--acc-m);
+  background: var(--acc-d);
+  color: var(--acc);
+}
+.time-pill.selected {
+  border-color: var(--acc);
+  background: var(--acc);
+  color: #fff;
+}
+.time-pill.disabled {
+  background: var(--s1);
+  color: var(--text4);
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+```
+
+Botón CTA "Continuar →" — deshabilitado hasta tener fecha + hora + partySize.
+
+---
+
+### S1 — Mesa (opcional)
+
+**Card de selección de mesa:**
+- Label: "MESA (OPCIONAL)"
+- Lista de mesas disponibles para ese slot, obtenidas del endpoint de disponibilidad
+
+Cada opción de mesa:
+```css
+.mesa-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  border: 1.5px solid var(--border);
+  background: var(--s0);
+  cursor: pointer;
+  transition: all var(--t-fast);
+  margin-bottom: 8px;
+}
+.mesa-option.selected {
+  border-color: var(--acc);
+  background: var(--acc-d);
+}
+.mesa-option:hover:not(.selected) {
+  background: var(--s1);
+}
+/* Icono mesa */
+.mesa-icon {
+  width: 44px; height: 44px;
+  border-radius: var(--r-sm);
+  background: var(--s1);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+/* Radio indicator */
+.mesa-radio {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border2);
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.mesa-option.selected .mesa-radio {
+  border-color: var(--acc);
+  background: var(--acc);
+}
+```
+
+Opción especial al inicio de la lista:
+```
+┌─ Sin preferencia ─────────────────────────────┐
+│  🍽  El restaurante asigna la mejor mesa       │
+│  disponible para tu grupo                  ○  │
+└───────────────────────────────────────────────┘
+```
+
+Botones footer: "← Atrás" (ghost) + "Continuar →" (CTA azul)
+
+---
+
+### S2 — Datos del cliente
+
+**Formulario:**
+- Nombre completo — `.reserve-input`, required
+- Teléfono / WhatsApp — `.reserve-input`, required, tipo `tel`
+  - Hint debajo: texto pequeño IBM Plex Mono `--text3`: "Recibirás confirmación por WhatsApp"
+- Email — `.reserve-input`, opcional
+- Notas especiales — `<textarea>` con mismos estilos que `.reserve-input`, 3 rows, opcional
+  - Placeholder: "Cumpleaños, alergias, tipo de silla para bebé..."
+
+**Resumen de la reserva** (card pequeño al pie del formulario antes del botón):
+```
+┌─────────────────────────────────────────────┐
+│  📅  Viernes 20 feb · 19:30                 │
+│  👥  3 personas · Mesa 5                    │
+└─────────────────────────────────────────────┘
+```
+Fondo `--s1`, borde `--border`, border-radius `--r-md`.
+Fuente IBM Plex Mono 13px para fechas y datos.
+
+Botón CTA: "Confirmar reserva" → `POST /api/public/reservations`
+Durante el envío: botón muestra spinner + "Enviando..." y `disabled`.
+
+---
+
+### S3 — Confirmación
+
+**Círculo de check animado:**
+```css
+.confirm-circle {
+  width: 88px; height: 88px;
+  border-radius: 50%;
+  background: var(--sage-d);
+  border: 2px solid var(--sage-m);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 40px;
+  margin: 0 auto 24px;
+  animation: popIn 0.4s cubic-bezier(0.22,0.68,0,1.2);
+}
+@keyframes popIn {
+  from { transform: scale(0.5); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+```
+
+**Código de reserva** — el dato más prominente:
+```css
+.reserve-code {
+  font-family: var(--f-mono);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--acc);
+  letter-spacing: 0.06em;
+  text-align: center;
+  background: var(--acc-d);
+  border: 1.5px solid var(--acc-m);
+  border-radius: var(--r-md);
+  padding: 16px 24px;
+  margin: 20px 0;
+}
+```
+
+**Resumen final** (mismo card compacto que S2):
+- Fecha y hora
+- Personas
+- Mesa asignada (o "Pendiente de asignación")
+- Notas si las hay
+
+**Mensaje de notificación:**
+- Si tiene email: "Te enviamos los detalles a {email}" — ícono ✉
+- Siempre: "Recibirás confirmación por WhatsApp al {phone}" — ícono 📱
+- Ambos en IBM Plex Mono 13px, color `--text3`
+
+**Botón secundario** (no CTA, sino outline):
+```css
+.reserve-btn-outline {
+  width: 100%;
+  padding: 14px 20px;
+  background: transparent;
+  color: var(--acc);
+  border: 1.5px solid var(--acc-m);
+  border-radius: var(--r-md);
+  font-family: var(--f-disp);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--t-fast);
+  margin-top: 12px;
+}
+.reserve-btn-outline:hover { background: var(--acc-d); }
+```
+Texto: "+ Hacer otra reserva" → resetea estado y vuelve a S0.
+
+---
+
+## 5. ADMIN — Configuración
+
+Solo agregar dentro de la página existente `admin/tables.tsx`:
+
+- Campo `capacity` en el formulario de crear/editar mesa (número, min 1, default 4)
+- Tab o sección nueva "Configuración de Reservas":
+  - Tabla editable de duración por tamaño de grupo (`reservation_duration_config`)
+  - Campo: horario de apertura / cierre para reservas online
+  - Toggle: habilitar/deshabilitar reservas online (`/reserve`)
+
+---
+
+## 6. ARCHIVOS A TOCAR
+
+### Nuevos
+```
+server/db/schema/reservations.ts                          ← tablas reservations + reservation_duration_config
+server/routes/reservations.ts                             ← rutas autenticadas /api/reservations/*
+server/routes/public-reservations.ts                      ← rutas públicas /api/public/reservations/*
+client/src/components/reservations/ReservationsSheet.tsx  ← sheet de lista de reservas (lazy, solo carga al abrir)
+client/src/components/reservations/ReservationFormDialog.tsx ← dialog crear/editar reserva
+client/src/pages/public-reserve.tsx                       ← página pública del cliente
+```
+
+### Modificados
+```
+server/db/schema/index.ts          ← exportar nuevas tablas
+server/db/schema/tables.ts         ← agregar columna capacity
+server/routes/index.ts             ← registrar nuevas rutas
+server/routes/waiter.ts            ← agregar upcomingReservation en /api/waiter/tables
+server/websocket.ts                ← emitir reservation_updated
+client/src/App.tsx                 ← agregar ruta pública /reserve
+client/src/pages/tables.tsx        ← (+70 líneas) badge + botón + imports de los 2 componentes + WS listener
+client/src/pages/admin/tables.tsx  ← campo capacity + config de reservas
+```
+
+**Total: 6 archivos nuevos, 8 modificados.**
+**`tables.tsx` pasa de ~310 a ~380 líneas. Los componentes de reservas viven separados y no se cargan hasta que el salonero los necesita.**
+
+---
+
+## 7. LO QUE NO CAMBIA
+
+- Toda la lógica de órdenes, pagos, KDS, POS, inventario, HR
+- El flujo actual de `tables.tsx` — solo se agregan elementos, no se modifica nada existente
+- Sistema de autenticación y permisos (las reservas usan `MODULE_TABLES_VIEW`)
+- Módulo QR del cliente
+- Timezone handling, patrones de datos, wsManager
+
+---
+
+## 8. ORDEN DE IMPLEMENTACIÓN
+
+1. Schema Drizzle + migración (reservations + duration_config + capacity en tables)
+2. Rutas backend `/api/reservations` (CRUD + validación de conflictos)
+3. Modificar `/api/waiter/tables` para incluir `upcomingReservation`
+4. Rutas públicas `/api/public/reservations`
+5. Modificar `tables.tsx`: badge en tarjetas + botón Reservas + ReservationsSheet + ReservationFormDialog
+6. Modificar `admin/tables.tsx`: campo capacity + config duraciones
+7. Página pública `/reserve`
+8. Email de confirmación (Nodemailer ya disponible)
