@@ -1,18 +1,14 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRoute } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useQuery } from "@tanstack/react-query";
 import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
-  UtensilsCrossed, Plus, Loader2, Check, ChevronLeft, ChevronRight,
-  X, Users, User, ArrowRight, Coffee, ChefHat,
-  Utensils, Send, CheckCircle2, ShoppingBag, ChevronDown, BookOpen,
+  Loader2, UtensilsCrossed, Coffee, ShoppingCart, User, Check,
+  Plus, Minus, ChevronLeft, Pencil, X,
 } from "lucide-react";
 
-type Step = "welcome" | "subaccount" | "name" | "mode_select" | "easy_cats" | "easy_products" | "easy_review" | "menu" | "modifiers" | "review" | "view_menu" | "sent";
-
-type Mode = "easy" | "standard" | "view_menu" | null;
+/* ═══════════════════ Types ═══════════════════ */
 
 interface QRProduct {
   id: number;
@@ -24,1532 +20,915 @@ interface QRProduct {
   categoryParentCode: string | null;
   availablePortions: number | null;
 }
-
-interface QRTopCategory {
-  code: string;
-  name: string;
-}
-
-interface QRMenuResponse {
-  products: QRProduct[];
-  topCategories: QRTopCategory[];
-}
-
-interface QRModifierGroup {
-  id: number;
-  name: string;
-  required: boolean;
-  multiSelect: boolean;
+interface QRTopCategory { code: string; name: string; }
+interface QRMenuResponse { products: QRProduct[]; topCategories: QRTopCategory[]; }
+interface ModGroup {
+  id: number; name: string; required: boolean; multiSelect: boolean;
   options: { id: number; name: string; priceDelta: string }[];
 }
-
 interface Subaccount {
-  id: number;
-  orderId: number;
-  tableId: number;
-  slotNumber: number;
-  code: string;
-  label: string;
-  isActive: boolean;
+  id: number; orderId: number; tableId: number;
+  slotNumber: number; code: string; label: string; isActive: boolean;
 }
-
 interface CartItem {
-  productId: number;
-  productName: string;
-  unitPrice: string;
+  product: QRProduct;
   qty: number;
-  customerName: string;
-  modifiers?: { modGroupId: number; optionId: number }[];
-  categoryName: string;
+  note: string;
+  selections: Record<string, number[]>;
+  unitPrice: number;
 }
 
-const MAX_SUBACCOUNTS = 6;
+/* ═══════════════════ Colors ═══════════════════ */
 
-const QR_STYLES = `
-.qr-page {
-  --qr-bg: #0d1117;
-  --qr-s1: #161d26;
-  --qr-s2: #1c2535;
-  --qr-accent: #22c55e;
-  --qr-text: #e8edf3;
-  --qr-sub: #6b7fa0;
-  --qr-red: #ef4444;
-  background: var(--qr-bg);
-  min-height: 100dvh;
-  font-family: var(--f-body);
-  color: var(--qr-text);
-  display: flex;
-  flex-direction: column;
-}
-.qr-header {
-  position: sticky; top: 0; z-index: 9999;
-  padding: 16px 20px;
-  background: var(--qr-bg);
-  display: flex; align-items: center; gap: 12px;
-}
-.qr-back {
-  width: 40px; height: 40px; border-radius: 50%;
-  background: var(--qr-s2); border: none;
-  color: var(--qr-text); font-size: 22px;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s;
-}
-.qr-back:active { background: var(--qr-s1); }
-.qr-progress { display: flex; gap: 6px; flex: 1; justify-content: center; }
-.qr-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--qr-s2); transition: all 0.3s ease;
-}
-.qr-dot.done { background: var(--qr-accent); }
-.qr-table-chip {
-  background: var(--qr-s2); padding: 5px 12px; border-radius: 20px;
-  font-family: var(--f-mono); font-size: 11px; color: var(--qr-sub);
-}
-.qr-content { padding: 0 20px; flex: 1; }
-.qr-footer {
-  position: sticky; bottom: 0; z-index: 9999;
-  padding: 16px 20px;
-  background: linear-gradient(to top, var(--qr-bg) 80%, transparent);
-}
-.qr-cta {
-  width: 100%; padding: 16px; border-radius: var(--r-md);
-  background: var(--qr-accent); color: #050f08;
-  font-family: var(--f-disp); font-size: 18px; font-weight: 800;
-  letter-spacing: 0.04em; border: none; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  transition: transform 0.1s;
-}
-.qr-cta:disabled { background: var(--qr-s2); color: var(--qr-sub); cursor: not-allowed; }
-.qr-cta:active:not(:disabled) { transform: scale(0.98); }
-.qr-cta-outline {
-  width: 100%; padding: 16px; border-radius: var(--r-md);
-  background: transparent; color: var(--qr-text);
-  font-family: var(--f-disp); font-size: 18px; font-weight: 800;
-  letter-spacing: 0.04em; border: 1.5px solid var(--qr-s2); cursor: pointer;
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  transition: all 0.15s;
-}
-.qr-cta-outline:active { background: var(--qr-s2); transform: scale(0.98); }
-.qr-step-title {
-  font-family: var(--f-disp); font-size: 26px; font-weight: 800; margin-bottom: 6px;
-}
-.qr-step-sub { color: var(--qr-sub); font-size: 14px; margin-bottom: 24px; }
-.qr-name-input {
-  width: 100%; padding: 16px; font-size: 18px;
-  background: var(--qr-s2); border: 2px solid transparent;
-  border-radius: var(--r-md); color: var(--qr-text); outline: none;
-  font-family: var(--f-body); text-align: center;
-}
-.qr-name-input:focus { border-color: var(--qr-accent); }
-.qr-name-input::placeholder { color: var(--qr-sub); }
-.qr-big-cats { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
-.qr-big-cat {
-  display: flex; align-items: center; gap: 16px;
-  padding: 18px 16px; background: var(--qr-s1);
-  border: 1.5px solid var(--qr-s2); border-radius: var(--r-md);
-  cursor: pointer; transition: all 0.2s; text-align: left;
-  color: var(--qr-text); font-family: var(--f-body);
-}
-.qr-big-cat:active { transform: scale(0.98); background: var(--qr-s2); }
-.qr-big-cat-label { font-size: 17px; font-weight: 600; }
-.qr-big-cat-count { font-size: 12px; color: var(--qr-sub); margin-top: 2px; }
-.qr-product-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.qr-product-card {
-  background: var(--qr-s1); border: 1.5px solid var(--qr-s2);
-  border-radius: var(--r-md); padding: 14px;
-  cursor: pointer; transition: all 0.2s;
-  display: flex; flex-direction: column;
-}
-.qr-product-card.selected { border-color: var(--qr-accent); background: rgba(34,197,94,0.08); }
-.qr-product-card.out-of-stock { opacity: 0.5; }
-.qr-product-name { font-family: var(--f-body); font-size: 15px; font-weight: 500; line-height: 1.3; }
-.qr-product-price { font-family: var(--f-mono); font-size: 14px; color: var(--qr-accent); font-weight: 600; margin-top: 4px; }
-.qr-product-desc { font-size: 12px; color: var(--qr-sub); margin-top: 4px; }
-.qr-product-badge {
-  display: inline-block; background: rgba(34,197,94,0.15); color: var(--qr-accent);
-  font-family: var(--f-mono); font-size: 11px; font-weight: 600;
-  padding: 2px 8px; border-radius: 12px; margin-top: 4px;
-}
-.qr-product-add-btn {
-  margin-top: auto; padding-top: 8px; width: 100%;
-  padding: 10px; border-radius: var(--r-sm);
-  background: var(--qr-accent); color: #050f08;
-  font-family: var(--f-disp); font-size: 14px; font-weight: 700;
-  border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;
-  transition: transform 0.1s;
-}
-.qr-product-add-btn:disabled { background: var(--qr-s2); color: var(--qr-sub); cursor: not-allowed; }
-.qr-product-add-btn:active:not(:disabled) { transform: scale(0.97); }
-.qr-qty { display: flex; align-items: center; gap: 12px; }
-.qr-qty-btn {
-  width: 40px; height: 40px; border-radius: 50%;
-  background: var(--qr-s2); border: 1.5px solid var(--qr-s2);
-  color: var(--qr-text); font-size: 18px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.qr-qty-value {
-  font-family: var(--f-mono); font-size: 22px; font-weight: 600;
-  min-width: 28px; text-align: center;
-}
-.qr-cart-item {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px; background: var(--qr-s1); border: 1px solid var(--qr-s2);
-  border-radius: var(--r-sm); margin-bottom: 6px;
-}
-.qr-cart-total {
-  font-family: var(--f-mono); font-size: 20px; font-weight: 700;
-  color: var(--qr-accent); text-align: right; margin-top: 12px;
-}
-.qr-mod-option {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px; background: var(--qr-s1);
-  border: 1.5px solid var(--qr-s2); border-radius: var(--r-sm);
-  margin-bottom: 6px; cursor: pointer; color: var(--qr-text);
-  font-family: var(--f-body); font-size: 16px;
-  transition: all 0.15s;
-}
-.qr-mod-option.selected { border-color: var(--qr-accent); background: rgba(34,197,94,0.05); }
-.qr-mod-option:active { transform: scale(0.98); }
-.qr-sub-tabs { display: flex; gap: 6px; padding: 10px 0; flex-wrap: wrap; }
-.qr-sub-tab {
-  padding: 8px 14px; border-radius: 20px;
-  background: var(--qr-s2); border: 1.5px solid var(--qr-s2);
-  color: var(--qr-sub); font-family: var(--f-mono); font-size: 12px;
-  cursor: pointer; transition: all 0.15s;
-}
-.qr-sub-tab.active { border-color: var(--qr-accent); color: var(--qr-accent); background: rgba(34,197,94,0.08); }
-.qr-slot-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.qr-slot-btn {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  padding: 20px 16px; border-radius: var(--r-md);
-  background: var(--qr-s1); border: 1.5px solid var(--qr-s2);
-  color: var(--qr-text); cursor: pointer; transition: all 0.15s;
-}
-.qr-slot-btn.exists { border-color: var(--qr-accent); background: rgba(34,197,94,0.08); }
-.qr-slot-btn:active { transform: scale(0.97); }
-.qr-slot-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.qr-slot-num { font-family: var(--f-disp); font-size: 28px; font-weight: 800; }
-.qr-slot-label { font-size: 11px; color: var(--qr-sub); }
-.qr-name-btn {
-  display: flex; align-items: center; gap: 12px;
-  padding: 18px 20px; border-radius: var(--r-md);
-  background: var(--qr-accent); border: none;
-  color: #050f08; cursor: pointer; width: 100%;
-  font-family: var(--f-disp); font-size: 18px; font-weight: 700;
-  transition: transform 0.1s;
-}
-.qr-name-btn:active { transform: scale(0.98); }
-.qr-name-btn-outline {
-  display: flex; align-items: center; gap: 12px;
-  padding: 18px 20px; border-radius: var(--r-md);
-  background: transparent; border: 1.5px solid var(--qr-s2);
-  color: var(--qr-text); cursor: pointer; width: 100%;
-  font-family: var(--f-disp); font-size: 18px; font-weight: 700;
-  transition: all 0.15s;
-}
-.qr-name-btn-outline:active { background: var(--qr-s2); transform: scale(0.98); }
-.qr-name-btn-outline:disabled { opacity: 0.5; cursor: not-allowed; }
-.qr-mode-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 24px 16px; border-radius: var(--r-md);
-  background: var(--qr-s1); border: 1.5px solid var(--qr-s2);
-  color: var(--qr-text); cursor: pointer; width: 100%;
-  font-family: var(--f-body); font-size: 17px; font-weight: 600;
-  transition: all 0.15s;
-}
-.qr-mode-btn:active { transform: scale(0.98); background: var(--qr-s2); }
-.qr-review-info {
-  background: var(--qr-s1); border: 1px solid var(--qr-s2);
-  border-radius: var(--r-md); padding: 14px 16px;
-}
-.qr-cart-remove {
-  width: 32px; height: 32px; border-radius: 50%;
-  background: var(--qr-s2); border: none;
-  color: var(--qr-sub); cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s;
-}
-.qr-cart-remove:active { background: rgba(239,68,68,0.15); color: var(--qr-red); }
-.qr-cart-count-bar {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  font-size: 13px; color: var(--qr-sub); padding: 8px 0;
-}
-.qr-top-tab {
-  flex: 1; padding: 12px 8px; text-align: center;
-  font-family: var(--f-disp); font-size: 14px; font-weight: 700;
-  border: 1.5px solid var(--qr-s2); border-radius: var(--r-sm);
-  cursor: pointer; transition: all 0.15s; color: var(--qr-sub);
-  background: var(--qr-s1);
-}
-.qr-top-tab.active { border-color: var(--qr-accent); color: var(--qr-accent); background: rgba(34,197,94,0.08); }
-.qr-subcat-tab {
-  flex: 1; padding: 10px 8px; text-align: center;
-  font-size: 13px; font-weight: 500;
-  border: 1px solid var(--qr-s2); border-radius: var(--r-sm);
-  cursor: pointer; transition: all 0.15s; color: var(--qr-sub);
-  background: var(--qr-s1);
-}
-.qr-subcat-tab.active { border-color: var(--qr-text); color: var(--qr-text); background: var(--qr-s2); }
-.qr-food-tab {
-  flex: 1; padding: 12px 8px; text-align: center;
-  font-size: 13px; font-weight: 600;
-  border: 1.5px solid var(--qr-s2); border-radius: var(--r-sm);
-  cursor: pointer; transition: all 0.15s; color: var(--qr-sub);
-  background: var(--qr-s1);
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-}
-.qr-food-tab.active { border-color: var(--qr-accent); color: var(--qr-accent); background: rgba(34,197,94,0.08); }
-.qr-cat-toggle {
-  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 12px 14px; border-radius: var(--r-sm);
-  background: transparent; border: none; color: var(--qr-text);
-  cursor: pointer; font-family: var(--f-body); font-size: 15px; font-weight: 600;
-  transition: background 0.1s;
-}
-.qr-cat-toggle:active { background: var(--qr-s2); }
-.qr-cat-count {
-  font-family: var(--f-mono); font-size: 11px; font-weight: 600;
-  background: var(--qr-s2); color: var(--qr-sub);
-  padding: 2px 8px; border-radius: 12px;
-}
-.qr-mod-group-label { font-family: var(--f-disp); font-size: 17px; font-weight: 700; margin-bottom: 4px; }
-.qr-mod-required {
-  display: inline-block; font-family: var(--f-mono); font-size: 10px;
-  background: var(--qr-s2); color: var(--qr-sub);
-  padding: 2px 8px; border-radius: 12px; margin-left: 8px;
-}
-.qr-view-menu-header {
-  position: sticky; top: 0; z-index: 9999;
-  padding: 14px 20px; background: var(--qr-s1);
-  display: flex; align-items: center; gap: 12px;
-}
-.qr-view-top-title {
-  font-family: var(--f-disp); font-size: 18px; font-weight: 800;
-  color: var(--qr-accent); margin-bottom: 8px;
-  border-bottom: 1px solid var(--qr-s2); padding-bottom: 6px;
-}
-.qr-view-subcat-title {
-  font-family: var(--f-mono); font-size: 11px; font-weight: 600;
-  color: var(--qr-sub); letter-spacing: 0.08em; text-transform: uppercase;
-  margin-bottom: 8px;
-}
-.qr-view-product-btn {
-  padding: 10px; border-radius: var(--r-sm);
-  background: var(--qr-s1); border: 1px solid var(--qr-s2);
-  cursor: pointer; text-align: left; color: var(--qr-text);
-  transition: all 0.15s;
-}
-.qr-view-product-btn:active { background: var(--qr-s2); }
-.qr-center {
-  display: flex; align-items: center; justify-content: center;
-  min-height: 100dvh; padding: 20px; background: var(--qr-bg);
-  color: var(--qr-text);
-}
-.qr-success-circle {
-  width: 80px; height: 80px; border-radius: 50%;
-  background: rgba(34,197,94,0.15); display: flex;
-  align-items: center; justify-content: center; margin: 0 auto 20px;
-}
+const C = {
+  bg: "#faf8f4", card: "#ffffff", border: "#e8e2d9", border2: "#d4cdc3",
+  text: "#1a1612", text2: "#5a524a", text3: "#9a8f83",
+  acc: "#2d6a4f", accD: "#e8f5ee", accM: "rgba(45,106,79,0.2)", accT: "rgba(45,106,79,0.06)",
+  red: "#c0392b", redD: "#fdecea", overlay: "rgba(15,12,8,0.58)",
+};
+const serif = "Georgia, serif";
+const body = "system-ui, sans-serif";
+const mono = "'SF Mono', 'Menlo', monospace";
+
+/* ═══════════════════ CSS ═══════════════════ */
+
+const PAGE_CSS = `
+@keyframes qrSlideUp{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes qrFadeIn{from{opacity:0}to{opacity:1}}
+.qr-page *{box-sizing:border-box}
+.qr-page{background:${C.bg};min-height:100dvh;font-family:${body};color:${C.text};-webkit-tap-highlight-color:transparent;overflow-x:hidden}
+.qr-page input,.qr-page textarea,.qr-page button{font-family:${body}}
 `;
 
-function QRHeader({
-  currentStep,
-  totalSteps,
-  tableName,
-  onBack,
-}: {
-  currentStep: number;
-  totalSteps: number;
-  tableName?: string;
-  onBack?: () => void;
-}) {
+/* ═══════════════════ Helpers ═══════════════════ */
+
+function Dots({ cur, total }: { cur: number; total: number }) {
   return (
-    <div className="qr-header">
-      {onBack && (
-        <button className="qr-back" onClick={onBack} data-testid="button-step-back">
-          <ChevronLeft size={20} />
-        </button>
-      )}
-      <div className="qr-progress">
-        {Array.from({ length: totalSteps }, (_, i) => (
-          <div key={i} className={`qr-dot ${i < currentStep ? "done" : ""}`} />
-        ))}
-      </div>
-      {tableName && <span className="qr-table-chip">{tableName}</span>}
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      {Array.from({ length: total }, (_, i) => {
+        const active = i === cur;
+        const done = i < cur;
+        return (
+          <div key={i} style={{
+            width: active ? 20 : 7, height: 7,
+            borderRadius: active ? 4 : 50,
+            background: active ? C.acc : done ? C.acc : C.border2,
+            opacity: done ? 0.35 : 1,
+            transition: "all 0.2s ease",
+          }} />
+        );
+      })}
     </div>
   );
 }
 
-function QRStepLayout({
-  currentStep,
-  totalSteps,
-  title,
-  subtitle,
-  tableName,
-  children,
-  footer,
-  onBack,
-}: {
-  currentStep: number;
-  totalSteps: number;
-  title: string;
-  subtitle?: string;
-  tableName?: string;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-  onBack?: () => void;
+function Header({ onBack, children, tableCode, dotPos }: {
+  onBack: () => void; children?: React.ReactNode; tableCode: string; dotPos: number;
 }) {
   return (
-    <div className="qr-page">
-      <style>{QR_STYLES}</style>
-      <QRHeader currentStep={currentStep} totalSteps={totalSteps} tableName={tableName} onBack={onBack} />
-      <div className="qr-content">
-        <div style={{ maxWidth: 480, margin: "0 auto" }}>
-          <h1 className="qr-step-title" data-testid="text-step-title">{title}</h1>
-          {subtitle && <p className="qr-step-sub" data-testid="text-step-subtitle">{subtitle}</p>}
-          <p style={{ display: "none" }} data-testid="text-step-progress">Paso {currentStep} de {totalSteps}</p>
-          {children}
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "14px 16px",
+      borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20,
+    }}>
+      <button data-testid="button-qr-back" onClick={onBack} style={{
+        width: 38, height: 38, borderRadius: 50, border: `1px solid ${C.border}`,
+        background: C.card, display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", fontSize: 18, color: C.text2, flexShrink: 0,
+      }}>&lsaquo;</button>
+      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+      <Dots cur={dotPos} total={4} />
+      <div style={{
+        fontFamily: mono, fontSize: 11, padding: "4px 10px", borderRadius: 20,
+        background: C.bg, color: C.text3, textTransform: "uppercase", letterSpacing: "0.06em",
+        flexShrink: 0, border: `1px solid ${C.border}`,
+      }}>{tableCode}</div>
+    </div>
+  );
+}
+
+function fmtPrice(n: number): string { return formatCurrency(n); }
+
+function FoodIcon({ type, size = 20 }: { type?: string | null; size?: number }) {
+  return type === "bebidas"
+    ? <Coffee size={size} style={{ color: C.acc }} />
+    : <UtensilsCrossed size={size} style={{ color: C.acc }} />;
+}
+
+function getModSummary(item: CartItem, groups: ModGroup[] | undefined): string {
+  if (!groups) return "";
+  const names: string[] = [];
+  for (const [gid, oids] of Object.entries(item.selections)) {
+    const g = groups.find(x => String(x.id) === gid);
+    if (!g) continue;
+    for (const oid of oids) {
+      const o = g.options.find(x => x.id === oid);
+      if (o) names.push(o.name);
+    }
+  }
+  return names.join(" · ");
+}
+
+/* ═══════════════════ ProductModal ═══════════════════ */
+
+function ProductModal({ product, existing, onAdd, onClose }: {
+  product: QRProduct;
+  existing?: CartItem;
+  onAdd: (product: QRProduct, qty: number, note: string, selections: Record<string, number[]>, unitPrice: number) => void;
+  onClose: () => void;
+}) {
+  const { data: groups, isLoading } = useQuery<ModGroup[]>({
+    queryKey: [`/api/products/${product.id}/modifiers`],
+    queryFn: async () => {
+      const r = await fetch(`/api/products/${product.id}/modifiers`);
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const [qty, setQty] = useState(existing?.qty ?? 1);
+  const [note, setNote] = useState(existing?.note ?? "");
+  const [sel, setSel] = useState<Record<string, number[]>>(existing?.selections ?? {});
+  const [tried, setTried] = useState(false);
+
+  const modPrice = useMemo(() => {
+    if (!groups) return 0;
+    return groups.flatMap(g =>
+      g.options.filter(o => sel[g.id]?.includes(o.id)).map(o => Number(o.priceDelta) || 0)
+    ).reduce((a, b) => a + b, 0);
+  }, [groups, sel]);
+
+  const basePrice = Number(product.price) || 0;
+  const unitPrice = basePrice + modPrice;
+
+  const missingRequired = useMemo(() =>
+    (groups || []).filter(g => g.required && (!sel[g.id] || sel[g.id].length === 0)),
+    [groups, sel]
+  );
+
+  function toggle(groupId: number, optionId: number, multi: boolean) {
+    setSel(prev => {
+      const cur = prev[groupId] ?? [];
+      if (multi) {
+        return { ...prev, [groupId]: cur.includes(optionId) ? cur.filter(x => x !== optionId) : [...cur, optionId] };
+      }
+      return { ...prev, [groupId]: cur.includes(optionId) ? [] : [optionId] };
+    });
+  }
+
+  function handleAdd() {
+    setTried(true);
+    if (missingRequired.length > 0) return;
+    onAdd(product, qty, note, sel, unitPrice);
+    onClose();
+  }
+
+  const hasGroups = groups && groups.length > 0;
+
+  return (
+    <div data-testid="modal-product-overlay" onClick={onClose} style={{
+      position: "fixed", inset: 0, zIndex: 100, background: C.overlay,
+      display: "flex", flexDirection: "column", justifyContent: "flex-end",
+      animation: "qrFadeIn 0.18s ease",
+    }}>
+      <div data-testid="modal-product-sheet" onClick={e => e.stopPropagation()} style={{
+        background: C.card, borderRadius: "24px 24px 0 0", maxHeight: "90dvh",
+        display: "flex", flexDirection: "column",
+        animation: "qrSlideUp 0.22s cubic-bezier(0.32,0.72,0,1)",
+      }}>
+        {/* Drag handle */}
+        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 2px" }}>
+          <div style={{ width: 40, height: 4, borderRadius: 2, background: C.border2 }} />
+        </div>
+        {/* Close btn */}
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 16px 4px" }}>
+          <button data-testid="button-modal-close" onClick={onClose} style={{
+            width: 34, height: 34, borderRadius: 50, border: `1px solid ${C.border}`,
+            background: C.card, cursor: "pointer", fontSize: 18, color: C.text3,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>&times;</button>
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 20px" }}>
+          {/* Product header */}
+          <div style={{ display: "flex", gap: 14, alignItems: "flex-start", marginBottom: 16 }}>
+            <div style={{
+              width: 68, height: 68, borderRadius: 16, background: C.bg,
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, flexShrink: 0,
+            }}>
+              <FoodIcon type={product.categoryFoodType} size={28} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: serif, fontSize: 21, fontWeight: 700, color: C.text, lineHeight: 1.2 }}>
+                {product.name}
+              </div>
+              {product.description && (
+                <div style={{ fontSize: 13, color: C.text3, marginTop: 4 }}>{product.description}</div>
+              )}
+              <div style={{ fontSize: 17, fontWeight: 700, color: C.acc, marginTop: 6 }}>
+                {fmtPrice(basePrice)}
+              </div>
+            </div>
+          </div>
+
+          {isLoading && (
+            <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
+              <Loader2 className="animate-spin" size={24} style={{ color: C.text3 }} />
+            </div>
+          )}
+
+          {/* Modifier groups */}
+          {hasGroups && (
+            <>
+              <hr style={{ border: "none", borderTop: `1px solid ${C.border}`, margin: "12px 0" }} />
+              {groups!.map(g => (
+                <div key={g.id} style={{ marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{g.name}</span>
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 10,
+                      background: g.required ? C.accD : C.bg,
+                      color: g.required ? C.acc : C.text3,
+                      border: `1px solid ${g.required ? C.accM : C.border}`,
+                    }}>
+                      {g.required ? "Requerido" : "Opcional"}
+                    </span>
+                    {g.multiSelect && (
+                      <span style={{ fontSize: 10, color: C.text3 }}>(varios)</span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {g.options.map(o => {
+                      const active = sel[g.id]?.includes(o.id);
+                      return (
+                        <button key={o.id} data-testid={`button-mod-option-${o.id}`}
+                          onClick={() => toggle(g.id, o.id, g.multiSelect)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+                            borderRadius: 10, border: `1.5px solid ${active ? C.acc : C.border}`,
+                            background: active ? C.accT : C.card, cursor: "pointer",
+                            textAlign: "left", width: "100%", minHeight: 44,
+                            transition: "all 0.15s ease",
+                          }}>
+                          {/* Radio / Checkbox indicator */}
+                          <div style={{
+                            width: 20, height: 20, borderRadius: g.multiSelect ? 6 : 50,
+                            border: `2px solid ${active ? C.acc : C.border2}`,
+                            background: active ? C.acc : "transparent",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0, transition: "all 0.15s ease",
+                          }}>
+                            {active && <Check size={12} style={{ color: "#fff" }} />}
+                          </div>
+                          <span style={{ flex: 1, fontSize: 14, color: C.text }}>{o.name}</span>
+                          {Number(o.priceDelta) > 0 && (
+                            <span style={{ fontSize: 13, color: C.acc, fontWeight: 600 }}>
+                              +{fmtPrice(Number(o.priceDelta))}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {tried && g.required && (!sel[g.id] || sel[g.id].length === 0) && (
+                    <div style={{ fontSize: 12, color: C.red, marginTop: 4 }}>
+                      Seleccione al menos una opci&oacute;n
+                    </div>
+                  )}
+                </div>
+              ))}
+              <hr style={{ border: "none", borderTop: `1px solid ${C.border}`, margin: "8px 0 16px" }} />
+            </>
+          )}
+
+          {/* Quantity */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Cantidad</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <button data-testid="button-modal-qty-minus" onClick={() => setQty(q => Math.max(1, q - 1))} style={{
+                width: 38, height: 38, borderRadius: 50, border: `1.5px solid ${C.border}`,
+                background: C.card, cursor: "pointer", fontSize: 20, color: C.text2,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>&minus;</button>
+              <span style={{ fontSize: 20, fontWeight: 700, minWidth: 24, textAlign: "center" }}>{qty}</span>
+              <button data-testid="button-modal-qty-plus" onClick={() => setQty(q => q + 1)} style={{
+                width: 38, height: 38, borderRadius: 50, border: `1.5px solid ${C.acc}`,
+                background: C.accD, cursor: "pointer", fontSize: 20, color: C.acc,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>+</button>
+            </div>
+          </div>
+
+          {/* Note */}
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ fontSize: 13, color: C.text2, marginBottom: 6, display: "block" }}>
+              <Pencil size={12} style={{ marginRight: 4, display: "inline" }} /> Nota para cocina (opcional)
+            </label>
+            <textarea data-testid="input-modal-note" value={note} onChange={e => setNote(e.target.value)}
+              placeholder="Ej: sin cebolla, extra picante..."
+              rows={2} style={{
+                width: "100%", padding: 12, borderRadius: 10, border: `1.5px solid ${C.border}`,
+                background: C.bg, fontSize: 14, color: C.text, resize: "none",
+                fontFamily: body,
+              }} />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: "12px 20px 20px", borderTop: `1px solid ${C.border}`, background: C.card,
+        }}>
+          {tried && missingRequired.length > 0 && (
+            <div style={{
+              fontSize: 13, color: C.red, background: C.redD, padding: "8px 12px",
+              borderRadius: 8, marginBottom: 10, textAlign: "center",
+            }}>
+              Seleccione las opciones requeridas
+            </div>
+          )}
+          <button data-testid="button-modal-add" onClick={handleAdd} style={{
+            width: "100%", padding: "14px 20px", borderRadius: 14, border: "none",
+            background: C.acc, color: "#fff", fontSize: 16, fontWeight: 700,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            minHeight: 48,
+          }}>
+            {existing ? <><Pencil size={14} /> Actualizar</> : <><ShoppingCart size={14} /> Pedir</>} &middot; {fmtPrice(unitPrice * qty)}
+          </button>
         </div>
       </div>
-      {footer && <div className="qr-footer"><div style={{ maxWidth: 480, margin: "0 auto" }}>{footer}</div></div>}
     </div>
   );
 }
 
-function ProductCard({
-  product, inCart, outOfStock, loading, onSelect,
-}: {
-  product: QRProduct;
-  inCart: number;
-  outOfStock: boolean;
-  loading: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <div className={`qr-product-card ${outOfStock ? "out-of-stock" : ""} ${inCart > 0 ? "selected" : ""}`} data-testid={`card-product-${product.id}`}>
-      <span className="qr-product-name">{product.name}</span>
-      <span className="qr-product-price">{formatCurrency(product.price)}</span>
-      {inCart > 0 && <span className="qr-product-badge">{inCart}x</span>}
-      <button
-        className="qr-product-add-btn"
-        onClick={onSelect}
-        disabled={loading || outOfStock}
-        data-testid={`button-add-${product.id}`}
-      >
-        {outOfStock ? "Agotado" : (<><Plus size={16} /> Agregar</>)}
-      </button>
-    </div>
-  );
-}
-
-function BigCategoryButton({
-  label, icon, count, onClick, testId,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  count: number;
-  onClick: () => void;
-  testId: string;
-}) {
-  return (
-    <button className="qr-big-cat" onClick={onClick} data-testid={testId}>
-      {icon}
-      <div>
-        <div className="qr-big-cat-label">{label}</div>
-        <div className="qr-big-cat-count">{count} opciones</div>
-      </div>
-    </button>
-  );
-}
+/* ═══════════════════ Main Component ═══════════════════ */
 
 export default function QRClientPage() {
   const [, params] = useRoute("/qr/:tableCode");
   const tableCode = params?.tableCode || "";
   const { toast } = useToast();
 
-  const [step, setStep] = useState<Step>("welcome");
-  const [mode, setMode] = useState<Mode>(null);
-  const [selectedSubaccount, setSelectedSubaccount] = useState<{ id: number; code: string; slotNumber: number } | null>(null);
-  const [customerName, setCustomerName] = useState("");
-  const [nameError, setNameError] = useState("");
+  const [screen, setScreen] = useState<0 | 1 | 2 | 3 | 4>(0);
+  const [name, setName] = useState("");
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [tab, setTab] = useState<string>("");
+  const [popup, setPopup] = useState<QRProduct | null>(null);
+  const [sending, setSending] = useState(false);
+  const [subaccountId, setSubaccountId] = useState<number | null>(null);
 
-  const [cartItems, setCartItems] = useState<CartItem[]>([]);
-  const [selectedFoodType, setSelectedFoodType] = useState<"bebidas" | "comidas" | "extras">("comidas");
-  const [selectedQrTopCode, setSelectedQrTopCode] = useState<string | null>(null);
-  const [selectedQrSubcat, setSelectedQrSubcat] = useState<string | null>(null);
-  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
-  const [pendingProduct, setPendingProduct] = useState<QRProduct | null>(null);
-  const [modGroups, setModGroups] = useState<QRModifierGroup[]>([]);
-  const [selectedMods, setSelectedMods] = useState<Record<number, number[]>>({});
-  const [loadingMods, setLoadingMods] = useState(false);
+  /* ─── Data fetching ─── */
 
-  const [selectedEasyTop, setSelectedEasyTop] = useState<string | null>(null);
-  const [viewMenuProduct, setViewMenuProduct] = useState<number | null>(null);
-
-  const totalSteps = mode === "easy" ? 5 : 4;
-
-  const { data: tableInfo, isLoading: tableLoading, error: tableError } = useQuery<{
-    tableId: number;
-    tableName: string;
-    tableCode: string;
-    maxSubaccounts: number;
-  }>({
+  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number }>({
     queryKey: ["/api/qr", tableCode, "info"],
+    queryFn: async () => {
+      const r = await fetch(`/api/qr/${tableCode}/info`);
+      if (!r.ok) throw new Error("Mesa no encontrada");
+      return r.json();
+    },
     enabled: !!tableCode,
   });
 
-  const { data: menuData } = useQuery<QRMenuResponse>({
+  const { data: menuData, isLoading: menuLoading } = useQuery<QRMenuResponse>({
     queryKey: ["/api/qr", tableCode, "menu"],
     queryFn: async () => {
-      const res = await fetch(`/api/qr/${tableCode}/menu`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load menu");
-      return res.json();
+      const r = await fetch(`/api/qr/${tableCode}/menu`);
+      if (!r.ok) throw new Error("Error cargando menú");
+      return r.json();
     },
-    enabled: !!tableCode && step !== "welcome",
+    enabled: !!tableCode && screen >= 2,
   });
+
   const menu = menuData?.products || [];
-  const qrTopCategories = menuData?.topCategories || [];
+  const topCats = menuData?.topCategories || [];
 
-  const { data: subaccounts = [], refetch: refetchSubaccounts } = useQuery<Subaccount[]>({
+  const { data: subaccounts = [] } = useQuery<Subaccount[]>({
     queryKey: ["/api/qr", tableCode, "subaccounts"],
-    enabled: !!tableCode,
+    queryFn: async () => {
+      const r = await fetch(`/api/qr/${tableCode}/subaccounts`);
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!tableCode && screen === 1,
   });
 
-  const activeSubaccounts = subaccounts.filter(s => s.isActive);
+  const existingNames = useMemo(() => {
+    const labels = subaccounts.filter(s => s.label).map(s => s.label);
+    return Array.from(new Set(labels));
+  }, [subaccounts]);
 
-  const hasQrTopSystem = qrTopCategories.length > 0;
-
-  useEffect(() => {
-    if (hasQrTopSystem && qrTopCategories.length > 0 && !selectedQrTopCode) {
-      setSelectedQrTopCode(qrTopCategories[0].code);
-    }
-  }, [hasQrTopSystem, qrTopCategories.length]);
-
-  const subcatsForQrTop = useMemo(() => {
-    if (!hasQrTopSystem || !selectedQrTopCode) return [];
-    const cats = new Map<string, QRProduct[]>();
-    menu.filter(p => p.categoryParentCode === selectedQrTopCode).forEach(p => {
-      const c = p.categoryName || "Otros";
-      if (!cats.has(c)) cats.set(c, []);
-      cats.get(c)!.push(p);
-    });
-    return Array.from(cats.entries()).map(([name, products]) => ({ name, products }));
-  }, [menu, hasQrTopSystem, selectedQrTopCode]);
+  /* ─── Set default tab ─── */
 
   useEffect(() => {
-    if (subcatsForQrTop.length > 0) {
-      setSelectedQrSubcat(subcatsForQrTop[0].name);
-    } else {
-      setSelectedQrSubcat(null);
+    if (topCats.length > 0 && !tab) {
+      setTab(topCats[0].code);
     }
-  }, [selectedQrTopCode, subcatsForQrTop.length]);
+  }, [topCats]);
 
-  const filteredProducts = useMemo(() => {
-    if (hasQrTopSystem && selectedQrTopCode) {
-      if (selectedQrSubcat) {
-        return menu.filter(p => p.categoryParentCode === selectedQrTopCode && p.categoryName === selectedQrSubcat);
-      }
-      return menu.filter(p => p.categoryParentCode === selectedQrTopCode);
+  /* ─── Filtered products ─── */
+
+  const categoryGroups = useMemo(() => {
+    let prods = menu;
+    if (topCats.length > 0 && tab) {
+      prods = menu.filter(p => p.categoryParentCode === tab);
     }
-    return menu.filter(p => (p.categoryFoodType || "comidas") === selectedFoodType);
-  }, [menu, selectedFoodType, hasQrTopSystem, selectedQrTopCode, selectedQrSubcat]);
-
-  const categoriesForFoodType = useMemo(() => {
-    if (hasQrTopSystem) return [];
-    const cats = new Map<string, QRProduct[]>();
-    filteredProducts.forEach(p => {
-      const c = p.categoryName || "Otros";
-      if (!cats.has(c)) cats.set(c, []);
-      cats.get(c)!.push(p);
+    const groups = new Map<string, QRProduct[]>();
+    prods.forEach(p => {
+      const cat = p.categoryName || "Otros";
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat)!.push(p);
     });
-    return Array.from(cats.entries()).map(([name, products]) => ({ name, products }));
-  }, [filteredProducts, hasQrTopSystem]);
+    return Array.from(groups.entries()).map(([catName, products]) => ({ catName, products }));
+  }, [menu, tab, topCats]);
 
-  useEffect(() => {
-    if (categoriesForFoodType.length > 0) {
-      setExpandedCategory(categoriesForFoodType[0].name);
-    } else {
-      setExpandedCategory(null);
-    }
-  }, [selectedFoodType, categoriesForFoodType.length]);
+  /* ─── Cart helpers ─── */
 
-  const easyProductsForTop = useMemo(() => {
-    if (!selectedEasyTop) return [];
-    return menu.filter(p => p.categoryParentCode === selectedEasyTop);
-  }, [menu, selectedEasyTop]);
+  const cartTotal = useMemo(() => cart.reduce((s, i) => s + i.unitPrice * i.qty, 0), [cart]);
+  const cartCount = useMemo(() => cart.reduce((s, i) => s + i.qty, 0), [cart]);
 
-  const viewMenuGrouped = useMemo(() => {
-    const topMap = new Map<string, Map<string, QRProduct[]>>();
-    menu.forEach(p => {
-      const topCode = p.categoryParentCode || "OTHER";
-      const subcat = p.categoryName || "Otros";
-      if (!topMap.has(topCode)) topMap.set(topCode, new Map());
-      const subcatMap = topMap.get(topCode)!;
-      if (!subcatMap.has(subcat)) subcatMap.set(subcat, []);
-      subcatMap.get(subcat)!.push(p);
-    });
-    return Array.from(topMap.entries()).map(([topCode, subcatMap]) => {
-      const topCat = qrTopCategories.find(t => t.code === topCode);
-      return {
-        topCode,
-        topName: topCat?.name || topCode,
-        subcategories: Array.from(subcatMap.entries()).map(([name, products]) => ({ name, products })),
-      };
-    });
-  }, [menu, qrTopCategories]);
+  const cartItemForProduct = useCallback((pid: number) => cart.find(c => c.product.id === pid), [cart]);
 
-  const createSubaccountMutation = useMutation({
-    mutationFn: async (slotNum?: number) => {
-      const res = await apiRequest("POST", `/api/qr/${tableCode}/subaccounts`, slotNum ? { slotNumber: slotNum } : {});
-      return res.json();
-    },
-    onSuccess: (data: Subaccount) => {
-      setSelectedSubaccount({ id: data.id, code: data.code, slotNumber: data.slotNumber });
-      queryClient.invalidateQueries({ queryKey: ["/api/qr", tableCode, "subaccounts"] });
-      setStep("name");
-    },
-    onError: (err: Error) => {
-      if (err.message.includes("max") || err.message.includes("limit") || err.message.includes("Máximo")) {
-        toast({ title: "Límite alcanzado", description: `Ya hay ${MAX_SUBACCOUNTS} cuentas en esta mesa. Usá una existente o pedile al salonero.`, variant: "destructive" });
-      } else {
-        toast({ title: "Error", description: "Se fue la señal un toque. Probá de nuevo.", variant: "destructive" });
+  function handleAddToCart(product: QRProduct, qty: number, note: string, selections: Record<string, number[]>, unitPrice: number) {
+    setCart(prev => {
+      const idx = prev.findIndex(c => c.product.id === product.id);
+      const item: CartItem = { product, qty, note, selections, unitPrice };
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = item;
+        return next;
       }
-    },
-  });
-
-  const submitMutation = useMutation({
-    mutationFn: async (payload: { subaccountId: number; items: CartItem[] }) => {
-      const items = payload.items.map(it => ({
-        productId: it.productId,
-        productName: it.productName,
-        qty: it.qty,
-        customerName: it.customerName,
-        modifiers: it.modifiers,
-      }));
-      return apiRequest("POST", `/api/qr/${tableCode}/submit-v2`, {
-        subaccountId: payload.subaccountId,
-        items,
-      });
-    },
-    onSuccess: () => setStep("sent"),
-    onError: (err: Error) => {
-      if (err.message.includes("pending") || err.message.includes("confirmando")) {
-        toast({ title: "Esperá un momento", description: "El salonero está confirmando pedidos. Apenas confirme, podés enviar el siguiente.", variant: "destructive" });
-      } else {
-        toast({ title: "Error", description: "Se fue la señal un toque. Probá de nuevo.", variant: "destructive" });
-      }
-    },
-  });
-
-  const handleStartOrder = () => {
-    setStep("subaccount");
-    refetchSubaccounts();
-  };
-
-  const handleSubaccountSelect = (sub: Subaccount) => {
-    setSelectedSubaccount({ id: sub.id, code: sub.code, slotNumber: sub.slotNumber });
-    if (sub.label) {
-      setCustomerName(sub.label);
-      setStep("mode_select");
-    } else {
-      setStep("name");
-    }
-  };
-
-  const handleNameContinue = () => {
-    const trimmed = customerName.trim();
-    if (!trimmed) {
-      setNameError("Poné tu nombre para que no se nos enrede la cuenta");
-      return;
-    }
-    setNameError("");
-    setStep("mode_select");
-  };
-
-  const handleProductClick = useCallback(async (product: QRProduct) => {
-    if (product.availablePortions !== null && product.availablePortions <= 0) {
-      toast({ title: "Agotado", description: "Eso se nos acabó por hoy. Escogé otra opción.", variant: "destructive" });
-      return;
-    }
-    setLoadingMods(true);
-    try {
-      const res = await fetch(`/api/products/${product.id}/modifiers`);
-      const groups: QRModifierGroup[] = await res.json();
-      if (groups.length > 0) {
-        setPendingProduct(product);
-        setModGroups(groups);
-        setSelectedMods({});
-        setStep("modifiers");
-      } else {
-        addItemToCart(product, []);
-      }
-    } catch {
-      addItemToCart(product, []);
-    } finally {
-      setLoadingMods(false);
-    }
-  }, [customerName, toast]);
-
-  const addItemToCart = (product: QRProduct, mods: { modGroupId: number; optionId: number }[]) => {
-    const name = customerName.trim();
-    const item: CartItem = {
-      productId: product.id,
-      productName: product.name,
-      unitPrice: product.price,
-      qty: 1,
-      customerName: name,
-      modifiers: mods.length > 0 ? mods : undefined,
-      categoryName: product.categoryName || "Otros",
-    };
-
-    setCartItems(prev => {
-      const existing = prev.find(it => it.productId === product.id && JSON.stringify(it.modifiers) === JSON.stringify(item.modifiers));
-      if (existing) return prev.map(it => it === existing ? { ...it, qty: it.qty + 1 } : it);
       return [...prev, item];
     });
-    toast({ title: "Apuntado", description: product.name });
-  };
+  }
 
-  const confirmModifiers = () => {
-    if (!pendingProduct) return;
-    for (const group of modGroups) {
-      const selected = selectedMods[group.id] || [];
-      if (group.required && selected.length === 0) {
-        toast({ title: `"${group.name}" es requerido`, variant: "destructive" });
-        return;
-      }
-    }
-    const mods: { modGroupId: number; optionId: number }[] = [];
-    for (const group of modGroups) {
-      for (const optId of (selectedMods[group.id] || [])) {
-        mods.push({ modGroupId: group.id, optionId: optId });
-      }
-    }
-
-    addItemToCart(pendingProduct, mods);
-
-    setPendingProduct(null);
-    setModGroups([]);
-    setSelectedMods({});
-    if (mode === "easy") {
-      setStep("easy_products");
-    } else {
-      setStep("menu");
-    }
-  };
-
-  const handleModifiersBack = () => {
-    setPendingProduct(null);
-    setModGroups([]);
-    setSelectedMods({});
-    if (mode === "easy") {
-      setStep("easy_products");
-    } else {
-      setStep("menu");
-    }
-  };
-
-  const toggleModOption = (groupId: number, optionId: number, multi: boolean) => {
-    setSelectedMods(prev => {
-      const current = prev[groupId] || [];
-      if (multi) {
-        return { ...prev, [groupId]: current.includes(optionId) ? current.filter(id => id !== optionId) : [...current, optionId] };
-      }
-      return { ...prev, [groupId]: current.includes(optionId) ? [] : [optionId] };
+  function updateQty(pid: number, delta: number) {
+    setCart(prev => {
+      const next = prev.map(c =>
+        c.product.id === pid ? { ...c, qty: c.qty + delta } : c
+      ).filter(c => c.qty > 0);
+      return next;
     });
-  };
-
-  const removeCartItem = (idx: number) => {
-    setCartItems(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const handleSubmit = () => {
-    if (!selectedSubaccount) return;
-    submitMutation.mutate({ subaccountId: selectedSubaccount.id, items: cartItems });
-  };
-
-  const resetAll = () => {
-    setStep("welcome");
-    setMode(null);
-    setSelectedSubaccount(null);
-    setCustomerName("");
-    setNameError("");
-    setCartItems([]);
-    setSelectedFoodType("comidas");
-    setExpandedCategory(null);
-    setPendingProduct(null);
-    setModGroups([]);
-    setSelectedMods({});
-    setSelectedEasyTop(null);
-    setViewMenuProduct(null);
-  };
-
-  const cartItemCount = cartItems.reduce((s, it) => s + it.qty, 0);
-
-  if (tableLoading) {
-    return (
-      <div className="qr-center" data-testid="loading-spinner">
-        <style>{QR_STYLES}</style>
-        <Loader2 size={32} className="animate-spin" style={{ color: "var(--qr-sub)" }} />
-      </div>
-    );
   }
 
-  if (tableError || !tableInfo) {
-    return (
-      <div className="qr-center">
-        <style>{QR_STYLES}</style>
-        <div style={{ textAlign: "center", maxWidth: 360 }}>
-          <UtensilsCrossed size={48} style={{ margin: "0 auto 16px", color: "var(--qr-sub)" }} />
-          <h2 style={{ fontFamily: "var(--f-disp)", fontSize: 20, fontWeight: 800, marginBottom: 8 }} data-testid="text-table-not-found">Mesa no encontrada</h2>
-          <p style={{ color: "var(--qr-sub)", fontSize: 14 }}>El código QR no es válido o la mesa no está activa.</p>
-        </div>
-      </div>
-    );
-  }
+  /* ─── Submit ─── */
 
-  if (step === "welcome") {
-    return (
-      <div className="qr-center">
-        <style>{QR_STYLES}</style>
-        <div style={{ textAlign: "center", maxWidth: 360, width: "100%" }}>
-          <UtensilsCrossed size={48} style={{ margin: "0 auto 16px", color: "var(--qr-accent)" }} />
-          <h1 style={{ fontFamily: "var(--f-disp)", fontSize: 26, fontWeight: 800, marginBottom: 8 }} data-testid="text-table-name">{tableInfo.tableName}</h1>
-          <p style={{ color: "var(--qr-sub)", fontSize: 16, marginBottom: 32 }} data-testid="text-welcome-message">Bienvenido! Pedí fácil y sin carrera.</p>
-          <button className="qr-cta" onClick={handleStartOrder} data-testid="button-start-order">
-            <ChefHat size={24} />
-            Empezar a pedir
-          </button>
-          <p style={{ color: "var(--qr-sub)", fontSize: 12, marginTop: 16 }} data-testid="text-welcome-note">
-            Tranqui: un salonero confirma tu pedido antes de mandarlo a cocina.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (step === "subaccount") {
-    const maxSlots = tableInfo?.maxSubaccounts ?? MAX_SUBACCOUNTS;
-    const namedSubaccounts = activeSubaccounts.filter(s => s.label);
-    const hasNamedSubs = namedSubaccounts.length > 0;
-    const canAddMore = activeSubaccounts.length < maxSlots;
-
-    const handleAddComensal = () => {
-      const usedSlots = new Set(activeSubaccounts.map(s => s.slotNumber));
-      let nextSlot = 1;
-      for (let i = 1; i <= maxSlots; i++) {
-        if (!usedSlots.has(i)) { nextSlot = i; break; }
-      }
-      createSubaccountMutation.mutate(nextSlot);
-    };
-
-    if (hasNamedSubs) {
-      return (
-        <QRStepLayout
-          currentStep={1} totalSteps={totalSteps}
-          title="¿Quién sos?"
-          subtitle="Escogé tu nombre o agregá un comensal nuevo."
-          tableName={tableInfo.tableName}
-          onBack={() => setStep("welcome")}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {namedSubaccounts.map(sub => (
-              <button
-                key={sub.id}
-                className="qr-name-btn"
-                onClick={() => handleSubaccountSelect(sub)}
-                data-testid={`button-sub-name-${sub.id}`}
-              >
-                <User size={24} />
-                <span>{sub.label}</span>
-              </button>
-            ))}
-            {canAddMore && (
-              <button
-                className="qr-name-btn-outline"
-                onClick={handleAddComensal}
-                disabled={createSubaccountMutation.isPending}
-                data-testid="button-add-comensal"
-              >
-                {createSubaccountMutation.isPending ? <Loader2 size={24} className="animate-spin" /> : <Plus size={24} />}
-                <span>Agregar comensal</span>
-              </button>
-            )}
-          </div>
-        </QRStepLayout>
-      );
-    }
-
-    const slotNumbers = Array.from({ length: maxSlots }, (_, i) => i + 1);
-    const existingSlots = new Map(activeSubaccounts.map(s => [s.slotNumber, s]));
-
-    const handleSlotClick = async (slotNum: number) => {
-      const existing = existingSlots.get(slotNum);
-      if (existing) {
-        handleSubaccountSelect(existing);
-      } else {
-        createSubaccountMutation.mutate(slotNum);
-      }
-    };
-
-    return (
-      <QRStepLayout
-        currentStep={1} totalSteps={totalSteps}
-        title="Escogé tu subcuenta"
-        subtitle="Después ordená lo que querás."
-        tableName={tableInfo.tableName}
-        onBack={() => setStep("welcome")}
-      >
-        <div className="qr-slot-grid">
-          {slotNumbers.map(n => {
-            const exists = existingSlots.has(n);
-            return (
-              <button
-                key={n}
-                className={`qr-slot-btn ${exists ? "exists" : ""}`}
-                onClick={() => handleSlotClick(n)}
-                disabled={createSubaccountMutation.isPending}
-                data-testid={`button-slot-${n}`}
-              >
-                <span className="qr-slot-num">{n}</span>
-                <span className="qr-slot-label">{exists ? "Cuenta activa" : "Cuenta nueva"}</span>
-              </button>
-            );
-          })}
-        </div>
-        {createSubaccountMutation.isPending && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", color: "var(--qr-sub)", fontSize: 13 }}>
-            <Loader2 size={16} className="animate-spin" />
-            <span>Creando cuenta...</span>
-          </div>
-        )}
-      </QRStepLayout>
-    );
-  }
-
-  if (step === "name") {
-    return (
-      <QRStepLayout
-        currentStep={2} totalSteps={totalSteps}
-        title="¿Cómo te llamás?"
-        subtitle="Así el salonero lo lee clarito."
-        tableName={tableInfo.tableName}
-        onBack={() => setStep("subaccount")}
-        footer={
-          <button className="qr-cta" onClick={handleNameContinue} data-testid="button-name-continue">
-            Continuar
-            <ArrowRight size={22} />
-          </button>
+  async function handleSubmit() {
+    if (cart.length === 0 || sending) return;
+    setSending(true);
+    try {
+      let sid = subaccountId;
+      if (!sid) {
+        const subRes = await fetch(`/api/qr/${tableCode}/subaccounts`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: name }),
+        });
+        if (!subRes.ok) {
+          const d = await subRes.json().catch(() => ({ message: "Error" }));
+          throw new Error(d.message);
         }
-      >
-        <div style={{ paddingTop: 24, display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
-          <User size={56} style={{ color: "var(--qr-accent)" }} />
+        const sub = await subRes.json();
+        sid = sub.id;
+        setSubaccountId(sid);
+      }
+
+      const items = cart.map(c => ({
+        productId: c.product.id,
+        productName: c.product.name,
+        unitPrice: String(c.unitPrice),
+        qty: c.qty,
+        customerName: name,
+        modifiers: Object.entries(c.selections).flatMap(([gid, oids]) =>
+          oids.map(oid => ({ modGroupId: Number(gid), optionId: oid }))
+        ),
+        notes: c.note || undefined,
+      }));
+
+      const res = await fetch(`/api/qr/${tableCode}/submit-v2`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subaccountId: sid, items }),
+      });
+
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({ message: "Error" }));
+        throw new Error(d.message);
+      }
+
+      setScreen(4);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  /* ─── Fetch modifiers for summary text ─── */
+  const [modGroupsCache, setModGroupsCache] = useState<Record<number, ModGroup[]>>({});
+
+  useEffect(() => {
+    cart.forEach(c => {
+      if (Object.keys(c.selections).length > 0 && !modGroupsCache[c.product.id]) {
+        fetch(`/api/products/${c.product.id}/modifiers`)
+          .then(r => r.ok ? r.json() : [])
+          .then(groups => setModGroupsCache(prev => ({ ...prev, [c.product.id]: groups })));
+      }
+    });
+  }, [cart]);
+
+  /* ═══════════════════ Render ═══════════════════ */
+
+  if (infoLoading) {
+    return (
+      <div className="qr-page" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100dvh" }}>
+        <style>{PAGE_CSS}</style>
+        <Loader2 className="animate-spin" size={32} style={{ color: C.text3 }} />
+      </div>
+    );
+  }
+
+  if (!info) {
+    return (
+      <div className="qr-page" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100dvh", padding: 32, textAlign: "center" }}>
+        <style>{PAGE_CSS}</style>
+        <div>
+          <div style={{ marginBottom: 16 }}><X size={40} style={{ color: C.text3 }} /></div>
+          <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Mesa no encontrada</div>
+          <div style={{ fontSize: 14, color: C.text3 }}>Verific&aacute; que el c&oacute;digo QR sea correcto.</div>
+        </div>
+      </div>
+    );
+  }
+
+  const tableName = info.tableName || tableCode;
+
+  /* ── S0: Welcome ── */
+  if (screen === 0) {
+    return (
+      <div className="qr-page" style={{
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        minHeight: "100dvh", padding: "32px 24px", textAlign: "center",
+      }}>
+        <style>{PAGE_CSS}</style>
+        <div style={{
+          width: 88, height: 88, borderRadius: 24, background: C.accD,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 40, marginBottom: 20,
+        }}><UtensilsCrossed size={40} style={{ color: C.acc }} /></div>
+        <div style={{
+          fontFamily: mono, fontSize: 11, padding: "4px 12px", borderRadius: 20,
+          background: C.bg, color: C.text3, textTransform: "uppercase",
+          letterSpacing: "0.08em", border: `1px solid ${C.border}`, marginBottom: 16,
+        }}>{tableName}</div>
+        <div style={{ fontFamily: serif, fontSize: 32, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+          Bienvenido
+        </div>
+        <div style={{ fontSize: 16, color: C.text2, maxWidth: 320, lineHeight: 1.5, marginBottom: 32 }}>
+          Ped&iacute; lo que quer&aacute;s. Un salonero confirma antes de enviarlo a cocina.
+        </div>
+        <button data-testid="button-qr-start" onClick={() => setScreen(1)} style={{
+          padding: "16px 40px", borderRadius: 30, border: "none", background: C.acc,
+          color: "#fff", fontSize: 17, fontWeight: 700, cursor: "pointer", minHeight: 48,
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <ShoppingCart size={18} /> Empezar a pedir
+        </button>
+        <div style={{ fontSize: 13, color: C.text3, marginTop: 14 }}>
+          Toc&aacute; el bot&oacute;n para comenzar
+        </div>
+      </div>
+    );
+  }
+
+  /* ── S1: Name ── */
+  if (screen === 1) {
+    return (
+      <div className="qr-page" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
+        <style>{PAGE_CSS}</style>
+        <Header onBack={() => setScreen(0)} tableCode={tableName} dotPos={0}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Tu nombre</div>
+        </Header>
+        <div style={{
+          flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "center", padding: "32px 24px", textAlign: "center",
+        }}>
+          <div style={{
+            width: 68, height: 68, borderRadius: 50, background: C.accD,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 30, marginBottom: 20,
+          }}><User size={30} style={{ color: C.acc }} /></div>
+          <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+            &iquest;C&oacute;mo te llam&aacute;s?
+          </div>
+          <div style={{ fontSize: 14, color: C.text2, marginBottom: 24 }}>
+            Para que el salonero sepa qui&eacute;n pidi&oacute; qu&eacute;.
+          </div>
           <input
-            className="qr-name-input"
-            value={customerName}
-            onChange={(e) => { setCustomerName(e.target.value); setNameError(""); }}
+            data-testid="input-qr-name"
+            value={name}
+            onChange={e => setName(e.target.value)}
             placeholder="Tu nombre"
             autoFocus
-            data-testid="input-customer-name"
+            style={{
+              width: "100%", maxWidth: 320, padding: 18, fontSize: 22, textAlign: "center",
+              borderRadius: 14, border: `2px solid ${name.trim() ? C.acc : C.border}`,
+              background: C.card, color: C.text, outline: "none",
+              transition: "border-color 0.2s ease",
+            }}
           />
-          {nameError && (
-            <p style={{ color: "var(--qr-red)", fontSize: 14, textAlign: "center" }} data-testid="text-name-error">{nameError}</p>
-          )}
-        </div>
-      </QRStepLayout>
-    );
-  }
+          <div style={{ fontSize: 13, color: C.text3, marginTop: 10 }}>
+            Escrib&iacute; tu nombre o escog&eacute; uno
+          </div>
 
-  if (step === "mode_select") {
-    return (
-      <QRStepLayout
-        currentStep={3} totalSteps={totalSteps}
-        title="¿Cómo preferís ordenar?"
-        subtitle="Escogé tu modo."
-        tableName={tableInfo.tableName}
-        onBack={() => setStep("name")}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 8 }}>
-          <button className="qr-mode-btn" onClick={() => { setMode("easy"); setStep("easy_cats"); }} data-testid="button-mode-easy">
-            <ChefHat size={28} />
-            <span>Modo Fácil</span>
-          </button>
-          <button className="qr-mode-btn" onClick={() => { setMode("standard"); setStep("menu"); }} data-testid="button-mode-standard">
-            <Utensils size={28} />
-            <span>Modo Estándar</span>
-          </button>
-          <button className="qr-mode-btn" onClick={() => { setMode("view_menu"); setStep("view_menu"); }} data-testid="button-mode-view-menu">
-            <UtensilsCrossed size={28} />
-            <span>Ver Menú</span>
-          </button>
-        </div>
-      </QRStepLayout>
-    );
-  }
-
-  if (step === "easy_cats") {
-    const topIconMap: Record<string, React.ReactNode> = {
-      "TOP-COMIDAS": <ChefHat size={24} />,
-      "TOP-BEBIDAS": <Coffee size={24} />,
-      "TOP-POSTRES": <Utensils size={24} />,
-    };
-
-    return (
-      <QRStepLayout
-        currentStep={3} totalSteps={5}
-        title="¿Qué se te antoja?"
-        tableName={tableInfo.tableName}
-        onBack={() => setStep("mode_select")}
-        footer={
-          <div>
-            {cartItemCount > 0 && (
-              <div className="qr-cart-count-bar" data-testid="text-easy-cart-count">
-                <ShoppingBag size={16} />
-                <span>{cartItemCount} item{cartItemCount !== 1 ? "s" : ""} en tu pedido</span>
+          {existingNames.length > 0 && (
+            <div style={{ marginTop: 20, width: "100%", maxWidth: 320 }}>
+              <div style={{ fontSize: 12, color: C.text3, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Ya en la mesa
               </div>
-            )}
-            <button className="qr-cta" onClick={() => setStep("easy_review")} disabled={cartItemCount === 0} data-testid="button-easy-review">
-              Revisar pedido
-              <ArrowRight size={22} />
-            </button>
-          </div>
-        }
-      >
-        <div className="qr-big-cats">
-          {qrTopCategories.map(top => {
-            const count = menu.filter(p => p.categoryParentCode === top.code).length;
-            return (
-              <BigCategoryButton
-                key={top.code}
-                label={top.name}
-                icon={topIconMap[top.code] || <BookOpen size={24} />}
-                count={count}
-                onClick={() => { setSelectedEasyTop(top.code); setStep("easy_products"); }}
-                testId={`button-easy-top-${top.code}`}
-              />
-            );
-          })}
-        </div>
-      </QRStepLayout>
-    );
-  }
-
-  if (step === "easy_products") {
-    const topName = qrTopCategories.find(t => t.code === selectedEasyTop)?.name || "Productos";
-
-    return (
-      <QRStepLayout
-        currentStep={4} totalSteps={5}
-        title={topName}
-        tableName={tableInfo.tableName}
-        onBack={() => setStep("easy_cats")}
-        footer={
-          <div>
-            {cartItemCount > 0 && (
-              <div className="qr-cart-count-bar" data-testid="text-easy-products-cart-count">
-                <ShoppingBag size={16} />
-                <span>{cartItemCount} item{cartItemCount !== 1 ? "s" : ""} en tu pedido</span>
-              </div>
-            )}
-            <button className="qr-cta-outline" onClick={() => setStep("easy_cats")} data-testid="button-back-to-cats">
-              <ChevronLeft size={20} />
-              Volver a categorías
-            </button>
-          </div>
-        }
-      >
-        {easyProductsForTop.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "40px 0" }}>
-            <Utensils size={48} style={{ margin: "0 auto 12px", color: "var(--qr-sub)" }} />
-            <p style={{ color: "var(--qr-sub)", fontSize: 16 }}>No hay productos disponibles.</p>
-          </div>
-        ) : (
-          <div className="qr-product-grid">
-            {easyProductsForTop.map(product => {
-              const inCart = cartItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
-              const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
-              return (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  inCart={inCart}
-                  outOfStock={outOfStock}
-                  loading={loadingMods}
-                  onSelect={() => handleProductClick(product)}
-                />
-              );
-            })}
-          </div>
-        )}
-      </QRStepLayout>
-    );
-  }
-
-  if (step === "easy_review") {
-    return (
-      <QRStepLayout
-        currentStep={5} totalSteps={5}
-        title="Revisá tu pedido"
-        tableName={tableInfo.tableName}
-        onBack={() => setStep("easy_cats")}
-        footer={
-          <button className="qr-cta" onClick={handleSubmit} disabled={submitMutation.isPending || cartItems.length === 0} data-testid="button-easy-confirm-order">
-            {submitMutation.isPending ? <Loader2 size={22} className="animate-spin" /> : <Send size={22} />}
-            Confirmar y enviar
-          </button>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div className="qr-review-info">
-            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--qr-sub)", fontSize: 14 }} data-testid="text-easy-review-account">
-              <Users size={18} />
-              <span>Cuenta: {tableInfo.tableName}-{selectedSubaccount?.slotNumber}</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, marginTop: 6 }} data-testid="text-easy-review-name">
-              <User size={18} style={{ color: "var(--qr-sub)" }} />
-              <span style={{ color: "var(--qr-sub)" }}>Nombre:</span>
-              <strong>{customerName.trim()}</strong>
-            </div>
-          </div>
-
-          {cartItems.length > 0 ? (
-            <>
-              {cartItems.map((item, idx) => (
-                <div className="qr-cart-item" key={idx} data-testid={`easy-review-item-${idx}`}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: 500, fontSize: 15 }}>{item.qty}x {item.productName}</p>
-                    <p style={{ color: "var(--qr-sub)", fontSize: 13, marginTop: 2 }}>
-                      {formatCurrency(item.unitPrice)} c/u
-                    </p>
-                    {item.modifiers && item.modifiers.length > 0 && (
-                      <p style={{ color: "var(--qr-sub)", fontSize: 12, marginTop: 2 }}>
-                        {item.modifiers.length} modificador{item.modifiers.length !== 1 ? "es" : ""}
-                      </p>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontFamily: "var(--f-mono)", fontWeight: 600, fontSize: 14, color: "var(--qr-accent)", whiteSpace: "nowrap" }} data-testid={`text-easy-item-subtotal-${idx}`}>
-                      {formatCurrency(Number(item.unitPrice) * item.qty)}
-                    </span>
-                    <button className="qr-cart-remove" onClick={() => removeCartItem(idx)} data-testid={`button-easy-remove-item-${idx}`}>
-                      <X size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", background: "var(--qr-s1)", border: "1px solid var(--qr-s2)", borderRadius: "var(--r-sm)" }}>
-                <span style={{ fontFamily: "var(--f-disp)", fontSize: 16, fontWeight: 700 }}>Total</span>
-                <span className="qr-cart-total" style={{ marginTop: 0 }} data-testid="text-easy-order-total">
-                  {formatCurrency(cartItems.reduce((sum, i) => sum + Number(i.unitPrice) * i.qty, 0))}
-                </span>
-              </div>
-            </>
-          ) : (
-            <p style={{ textAlign: "center", color: "var(--qr-sub)", fontSize: 15, padding: "24px 0" }} data-testid="text-easy-empty-order">No hay items en tu pedido.</p>
-          )}
-
-          <button className="qr-cta-outline" onClick={() => setStep("easy_cats")} data-testid="button-easy-add-more">
-            <Plus size={20} />
-            Agregar algo más
-          </button>
-        </div>
-      </QRStepLayout>
-    );
-  }
-
-  if (step === "menu") {
-    const foodTypeLabels: { key: "bebidas" | "comidas" | "extras"; label: string; icon: React.ReactNode }[] = [
-      { key: "bebidas", label: "Bebidas", icon: <Coffee size={16} /> },
-      { key: "comidas", label: "Comidas", icon: <ChefHat size={16} /> },
-      { key: "extras", label: "Extras", icon: <Utensils size={16} /> },
-    ];
-
-    return (
-      <div className="qr-page" style={{ paddingBottom: 120 }}>
-        <style>{QR_STYLES}</style>
-        <div className="qr-header" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button className="qr-back" onClick={() => setStep("mode_select")} data-testid="button-step-back">
-              <ChevronLeft size={20} />
-            </button>
-            <div style={{ flex: 1 }}>
-              <p style={{ display: "none" }} data-testid="text-step-progress">Paso 3 de {totalSteps}</p>
-              <h1 style={{ fontFamily: "var(--f-disp)", fontSize: 20, fontWeight: 800 }} data-testid="text-step-title">¿Qué querés pedir?</h1>
-            </div>
-            <span className="qr-table-chip">{tableInfo.tableName}</span>
-          </div>
-
-          {hasQrTopSystem ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", gap: 6 }}>
-                {qrTopCategories.map((top) => (
-                  <button
-                    key={top.code}
-                    className={`qr-top-tab ${selectedQrTopCode === top.code ? "active" : ""}`}
-                    onClick={() => setSelectedQrTopCode(top.code)}
-                    data-testid={`button-qr-top-${top.code}`}
-                  >
-                    {top.name}
-                  </button>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                {existingNames.map(n => (
+                  <button key={n} data-testid={`button-qr-name-${n}`} onClick={() => setName(n)} style={{
+                    padding: "8px 18px", borderRadius: 20, border: `1.5px solid ${name === n ? C.acc : C.border}`,
+                    background: name === n ? C.accD : C.card, color: name === n ? C.acc : C.text2,
+                    fontSize: 14, fontWeight: 500, cursor: "pointer", minHeight: 38,
+                    transition: "all 0.15s ease",
+                  }}>{n}</button>
                 ))}
               </div>
-              {subcatsForQrTop.length > 0 && (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {subcatsForQrTop.map(({ name: catName, products: catProducts }) => (
-                    <button
-                      key={catName}
-                      className={`qr-subcat-tab ${selectedQrSubcat === catName ? "active" : ""}`}
-                      onClick={() => setSelectedQrSubcat(catName)}
-                      data-testid={`button-qr-subcat-${catName}`}
-                    >
-                      {catName} ({catProducts.length})
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ display: "flex", gap: 6 }}>
-              {foodTypeLabels.map(ft => (
-                <button
-                  key={ft.key}
-                  className={`qr-food-tab ${selectedFoodType === ft.key ? "active" : ""}`}
-                  onClick={() => setSelectedFoodType(ft.key)}
-                  data-testid={`button-food-type-${ft.key}`}
-                >
-                  {ft.icon}
-                  {ft.label}
-                </button>
-              ))}
             </div>
           )}
-        </div>
 
-        <div className="qr-content" style={{ paddingTop: 12, paddingBottom: 12 }}>
-          <div style={{ maxWidth: 480, margin: "0 auto" }}>
-            {hasQrTopSystem ? (
-              filteredProducts.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "40px 0" }}>
-                  <Utensils size={48} style={{ margin: "0 auto 12px", color: "var(--qr-sub)" }} />
-                  <p style={{ color: "var(--qr-sub)", fontSize: 16 }}>No hay productos disponibles.</p>
-                </div>
-              ) : (
-                <div className="qr-product-grid">
-                  {filteredProducts.map(product => {
-                    const inCart = cartItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
-                    const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
+          <button
+            data-testid="button-qr-continue-name"
+            onClick={() => { if (name.trim()) setScreen(2); }}
+            disabled={!name.trim()}
+            style={{
+              marginTop: 32, padding: "14px 40px", borderRadius: 30, border: "none",
+              background: C.acc, color: "#fff", fontSize: 16, fontWeight: 700,
+              cursor: name.trim() ? "pointer" : "default",
+              opacity: name.trim() ? 1 : 0.4, minHeight: 48,
+              transition: "opacity 0.2s ease",
+            }}
+          >
+            Continuar &rarr;
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── S2: Menu ── */
+  if (screen === 2) {
+    return (
+      <div className="qr-page" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
+        <style>{PAGE_CSS}</style>
+        <Header onBack={() => setScreen(1)} tableCode={tableName} dotPos={1}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Hola, {name}</div>
+          <div style={{ fontSize: 12, color: C.text3 }}>Toc&aacute; un plato para agregarlo</div>
+        </Header>
+
+        {/* Category tabs */}
+        {topCats.length > 0 && (
+          <div style={{
+            display: "flex", gap: 8, padding: "10px 16px", overflowX: "auto",
+            borderBottom: `1px solid ${C.border}`, background: C.card,
+            WebkitOverflowScrolling: "touch",
+          }}>
+            {topCats.map(tc => (
+              <button key={tc.code} data-testid={`button-qr-tab-${tc.code}`}
+                onClick={() => setTab(tc.code)}
+                style={{
+                  padding: "8px 18px", borderRadius: 20, border: "none", whiteSpace: "nowrap",
+                  background: tab === tc.code ? C.acc : C.bg,
+                  color: tab === tc.code ? "#fff" : C.text2,
+                  fontSize: 13, fontWeight: 600, cursor: "pointer", minHeight: 36,
+                  transition: "all 0.15s ease", flexShrink: 0,
+                }}>{tc.name}</button>
+            ))}
+          </div>
+        )}
+
+        {/* Product list */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px", paddingBottom: cartCount > 0 ? 80 : 14 }}>
+          {menuLoading ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
+              <Loader2 className="animate-spin" size={28} style={{ color: C.text3 }} />
+            </div>
+          ) : categoryGroups.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: C.text3 }}>
+              No hay productos disponibles
+            </div>
+          ) : (
+            categoryGroups.map(({ catName, products }) => (
+              <div key={catName} style={{ marginBottom: 20 }}>
+                <div style={{
+                  fontSize: 13, fontWeight: 600, color: C.text3, textTransform: "uppercase",
+                  letterSpacing: "0.05em", marginBottom: 8, paddingLeft: 2,
+                }}>{catName}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {products.map(p => {
+                    const inCart = cartItemForProduct(p.id);
+                    const modSummary = inCart ? getModSummary(inCart, modGroupsCache[p.id]) : "";
                     return (
-                      <ProductCard
-                        key={product.id}
-                        product={product}
-                        inCart={inCart}
-                        outOfStock={outOfStock}
-                        loading={loadingMods}
-                        onSelect={() => handleProductClick(product)}
-                      />
+                      <button key={p.id} data-testid={`button-qr-product-${p.id}`}
+                        onClick={() => setPopup(p)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 12, padding: 14,
+                          borderRadius: 14, border: `1.5px solid ${inCart ? C.acc : C.border}`,
+                          background: inCart ? C.accT : C.card, cursor: "pointer",
+                          textAlign: "left", width: "100%",
+                          transition: "all 0.15s ease",
+                        }}>
+                        <div style={{
+                          width: 52, height: 52, borderRadius: 12, background: C.bg,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 24, flexShrink: 0,
+                        }}>
+                          <FoodIcon type={p.categoryFoodType} size={22} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{p.name}</span>
+                          </div>
+                          {p.description && (
+                            <div style={{
+                              fontSize: 12, color: C.text3, marginTop: 2,
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>{p.description}</div>
+                          )}
+                          <div style={{ fontSize: 15, fontWeight: 700, color: C.acc, marginTop: 4 }}>
+                            {inCart ? fmtPrice(inCart.unitPrice) : fmtPrice(Number(p.price))}
+                          </div>
+                          {inCart && modSummary && (
+                            <div style={{ fontSize: 11, color: C.acc, marginTop: 2 }}>
+                              &bull; {modSummary}
+                            </div>
+                          )}
+                          {inCart && inCart.note && (
+                            <div style={{ fontSize: 11, color: C.text3, marginTop: 1 }}>
+                              <Pencil size={10} style={{ display: "inline", marginRight: 3 }} />{inCart.note}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{
+                          width: 34, height: 34, borderRadius: 50, flexShrink: 0,
+                          background: inCart ? C.acc : C.accD,
+                          color: inCart ? "#fff" : C.acc,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: inCart ? 14 : 18, fontWeight: 700,
+                        }}>
+                          {inCart ? inCart.qty : "+"}
+                        </div>
+                      </button>
                     );
                   })}
                 </div>
-              )
-            ) : categoriesForFoodType.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0" }}>
-                <Utensils size={48} style={{ margin: "0 auto 12px", color: "var(--qr-sub)" }} />
-                <p style={{ color: "var(--qr-sub)", fontSize: 16 }}>No hay productos disponibles en esta categoría.</p>
               </div>
-            ) : (
-              <div>
-                {categoriesForFoodType.map(({ name: catName, products: catProducts }) => {
-                  const isExpanded = expandedCategory === catName;
-                  return (
-                    <div key={catName} data-testid={`category-group-${catName}`}>
-                      <button
-                        className="qr-cat-toggle"
-                        onClick={() => setExpandedCategory(isExpanded ? null : catName)}
-                        aria-expanded={isExpanded}
-                        data-testid={`button-toggle-category-${catName}`}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                          {isExpanded
-                            ? <ChevronDown size={16} style={{ color: "var(--qr-sub)", flexShrink: 0 }} />
-                            : <ChevronRight size={16} style={{ color: "var(--qr-sub)", flexShrink: 0 }} />}
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{catName}</span>
-                        </div>
-                        <span className="qr-cat-count">{catProducts.length}</span>
-                      </button>
-                      {isExpanded && (
-                        <div style={{ padding: "4px 4px 16px" }}>
-                          <div className="qr-product-grid">
-                            {catProducts.map(product => {
-                              const inCart = cartItems.filter(it => it.productId === product.id).reduce((s, it) => s + it.qty, 0);
-                              const outOfStock = product.availablePortions !== null && product.availablePortions <= 0;
-                              return (
-                                <ProductCard
-                                  key={product.id}
-                                  product={product}
-                                  inCart={inCart}
-                                  outOfStock={outOfStock}
-                                  loading={loadingMods}
-                                  onSelect={() => handleProductClick(product)}
-                                />
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+            ))
+          )}
         </div>
 
-        <div className="qr-footer" style={{ position: "fixed", left: 0, right: 0 }}>
-          <div style={{ maxWidth: 480, margin: "0 auto" }}>
-            {cartItemCount > 0 && (
-              <div className="qr-cart-count-bar" data-testid="text-cart-count">
-                <ShoppingBag size={16} />
-                <span>{cartItemCount} item{cartItemCount !== 1 ? "s" : ""} en tu pedido</span>
-              </div>
-            )}
-            <button className="qr-cta" onClick={() => setStep("review")} disabled={cartItemCount === 0} data-testid="button-review-order">
-              Revisar pedido
-              <ArrowRight size={22} />
+        {/* Sticky cart footer */}
+        {cartCount > 0 && (
+          <div style={{
+            position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30,
+            padding: "10px 14px 14px",
+          }}>
+            <button data-testid="button-qr-view-cart" onClick={() => setScreen(3)} style={{
+              width: "100%", padding: "14px 20px", borderRadius: 16, border: "none",
+              background: C.acc, color: "#fff", fontSize: 15, fontWeight: 700,
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between",
+              minHeight: 48, boxShadow: "0 -4px 20px rgba(0,0,0,0.12)",
+            }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><ShoppingCart size={16} /> {cartCount} {cartCount === 1 ? "item" : "items"}</span>
+              <span>Ver mi pedido</span>
+              <span style={{ fontFamily: mono }}>{fmtPrice(cartTotal)}</span>
             </button>
           </div>
-        </div>
+        )}
+
+        {/* Product modal */}
+        {popup && (
+          <ProductModal
+            product={popup}
+            existing={cartItemForProduct(popup.id)}
+            onAdd={handleAddToCart}
+            onClose={() => setPopup(null)}
+          />
+        )}
       </div>
     );
   }
 
-  if (step === "modifiers") {
+  /* ── S3: Review ── */
+  if (screen === 3) {
     return (
-      <QRStepLayout
-        currentStep={mode === "easy" ? 4 : 3} totalSteps={totalSteps}
-        title={`¿Cómo preferís tu ${pendingProduct?.name}?`}
-        tableName={tableInfo.tableName}
-        onBack={handleModifiersBack}
-        footer={
-          <button className="qr-cta" onClick={() => confirmModifiers()} data-testid="button-confirm-modifiers">
-            Confirmar
-            <ArrowRight size={22} />
-          </button>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {modGroups.map(group => (
-            <div key={group.id} data-testid={`modifier-group-${group.id}`}>
-              <div style={{ marginBottom: 8, display: "flex", alignItems: "center", flexWrap: "wrap" }}>
-                <span className="qr-mod-group-label">{group.name}</span>
-                {group.required && <span className="qr-mod-required">Requerido</span>}
-                {group.multiSelect && <span style={{ fontSize: 12, color: "var(--qr-sub)", marginLeft: 8 }}>(varias opciones)</span>}
-              </div>
-              <div>
-                {group.options.map(opt => {
-                  const isSelected = (selectedMods[group.id] || []).includes(opt.id);
-                  return (
-                    <button
-                      key={opt.id}
-                      className={`qr-mod-option ${isSelected ? "selected" : ""}`}
-                      onClick={() => toggleModOption(group.id, opt.id, group.multiSelect)}
-                      data-testid={`button-modifier-${opt.id}`}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-                        {isSelected && <CheckCircle2 size={20} style={{ color: "var(--qr-accent)", flexShrink: 0 }} />}
-                        <span>{opt.name}</span>
-                      </div>
-                      {Number(opt.priceDelta) !== 0 && (
-                        <span style={{ fontFamily: "var(--f-mono)", fontSize: 13, color: "var(--qr-accent)", fontWeight: 600 }}>
-                          +{formatCurrency(opt.priceDelta)}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-                {!group.required && (
-                  <button
-                    className={`qr-mod-option ${(selectedMods[group.id] || []).length === 0 ? "selected" : ""}`}
-                    onClick={() => setSelectedMods(prev => ({ ...prev, [group.id]: [] }))}
-                    data-testid={`button-modifier-skip-${group.id}`}
-                  >
-                    <span>No gracias</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </QRStepLayout>
-    );
-  }
+      <div className="qr-page" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
+        <style>{PAGE_CSS}</style>
+        <Header onBack={() => setScreen(2)} tableCode={tableName} dotPos={2}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Tu pedido</div>
+          <div style={{ fontSize: 12, color: C.text3 }}>{cartCount} {cartCount === 1 ? "producto" : "productos"}</div>
+        </Header>
 
-  if (step === "review") {
-    return (
-      <QRStepLayout
-        currentStep={4} totalSteps={totalSteps}
-        title="Revisá tu pedido"
-        tableName={tableInfo.tableName}
-        onBack={() => setStep("menu")}
-        footer={
-          <button className="qr-cta" onClick={handleSubmit} disabled={submitMutation.isPending || cartItems.length === 0} data-testid="button-confirm-order">
-            {submitMutation.isPending ? <Loader2 size={22} className="animate-spin" /> : <Send size={22} />}
-            Confirmar y enviar
-          </button>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div className="qr-review-info">
-            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--qr-sub)", fontSize: 14 }} data-testid="text-review-account">
-              <Users size={18} />
-              <span>Cuenta: {tableInfo.tableName}-{selectedSubaccount?.slotNumber}</span>
+        <div style={{ flex: 1, overflowY: "auto", padding: "16px 14px" }}>
+          {/* Info card */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16,
+            padding: 14, borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`,
+          }}>
+            <div>
+              <div style={{ fontSize: 11, color: C.text3, textTransform: "uppercase", letterSpacing: "0.05em" }}>Mesa</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: C.text, marginTop: 2 }}>{tableName}</div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, marginTop: 6 }} data-testid="text-review-name">
-              <User size={18} style={{ color: "var(--qr-sub)" }} />
-              <span style={{ color: "var(--qr-sub)" }}>Nombre:</span>
-              <strong>{customerName.trim()}</strong>
+            <div>
+              <div style={{ fontSize: 11, color: C.text3, textTransform: "uppercase", letterSpacing: "0.05em" }}>Nombre</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: C.text, marginTop: 2 }}>{name}</div>
             </div>
           </div>
 
-          {cartItems.length > 0 ? (
-            <>
-              {cartItems.map((item, idx) => (
-                <div className="qr-cart-item" key={idx} data-testid={`review-item-${idx}`}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: 500, fontSize: 15 }}>{item.qty}x {item.productName}</p>
-                    <p style={{ color: "var(--qr-sub)", fontSize: 13, marginTop: 2 }}>
-                      {formatCurrency(item.unitPrice)} c/u
-                    </p>
-                    {item.modifiers && item.modifiers.length > 0 && (
-                      <p style={{ color: "var(--qr-sub)", fontSize: 12, marginTop: 2 }}>
-                        {item.modifiers.length} modificador{item.modifiers.length !== 1 ? "es" : ""}
-                      </p>
-                    )}
+          {/* Cart items */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {cart.map(item => {
+              const modSummary = getModSummary(item, modGroupsCache[item.product.id]);
+              return (
+                <div key={item.product.id} style={{
+                  display: "flex", gap: 12, padding: 14, borderRadius: 12,
+                  background: C.card, border: `1px solid ${C.border}`,
+                }}>
+                  <div style={{
+                    width: 44, height: 44, borderRadius: 10, background: C.bg,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 22, flexShrink: 0,
+                  }}>
+                    <FoodIcon type={item.product.categoryFoodType} size={20} />
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontFamily: "var(--f-mono)", fontWeight: 600, fontSize: 14, color: "var(--qr-accent)", whiteSpace: "nowrap" }} data-testid={`text-item-subtotal-${idx}`}>
-                      {formatCurrency(Number(item.unitPrice) * item.qty)}
-                    </span>
-                    <button className="qr-cart-remove" onClick={() => removeCartItem(idx)} data-testid={`button-remove-item-${idx}`}>
-                      <X size={16} />
-                    </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{item.product.name}</div>
+                    {modSummary && (
+                      <div style={{ fontSize: 12, color: C.acc, marginTop: 2 }}>&bull; {modSummary}</div>
+                    )}
+                    {item.note && (
+                      <div style={{ fontSize: 12, color: C.text3, marginTop: 1, display: "flex", alignItems: "center", gap: 3 }}><Pencil size={10} />{item.note}</div>
+                    )}
+                    <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                      <span style={{ fontSize: 13, color: C.text2 }}>{fmtPrice(item.unitPrice)} c/u</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: C.acc }}>{fmtPrice(item.unitPrice * item.qty)}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <button data-testid={`button-qr-qty-minus-${item.product.id}`}
+                      onClick={() => {
+                        updateQty(item.product.id, -1);
+                        if (item.qty <= 1 && cart.length <= 1) setScreen(2);
+                      }}
+                      style={{
+                        width: 34, height: 34, borderRadius: 50, border: `1.5px solid ${C.border}`,
+                        background: C.card, cursor: "pointer", fontSize: 18, color: C.text2,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>&minus;</button>
+                    <span style={{ fontSize: 17, fontWeight: 700, minWidth: 20, textAlign: "center" }}>{item.qty}</span>
+                    <button data-testid={`button-qr-qty-plus-${item.product.id}`}
+                      onClick={() => updateQty(item.product.id, 1)}
+                      style={{
+                        width: 34, height: 34, borderRadius: 50, border: `1.5px solid ${C.acc}`,
+                        background: C.accD, cursor: "pointer", fontSize: 18, color: C.acc,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>+</button>
                   </div>
                 </div>
-              ))}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", background: "var(--qr-s1)", border: "1px solid var(--qr-s2)", borderRadius: "var(--r-sm)" }}>
-                <span style={{ fontFamily: "var(--f-disp)", fontSize: 16, fontWeight: 700 }}>Total</span>
-                <span className="qr-cart-total" style={{ marginTop: 0 }} data-testid="text-order-total">
-                  {formatCurrency(cartItems.reduce((sum, i) => sum + Number(i.unitPrice) * i.qty, 0))}
-                </span>
-              </div>
-            </>
-          ) : (
-            <p style={{ textAlign: "center", color: "var(--qr-sub)", fontSize: 15, padding: "24px 0" }} data-testid="text-empty-order">No hay items en tu pedido.</p>
-          )}
+              );
+            })}
+          </div>
 
-          <button className="qr-cta-outline" onClick={() => setStep("menu")} data-testid="button-add-more">
-            <Plus size={20} />
-            Agregar algo más
-          </button>
-        </div>
-      </QRStepLayout>
-    );
-  }
+          {/* Total */}
+          <div style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            marginTop: 16, padding: "14px 16px", borderRadius: 12,
+            background: C.accD, border: `1.5px solid ${C.accM}`,
+          }}>
+            <span style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: C.text }}>Total</span>
+            <span style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.acc }}>{fmtPrice(cartTotal)}</span>
+          </div>
 
-  if (step === "view_menu") {
-    const expandedProduct = viewMenuProduct !== null ? menu.find(p => p.id === viewMenuProduct) : null;
-
-    if (expandedProduct) {
-      return (
-        <div className="qr-page">
-          <style>{QR_STYLES}</style>
-          <div className="qr-view-menu-header">
-            <button className="qr-back" onClick={() => setViewMenuProduct(null)} data-testid="button-view-product-back">
-              <ChevronLeft size={20} />
+          {/* Actions */}
+          <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+            <button data-testid="button-qr-add-more" onClick={() => setScreen(2)} style={{
+              width: "100%", padding: "12px 20px", borderRadius: 14,
+              border: `1.5px solid ${C.border}`, background: C.card,
+              color: C.text, fontSize: 15, fontWeight: 600, cursor: "pointer", minHeight: 48,
+            }}>
+              + Agregar algo m&aacute;s
             </button>
-            <h1 style={{ fontFamily: "var(--f-disp)", fontSize: 18, fontWeight: 800, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} data-testid="text-view-product-title">{expandedProduct.name}</h1>
-          </div>
-          <div className="qr-content" style={{ paddingTop: 24 }}>
-            <div style={{ maxWidth: 480, margin: "0 auto" }}>
-              <h2 style={{ fontFamily: "var(--f-disp)", fontSize: 24, fontWeight: 800, marginBottom: 8 }} data-testid="text-view-product-name">{expandedProduct.name}</h2>
-              <p style={{ fontFamily: "var(--f-mono)", fontSize: 20, fontWeight: 600, color: "var(--qr-accent)", marginBottom: 16 }} data-testid="text-view-product-price">
-                {formatCurrency(expandedProduct.price)}
-              </p>
-              {expandedProduct.description && (
-                <p style={{ color: "var(--qr-sub)", fontSize: 15, lineHeight: 1.6 }} data-testid="text-view-product-description">
-                  {expandedProduct.description}
-                </p>
+            <button data-testid="button-qr-confirm" onClick={handleSubmit}
+              disabled={sending || cart.length === 0}
+              style={{
+                width: "100%", padding: "14px 20px", borderRadius: 14, border: "none",
+                background: C.acc, color: "#fff", fontSize: 16, fontWeight: 700,
+                cursor: sending ? "wait" : "pointer", minHeight: 48,
+                opacity: sending ? 0.7 : 1,
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              }}>
+              {sending ? (
+                <><Loader2 className="animate-spin" size={18} /> Enviando...</>
+              ) : (
+                <>&checkmark; Confirmar y enviar</>
               )}
-            </div>
-          </div>
-          <div className="qr-footer">
-            <div style={{ maxWidth: 480, margin: "0 auto" }}>
-              <button className="qr-cta-outline" onClick={() => setViewMenuProduct(null)} data-testid="button-view-product-close">
-                Volver al menú
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="qr-page">
-        <style>{QR_STYLES}</style>
-        <div className="qr-view-menu-header">
-          <button className="qr-back" onClick={() => setStep("mode_select")} data-testid="button-view-menu-back">
-            <ChevronLeft size={20} />
-          </button>
-          <div style={{ flex: 1, textAlign: "center" }}>
-            <h1 style={{ fontFamily: "var(--f-disp)", fontSize: 20, fontWeight: 800 }} data-testid="text-view-menu-title">Menú</h1>
-            <p style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--qr-sub)" }} data-testid="text-view-menu-table">{tableInfo.tableName}</p>
-          </div>
-          <div style={{ width: 40 }} />
-        </div>
-
-        <div className="qr-content" style={{ paddingTop: 16, paddingBottom: 16 }}>
-          <div style={{ maxWidth: 480, margin: "0 auto" }}>
-            {viewMenuGrouped.map(({ topCode, topName, subcategories }) => (
-              <div key={topCode} style={{ marginBottom: 24 }} data-testid={`view-menu-top-${topCode}`}>
-                <h2 className="qr-view-top-title" data-testid={`text-view-top-${topCode}`}>
-                  {topName}
-                </h2>
-                {subcategories.map(({ name: subcatName, products: subcatProducts }) => (
-                  <div key={subcatName} style={{ marginBottom: 16 }} data-testid={`view-menu-subcat-${subcatName}`}>
-                    <h3 className="qr-view-subcat-title" data-testid={`text-view-subcat-${subcatName}`}>
-                      {subcatName}
-                    </h3>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-                      {subcatProducts.map(product => (
-                        <button
-                          key={product.id}
-                          className="qr-view-product-btn"
-                          onClick={() => setViewMenuProduct(product.id)}
-                          data-testid={`button-view-product-${product.id}`}
-                        >
-                          <p style={{ fontWeight: 500, fontSize: 13, lineHeight: 1.3 }}>{product.name}</p>
-                          <p style={{ fontFamily: "var(--f-mono)", fontSize: 12, fontWeight: 600, color: "var(--qr-accent)", marginTop: 4 }}>
-                            {formatCurrency(product.price)}
-                          </p>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-            {viewMenuGrouped.length === 0 && (
-              <div style={{ textAlign: "center", padding: "40px 0" }}>
-                <BookOpen size={48} style={{ margin: "0 auto 12px", color: "var(--qr-sub)" }} />
-                <p style={{ color: "var(--qr-sub)", fontSize: 16 }}>Menú no disponible.</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="qr-footer">
-          <div style={{ maxWidth: 480, margin: "0 auto" }}>
-            <button className="qr-cta-outline" onClick={() => setStep("mode_select")} data-testid="button-view-menu-volver">
-              Volver
             </button>
           </div>
         </div>
@@ -1557,24 +936,78 @@ export default function QRClientPage() {
     );
   }
 
-  if (step === "sent") {
+  /* ── S4: Sent ── */
+  if (screen === 4) {
     return (
-      <div className="qr-center" style={{ flexDirection: "column" }}>
-        <style>{QR_STYLES}</style>
-        <div style={{ textAlign: "center", maxWidth: 360, width: "100%" }}>
-          <div className="qr-success-circle">
-            <Check size={40} style={{ color: "var(--qr-accent)" }} />
-          </div>
-          <h1 style={{ fontFamily: "var(--f-disp)", fontSize: 26, fontWeight: 800, marginBottom: 8 }} data-testid="text-order-sent">Pedido enviado</h1>
-          <p style={{ color: "var(--qr-sub)", fontSize: 16, marginBottom: 8 }} data-testid="text-order-sent-message">
-            Ya viene un salonero a confirmarles la orden.
-          </p>
-          <p style={{ color: "var(--qr-sub)", fontSize: 14, marginBottom: 32 }}>Gracias por la paciencia, y buen provecho!</p>
-          <button className="qr-cta" onClick={resetAll} data-testid="button-new-order">
-            <Plus size={22} />
-            Hacer otro pedido
-          </button>
+      <div className="qr-page" style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        minHeight: "100dvh", padding: "48px 24px", textAlign: "center",
+      }}>
+        <style>{PAGE_CSS}</style>
+        <div style={{
+          width: 96, height: 96, borderRadius: 50, background: C.accD,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 44, marginBottom: 20,
+        }}><Check size={44} style={{ color: C.acc }} /></div>
+        <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+          &iexcl;Pedido enviado!
         </div>
+        <div style={{ fontSize: 15, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 28 }}>
+          Un salonero va a confirmar tu pedido en un momento.
+        </div>
+
+        {/* Order summary */}
+        <div style={{
+          width: "100%", maxWidth: 400, borderRadius: 14, border: `1px solid ${C.border}`,
+          background: C.card, overflow: "hidden", textAlign: "left",
+        }}>
+          {cart.map((item, i) => {
+            const modSummary = getModSummary(item, modGroupsCache[item.product.id]);
+            return (
+              <div key={i} style={{
+                display: "flex", gap: 10, padding: "12px 16px",
+                borderBottom: i < cart.length - 1 ? `1px solid ${C.border}` : "none",
+              }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 8, background: C.bg,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 18, flexShrink: 0,
+                }}>
+                  <FoodIcon type={item.product.categoryFoodType} size={16} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>
+                    {item.product.name} <span style={{ color: C.text3, fontWeight: 400 }}>&times;{item.qty}</span>
+                  </div>
+                  {modSummary && <div style={{ fontSize: 11, color: C.acc, marginTop: 1 }}>&bull; {modSummary}</div>}
+                  {item.note && <div style={{ fontSize: 11, color: C.text3, marginTop: 1, display: "flex", alignItems: "center", gap: 3 }}><Pencil size={10} />{item.note}</div>}
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.text, flexShrink: 0 }}>
+                  {fmtPrice(item.unitPrice * item.qty)}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{
+            display: "flex", justifyContent: "space-between", padding: "12px 16px",
+            background: C.accD, borderTop: `1px solid ${C.accM}`,
+          }}>
+            <span style={{ fontFamily: serif, fontSize: 16, fontWeight: 700, color: C.text }}>Total</span>
+            <span style={{ fontFamily: serif, fontSize: 18, fontWeight: 700, color: C.acc }}>{fmtPrice(cartTotal)}</span>
+          </div>
+        </div>
+
+        <button data-testid="button-qr-order-more" onClick={() => {
+          setCart([]);
+          setSubaccountId(null);
+          setScreen(0);
+        }} style={{
+          marginTop: 24, padding: "14px 32px", borderRadius: 30, border: `1.5px solid ${C.acc}`,
+          background: C.card, color: C.acc, fontSize: 15, fontWeight: 600,
+          cursor: "pointer", minHeight: 48,
+        }}>
+          + Pedir algo m&aacute;s
+        </button>
       </div>
     );
   }
