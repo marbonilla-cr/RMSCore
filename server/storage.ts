@@ -1066,6 +1066,7 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   }));
 
   const allRelevantOrderIds = [...openOrders, ...paidOrders].map(o => o.id);
+  const paidOrderIds_forTax = paidOrders.map(o => o.id);
   let totalDiscounts = 0;
   let totalTaxes = 0;
   const taxBreakdown: { taxName: string; taxRate: number; inclusive: boolean; totalAmount: number }[] = [];
@@ -1074,7 +1075,8 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
       .from(orderItemDiscounts)
       .where(inArray(orderItemDiscounts.orderId, allRelevantOrderIds));
     totalDiscounts = discountRows.reduce((s, d) => s + Number(d.amountApplied || 0), 0);
-
+  }
+  if (paidOrderIds_forTax.length > 0) {
     const taxRows = await db.select({
       taxNameSnapshot: orderItemTaxes.taxNameSnapshot,
       taxRateSnapshot: orderItemTaxes.taxRateSnapshot,
@@ -1083,7 +1085,7 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
     })
       .from(orderItemTaxes)
       .innerJoin(orderItems, eq(orderItemTaxes.orderItemId, orderItems.id))
-      .where(inArray(orderItems.orderId, allRelevantOrderIds));
+      .where(inArray(orderItems.orderId, paidOrderIds_forTax));
 
     const taxMap = new Map<string, { taxName: string; taxRate: number; inclusive: boolean; totalAmount: number }>();
     for (const row of taxRows) {
