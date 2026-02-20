@@ -1,0 +1,303 @@
+# Prompt — Reconstruir página QR del cliente (`client/src/pages/qr-client.tsx`)
+
+## Contexto
+Estás trabajando en un sistema de restaurante (PWA, React + Vite, Tailwind CSS, wouter).  
+El archivo a reemplazar es `client/src/pages/qr-client.tsx`.  
+La ruta es `/qr/:tableCode` — **pública, sin autenticación**.
+
+**No toques ningún otro archivo.** Solo reescribís `qr-client.tsx`.
+
+---
+
+## Objetivo
+Reemplazar el flujo QR actual (7+ pasos, selección explícita de subcuenta, selección de modo Easy/Standard) por un flujo simplificado de **4 pasos lineales**, con un popup de producto que incluye modificadores, cantidad y nota antes de agregar al carrito.
+
+---
+
+## Flujo de pantallas
+
+```
+S0: Bienvenida  →  S1: Nombre  →  S2: Menú  →  S3: Revisión  →  S4: Enviado
+```
+
+La selección de subcuenta desaparece de la vista del cliente. El backend la asigna automáticamente por nombre: si ya existe una subcuenta con ese nombre en la mesa, se reutiliza; si no, se crea una nueva. Esto ya lo maneja `POST /api/qr/:tableCode/submit` — solo asegurate de enviar `customerName` en cada ítem.
+
+---
+
+## APIs a usar (sin cambios)
+
+| Método | Endpoint | Uso |
+|--------|----------|-----|
+| GET | `/api/qr/:tableCode/info` | Nombre de mesa, maxSubaccounts |
+| GET | `/api/qr/:tableCode/menu` | Productos activos + categorías TOP |
+| GET | `/api/products/:id/modifiers` | Grupos de modificadores del producto |
+| POST | `/api/qr/:tableCode/submit` | Enviar pedido |
+
+### Estructura del submit
+```typescript
+POST /api/qr/:tableCode/submit
+{
+  customerName: string,           // nombre ingresado en S1
+  items: Array<{
+    productId: number,
+    qty: number,
+    notes: string,                // nota libre de cocina
+    modifiers: Array<{            // opciones seleccionadas
+      modGroupId: number,
+      optionId: number
+    }>
+  }>
+}
+```
+
+---
+
+## Diseño visual — tokens exactos
+
+```typescript
+const C = {
+  bg:      "#faf8f4",
+  card:    "#ffffff",
+  border:  "#e8e2d9",
+  border2: "#d4cdc3",
+  text:    "#1a1612",
+  text2:   "#5a524a",
+  text3:   "#9a8f83",
+  acc:     "#2d6a4f",   // verde bosque — acento principal
+  accD:    "#e8f5ee",   // verde claro — fondos activos
+  accM:    "rgba(45,106,79,0.2)",
+  accT:    "rgba(45,106,79,0.06)",
+  red:     "#c0392b",
+  redD:    "#fdecea",
+  overlay: "rgba(15,12,8,0.58)",
+}
+```
+
+**Tipografía:** `system-ui, sans-serif` para el body. `Georgia, serif` para títulos de pantalla y totales.  
+**Touch targets mínimos:** 44px de alto/ancho en todos los botones interactivos.  
+**Tema:** claro (light) siempre — no dark mode en esta página.
+
+---
+
+## Estructura de componentes
+
+### `<QRClientPage>` — componente principal
+Estado:
+```typescript
+const [screen,  setScreen]  = useState<0|1|2|3|4>(0)
+const [name,    setName]    = useState("")
+const [cart,    setCart]    = useState<CartItem[]>([])
+const [tab,     setTab]     = useState<string>("")   // categoryId activo
+const [popup,   setPopup]   = useState<Product|null>(null)
+const [sending, setSending] = useState(false)
+```
+
+Tipo de ítem en carrito:
+```typescript
+interface CartItem {
+  product:    Product
+  qty:        number
+  note:       string
+  selections: Record<string, number[]>  // { [groupId]: [optionId, ...] }
+  unitPrice:  number   // precio base + precio de modificadores seleccionados
+}
+```
+
+### `<ProductModal>` — popup bottom-sheet
+
+Se abre al tocar cualquier producto en S2. Recibe:
+```typescript
+interface ProductModalProps {
+  product:   Product
+  existing?: CartItem      // si el producto ya está en el carrito, pre-llena el modal
+  onAdd:     (product, qty, note, selections, unitPrice) => void
+  onClose:   () => void
+}
+```
+
+Internamente llama `GET /api/products/:id/modifiers` para obtener los grupos.
+
+---
+
+## Especificación de cada pantalla
+
+### S0 — Bienvenida
+- Icono 🍽️ en caja 88×88px, `borderRadius:24`, fondo `accD`
+- Nombre de mesa en chip `font: DM Mono / system monospace`, uppercase, color `text3`
+- Título Georgia serif 32px: "Bienvenido"
+- Subtítulo 16px: "Pedí lo que querás. Un salonero confirma antes de enviarlo a cocina."
+- Botón CTA `borderRadius:30`: "🛒 Empezar a pedir"
+- Nota pequeña debajo: "Toca el botón para comenzar"
+
+### S1 — Nombre
+- Header: botón `‹` back + progress dots (posición 1/4) + chip de mesa
+- Icono 👤 circular 68×68 fondo `accD`
+- Título Georgia: "¿Cómo te llamás?"
+- Subtítulo: "Para que el salonero sepa quién pidió qué."
+- `<input>` centrado, `fontSize:22`, `padding:18px`, border cambia a `acc` cuando tiene valor
+- Hint debajo: "Escribí tu nombre o escogé uno"
+- Sección "Ya en la mesa" — botones pill con nombres de subcuentas activas (fetch `GET /api/qr/:tableCode/subaccounts`). Al tocar uno se llena el input.
+- Botón CTA "Continuar →" — deshabilitado (opacidad 0.4, no clickeable) si el input está vacío
+
+### S2 — Menú
+- Header: `‹` back + "Hola, {nombre} 👋" + subtítulo "Tocá un plato para agregarlo" + chip mesa
+- Progress dots posición 2/4
+- Tabs de categorías TOP: pills horizontales scrollables. La categoría activa tiene fondo `acc` texto blanco.
+- Lista de productos: tarjetas verticales (una por fila), 14px padding:
+  - Emoji/imagen 52×52 `borderRadius:12` fondo `bg`
+  - Nombre 16px bold + chip "personalizable" en verde si tiene modificadores
+  - Descripción 12px color `text3`
+  - Precio 15px bold color `acc` — si hay item en carrito muestra `unitPrice` del item (puede incluir extras)
+  - Si item en carrito: debajo del precio muestra selecciones "• Término medio · Tocino" y nota "✏️ sin sal"
+  - Badge derecho: círculo verde con número si está en carrito, círculo `accD` con "+" si no
+  - Toda la tarjeta es clickeable → abre `<ProductModal>`
+  - Tarjeta con borde `acc` y fondo `accT` si el producto está en carrito
+- Footer sticky: barra verde "🛒 {n} items · Ver mi pedido · ₡{total}" — solo visible cuando `cart.length > 0`. Al tocar → S3.
+
+### S3 — Revisión
+- Header: `‹` back + "Tu pedido / {n} productos" + chip mesa
+- Progress dots posición 3/4
+- Tarjeta info: Mesa | Nombre (2 columnas)
+- Lista de ítems del carrito:
+  - Emoji + nombre + selecciones "• ..." + precio unitario y subtotal + nota "✏️ ..."
+  - Controles `−` cantidad `+` a la derecha (34×34px botones circulares)
+  - Si qty baja a 0, el ítem se elimina del carrito
+- Fila total: fondo `accD`, borde `accM`, Georgia 20px "Total" + monto 24px bold verde
+- Botón secundario: "+ Agregar algo más" → vuelve a S2
+- Botón CTA: "✓ Confirmar y enviar" → llama `POST /api/qr/:tableCode/submit`
+
+### S4 — Enviado
+- Círculo ✓ 96×96 fondo `accD`
+- Título Georgia: "¡Pedido enviado!"
+- Subtítulo: "Un salonero va a confirmar tu pedido en un momento."
+- Tarjeta resumen: lista de ítems con emoji, nombre ×qty, selecciones, nota, subtotal — y fila de total al pie
+- Botón: "+ Pedir algo más" → resetea estado y vuelve a S0
+
+---
+
+## `<ProductModal>` — especificación detallada
+
+### Estructura visual
+```
+[overlay oscuro — click cierra]
+  └── [sheet blanco, borderRadius "24px 24px 0 0", maxHeight 90%, flex column]
+        ├── drag handle (40×4px, borderRadius 2, color border2)
+        ├── botón ✕ alineado a la derecha
+        ├── [zona scrollable flex:1]
+        │     ├── header: emoji 68×68 + nombre Georgia 21px + desc + precio base
+        │     ├── divisor hr
+        │     ├── [por cada modifier group]:
+        │     │     ├── label grupo + badge "Requerido"/"Opcional" + "(varios)" si multi
+        │     │     └── [por cada opción]:
+        │     │           radio (circle) si single-select, checkbox (square r:6) si multi
+        │     │           nombre opción + "+₡precio" si price > 0
+        │     │           fondo accT + borde acc cuando activo
+        │     ├── divisor hr (solo si hay grupos)
+        │     ├── control cantidad: "Cantidad" label + [−] número [+]
+        │     └── textarea nota: label "✏️ Nota para cocina (opcional)"
+        └── [footer sticky]
+              ├── mensaje error rojo si tried===true y hay grupos requeridos sin elegir
+              └── botón CTA "🛒 Pedir · ₡{unitPrice×qty}"
+                  (dice "Actualizar" si existing !== undefined)
+```
+
+### Lógica del modal
+
+```typescript
+// Al abrir: fetch modificadores
+const { data: groups } = useQuery({
+  queryKey: [`/api/products/${product.id}/modifiers`],
+})
+// groups: Array<{ id, name, required, multiSelect, options: [{id, name, priceDelta}] }>
+
+// Estado interno
+const [qty,   setQty]   = useState(existing?.qty  ?? 1)
+const [note,  setNote]  = useState(existing?.note ?? "")
+const [sel,   setSel]   = useState<Record<string, number[]>>(
+  existing?.selections ?? {}
+)
+const [tried, setTried] = useState(false)
+
+// Precio dinámico
+const modPrice = groups?.flatMap(g => g.options
+  .filter(o => sel[g.id]?.includes(o.id))
+  .map(o => o.priceDelta)
+).reduce((a,b) => a+b, 0) ?? 0
+const unitPrice = product.price + modPrice
+
+// Validación
+const missingRequired = groups?.filter(
+  g => g.required && (!sel[g.id] || sel[g.id].length === 0)
+) ?? []
+
+// Toggle opción
+function toggle(groupId: number, optionId: number, multi: boolean) {
+  setSel(prev => {
+    const cur = prev[groupId] ?? []
+    if (multi) {
+      return { ...prev, [groupId]: cur.includes(optionId)
+        ? cur.filter(x => x !== optionId)
+        : [...cur, optionId] }
+    }
+    return { ...prev, [groupId]: cur.includes(optionId) ? [] : [optionId] }
+  })
+}
+
+// Al tocar "Pedir"
+function handleAdd() {
+  setTried(true)
+  if (missingRequired.length > 0) return
+  // construir array de modifiers para el submit
+  const modifiers = Object.entries(sel).flatMap(([groupId, optIds]) =>
+    optIds.map(optionId => ({ modGroupId: Number(groupId), optionId }))
+  )
+  onAdd(product, qty, note, sel, unitPrice)
+  onClose()
+}
+```
+
+### Animación del sheet
+```css
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+/* aplicar al sheet: animation: slideUp 0.22s cubic-bezier(0.32,0.72,0,1) */
+```
+
+---
+
+## Progress dots
+
+Componente auxiliar `<Dots cur={n} total={4} />`:
+- Punto activo: ancho 20px, `borderRadius:4`, color `acc`
+- Punto hecho: 7×7 circular, color `acc`, opacity 0.35
+- Punto pendiente: 7×7 circular, color `border2`
+
+---
+
+## Manejo de errores y estados de carga
+
+- Mientras carga `info` o `menu`: spinner centrado con Loader2
+- Error en fetch: toast destructivo, no rompe la página
+- Error en submit: toast destructivo, botón "Confirmar" vuelve a habilitarse
+- Durante el submit: botón muestra "⏳ Enviando..." y `disabled`
+
+---
+
+## Comportamiento del carrito
+
+- El carrito vive en `useState` — no en localStorage para esta página
+- `unitPrice` del ítem = `product.price + suma(priceDelta de opciones seleccionadas)`
+- Si el cliente toca un producto ya agregado → el modal se abre pre-llenado con qty, note y selections actuales. El botón dice "Actualizar". Al confirmar, reemplaza el ítem existente.
+- Si qty baja a 0 en S3 → ítem eliminado del carrito. Si carrito queda vacío → `go(2)`
+
+---
+
+## Lo que NO debe cambiar
+
+- La ruta `/qr/:tableCode` sigue siendo pública (sin auth)
+- El endpoint `POST /api/qr/:tableCode/submit` no se modifica
+- La lógica de subcuentas en el backend no se toca — solo se deja de exponer al cliente
+- Rate limiting del backend sigue activo
+- `GET /api/qr/:tableCode/subaccounts` sigue usándose, pero solo para mostrar los nombres existentes como botones rápidos en S1 (no para selección de slot)
