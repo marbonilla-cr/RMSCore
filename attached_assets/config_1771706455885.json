@@ -1,0 +1,15 @@
+{
+  "serverUrl": "wss://rms.restlaantigua.com/ws",
+  "bridgeId": "bridge-001",
+  "bridgeToken": "bridge-token-local",
+  "printers": [
+    {
+      "name": "Impresora Caja",
+      "type": "caja",
+      "ipAddress": "192.168.2.200",
+      "port": 9100,
+      "paperWidth": 80,
+      "enabled": true
+    }
+  ]
+}

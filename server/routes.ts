@@ -5175,6 +5175,7 @@ export async function registerRoutes(
 
       const dayReservations = await db.select().from(reservations)
         .where(and(
+          
           eq(reservations.reservedDate, date as string),
           inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
         ));
