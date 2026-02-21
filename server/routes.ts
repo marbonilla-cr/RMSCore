@@ -4418,12 +4418,42 @@ export async function registerRoutes(
 
   // ==================== WEBSOCKET ====================
   const wss = new WebSocketServer({ noServer: true });
+
+  const printBridges = new Map<string, WebSocket>();
+
+  function dispatchPrintJob(job: { jobType: string; destination: string; payload: any }) {
+    const msg = JSON.stringify({ type: "print_job", payload: job });
+    let sent = 0;
+    printBridges.forEach((ws, bridgeId) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.send(msg); sent++; } catch { printBridges.delete(bridgeId); }
+      } else {
+        printBridges.delete(bridgeId);
+      }
+    });
+    return sent > 0;
+  }
+
+  (app as any).dispatchPrintJob = dispatchPrintJob;
+
+  const BRIDGE_TOKEN = process.env.PRINT_BRIDGE_TOKEN || "bridge-token-local";
+
   httpServer.on("upgrade", (request, socket, head) => {
     const urlPath = (request.url || "").split("?")[0];
     if (urlPath !== "/ws") {
       socket.destroy();
       return;
     }
+
+    const urlParams = new URLSearchParams((request.url || "").split("?")[1] || "");
+    const bridgeToken = urlParams.get("bridge_token");
+    if (bridgeToken && bridgeToken === BRIDGE_TOKEN) {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request, "bridge");
+      });
+      return;
+    }
+
     const res = new ServerResponse(request);
     res.assignSocket(socket);
     const sessionMiddleware = app.get("sessionMiddleware");
@@ -4445,7 +4475,8 @@ export async function registerRoutes(
       });
     }
   });
-  wss.on("connection", (ws) => {
+
+  wss.on("connection", (ws, _request, clientType?: string) => {
     wsClients.add(ws);
     ws.on("message", (raw) => {
       try {
@@ -4455,10 +4486,22 @@ export async function registerRoutes(
             ws.send(JSON.stringify({ type: "pong" }));
           }
         }
+        if (msg.type === "print_bridge_register") {
+          const bridgeId = msg.payload?.bridgeId || "unknown";
+          printBridges.set(bridgeId, ws);
+          console.log(`[PrintBridge] Registrado: ${bridgeId}`);
+          ws.send(JSON.stringify({ type: "pong" }));
+        }
       } catch {}
     });
-    ws.on("close", () => wsClients.delete(ws));
-    ws.on("error", () => wsClients.delete(ws));
+    ws.on("close", () => {
+      wsClients.delete(ws);
+      printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
+    });
+    ws.on("error", () => {
+      wsClients.delete(ws);
+      printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
+    });
   });
 
   app.post("/api/admin/fix-loyverse-timestamps", requireRole("MANAGER"), async (_req, res) => {
