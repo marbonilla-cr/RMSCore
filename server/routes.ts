@@ -1,5 +1,5 @@
 import type { Express, Request, Response, NextFunction } from "express";
-import { createServer, type Server } from "http";
+import { createServer, type Server, ServerResponse } from "http";
 import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
@@ -4343,7 +4343,7 @@ export async function registerRoutes(
       socket.destroy();
       return;
     }
-    const res = new (require("http").ServerResponse)(request);
+    const res = new ServerResponse(request);
     res.assignSocket(socket);
     const sessionMiddleware = app.get("sessionMiddleware");
     if (sessionMiddleware) {
