@@ -81,7 +81,15 @@ function padLeft(text: string, width: number): string {
 }
 
 function formatCurrency(amount: number): string {
-  return amount.toLocaleString("es-CR");
+  const isNeg = amount < 0;
+  const abs = Math.abs(Math.round(amount));
+  const str = abs.toString();
+  let result = "";
+  for (let i = str.length - 1, c = 0; i >= 0; i--, c++) {
+    if (c > 0 && c % 3 === 0) result = "," + result;
+    result = str[i] + result;
+  }
+  return isNeg ? "-" + result : result;
 }
 
 interface ReceiptItem {
