@@ -6,6 +6,8 @@ let ws = null;
 let pingTimer = null;
 let reconnectTimer = null;
 let alive = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_INTERVAL = 60000;
 
 const printQueue = [];
 let printing = false;
@@ -117,6 +119,7 @@ function connect() {
 
   ws.on("open", () => {
     log("Conexion establecida");
+    reconnectAttempts = 0;
     alive = true;
 
     ws.send(
@@ -151,9 +154,7 @@ function connect() {
   });
 
   ws.on("close", (code) => {
-    log(
-      `Desconectado (code=${code}). Reconectando en ${config.reconnectInterval / 1000}s...`
-    );
+    log(`Desconectado (code=${code}).`);
     cleanup();
     scheduleReconnect();
   });
@@ -193,10 +194,14 @@ function cleanup() {
 
 function scheduleReconnect() {
   if (reconnectTimer) return;
+  reconnectAttempts++;
+  const baseDelay = config.reconnectInterval;
+  const delay = Math.min(baseDelay * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_INTERVAL);
+  log(`Intento #${reconnectAttempts} — reconectando en ${(delay / 1000).toFixed(0)}s...`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
-  }, config.reconnectInterval);
+  }, delay);
 }
 
 async function handlePrintJob(job) {

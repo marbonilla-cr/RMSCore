@@ -17,6 +17,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Checkbox } from "@/components/ui/checkbox";
 import { PayDialog } from "@/components/pos/PayDialog";
 import { SplitDialog } from "@/components/pos/SplitDialog";
+import "@/components/pos/pos-dialogs.css";
 import { formatCurrency } from "@/lib/utils";
 
 interface POSItemModifier {
@@ -1438,18 +1439,29 @@ export default function POSPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
           <button
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: '1px solid var(--border2)', background: 'var(--bg2)', color: 'var(--text2)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            className="pos-drawer-btn"
             onClick={(e) => {
               const btn = e.currentTarget;
-              if (btn.disabled) return;
-              btn.disabled = true;
-              btn.style.opacity = "0.5";
+              if (btn.dataset.busy === "1") return;
+              btn.dataset.busy = "1";
+              btn.classList.add("pos-drawer-btn--active");
               apiRequest("POST", "/api/pos/open-drawer", {})
                 .then(r => r.json())
-                .then(() => toast({ title: "Gaveta abierta" }))
-                .catch(() => toast({ title: "Error", description: "No se pudo abrir la gaveta", variant: "destructive" }))
+                .then(() => {
+                  btn.classList.remove("pos-drawer-btn--active");
+                  btn.classList.add("pos-drawer-btn--success");
+                  toast({ title: "Gaveta abierta" });
+                })
+                .catch(() => {
+                  btn.classList.remove("pos-drawer-btn--active");
+                  btn.classList.add("pos-drawer-btn--error");
+                  toast({ title: "Error", description: "No se pudo abrir la gaveta", variant: "destructive" });
+                })
                 .finally(() => {
-                  setTimeout(() => { btn.disabled = false; btn.style.opacity = "1"; }, 2000);
+                  setTimeout(() => {
+                    btn.classList.remove("pos-drawer-btn--success", "pos-drawer-btn--error");
+                    btn.dataset.busy = "0";
+                  }, 2000);
                 });
             }}
             data-testid="button-open-drawer"
