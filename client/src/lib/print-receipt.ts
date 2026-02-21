@@ -28,6 +28,8 @@ interface ReceiptData {
   totalTaxes?: number;
   taxBreakdown?: TaxBreakdownEntry[];
   paymentMethod: string;
+  cashReceived?: number;
+  changeAmount?: number;
   clientName?: string;
   cashierName?: string;
   date: string;
@@ -176,6 +178,8 @@ export function printReceipt(data: ReceiptData) {
   <div style="font-size:11px;margin-top:4px;">
     <span class="bold">Pago:</span> ${escapeHtml(data.paymentMethod)}
   </div>
+  ${data.cashReceived && data.cashReceived > 0 ? `<div style="font-size:11px;display:flex;justify-content:space-between;"><span>Recibido:</span><span>${formatCurrency(data.cashReceived)}</span></div>` : ""}
+  ${data.changeAmount && data.changeAmount > 0 ? `<div style="font-size:11px;display:flex;justify-content:space-between;"><span class="bold">Vuelto:</span><span class="bold">${formatCurrency(data.changeAmount)}</span></div>` : ""}
 
   <div class="divider"></div>
 

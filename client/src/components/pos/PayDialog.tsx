@@ -58,7 +58,7 @@ interface PayDialogProps {
   canEditCustomer: boolean;
   canEmailTicket: boolean;
   canPrint: boolean;
-  onSuccess: (paymentMethodId: string, clientName: string, clientEmail: string, wasCash: boolean) => void;
+  onSuccess: (paymentMethodId: string, clientName: string, clientEmail: string, wasCash: boolean, cashReceived?: number, changeAmount?: number) => void;
 }
 
 interface PayLeg {
@@ -209,7 +209,7 @@ export function PayDialog({
       const wasCash = pm ? (pm.paymentCode.toUpperCase().includes("CASH") || pm.paymentCode.toUpperCase().includes("EFECT")) : false;
 
       setTimeout(() => {
-        onSuccess(methodId, clientName, clientEmail, wasCash);
+        onSuccess(methodId, clientName, clientEmail, wasCash, wasCash ? received : undefined, wasCash && change > 0 ? change : undefined);
         onClose();
       }, 800);
     } catch (err: any) {

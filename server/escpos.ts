@@ -122,6 +122,8 @@ interface ReceiptData {
   totalTaxes?: number;
   taxBreakdown?: TaxBreakdownEntry[];
   paymentMethod: string;
+  cashReceived?: number;
+  changeAmount?: number;
   clientName?: string;
   cashierName?: string;
   date: string;
@@ -226,6 +228,18 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
   parts.push(CMD.BOLD_ON);
   parts.push(line(`Pago: ${data.paymentMethod}`));
   parts.push(CMD.BOLD_OFF);
+  if (data.cashReceived != null && data.cashReceived > 0) {
+    const recLabel = "Recibido:";
+    const recVal = formatCurrency(data.cashReceived);
+    parts.push(line(padRight(recLabel, cols - recVal.length - 1) + " " + recVal));
+  }
+  if (data.changeAmount != null && data.changeAmount > 0) {
+    parts.push(CMD.BOLD_ON);
+    const chgLabel = "Vuelto:";
+    const chgVal = formatCurrency(data.changeAmount);
+    parts.push(line(padRight(chgLabel, cols - chgVal.length - 1) + " " + chgVal));
+    parts.push(CMD.BOLD_OFF);
+  }
 
   parts.push(divider(cols));
 

@@ -871,11 +871,11 @@ export default function POSPage() {
     setPayDialogOpen(true);
   };
 
-  const handlePayDialogSuccess = (pmId: string, clName: string, clEmail: string, wasCash: boolean) => {
+  const handlePayDialogSuccess = (pmId: string, clName: string, clEmail: string, wasCash: boolean, cashReceived?: number, changeAmount?: number) => {
     if (!selectedTable) return;
     const tbl = selectedTable;
 
-    apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId })
+    apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId, cashReceived, changeAmount })
       .then(r => r.json())
       .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
       .catch(() => {});

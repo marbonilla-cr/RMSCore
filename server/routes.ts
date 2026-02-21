@@ -3229,7 +3229,7 @@ export async function registerRoutes(
   // ==================== POS: PRINT RECEIPT (direct to printer) ====================
   app.post("/api/pos/print-receipt", requirePermission("POS_PRINT"), async (req, res) => {
     try {
-      const { orderId } = req.body;
+      const { orderId, cashReceived, changeAmount } = req.body;
       if (!orderId || typeof orderId !== "number") return res.status(400).json({ message: "orderId requerido (número)" });
 
       const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
@@ -3300,6 +3300,8 @@ export async function registerRoutes(
         totalTaxes: totalTaxes > 0 ? totalTaxes : undefined,
         taxBreakdown: orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : undefined,
         paymentMethod: paymentMethodName,
+        cashReceived: typeof cashReceived === "number" && cashReceived > 0 ? cashReceived : undefined,
+        changeAmount: typeof changeAmount === "number" && changeAmount > 0 ? changeAmount : undefined,
         clientName: lastPayment?.clientNameSnapshot || undefined,
         cashierName: cashier?.displayName || undefined,
         date: new Date().toLocaleString("es-CR"),
