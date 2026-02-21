@@ -4447,6 +4447,9 @@ export async function registerRoutes(
 
     const urlParams = new URLSearchParams((request.url || "").split("?")[1] || "");
     const bridgeToken = urlParams.get("bridge_token");
+    console.log("[Bridge] URL recibida:", request.url);
+    console.log("[Bridge] Token recibido:", bridgeToken);
+    console.log("[Bridge] Token esperado:", BRIDGE_TOKEN);
     if (bridgeToken && bridgeToken === BRIDGE_TOKEN) {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request, "bridge");
