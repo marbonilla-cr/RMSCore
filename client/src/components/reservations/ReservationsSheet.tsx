@@ -101,7 +101,7 @@ export function ReservationsSheet({ open, onOpenChange }: { open: boolean; onOpe
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="right" className="w-full sm:max-w-[420px] p-0" style={{ background: "var(--s0)", color: "var(--text)", fontFamily: "var(--f-body)" }}>
+        <SheetContent side="right" className="w-full sm:max-w-[420px] p-0 [&>button[class*='absolute']]:hidden" style={{ background: "var(--s0)", color: "var(--text)", fontFamily: "var(--f-body)" }}>
           <style>{`
             .res-sheet [data-radix-scroll-area-viewport] { background: var(--s0) !important; }
             .res-header {
@@ -129,10 +129,17 @@ export function ReservationsSheet({ open, onOpenChange }: { open: boolean; onOpe
             }
             .res-add-btn {
               background: var(--green); color: #050f08; border: none;
-              border-radius: var(--r-sm); width: 32px; height: 32px;
+              border-radius: var(--r-sm); width: 44px; height: 44px;
               display: flex; align-items: center; justify-content: center;
               cursor: pointer; font-weight: 700;
             }
+            .res-close-btn {
+              background: none; border: 1px solid var(--border-ds); color: var(--text2);
+              border-radius: var(--r-sm); width: 44px; height: 44px;
+              display: flex; align-items: center; justify-content: center;
+              cursor: pointer; transition: background var(--t-fast);
+            }
+            .res-close-btn:active { background: var(--s2); }
             .res-section-label {
               font-family: var(--f-mono); font-size: 10px; font-weight: 600;
               color: var(--text3); text-transform: uppercase; letter-spacing: 0.6px;
@@ -196,9 +203,18 @@ export function ReservationsSheet({ open, onOpenChange }: { open: boolean; onOpe
                 <CalendarDays size={18} style={{ color: "var(--green)" }} />
                 <span style={{ fontFamily: "var(--f-disp)", fontWeight: 800, fontSize: 16 }}>Reservas</span>
               </div>
-              <button className="res-add-btn" onClick={() => { setEditReservation(null); setFormOpen(true); }} data-testid="button-add-reservation">
-                <Plus size={16} />
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button className="res-add-btn" onClick={() => { setEditReservation(null); setFormOpen(true); }} data-testid="button-add-reservation">
+                  <Plus size={16} />
+                </button>
+                <button
+                  className="res-close-btn"
+                  onClick={() => onOpenChange(false)}
+                  data-testid="button-close-reservations"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "10px 18px", gap: 8, borderBottom: "1px solid var(--border-ds)" }}>
