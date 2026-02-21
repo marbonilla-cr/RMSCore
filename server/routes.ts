@@ -4660,7 +4660,7 @@ export async function registerRoutes(
   // PUT /api/reservations/settings
   app.put("/api/reservations/settings", requireRole("MANAGER"), async (req, res) => {
     try {
-      const { openTime, closeTime, slotIntervalMinutes, maxOccupancyPercent, turnoverBufferMinutes, enabled } = req.body;
+      const { openTime, closeTime, slotIntervalMinutes, maxOccupancyPercent, turnoverBufferMinutes, maxPartySize, enabled } = req.body;
       const rows = await db.select().from(reservationSettings);
       if (rows.length === 0) {
         const [created] = await db.insert(reservationSettings).values({
@@ -4669,6 +4669,7 @@ export async function registerRoutes(
           slotIntervalMinutes: slotIntervalMinutes || 30,
           maxOccupancyPercent: maxOccupancyPercent !== undefined ? maxOccupancyPercent : 50,
           turnoverBufferMinutes: turnoverBufferMinutes !== undefined ? turnoverBufferMinutes : 15,
+          maxPartySize: maxPartySize !== undefined ? maxPartySize : 20,
           enabled: enabled !== undefined ? enabled : true,
         }).returning();
         return res.json(created);
@@ -4680,6 +4681,7 @@ export async function registerRoutes(
           slotIntervalMinutes: slotIntervalMinutes !== undefined ? slotIntervalMinutes : rows[0].slotIntervalMinutes,
           maxOccupancyPercent: maxOccupancyPercent !== undefined ? maxOccupancyPercent : rows[0].maxOccupancyPercent,
           turnoverBufferMinutes: turnoverBufferMinutes !== undefined ? turnoverBufferMinutes : rows[0].turnoverBufferMinutes,
+          maxPartySize: maxPartySize !== undefined ? maxPartySize : (rows[0].maxPartySize ?? 20),
           enabled: enabled !== undefined ? enabled : rows[0].enabled,
         })
         .where(eq(reservationSettings.id, rows[0].id))
@@ -4693,8 +4695,8 @@ export async function registerRoutes(
   // GET /api/public/reservations/settings (public - limited info)
   app.get("/api/public/reservations/settings", async (_req, res) => {
     const rows = await db.select().from(reservationSettings);
-    const settings = rows.length > 0 ? rows[0] : { openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30, enabled: true };
-    res.json({ openTime: settings.openTime, closeTime: settings.closeTime, slotIntervalMinutes: settings.slotIntervalMinutes, enabled: settings.enabled });
+    const settings = rows.length > 0 ? rows[0] : { openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30, enabled: true, maxPartySize: 20 };
+    res.json({ openTime: settings.openTime, closeTime: settings.closeTime, slotIntervalMinutes: settings.slotIntervalMinutes, enabled: settings.enabled, maxPartySize: settings.maxPartySize ?? 20 });
   });
 
   // ==================== PUBLIC RESERVATIONS ====================
@@ -4844,6 +4846,7 @@ export async function registerRoutes(
       const duration = await getDurationForPartySize(ps);
       const buffer = settings.turnoverBufferMinutes;
 
+      const suitableTableIds = new Set(suitableTables.map(t => t.id));
       const slots: { time: string; available: boolean; tablesAvailable: number }[] = [];
       for (let mins = openMinutes; mins <= closeMinutes; mins += interval) {
         const normalizedMins = mins % 1440;
@@ -4863,7 +4866,6 @@ export async function registerRoutes(
           if (!hasConflict) tablesAvailableCount++;
         }
 
-        const suitableTableIds = new Set(suitableTables.map(t => t.id));
         const currentlyReservedInSlot = dayReservations.filter(r => {
           if (!r.tableId || !suitableTableIds.has(r.tableId)) return false;
           let rStart = timeToMinutes(r.reservedTime);

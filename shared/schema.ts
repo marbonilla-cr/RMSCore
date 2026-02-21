@@ -997,6 +997,7 @@ export const reservationSettings = pgTable("reservation_settings", {
   slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(30),
   maxOccupancyPercent: integer("max_occupancy_percent").notNull().default(50),
   turnoverBufferMinutes: integer("turnover_buffer_minutes").notNull().default(15),
+  maxPartySize: integer("max_party_size").notNull().default(20),
   enabled: boolean("enabled").notNull().default(true),
 });
 

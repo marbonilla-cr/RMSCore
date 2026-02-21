@@ -312,6 +312,7 @@ function ReservationSettingsSection() {
     slotIntervalMinutes: 30,
     maxOccupancyPercent: 50,
     turnoverBufferMinutes: 15,
+    maxPartySize: 20,
     enabled: true,
   });
 
@@ -327,6 +328,7 @@ function ReservationSettingsSection() {
         slotIntervalMinutes: settings.slotIntervalMinutes,
         maxOccupancyPercent: settings.maxOccupancyPercent,
         turnoverBufferMinutes: settings.turnoverBufferMinutes,
+        maxPartySize: settings.maxPartySize ?? 20,
         enabled: settings.enabled,
       });
     }
@@ -389,7 +391,7 @@ function ReservationSettingsSection() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="space-y-1">
             <Label className="text-xs">Intervalo Slots (min)</Label>
             <Input
@@ -422,6 +424,17 @@ function ReservationSettingsSection() {
               value={form.turnoverBufferMinutes}
               onChange={(e) => setForm({ ...form, turnoverBufferMinutes: parseInt(e.target.value) || 15 })}
               data-testid="input-buffer-minutes"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Máx Personas</Label>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={form.maxPartySize}
+              onChange={(e) => setForm({ ...form, maxPartySize: parseInt(e.target.value) || 20 })}
+              data-testid="input-max-party-size"
             />
           </div>
         </div>
