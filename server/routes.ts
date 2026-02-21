@@ -3145,9 +3145,22 @@ export async function registerRoutes(
       };
 
       const buffer = buildReceiptBuffer(receiptData, cajaPrinter.paperWidth);
-      await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, buffer);
 
-      res.json({ ok: true, printer: cajaPrinter.name });
+      const dispatch = (app as any).dispatchPrintJob;
+      if (typeof dispatch === "function") {
+        const sent = dispatch({
+          jobType: "raw",
+          destination: cajaPrinter.type || "caja",
+          payload: { raw: buffer.toString("base64") }
+        });
+        if (!sent) {
+          return res.status(503).json({ message: "No hay Print Bridge conectado" });
+        }
+        res.json({ ok: true, printer: cajaPrinter.name, via: "bridge" });
+      } else {
+        await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, buffer);
+        res.json({ ok: true, printer: cajaPrinter.name, via: "direct" });
+      }
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -3163,8 +3176,22 @@ export async function registerRoutes(
         return res.json({ ok: false, message: "No hay impresora de caja configurada" });
       }
       const drawerData = buildDrawerKickData();
-      await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, drawerData);
-      res.json({ ok: true, printer: cajaPrinter.name });
+
+      const dispatch = (app as any).dispatchPrintJob;
+      if (typeof dispatch === "function") {
+        const sent = dispatch({
+          jobType: "raw",
+          destination: cajaPrinter.type || "caja",
+          payload: { raw: drawerData.toString("base64") }
+        });
+        if (!sent) {
+          return res.json({ ok: false, message: "No hay Print Bridge conectado" });
+        }
+        res.json({ ok: true, printer: cajaPrinter.name, via: "bridge" });
+      } else {
+        await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, drawerData);
+        res.json({ ok: true, printer: cajaPrinter.name, via: "direct" });
+      }
     } catch (err: any) {
       res.json({ ok: false, message: err.message });
     }
@@ -4511,22 +4538,17 @@ export async function registerRoutes(
     res.json({ available: typeof dispatch === "function" });
   });
 
-  app.post("/api/admin/print-bridge/test", requireRole("MANAGER"), (_req, res) => {
+  app.post("/api/admin/print-bridge/test", requireRole("MANAGER"), async (_req, res) => {
     const dispatch = (app as any).dispatchPrintJob;
     if (typeof dispatch !== "function") {
       return res.status(503).json({ ok: false, error: "dispatchPrintJob no disponible" });
     }
+    const { buildTestPageBuffer } = await import("./escpos");
+    const buffer = buildTestPageBuffer("bridge-test");
     const sent = dispatch({
-      jobType: "test",
+      jobType: "raw",
       destination: "caja",
-      payload: {
-        businessName: "Rest La Antigua",
-        lines: [
-          "Prueba de impresion",
-          "Print Bridge OK",
-          new Date().toISOString()
-        ]
-      }
+      payload: { raw: buffer.toString("base64") }
     });
     if (!sent) {
       return res.status(503).json({ ok: false, error: "No hay bridge conectado" });

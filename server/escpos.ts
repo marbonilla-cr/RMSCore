@@ -241,6 +241,26 @@ export function buildDrawerKickData(): Buffer {
   return Buffer.concat([CMD.INIT, CMD.OPEN_DRAWER]);
 }
 
+export function buildTestPageBuffer(bridgeId: string): Buffer {
+  const cols = 42;
+  const parts: Buffer[] = [];
+  parts.push(CMD.INIT);
+  parts.push(Buffer.from([ESC, 0x74, 19]));
+  parts.push(CMD.ALIGN_CENTER);
+  parts.push(CMD.DOUBLE_ON);
+  parts.push(line("PRUEBA DE IMPRESION"));
+  parts.push(CMD.NORMAL_SIZE);
+  parts.push(CMD.LINE);
+  parts.push(line("Print Bridge OK"));
+  parts.push(line(`Bridge: ${bridgeId}`));
+  parts.push(line(new Date().toLocaleString("es-CR")));
+  parts.push(CMD.LINE);
+  parts.push(divider(cols));
+  parts.push(CMD.FEED_LINES(4));
+  parts.push(CMD.PARTIAL_CUT);
+  return Buffer.concat(parts);
+}
+
 export function sendToPrinter(
   ip: string,
   port: number,
