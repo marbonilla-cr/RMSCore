@@ -61,7 +61,18 @@ interface PayDialogProps {
   onSuccess: (paymentMethodId: string, clientName: string, clientEmail: string, wasCash: boolean) => void;
 }
 
-const DENOMINATIONS = [1000, 2000, 5000, 10000, 20000, 50000];
+const ROUND_TARGETS = [1000, 5000, 10000, 20000, 50000, 100000];
+
+function getSuggestedDenominations(total: number): number[] {
+  if (total <= 0) return [1000, 2000, 5000, 10000, 20000, 50000];
+  const suggestions = new Set<number>();
+  for (const unit of ROUND_TARGETS) {
+    const rounded = Math.ceil(total / unit) * unit;
+    if (rounded > total) suggestions.add(rounded);
+  }
+  const sorted = Array.from(suggestions).sort((a, b) => a - b);
+  return sorted.slice(0, 6);
+}
 
 export function PayDialog({
   open, onClose, table, paymentMethods, splitId, splitLabel, splitTotal,
@@ -440,7 +451,15 @@ export function PayDialog({
 
             <div className="pos-sect-lbl">Monto recibido</div>
             <div className="pos-denom-grid">
-              {DENOMINATIONS.map((d) => (
+              <button
+                className={`pos-denom-btn ${activeDenom === total ? "active" : ""}`}
+                onClick={() => setDenom(total)}
+                data-testid="pay-denom-exact"
+                style={{ background: activeDenom === total ? undefined : 'var(--bg3)', fontWeight: 600 }}
+              >
+                Exacto ₡{total.toLocaleString()}
+              </button>
+              {getSuggestedDenominations(total).map((d) => (
                 <button
                   key={d}
                   className={`pos-denom-btn ${activeDenom === d ? "active" : ""}`}
@@ -457,7 +476,7 @@ export function PayDialog({
               <input
                 className="pos-field-input mono"
                 type="number"
-                placeholder="₡ Monto exacto"
+                placeholder="₡ Monto"
                 value={customInput}
                 onChange={(e) => setCustom(e.target.value)}
                 data-testid="pay-input-custom-cash"
