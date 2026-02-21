@@ -1334,7 +1334,7 @@ export async function registerRoutes(
       let upcomingReservation: any = null;
       let hasActiveReservation = false;
       const tableReservations = upcomingReservations
-        .filter(r => r.tableId === t.id)
+        .filter(r => reservationCoversTable(r, t.id))
         .map(r => {
           const rDate = r.reservedDate as string;
           const rTime = r.reservedTime as string;
@@ -1364,7 +1364,7 @@ export async function registerRoutes(
       }
 
       const relevantTableRes = upcomingReservations.filter(r =>
-        r.tableId === t.id && (r.reservedDate === todayStr || r.reservedDate === yesterdayStr)
+        reservationCoversTable(r, t.id) && (r.reservedDate === todayStr || r.reservedDate === yesterdayStr)
       );
       for (const r of relevantTableRes) {
         const rTime = r.reservedTime as string;
@@ -4374,9 +4374,9 @@ export async function registerRoutes(
     return timeToMinutes(t) + mins;
   }
 
-  async function checkReservationConflict(tableId: number, date: string, time: string, durationMinutes: number, excludeId?: number) {
+  async function checkReservationConflict(tableIdOrIds: number | number[], date: string, time: string, durationMinutes: number, excludeId?: number) {
+    const tableIdsToCheck = Array.isArray(tableIdOrIds) ? tableIdOrIds : [tableIdOrIds];
     const conditions = [
-      eq(reservations.tableId, tableId),
       eq(reservations.reservedDate, date),
       inArray(reservations.status, ['CONFIRMED', 'SEATED']),
     ];
@@ -4385,6 +4385,9 @@ export async function registerRoutes(
     const newStart = timeToMinutes(time);
     const newEnd = addMinutesToTime(time, durationMinutes);
     for (const r of existing) {
+      const rTableIds = r.tableIds || (r.tableId ? [r.tableId] : []);
+      const overlaps = tableIdsToCheck.some(tid => rTableIds.includes(tid));
+      if (!overlaps) continue;
       const rStart = timeToMinutes(r.reservedTime);
       const rEnd = addMinutesToTime(r.reservedTime, r.durationMinutes);
       if (newStart < rEnd && newEnd > rStart) {
@@ -4392,6 +4395,29 @@ export async function registerRoutes(
       }
     }
     return { conflict: false, with: null };
+  }
+
+  function getReservationTableIds(r: { tableIds: number[] | null; tableId: number | null }): number[] {
+    return r.tableIds || (r.tableId ? [r.tableId] : []);
+  }
+
+  function reservationCoversTable(r: { tableIds: number[] | null; tableId: number | null }, tableId: number): boolean {
+    return getReservationTableIds(r).includes(tableId);
+  }
+
+  function findTableBlock(freeTables: { id: number; capacity: number }[], partySize: number): number[] {
+    const singleTable = freeTables.find(t => t.capacity >= partySize);
+    if (singleTable) return [singleTable.id];
+
+    const sorted = [...freeTables].sort((a, b) => b.capacity - a.capacity);
+    const block: number[] = [];
+    let remaining = partySize;
+    for (const table of sorted) {
+      block.push(table.id);
+      remaining -= table.capacity;
+      if (remaining <= 0) break;
+    }
+    return remaining <= 0 ? block : [];
   }
 
   async function sendReservationEmail(email: string, reservation: { reservationCode: string; guestName: string; reservedDate: string; reservedTime: string; partySize: number; notes: string | null }) {
@@ -4427,20 +4453,29 @@ export async function registerRoutes(
       const { date, tableId, status } = req.query;
       if (!date) return res.status(400).json({ message: "date es requerido" });
       const conditions: any[] = [eq(reservations.reservedDate, date as string)];
-      if (tableId) conditions.push(eq(reservations.tableId, parseInt(tableId as string)));
       if (status) conditions.push(eq(reservations.status, status as string));
 
-      const rows = await db.select().from(reservations)
+      let rows = await db.select().from(reservations)
         .where(and(...conditions))
         .orderBy(asc(reservations.reservedTime));
 
-      const allTables = await storage.getAllTables();
-      const tableMap = new Map(allTables.map(t => [t.id, { id: t.id, tableName: t.tableName, tableCode: t.tableCode }]));
+      if (tableId) {
+        const tid = parseInt(tableId as string);
+        rows = rows.filter(r => reservationCoversTable(r, tid));
+      }
 
-      const result = rows.map(r => ({
-        ...r,
-        table: r.tableId ? tableMap.get(r.tableId) || null : null,
-      }));
+      const allTables = await storage.getAllTables();
+      const tableMap = new Map(allTables.map(t => [t.id, { id: t.id, tableName: t.tableName, tableCode: t.tableCode, capacity: t.capacity }]));
+
+      const result = rows.map(r => {
+        const tIds = getReservationTableIds(r);
+        const tables = tIds.map(tid => tableMap.get(tid)).filter(Boolean);
+        return {
+          ...r,
+          table: tables.length > 0 ? tables[0] : null,
+          tables,
+        };
+      });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4463,7 +4498,7 @@ export async function registerRoutes(
         ));
 
       const result = activeTables.map(t => {
-        const tableReservations = dayReservations.filter(r => r.tableId === t.id);
+        const tableReservations = dayReservations.filter(r => reservationCoversTable(r, t.id));
         return {
           id: t.id,
           tableName: t.tableName,
@@ -4502,14 +4537,15 @@ export async function registerRoutes(
   // POST /api/reservations - Create (authenticated, status = CONFIRMED)
   app.post("/api/reservations", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
-      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, tableId, notes, durationMinutes } = req.body;
+      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, tableId, tableIds: reqTableIds, notes, durationMinutes } = req.body;
       if (!guestName || !guestPhone || !partySize || !reservedDate || !reservedTime) {
         return res.status(400).json({ message: "Faltan campos requeridos" });
       }
       const duration = durationMinutes || await getDurationForPartySize(partySize);
+      const assignedTableIds: number[] = reqTableIds || (tableId ? [tableId] : []);
 
-      if (tableId) {
-        const conflict = await checkReservationConflict(tableId, reservedDate, reservedTime, duration);
+      if (assignedTableIds.length > 0) {
+        const conflict = await checkReservationConflict(assignedTableIds, reservedDate, reservedTime, duration);
         if (conflict.conflict) {
           return res.status(409).json({
             message: `Conflicto con reserva existente de ${conflict.with!.guestName} (${conflict.with!.reservedTime})`,
@@ -4528,13 +4564,14 @@ export async function registerRoutes(
         reservedDate,
         reservedTime,
         durationMinutes: duration,
-        tableId: tableId || null,
+        tableId: assignedTableIds.length > 0 ? assignedTableIds[0] : null,
+        tableIds: assignedTableIds.length > 0 ? assignedTableIds : null,
         status: 'CONFIRMED',
         notes: notes || null,
         createdBy: req.session.userId || null,
       }).returning();
 
-      broadcast("reservation_updated", { reservationId: created.id, tableId: created.tableId, status: created.status });
+      broadcast("reservation_updated", { reservationId: created.id, tableIds: getReservationTableIds(created), status: created.status });
       res.status(201).json(created);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4552,14 +4589,16 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Solo se pueden editar reservas PENDING o CONFIRMED" });
       }
 
-      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, tableId, notes, durationMinutes } = req.body;
-      const newTableId = tableId !== undefined ? tableId : existing.tableId;
+      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, tableId, tableIds: reqTableIds, notes, durationMinutes } = req.body;
+      const newTableIds: number[] = reqTableIds !== undefined ? (reqTableIds || []) : (tableId !== undefined ? (tableId ? [tableId] : []) : getReservationTableIds(existing));
       const newDate = reservedDate || existing.reservedDate;
       const newTime = reservedTime || existing.reservedTime;
       const newDuration = durationMinutes || existing.durationMinutes;
 
-      if (newTableId && (newTableId !== existing.tableId || newDate !== existing.reservedDate || newTime !== existing.reservedTime)) {
-        const conflict = await checkReservationConflict(newTableId, newDate, newTime, newDuration, id);
+      const existingTableIds = getReservationTableIds(existing);
+      const tablesChanged = JSON.stringify(newTableIds.sort()) !== JSON.stringify(existingTableIds.sort());
+      if (newTableIds.length > 0 && (tablesChanged || newDate !== existing.reservedDate || newTime !== existing.reservedTime)) {
+        const conflict = await checkReservationConflict(newTableIds, newDate, newTime, newDuration, id);
         if (conflict.conflict) {
           return res.status(409).json({
             message: `Conflicto con reserva existente de ${conflict.with!.guestName} (${conflict.with!.reservedTime})`,
@@ -4575,12 +4614,15 @@ export async function registerRoutes(
       if (partySize !== undefined) updates.partySize = partySize;
       if (reservedDate !== undefined) updates.reservedDate = reservedDate;
       if (reservedTime !== undefined) updates.reservedTime = reservedTime;
-      if (tableId !== undefined) updates.tableId = tableId || null;
+      if (reqTableIds !== undefined || tableId !== undefined) {
+        updates.tableId = newTableIds.length > 0 ? newTableIds[0] : null;
+        updates.tableIds = newTableIds.length > 0 ? newTableIds : null;
+      }
       if (notes !== undefined) updates.notes = notes;
       if (durationMinutes !== undefined) updates.durationMinutes = durationMinutes;
 
       const [updated] = await db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
-      broadcast("reservation_updated", { reservationId: updated.id, tableId: updated.tableId, status: updated.status });
+      broadcast("reservation_updated", { reservationId: updated.id, tableIds: getReservationTableIds(updated), status: updated.status });
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4614,7 +4656,7 @@ export async function registerRoutes(
       }
 
       const [updated] = await db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
-      broadcast("reservation_updated", { reservationId: updated.id, tableId: updated.tableId, status: updated.status });
+      broadcast("reservation_updated", { reservationId: updated.id, tableIds: getReservationTableIds(updated), status: updated.status });
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4660,7 +4702,7 @@ export async function registerRoutes(
   // PUT /api/reservations/settings
   app.put("/api/reservations/settings", requireRole("MANAGER"), async (req, res) => {
     try {
-      const { openTime, closeTime, slotIntervalMinutes, maxOccupancyPercent, turnoverBufferMinutes, maxPartySize, enabled } = req.body;
+      const { openTime, closeTime, slotIntervalMinutes, maxOccupancyPercent, turnoverBufferMinutes, maxPartySize, occupancyThresholdPercent, enabled } = req.body;
       const rows = await db.select().from(reservationSettings);
       if (rows.length === 0) {
         const [created] = await db.insert(reservationSettings).values({
@@ -4670,6 +4712,7 @@ export async function registerRoutes(
           maxOccupancyPercent: maxOccupancyPercent !== undefined ? maxOccupancyPercent : 50,
           turnoverBufferMinutes: turnoverBufferMinutes !== undefined ? turnoverBufferMinutes : 15,
           maxPartySize: maxPartySize !== undefined ? maxPartySize : 20,
+          occupancyThresholdPercent: occupancyThresholdPercent !== undefined ? occupancyThresholdPercent : 10,
           enabled: enabled !== undefined ? enabled : true,
         }).returning();
         return res.json(created);
@@ -4682,6 +4725,7 @@ export async function registerRoutes(
           maxOccupancyPercent: maxOccupancyPercent !== undefined ? maxOccupancyPercent : rows[0].maxOccupancyPercent,
           turnoverBufferMinutes: turnoverBufferMinutes !== undefined ? turnoverBufferMinutes : rows[0].turnoverBufferMinutes,
           maxPartySize: maxPartySize !== undefined ? maxPartySize : (rows[0].maxPartySize ?? 20),
+          occupancyThresholdPercent: occupancyThresholdPercent !== undefined ? occupancyThresholdPercent : (rows[0].occupancyThresholdPercent ?? 10),
           enabled: enabled !== undefined ? enabled : rows[0].enabled,
         })
         .where(eq(reservationSettings.id, rows[0].id))
@@ -4718,58 +4762,63 @@ export async function registerRoutes(
         reservationRateLimits.set(ip, { count: 1, resetAt: now + 3600000 });
       }
 
-      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, tableId, notes } = req.body;
+      const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, notes } = req.body;
       if (!guestName || !guestPhone || !partySize || !reservedDate || !reservedTime) {
         return res.status(400).json({ message: "Faltan campos requeridos" });
       }
       const duration = await getDurationForPartySize(partySize);
 
       const settingsRows = await db.select().from(reservationSettings);
-      const settings = settingsRows.length > 0 ? settingsRows[0] : { turnoverBufferMinutes: 15, maxOccupancyPercent: 50, enabled: true };
+      const settings = settingsRows.length > 0 ? settingsRows[0] : { turnoverBufferMinutes: 15, maxOccupancyPercent: 50, occupancyThresholdPercent: 10, enabled: true };
       const buffer = settings.turnoverBufferMinutes;
 
       if (!settings.enabled) {
         return res.status(400).json({ message: "El sistema de reservaciones no está disponible." });
       }
 
-      let assignedTableId = tableId || null;
+      const allTables = await storage.getAllTables();
+      const activeTables = allTables.filter(t => t.active).sort((a, b) => a.capacity - b.capacity);
+      const totalSeats = activeTables.reduce((sum, t) => sum + t.capacity, 0);
+      const maxReservableSeats = Math.max(1, Math.floor(totalSeats * settings.maxOccupancyPercent / 100));
+      const thresholdSeats = Math.floor(totalSeats * (settings.occupancyThresholdPercent ?? 10) / 100);
 
-      if (!assignedTableId) {
-        const allTables = await storage.getAllTables();
-        const suitableTables = allTables
-          .filter(t => t.active && t.capacity >= partySize)
-          .sort((a, b) => a.capacity - b.capacity);
+      const dayReservations = await db.select().from(reservations)
+        .where(and(
+          eq(reservations.reservedDate, reservedDate),
+          inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
+        ));
 
-        const dayReservations = await db.select().from(reservations)
-          .where(and(
-            eq(reservations.reservedDate, reservedDate),
-            inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
-          ));
+      const slotStart = timeToMinutes(reservedTime);
+      const slotEnd = slotStart + duration;
 
-        const slotStart = timeToMinutes(reservedTime);
-        const slotEnd = slotStart + duration;
-
-        for (const table of suitableTables) {
-          const tableReservations = dayReservations.filter(r => r.tableId === table.id);
-          const hasConflict = tableReservations.some(r => {
-            const rStart = timeToMinutes(r.reservedTime);
-            const rEnd = rStart + r.durationMinutes + buffer;
-            return slotStart < rEnd && slotEnd > rStart;
-          });
-          if (!hasConflict) {
-            assignedTableId = table.id;
-            break;
+      const occupiedTableIds = new Set<number>();
+      for (const r of dayReservations) {
+        const rStart = timeToMinutes(r.reservedTime);
+        const rEnd = rStart + r.durationMinutes + buffer;
+        if (slotStart < rEnd && slotEnd > rStart) {
+          for (const tid of getReservationTableIds(r)) {
+            occupiedTableIds.add(tid);
           }
         }
+      }
 
-        if (!assignedTableId) {
-          return res.status(409).json({ message: "No hay mesas disponibles para ese horario. Por favor intente otro horario." });
-        }
-      } else {
-        const conflict = await checkReservationConflict(assignedTableId, reservedDate, reservedTime, duration);
-        if (conflict.conflict) {
-          return res.status(409).json({ message: "Esta mesa no esta disponible en ese horario." });
-        }
+      const freeTables = activeTables.filter(t => !occupiedTableIds.has(t.id));
+      const reservedPersons = dayReservations
+        .filter(r => {
+          const rStart = timeToMinutes(r.reservedTime);
+          const rEnd = rStart + r.durationMinutes + buffer;
+          return slotStart < rEnd && slotEnd > rStart;
+        })
+        .reduce((sum, r) => sum + r.partySize, 0);
+
+      if (reservedPersons + partySize > maxReservableSeats + thresholdSeats) {
+        return res.status(409).json({ message: "No hay disponibilidad para ese horario. Por favor intente otro horario." });
+      }
+
+      const assignedTableIds = findTableBlock(freeTables, partySize);
+
+      if (assignedTableIds.length === 0) {
+        return res.status(409).json({ message: "No hay mesas disponibles para ese horario. Por favor intente otro horario." });
       }
 
       const code = await generateReservationCode();
@@ -4782,13 +4831,14 @@ export async function registerRoutes(
         reservedDate,
         reservedTime,
         durationMinutes: duration,
-        tableId: assignedTableId,
+        tableId: assignedTableIds[0],
+        tableIds: assignedTableIds,
         status: 'PENDING',
         notes: notes || null,
         createdBy: null,
       }).returning();
 
-      broadcast("reservation_updated", { reservationId: created.id, tableId: created.tableId, status: created.status });
+      broadcast("reservation_updated", { reservationId: created.id, tableIds: assignedTableIds, status: created.status });
 
       if (guestEmail) {
         sendReservationEmail(guestEmail, {
@@ -4817,7 +4867,7 @@ export async function registerRoutes(
       const settingsRows = await db.select().from(reservationSettings);
       const settings = settingsRows.length > 0 ? settingsRows[0] : {
         openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30,
-        maxOccupancyPercent: 50, turnoverBufferMinutes: 15, enabled: true
+        maxOccupancyPercent: 50, turnoverBufferMinutes: 15, occupancyThresholdPercent: 10, enabled: true
       };
 
       if (!settings.enabled) {
@@ -4825,13 +4875,15 @@ export async function registerRoutes(
       }
 
       const allTables = await storage.getAllTables();
-      const suitableTables = allTables.filter(t => t.active && t.capacity >= ps);
+      const activeTables = allTables.filter(t => t.active).sort((a, b) => a.capacity - b.capacity);
+      const totalSeats = activeTables.reduce((sum, t) => sum + t.capacity, 0);
 
-      if (suitableTables.length === 0) {
+      if (totalSeats === 0) {
         return res.json([]);
       }
 
-      const maxReservableTables = Math.max(1, Math.floor(suitableTables.length * settings.maxOccupancyPercent / 100));
+      const maxReservableSeats = Math.max(1, Math.floor(totalSeats * settings.maxOccupancyPercent / 100));
+      const thresholdSeats = Math.floor(totalSeats * (settings.occupancyThresholdPercent ?? 10) / 100);
 
       const dayReservations = await db.select().from(reservations)
         .where(and(
@@ -4846,38 +4898,35 @@ export async function registerRoutes(
       const duration = await getDurationForPartySize(ps);
       const buffer = settings.turnoverBufferMinutes;
 
-      const suitableTableIds = new Set(suitableTables.map(t => t.id));
-      const slots: { time: string; available: boolean; tablesAvailable: number }[] = [];
+      const slots: { time: string; available: boolean; seatsAvailable: number }[] = [];
       for (let mins = openMinutes; mins <= closeMinutes; mins += interval) {
         const normalizedMins = mins % 1440;
         const timeStr = `${String(Math.floor(normalizedMins / 60)).padStart(2, '0')}:${String(normalizedMins % 60).padStart(2, '0')}`;
         const slotStart = mins;
         const slotEnd = slotStart + duration;
 
-        let tablesAvailableCount = 0;
-        for (const table of suitableTables) {
-          const tableReservations = dayReservations.filter(r => r.tableId === table.id);
-          const hasConflict = tableReservations.some(r => {
-            let rStart = timeToMinutes(r.reservedTime);
-            if (rStart < openMinutes) rStart += 1440;
-            const rEnd = rStart + r.durationMinutes + buffer;
-            return slotStart < rEnd && slotEnd > rStart;
-          });
-          if (!hasConflict) tablesAvailableCount++;
-        }
-
-        const currentlyReservedInSlot = dayReservations.filter(r => {
-          if (!r.tableId || !suitableTableIds.has(r.tableId)) return false;
+        const occupiedTableIds = new Set<number>();
+        let reservedPersons = 0;
+        for (const r of dayReservations) {
           let rStart = timeToMinutes(r.reservedTime);
           if (rStart < openMinutes) rStart += 1440;
           const rEnd = rStart + r.durationMinutes + buffer;
-          return slotStart < rEnd && slotEnd > rStart;
-        }).length;
+          if (slotStart < rEnd && slotEnd > rStart) {
+            for (const tid of getReservationTableIds(r)) {
+              occupiedTableIds.add(tid);
+            }
+            reservedPersons += r.partySize;
+          }
+        }
 
-        const stillAvailable = Math.max(0, maxReservableTables - currentlyReservedInSlot);
-        const finalAvailable = Math.min(tablesAvailableCount, stillAvailable);
+        const freeTables = activeTables.filter(t => !occupiedTableIds.has(t.id));
+        const freeSeats = freeTables.reduce((sum, t) => sum + t.capacity, 0);
 
-        slots.push({ time: timeStr, available: finalAvailable > 0, tablesAvailable: finalAvailable });
+        const canFitParty = findTableBlock(freeTables, ps).length > 0;
+        const occupancyOk = reservedPersons + ps <= maxReservableSeats + thresholdSeats;
+        const isAvailable = canFitParty && occupancyOk;
+
+        slots.push({ time: timeStr, available: isAvailable, seatsAvailable: freeSeats });
       }
 
       const today = getBusinessDate();
@@ -4911,7 +4960,7 @@ export async function registerRoutes(
       const buffer = settings.turnoverBufferMinutes;
 
       const allTables = await storage.getAllTables();
-      const suitableTables = allTables.filter(t => t.active && t.capacity >= ps);
+      const activeTables = allTables.filter(t => t.active);
 
       const dayReservations = await db.select().from(reservations)
         .where(and(
@@ -4922,14 +4971,20 @@ export async function registerRoutes(
       const slotStart = timeToMinutes(time as string);
       const slotEnd = slotStart + duration;
 
-      const available = suitableTables.filter(table => {
-        const tableReservations = dayReservations.filter(r => r.tableId === table.id);
-        return !tableReservations.some(r => {
-          const rStart = timeToMinutes(r.reservedTime);
-          const rEnd = rStart + r.durationMinutes + buffer;
-          return slotStart < rEnd && slotEnd > rStart;
-        });
-      }).map(t => ({ id: t.id, tableName: t.tableName, tableCode: t.tableCode, capacity: t.capacity }));
+      const occupiedTableIds = new Set<number>();
+      for (const r of dayReservations) {
+        const rStart = timeToMinutes(r.reservedTime);
+        const rEnd = rStart + r.durationMinutes + buffer;
+        if (slotStart < rEnd && slotEnd > rStart) {
+          for (const tid of getReservationTableIds(r)) {
+            occupiedTableIds.add(tid);
+          }
+        }
+      }
+
+      const available = activeTables
+        .filter(t => !occupiedTableIds.has(t.id))
+        .map(t => ({ id: t.id, tableName: t.tableName, tableCode: t.tableCode, capacity: t.capacity }));
 
       res.json(available);
     } catch (err: any) {

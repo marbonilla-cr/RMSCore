@@ -17,9 +17,11 @@ interface ReservationRow {
   reservedTime: string;
   durationMinutes: number;
   tableId: number | null;
+  tableIds: number[] | null;
   status: string;
   notes: string | null;
   table: { id: number; tableName: string; tableCode: string } | null;
+  tables?: { id: number; tableName: string; tableCode: string; capacity: number }[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -321,7 +323,11 @@ function ReservationCard({
         <span><Clock size={11} /> {r.reservedTime.slice(0, 5)}</span>
         <span><Users size={11} /> {r.partySize}p</span>
         <span><Phone size={11} /> {r.guestPhone}</span>
-        {r.table && <span><Armchair size={11} /> {r.table.tableName}</span>}
+        {(r.tables && r.tables.length > 0) ? (
+          <span><Armchair size={11} /> {r.tables.map(t => t.tableName).join(" + ")}</span>
+        ) : r.table ? (
+          <span><Armchair size={11} /> {r.table.tableName}</span>
+        ) : null}
       </div>
       {r.notes && <div className="res-card-notes">{r.notes}</div>}
       {!isPast && (

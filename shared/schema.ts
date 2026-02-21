@@ -971,6 +971,7 @@ export const reservations = pgTable("reservations", {
   reservedTime: time("reserved_time").notNull(),
   durationMinutes: integer("duration_minutes").notNull().default(90),
   tableId: integer("table_id"),
+  tableIds: integer("table_ids").array(),
   status: varchar("status", { length: 20 }).notNull().default("PENDING"),
   notes: text("notes"),
   seatedAt: timestamp("seated_at"),
@@ -998,6 +999,7 @@ export const reservationSettings = pgTable("reservation_settings", {
   maxOccupancyPercent: integer("max_occupancy_percent").notNull().default(50),
   turnoverBufferMinutes: integer("turnover_buffer_minutes").notNull().default(15),
   maxPartySize: integer("max_party_size").notNull().default(20),
+  occupancyThresholdPercent: integer("occupancy_threshold_percent").notNull().default(10),
   enabled: boolean("enabled").notNull().default(true),
 });
 
