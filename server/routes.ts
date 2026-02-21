@@ -3166,6 +3166,91 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== POS: PRINT PRE-CUENTA ====================
+  app.post("/api/pos/print-precuenta", requirePermission("POS_PRINT"), async (req, res) => {
+    try {
+      const { orderId } = req.body;
+      if (!orderId || typeof orderId !== "number") return res.status(400).json({ message: "orderId requerido (número)" });
+
+      const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
+
+      const printersList = await storage.getAllPrinters();
+      const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
+      if (!cajaPrinter) {
+        return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });
+      }
+
+      const config = await storage.getBusinessConfig();
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const table = await storage.getTable(order.tableId);
+      const items = await storage.getOrderItems(orderId);
+      const activeItems = items.filter(i => i.status !== "VOIDED");
+
+      const cashier = req.session.userId ? await storage.getUser(req.session.userId) : null;
+
+      const receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
+      for (const i of activeItems) {
+        const mods = await storage.getOrderItemModifiers(i.id);
+        const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+        receiptItems.push({
+          name: i.productNameSnapshot + (mods.length > 0 ? ` (${mods.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${Number(m.priceDeltaSnapshot)}` : "")).join(", ")})` : ""),
+          qty: i.qty,
+          price: Number(i.productPriceSnapshot) + modDelta,
+          total: (Number(i.productPriceSnapshot) + modDelta) * i.qty,
+        });
+      }
+
+      const oNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `#${order.id}`);
+
+      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
+      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
+      const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
+      const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
+
+      const receiptData = {
+        businessName: config?.businessName || "",
+        legalName: config?.legalName || "",
+        taxId: config?.taxId || "",
+        address: config?.address || "",
+        phone: config?.phone || "",
+        email: config?.email || "",
+        legalNote: config?.legalNote || "",
+        orderNumber: oNum,
+        tableName: table?.tableName || "",
+        items: receiptItems,
+        totalAmount: Number(order.totalAmount),
+        totalDiscounts: totalDiscounts > 0 ? totalDiscounts : undefined,
+        totalTaxes: totalTaxes > 0 ? totalTaxes : undefined,
+        taxBreakdown: orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : undefined,
+        paymentMethod: "PRE-CUENTA",
+        cashierName: cashier?.displayName || undefined,
+        date: new Date().toLocaleString("es-CR"),
+      };
+
+      const buffer = buildReceiptBuffer(receiptData, cajaPrinter.paperWidth);
+
+      const dispatch = (app as any).dispatchPrintJob;
+      if (typeof dispatch === "function") {
+        const sent = dispatch({
+          jobType: "raw",
+          destination: cajaPrinter.type || "caja",
+          payload: { raw: buffer.toString("base64") }
+        });
+        if (!sent) {
+          return res.status(503).json({ message: "No hay Print Bridge conectado" });
+        }
+        res.json({ ok: true, printer: cajaPrinter.name, via: "bridge" });
+      } else {
+        await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, buffer);
+        res.json({ ok: true, printer: cajaPrinter.name, via: "direct" });
+      }
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== POS: OPEN CASH DRAWER ====================
   app.post("/api/pos/open-drawer", requirePermission("POS_PAY"), async (_req, res) => {
     try {

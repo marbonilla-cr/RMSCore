@@ -1749,25 +1749,30 @@ export default function POSPage() {
                       style={{ width: '100%' }}
                       onClick={() => {
                         const tbl = selectedTable;
-                        const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
-                        const grouped = groupItems(tbl.items);
-                        const receiptItems = grouped.map((g) => {
-                          const modDelta = g.modifiers.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
-                          const modLabel = g.modifiers.length > 0 ? ` (${g.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(Number(m.priceDeltaSnapshot))}` : "")).join(", ")})` : "";
-                          const unitPrice = Number(g.productPriceSnapshot) + modDelta;
-                          return { name: g.productNameSnapshot + modLabel, qty: g.totalQty, price: unitPrice, total: g.totalAmount };
-                        });
-                        triggerReceiptPrint(
-                          receiptItems,
-                          Number(tbl.totalAmount),
-                          "PRE-CUENTA",
-                          tbl.tableName,
-                          orderNum,
-                          undefined,
-                          Number(tbl.totalDiscounts || 0),
-                          Number(tbl.totalTaxes || 0),
-                          tbl.taxBreakdown
-                        );
+                        apiRequest("POST", "/api/pos/print-precuenta", { orderId: tbl.orderId })
+                          .then(r => r.json())
+                          .then(data => toast({ title: "Pre-cuenta impresa", description: `Enviado a ${data.printer}` }))
+                          .catch(() => {
+                            const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
+                            const grouped = groupItems(tbl.items);
+                            const receiptItems = grouped.map((g) => {
+                              const modDelta = g.modifiers.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
+                              const modLabel = g.modifiers.length > 0 ? ` (${g.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(Number(m.priceDeltaSnapshot))}` : "")).join(", ")})` : "";
+                              const unitPrice = Number(g.productPriceSnapshot) + modDelta;
+                              return { name: g.productNameSnapshot + modLabel, qty: g.totalQty, price: unitPrice, total: g.totalAmount };
+                            });
+                            triggerReceiptPrint(
+                              receiptItems,
+                              Number(tbl.totalAmount),
+                              "PRE-CUENTA",
+                              tbl.tableName,
+                              orderNum,
+                              undefined,
+                              Number(tbl.totalDiscounts || 0),
+                              Number(tbl.totalTaxes || 0),
+                              tbl.taxBreakdown
+                            );
+                          });
                       }}
                       data-testid="button-pre-cuenta"
                     >

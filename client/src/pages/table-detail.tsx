@@ -1213,43 +1213,48 @@ export default function TableDetailPage() {
                       className="btn-secondary"
                       style={{ width: "100%", marginTop: 10 }}
                       onClick={() => {
-                        const cfg = businessCfg || {};
-                        const allItems = orderItems.filter((i: any) => i.status !== "VOIDED");
-                        const grouped = new Map<string, { name: string; qty: number; price: number; total: number }>();
-                        for (const item of allItems) {
-                          const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
-                          const modLabel = (item.modifiers && item.modifiers.length > 0) ? ` (${item.modifiers.map((m: any) => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(m.priceDeltaSnapshot)}` : "")).join(", ")})` : "";
-                          const unitPrice = Number(item.productPriceSnapshot) + modDelta;
-                          const modSig = (item.modifiers || []).map((m: any) => `${m.nameSnapshot}:${m.priceDeltaSnapshot}`).sort().join("|");
-                          const key = `${item.productNameSnapshot}::${item.productPriceSnapshot}::${modSig}`;
-                          const existing = grouped.get(key);
-                          if (existing) {
-                            existing.qty += item.qty;
-                            existing.total += unitPrice * item.qty;
-                          } else {
-                            grouped.set(key, { name: item.productNameSnapshot + modLabel, qty: item.qty, price: unitPrice, total: unitPrice * item.qty });
-                          }
-                        }
-                        const receiptItems = Array.from(grouped.values());
-                        const orderNum = activeOrder.globalNumber ? `G-${activeOrder.globalNumber}` : (activeOrder.dailyNumber ? `D-${activeOrder.dailyNumber}` : `#${activeOrder.id}`);
-                        printReceipt({
-                          businessName: cfg.businessName || "",
-                          legalName: cfg.legalName || "",
-                          taxId: cfg.taxId || "",
-                          address: cfg.address || "",
-                          phone: cfg.phone || "",
-                          email: cfg.email || "",
-                          legalNote: cfg.legalNote || "",
-                          orderNumber: orderNum,
-                          tableName: currentView?.table?.tableName || "",
-                          items: receiptItems,
-                          totalAmount: Number(activeOrder.totalAmount),
-                          totalDiscounts: Number(activeOrder.totalDiscounts || 0),
-                          totalTaxes: Number(activeOrder.totalTaxes || 0),
-                          taxBreakdown: activeOrder.taxBreakdown || [],
-                          paymentMethod: "PRE-CUENTA",
-                          date: new Date().toLocaleString("es-CR"),
-                        });
+                        apiRequest("POST", "/api/pos/print-precuenta", { orderId: activeOrder.id })
+                          .then(r => r.json())
+                          .then(data => toast({ title: "Pre-cuenta impresa", description: `Enviado a ${data.printer}` }))
+                          .catch(() => {
+                            const cfg = businessCfg || {};
+                            const allItems = orderItems.filter((i: any) => i.status !== "VOIDED");
+                            const grouped = new Map<string, { name: string; qty: number; price: number; total: number }>();
+                            for (const item of allItems) {
+                              const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot) * (m.qty || 1), 0);
+                              const modLabel = (item.modifiers && item.modifiers.length > 0) ? ` (${item.modifiers.map((m: any) => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(m.priceDeltaSnapshot)}` : "")).join(", ")})` : "";
+                              const unitPrice = Number(item.productPriceSnapshot) + modDelta;
+                              const modSig = (item.modifiers || []).map((m: any) => `${m.nameSnapshot}:${m.priceDeltaSnapshot}`).sort().join("|");
+                              const key = `${item.productNameSnapshot}::${item.productPriceSnapshot}::${modSig}`;
+                              const existing = grouped.get(key);
+                              if (existing) {
+                                existing.qty += item.qty;
+                                existing.total += unitPrice * item.qty;
+                              } else {
+                                grouped.set(key, { name: item.productNameSnapshot + modLabel, qty: item.qty, price: unitPrice, total: unitPrice * item.qty });
+                              }
+                            }
+                            const receiptItems = Array.from(grouped.values());
+                            const orderNum = activeOrder.globalNumber ? `G-${activeOrder.globalNumber}` : (activeOrder.dailyNumber ? `D-${activeOrder.dailyNumber}` : `#${activeOrder.id}`);
+                            printReceipt({
+                              businessName: cfg.businessName || "",
+                              legalName: cfg.legalName || "",
+                              taxId: cfg.taxId || "",
+                              address: cfg.address || "",
+                              phone: cfg.phone || "",
+                              email: cfg.email || "",
+                              legalNote: cfg.legalNote || "",
+                              orderNumber: orderNum,
+                              tableName: currentView?.table?.tableName || "",
+                              items: receiptItems,
+                              totalAmount: Number(activeOrder.totalAmount),
+                              totalDiscounts: Number(activeOrder.totalDiscounts || 0),
+                              totalTaxes: Number(activeOrder.totalTaxes || 0),
+                              taxBreakdown: activeOrder.taxBreakdown || [],
+                              paymentMethod: "PRE-CUENTA",
+                              date: new Date().toLocaleString("es-CR"),
+                            });
+                          });
                       }}
                       data-testid="button-pre-cuenta"
                     >
