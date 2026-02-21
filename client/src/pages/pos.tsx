@@ -1436,15 +1436,29 @@ export default function POSPage() {
         <div className="pos-header-title" data-testid="text-page-title">
           <CreditCard size={22} /> POS / Caja
         </div>
-        {cashSession?.id && !cashSession.closedAt ? (
-          <span className="pos-cash-badge open">
-            <Unlock size={12} /> Caja Abierta
-          </span>
-        ) : (
-          <span className="pos-cash-badge closed">
-            <Lock size={12} /> Caja Cerrada
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          <button
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: '1px solid var(--border2)', background: 'var(--bg2)', color: 'var(--text2)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            onClick={() => {
+              apiRequest("POST", "/api/pos/open-drawer", {})
+                .then(r => r.json())
+                .then(() => toast({ title: "Gaveta abierta" }))
+                .catch(() => toast({ title: "Error", description: "No se pudo abrir la gaveta", variant: "destructive" }));
+            }}
+            data-testid="button-open-drawer"
+          >
+            <Banknote size={14} /> Gaveta
+          </button>
+          {cashSession?.id && !cashSession.closedAt ? (
+            <span className="pos-cash-badge open">
+              <Unlock size={12} /> Caja Abierta
+            </span>
+          ) : (
+            <span className="pos-cash-badge closed">
+              <Lock size={12} /> Caja Cerrada
+            </span>
+          )}
+        </div>
       </div>
 
       {detailView && selectedTable ? (
@@ -1939,21 +1953,8 @@ export default function POSPage() {
                           ))}
                         </div>
                       )}
-                      <button
-                        className="btn-secondary"
-                        style={{ width: '100%', marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 16px', fontSize: 13, borderRadius: 8, border: '1px solid var(--border2)', background: 'var(--bg2)', color: 'var(--text1)', cursor: 'pointer' }}
-                        onClick={() => {
-                          apiRequest("POST", "/api/pos/open-drawer", {})
-                            .then(r => r.json())
-                            .then(() => toast({ title: "Gaveta abierta" }))
-                            .catch(() => toast({ title: "Error", description: "No se pudo abrir la gaveta", variant: "destructive" }));
-                        }}
-                        data-testid="button-open-drawer"
-                      >
-                        <Banknote size={14} /> Abrir Gaveta
-                      </button>
                       {canCashClose && (
-                        <button className="btn-danger" style={{ width: '100%', marginTop: 8 }} onClick={() => setCloseOpen(true)} data-testid="button-close-cash">
+                        <button className="btn-danger" style={{ width: '100%', marginTop: 16 }} onClick={() => setCloseOpen(true)} data-testid="button-close-cash">
                           <Lock size={14} /> Cerrar Caja
                         </button>
                       )}
