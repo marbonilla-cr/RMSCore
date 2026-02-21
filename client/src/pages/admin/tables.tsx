@@ -17,7 +17,7 @@ export default function AdminTablesPage() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<RestTable | null>(null);
-  const [form, setForm] = useState({ tableCode: "", tableName: "", active: true, sortOrder: 0, capacity: 4 });
+  const [form, setForm] = useState({ tableCode: "", tableName: "", active: true, sortOrder: 0, capacity: "4" });
 
   const { data: tables = [], isLoading } = useQuery<RestTable[]>({
     queryKey: ["/api/admin/tables"],
@@ -56,7 +56,7 @@ export default function AdminTablesPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ tableCode: "", tableName: "", active: true, sortOrder: 0, capacity: 4 });
+    setForm({ tableCode: "", tableName: "", active: true, sortOrder: 0, capacity: "4" });
     setOpen(true);
   };
 
@@ -67,14 +67,15 @@ export default function AdminTablesPage() {
       tableName: table.tableName,
       active: table.active,
       sortOrder: table.sortOrder,
-      capacity: table.capacity,
+      capacity: String(table.capacity),
     });
     setOpen(true);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    saveMutation.mutate(form);
+    const cap = parseInt(form.capacity) || 4;
+    saveMutation.mutate({ ...form, capacity: Math.max(1, Math.min(50, cap)) });
   };
 
   return (
@@ -137,7 +138,7 @@ export default function AdminTablesPage() {
                     max={50}
                     data-testid="input-table-capacity"
                     value={form.capacity}
-                    onChange={(e) => setForm({ ...form, capacity: parseInt(e.target.value) || 4 })}
+                    onChange={(e) => setForm({ ...form, capacity: e.target.value })}
                   />
                 </div>
               </div>
