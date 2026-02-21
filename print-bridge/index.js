@@ -1,10 +1,6 @@
+const net = require("net");
 const WebSocket = require("ws");
-const { spawn } = require("child_process");
-const path = require("path");
-const fs = require("fs");
 const config = require("./config");
-
-const VALID_PRINTER = /^[a-zA-Z0-9_\-]+$/;
 
 let ws = null;
 let pingTimer = null;
@@ -14,6 +10,76 @@ let alive = false;
 function log(msg) {
   const ts = new Date().toLocaleTimeString("es-CR", { hour12: false });
   console.log(`[${ts}] ${msg}`);
+}
+
+function validateConfig() {
+  if (!config.serverUrl) {
+    console.error("ERROR: serverUrl no configurado");
+    process.exit(1);
+  }
+  if (!config.bridgeToken) {
+    console.error("ERROR: bridgeToken no configurado");
+    process.exit(1);
+  }
+  if (!config.printers || config.printers.length === 0) {
+    log("ADVERTENCIA: No hay impresoras configuradas. Los trabajos se mostraran en consola.");
+  }
+  config.printers.forEach((p) => {
+    if (!p.ipAddress || !p.port) {
+      console.error(`ERROR: Impresora "${p.name}" sin ipAddress o port`);
+      process.exit(1);
+    }
+  });
+}
+
+function findPrinter(destination) {
+  if (!config.printers || config.printers.length === 0) return null;
+
+  if (destination) {
+    const match = config.printers.find(
+      (p) => p.enabled && (p.name === destination || p.type === destination)
+    );
+    if (match) return match;
+  }
+
+  return config.printers.find((p) => p.enabled) || null;
+}
+
+function sendToPrinter(printer, data) {
+  return new Promise((resolve, reject) => {
+    const socket = new net.Socket();
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        socket.destroy();
+        reject(new Error(`Timeout conectando a ${printer.ipAddress}:${printer.port}`));
+      }
+    }, 5000);
+
+    socket.connect(printer.port, printer.ipAddress, () => {
+      clearTimeout(timeout);
+      socket.write(data, () => {
+        socket.end();
+      });
+    });
+
+    socket.on("close", () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    });
+
+    socket.on("error", (err) => {
+      clearTimeout(timeout);
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+  });
 }
 
 function connect() {
@@ -27,10 +93,12 @@ function connect() {
     log("Conexion establecida");
     alive = true;
 
-    ws.send(JSON.stringify({
-      type: "print_bridge_register",
-      payload: { bridgeId: config.bridgeId },
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "print_bridge_register",
+        payload: { bridgeId: config.bridgeId },
+      })
+    );
     log(`Registrado como: ${config.bridgeId}`);
 
     startPing();
@@ -56,8 +124,10 @@ function connect() {
     }
   });
 
-  ws.on("close", (code, reason) => {
-    log(`Desconectado (code=${code}). Reconectando en ${config.reconnectInterval / 1000}s...`);
+  ws.on("close", (code) => {
+    log(
+      `Desconectado (code=${code}). Reconectando en ${config.reconnectInterval / 1000}s...`
+    );
     cleanup();
     scheduleReconnect();
   });
@@ -103,104 +173,77 @@ function scheduleReconnect() {
   }, config.reconnectInterval);
 }
 
-function validatePrinter(name) {
-  if (!name) return null;
-  if (!VALID_PRINTER.test(name)) {
-    log(`Nombre de impresora invalido: ${name}`);
-    return null;
-  }
-  return name;
-}
-
-function handlePrintJob(job) {
+async function handlePrintJob(job) {
   if (!job) {
     log("Trabajo de impresion vacio, ignorando");
     return;
   }
 
   const { jobType, destination, payload } = job;
-  log(`Trabajo recibido: tipo=${jobType || "desconocido"}, destino=${destination || "default"}`);
+  log(
+    `Trabajo recibido: tipo=${jobType || "desconocido"}, destino=${destination || "default"}`
+  );
 
   if (jobType === "test") {
     log(">>> TRABAJO DE PRUEBA RECIBIDO <<<");
     log(`    Contenido: ${JSON.stringify(payload)}`);
+
+    const printer = findPrinter(destination);
+    if (printer) {
+      try {
+        const testText =
+          "=== PRUEBA DE IMPRESION ===\n" +
+          `Bridge: ${config.bridgeId}\n` +
+          `Impresora: ${printer.name}\n` +
+          `Fecha: ${new Date().toLocaleString("es-CR")}\n` +
+          "===========================\n\n\n";
+        await sendToPrinter(printer, Buffer.from(testText));
+        log(
+          `Prueba impresa en ${printer.name} (${printer.ipAddress}:${printer.port})`
+        );
+      } catch (err) {
+        log(`Error imprimiendo prueba: ${err.message}`);
+      }
+    }
     return;
   }
 
   if (jobType === "raw" && payload?.raw) {
-    printRaw(payload.raw, destination);
+    const printer = findPrinter(destination);
+    if (!printer) {
+      log("No hay impresora disponible para trabajo raw");
+      return;
+    }
+    try {
+      const buffer = Buffer.from(payload.raw, "base64");
+      await sendToPrinter(printer, buffer);
+      log(`Raw impreso en ${printer.name} (${buffer.length} bytes)`);
+    } catch (err) {
+      log(`Error imprimiendo raw: ${err.message}`);
+    }
     return;
   }
 
   if (jobType === "receipt" && payload?.text) {
-    printText(payload.text, destination);
+    const printer = findPrinter(destination);
+    if (!printer) {
+      log("No hay impresora disponible. Imprimiendo en consola:");
+      console.log("\u2500".repeat(42));
+      console.log(payload.text);
+      console.log("\u2500".repeat(42));
+      return;
+    }
+    try {
+      await sendToPrinter(printer, Buffer.from(payload.text));
+      log(`Recibo impreso en ${printer.name}`);
+    } catch (err) {
+      log(`Error imprimiendo recibo: ${err.message}`);
+    }
     return;
   }
 
   log(`Tipo de trabajo no soportado: ${jobType}`);
   log(`Payload: ${JSON.stringify(job).substring(0, 200)}`);
-}
-
-function printText(text, destination) {
-  const printer = validatePrinter(destination) || validatePrinter(config.printerName);
-
-  if (!printer) {
-    log("No hay impresora configurada. Imprimiendo en consola:");
-    console.log("─".repeat(42));
-    console.log(text);
-    console.log("─".repeat(42));
-    return;
-  }
-
-  const lp = spawn("lp", ["-d", printer]);
-
-  lp.stdin.write(text);
-  lp.stdin.end();
-
-  lp.stdout.on("data", (data) => {
-    log(`Impreso en ${printer}: ${data.toString().trim()}`);
-  });
-
-  lp.stderr.on("data", (data) => {
-    log(`Error imprimiendo: ${data.toString().trim()}`);
-  });
-
-  lp.on("error", (err) => {
-    log(`Error ejecutando lp: ${err.message}`);
-  });
-}
-
-function printRaw(rawBase64, destination) {
-  const printer = validatePrinter(destination) || validatePrinter(config.printerName);
-  const buffer = Buffer.from(rawBase64, "base64");
-
-  if (!printer) {
-    log(`Datos raw recibidos (${buffer.length} bytes). No hay impresora configurada.`);
-    return;
-  }
-
-  const tmpFile = path.join(__dirname, `.tmp_print_${Date.now()}.bin`);
-
-  fs.writeFileSync(tmpFile, buffer);
-
-  const lp = spawn("lp", ["-d", printer, "-o", "raw", tmpFile]);
-
-  lp.stdout.on("data", (data) => {
-    log(`Raw impreso en ${printer}: ${data.toString().trim()}`);
-  });
-
-  lp.stderr.on("data", (data) => {
-    log(`Error imprimiendo raw: ${data.toString().trim()}`);
-  });
-
-  lp.on("close", () => {
-    try { fs.unlinkSync(tmpFile); } catch {}
-  });
-
-  lp.on("error", (err) => {
-    log(`Error ejecutando lp: ${err.message}`);
-    try { fs.unlinkSync(tmpFile); } catch {}
-  });
 }
 
 process.on("SIGINT", () => {
@@ -217,9 +260,16 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
+validateConfig();
+
 log("=== Print Bridge iniciando ===");
-log(`Bridge ID: ${config.bridgeId}`);
-log(`Servidor:  ${config.serverUrl}`);
-log(`Impresora: ${config.printerName || "(consola)"}`);
+log(`Bridge ID:  ${config.bridgeId}`);
+log(`Servidor:   ${config.serverUrl}`);
+log(`Impresoras: ${config.printers.length}`);
+config.printers.forEach((p) => {
+  log(
+    `  - ${p.name} (${p.type}) -> ${p.ipAddress}:${p.port} [${p.enabled ? "ON" : "OFF"}]`
+  );
+});
 log("");
 connect();
