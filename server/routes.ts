@@ -633,11 +633,13 @@ export async function registerRoutes(
       if (!tableName || typeof tableName !== "string" || !tableName.trim()) {
         return res.status(400).json({ message: "El nombre de mesa es requerido" });
       }
+      const capacity = req.body.capacity;
       const data = {
         tableCode: tableCode.trim(),
         tableName: tableName.trim(),
         active: active !== undefined ? Boolean(active) : true,
         sortOrder: typeof sortOrder === "number" ? sortOrder : parseInt(String(sortOrder)) || 0,
+        capacity: Math.max(1, Math.min(50, typeof capacity === "number" ? capacity : parseInt(String(capacity)) || 4)),
       };
       const table = await storage.createTable(data);
       res.json(table);
@@ -657,6 +659,7 @@ export async function registerRoutes(
       if (req.body.tableName !== undefined) updates.tableName = String(req.body.tableName).trim();
       if (req.body.active !== undefined) updates.active = Boolean(req.body.active);
       if (req.body.sortOrder !== undefined) updates.sortOrder = typeof req.body.sortOrder === "number" ? req.body.sortOrder : parseInt(String(req.body.sortOrder)) || 0;
+      if (req.body.capacity !== undefined) updates.capacity = Math.max(1, Math.min(50, typeof req.body.capacity === "number" ? req.body.capacity : parseInt(String(req.body.capacity)) || 4));
       const table = await storage.updateTable(parseInt(req.params.id as string), updates);
       res.json(table);
     } catch (err: any) {
