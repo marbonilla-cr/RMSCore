@@ -4504,6 +4504,34 @@ export async function registerRoutes(
     });
   });
 
+  app.get("/api/admin/print-bridge/status", requireRole("MANAGER"), (_req, res) => {
+    const dispatch = (app as any).dispatchPrintJob;
+    res.json({ available: typeof dispatch === "function" });
+  });
+
+  app.post("/api/admin/print-bridge/test", requireRole("MANAGER"), (_req, res) => {
+    const dispatch = (app as any).dispatchPrintJob;
+    if (typeof dispatch !== "function") {
+      return res.status(503).json({ ok: false, error: "dispatchPrintJob no disponible" });
+    }
+    const sent = dispatch({
+      jobType: "test",
+      destination: "caja",
+      payload: {
+        businessName: "Rest La Antigua",
+        lines: [
+          "Prueba de impresion",
+          "Print Bridge OK",
+          new Date().toISOString()
+        ]
+      }
+    });
+    if (!sent) {
+      return res.status(503).json({ ok: false, error: "No hay bridge conectado" });
+    }
+    return res.json({ ok: true });
+  });
+
   app.post("/api/admin/fix-loyverse-timestamps", requireRole("MANAGER"), async (_req, res) => {
     try {
       const result1 = await db.execute(sql`
