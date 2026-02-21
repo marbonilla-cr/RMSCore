@@ -3,6 +3,7 @@ import { createServer, type Server, ServerResponse } from "http";
 import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import QRCode from "qrcode";
+import crypto from "crypto";
 import { sql, and, eq, gte, lte, inArray, or, ne, asc, desc, count } from "drizzle-orm";
 import { db } from "./db";
 import * as storage from "./storage";
@@ -97,6 +98,60 @@ setInterval(() => {
     if (entry && entry.resetAt <= now) loginAttempts.delete(ip);
   }
 }, 60 * 1000);
+
+function createRateLimiter(maxRequests: number, windowMs: number, minIntervalMs = 0) {
+  const store = new Map<string, { count: number; resetAt: number; lastAt: number }>();
+  setInterval(() => {
+    const now = Date.now();
+    const keys = Array.from(store.keys());
+    for (const ip of keys) {
+      const entry = store.get(ip);
+      if (entry && entry.resetAt <= now) store.delete(ip);
+    }
+  }, 60 * 1000);
+  return (req: Request, res: Response): boolean => {
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const now = Date.now();
+    const entry = store.get(ip);
+    if (entry && entry.resetAt > now) {
+      if (minIntervalMs > 0 && (now - entry.lastAt) < minIntervalMs) {
+        const retryAfter = Math.ceil((minIntervalMs - (now - entry.lastAt)) / 1000);
+        res.set("Retry-After", String(retryAfter));
+        res.status(429).json({ message: `Espere ${retryAfter} segundos antes de intentar de nuevo.` });
+        return false;
+      }
+      if (entry.count >= maxRequests) {
+        const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+        res.set("Retry-After", String(retryAfter));
+        res.status(429).json({ message: `Demasiadas solicitudes. Intente de nuevo en ${Math.ceil(retryAfter / 60)} minutos.` });
+        return false;
+      }
+      entry.count++;
+      entry.lastAt = now;
+    } else {
+      store.set(ip, { count: 1, resetAt: now + windowMs, lastAt: now });
+    }
+    return true;
+  };
+}
+
+const reservationRateCheck = createRateLimiter(3, 60 * 1000, 10 * 1000);
+const qrSubmitRateCheck = createRateLimiter(5, 60 * 1000, 5 * 1000);
+const qrSubaccountRateCheck = createRateLimiter(10, 60 * 1000, 3 * 1000);
+
+function generateQrDailyToken(tableCode: string, date: string): string {
+  const secret = process.env.SESSION_SECRET || "qr-fallback";
+  return crypto.createHmac("sha256", secret).update(`${tableCode}:${date}`).digest("hex").substring(0, 16);
+}
+
+function getBusinessDateCR(): string {
+  const now = new Date();
+  const crTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Costa_Rica" }));
+  if (crTime.getHours() < 5) {
+    crTime.setDate(crTime.getDate() - 1);
+  }
+  return crTime.toISOString().split("T")[0];
+}
 
 // Auth middleware
 function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -4344,8 +4399,22 @@ export async function registerRoutes(
   // ==================== SALES CUBE REPORTS ====================
   registerSalesCubeRoutes(app);
 
+  // ==================== QR DAILY TOKEN ====================
+  app.get("/api/qr/:tableCode/token", async (req, res) => {
+    try {
+      const tableCode = req.params.tableCode as string;
+      const table = await storage.getTableByCode(tableCode);
+      if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+      const today = getBusinessDateCR();
+      const token = generateQrDailyToken(tableCode, today);
+      res.json({ token, date: today });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== QR SUBACCOUNTS MODULE ====================
-  registerQrSubaccountRoutes(app, broadcast);
+  registerQrSubaccountRoutes(app, broadcast, { qrSubmitRateCheck, qrSubaccountRateCheck, generateQrDailyToken, getBusinessDateCR });
 
   // ==================== WEBSOCKET ====================
   const wss = new WebSocketServer({ noServer: true });
@@ -4825,22 +4894,10 @@ export async function registerRoutes(
 
   // ==================== PUBLIC RESERVATIONS ====================
 
-  const reservationRateLimits = new Map<string, { count: number; resetAt: number }>();
-
   // POST /api/public/reservations
   app.post("/api/public/reservations", async (req, res) => {
     try {
-      const ip = req.ip || req.socket.remoteAddress || "unknown";
-      const now = Date.now();
-      const rateEntry = reservationRateLimits.get(ip);
-      if (rateEntry && rateEntry.resetAt > now) {
-        if (rateEntry.count >= 5) {
-          return res.status(429).json({ message: "Demasiadas solicitudes. Intenta de nuevo mas tarde." });
-        }
-        rateEntry.count++;
-      } else {
-        reservationRateLimits.set(ip, { count: 1, resetAt: now + 3600000 });
-      }
+      if (!reservationRateCheck(req, res)) return;
 
       const { guestName, guestPhone, guestEmail, partySize, reservedDate, reservedTime, notes } = req.body;
       if (!guestName || !guestPhone || !partySize || !reservedDate || !reservedTime) {

@@ -88,6 +88,9 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 -   **HTML Sanitization:** Global middleware strips HTML tags from all string values in POST/PUT/PATCH request bodies before route handlers.
 -   **Endpoint Protection:** Sales cube reports (`/api/reports/sales-cube/*`) now require authentication + role-based permission check. `/api/admin/fix-loyverse-timestamps` requires MANAGER role.
 -   **WebSocket Authentication:** WS upgrade requests are verified against express-session. Unauthenticated connections receive 401 and are destroyed.
+-   **Reservation Rate Limiting:** In-memory per-IP rate limiter via `createRateLimiter`: max 3 requests per minute, minimum 10s between attempts on `POST /api/public/reservations`. Returns 429 with Retry-After header.
+-   **QR Rate Limiting:** Per-IP rate limiters on QR subaccount creation (10/min, 3s interval) and order submission (5/min, 5s interval). Applied via middleware on all public QR POST endpoints.
+-   **QR Daily Token:** HMAC-SHA256 token generated from `SESSION_SECRET + tableCode + businessDate`. Frontend fetches token via `GET /api/qr/:tableCode/token` and sends as `x-qr-token` header on all protected QR API calls. Token expires at business-date rollover (5am CR time). Auto-refresh on 403 responses.
 -   **Existing Security:** bcrypt password/PIN hashing (salt 10), PIN lockout after failed attempts, RBAC with configurable permissions, Drizzle ORM (SQL injection prevention), audit trail for login/actions.
 
 ## External Dependencies

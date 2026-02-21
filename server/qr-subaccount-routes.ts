@@ -69,9 +69,34 @@ async function getMaxSubaccounts(): Promise<number> {
   return (config as any)?.maxSubaccounts ?? 6;
 }
 
-export function registerQrSubaccountRoutes(app: Express, broadcast: (type: string, payload: any) => void) {
+interface QrSecurityUtils {
+  qrSubmitRateCheck: (req: Request, res: Response) => boolean;
+  qrSubaccountRateCheck: (req: Request, res: Response) => boolean;
+  generateQrDailyToken: (tableCode: string, date: string) => string;
+  getBusinessDateCR: () => string;
+}
 
-  app.get("/api/qr/:tableCode/subaccounts", async (req, res) => {
+function validateQrToken(utils: QrSecurityUtils) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const token = req.headers["x-qr-token"] as string;
+    const tableCode = req.params.tableCode as string;
+    if (!token || !tableCode) {
+      return res.status(403).json({ message: "Token de acceso requerido. Escanee el QR nuevamente." });
+    }
+    const today = utils.getBusinessDateCR();
+    const expected = utils.generateQrDailyToken(tableCode, today);
+    if (token !== expected) {
+      return res.status(403).json({ message: "Token expirado. Escanee el QR nuevamente para obtener acceso." });
+    }
+    next();
+  };
+}
+
+export function registerQrSubaccountRoutes(app: Express, broadcast: (type: string, payload: any) => void, security?: QrSecurityUtils) {
+
+  const tokenCheck = security ? validateQrToken(security) : (_req: Request, _res: Response, next: NextFunction) => next();
+
+  app.get("/api/qr/:tableCode/subaccounts", tokenCheck, async (req, res) => {
     try {
       const tableCode = req.params.tableCode as string;
       const table = await storage.getTableByCode(tableCode);
@@ -90,8 +115,9 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     }
   });
 
-  app.post("/api/qr/:tableCode/subaccounts", async (req, res) => {
+  app.post("/api/qr/:tableCode/subaccounts", tokenCheck, async (req, res) => {
     try {
+      if (security && !security.qrSubaccountRateCheck(req, res)) return;
       const tableCode = req.params.tableCode as string;
       const { label, slotNumber: requestedSlot } = req.body || {};
 
@@ -144,8 +170,9 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     }
   });
 
-  app.post("/api/qr/:tableCode/subaccounts-batch", async (req, res) => {
+  app.post("/api/qr/:tableCode/subaccounts-batch", tokenCheck, async (req, res) => {
     try {
+      if (security && !security.qrSubaccountRateCheck(req, res)) return;
       const tableCode = req.params.tableCode as string;
       const { count } = req.body || {};
 
@@ -194,8 +221,9 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     }
   });
 
-  app.post("/api/qr/:tableCode/submit-v2", async (req, res) => {
+  app.post("/api/qr/:tableCode/submit-v2", tokenCheck, async (req, res) => {
     try {
+      if (security && !security.qrSubmitRateCheck(req, res)) return;
       const tableCode = req.params.tableCode as string;
       const { subaccountId, items } = req.body;
 

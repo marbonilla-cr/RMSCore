@@ -374,6 +374,16 @@ export default function QRClientPage() {
   const [popup, setPopup] = useState<QRProduct | null>(null);
   const [sending, setSending] = useState(false);
   const [subaccountId, setSubaccountId] = useState<number | null>(null);
+  const [qrToken, setQrToken] = useState<string>("");
+
+  /* ─── Fetch daily QR token ─── */
+  useEffect(() => {
+    if (!tableCode) return;
+    fetch(`/api/qr/${tableCode}/token`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.token) setQrToken(data.token); })
+      .catch(() => {});
+  }, [tableCode]);
 
   /* ─── Data fetching ─── */
 
@@ -401,13 +411,20 @@ export default function QRClientPage() {
   const topCats = menuData?.topCategories || [];
 
   const { data: subaccounts = [] } = useQuery<Subaccount[]>({
-    queryKey: ["/api/qr", tableCode, "subaccounts"],
+    queryKey: ["/api/qr", tableCode, "subaccounts", qrToken],
     queryFn: async () => {
-      const r = await fetch(`/api/qr/${tableCode}/subaccounts`);
+      const r = await fetch(`/api/qr/${tableCode}/subaccounts`, {
+        headers: qrToken ? { "x-qr-token": qrToken } : {},
+      });
+      if (r.status === 403) {
+        const fresh = await fetch(`/api/qr/${tableCode}/token`).then(r2 => r2.ok ? r2.json() : null);
+        if (fresh?.token) { setQrToken(fresh.token); }
+        return [];
+      }
       if (!r.ok) return [];
       return r.json();
     },
-    enabled: !!tableCode && screen === 1,
+    enabled: !!tableCode && screen === 1 && !!qrToken,
   });
 
   const existingNames = useMemo(() => {
@@ -477,9 +494,14 @@ export default function QRClientPage() {
       let sid = subaccountId;
       if (!sid) {
         const subRes = await fetch(`/api/qr/${tableCode}/subaccounts`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json", ...(qrToken ? { "x-qr-token": qrToken } : {}) },
           body: JSON.stringify({ label: name }),
         });
+        if (subRes.status === 403) {
+          const fresh = await fetch(`/api/qr/${tableCode}/token`).then(r2 => r2.ok ? r2.json() : null);
+          if (fresh?.token) setQrToken(fresh.token);
+          throw new Error("Token expirado. Intente de nuevo.");
+        }
         if (!subRes.ok) {
           const d = await subRes.json().catch(() => ({ message: "Error" }));
           throw new Error(d.message);
@@ -502,10 +524,15 @@ export default function QRClientPage() {
       }));
 
       const res = await fetch(`/api/qr/${tableCode}/submit-v2`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...(qrToken ? { "x-qr-token": qrToken } : {}) },
         body: JSON.stringify({ subaccountId: sid, items }),
       });
 
+      if (res.status === 403) {
+        const fresh = await fetch(`/api/qr/${tableCode}/token`).then(r2 => r2.ok ? r2.json() : null);
+        if (fresh?.token) setQrToken(fresh.token);
+        throw new Error("Token expirado. Intente de nuevo.");
+      }
       if (!res.ok) {
         const d = await res.json().catch(() => ({ message: "Error" }));
         throw new Error(d.message);
