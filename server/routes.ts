@@ -61,6 +61,43 @@ function broadcast(type: string, payload: any) {
   });
 }
 
+// Login rate limiter - per IP, 5 attempts per 15 minutes
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+
+function checkLoginRateLimit(req: Request, res: Response): boolean {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (entry && entry.resetAt > now) {
+    if (entry.count >= LOGIN_MAX_ATTEMPTS) {
+      const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+      res.set("Retry-After", String(retryAfter));
+      res.status(429).json({ message: `Demasiados intentos. Intente de nuevo en ${Math.ceil(retryAfter / 60)} minutos.` });
+      return false;
+    }
+    entry.count++;
+  } else {
+    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+  }
+  return true;
+}
+
+function clearLoginRateLimit(req: Request) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  loginAttempts.delete(ip);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  const keys = Array.from(loginAttempts.keys());
+  for (const ip of keys) {
+    const entry = loginAttempts.get(ip);
+    if (entry && entry.resetAt <= now) loginAttempts.delete(ip);
+  }
+}, 60 * 1000);
+
 // Auth middleware
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.session.userId) {
@@ -153,35 +190,40 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   // Session setup
-  const sessionSecret = process.env.SESSION_SECRET || "restaurant-secret-key-dev";
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    throw new Error("SESSION_SECRET environment variable is required");
+  }
   const pgSession = (await import("connect-pg-simple")).default(session);
 
   app.set("trust proxy", 1);
 
-  app.use(
-    session({
-      secret: sessionSecret,
-      resave: false,
-      saveUninitialized: false,
-      store: new pgSession({
-        conString: process.env.DATABASE_URL,
-        tableName: "session",
-        pruneSessionInterval: 60 * 15,
-        createTableIfMissing: true,
-      }),
-      proxy: true,
-      cookie: {
-        maxAge: 24 * 60 * 60 * 1000,
-        httpOnly: true,
-        secure: true,
-        sameSite: "none" as const,
-        partitioned: true,
-      },
-    })
-  );
+  const isProduction = process.env.NODE_ENV === "production";
+  const sessionMiddleware = session({
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    store: new pgSession({
+      conString: process.env.DATABASE_URL,
+      tableName: "session",
+      pruneSessionInterval: 60 * 15,
+      createTableIfMissing: true,
+    }),
+    proxy: true,
+    cookie: {
+      maxAge: 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      secure: true,
+      sameSite: "none" as const,
+      partitioned: true,
+    },
+  });
+  app.use(sessionMiddleware);
+  app.set("sessionMiddleware", sessionMiddleware);
 
   // ==================== AUTH ====================
   app.post("/api/auth/login", async (req, res) => {
+    if (!checkLoginRateLimit(req, res)) return;
     try {
       const { username, password } = loginSchema.parse(req.body);
       const user = await storage.getUserByUsername(username);
@@ -192,6 +234,7 @@ export async function registerRoutes(
       if (!valid) {
         return res.status(401).json({ message: "Usuario o contraseña incorrectos" });
       }
+      clearLoginRateLimit(req);
       req.session.userId = user.id;
       await storage.createAuditEvent({ actorType: "USER", actorUserId: user.id, action: "LOGIN_PASSWORD", entityType: "USER", entityId: user.id, metadata: {} });
       const { password: _, pin: _p, ...safeUser } = user;
@@ -222,6 +265,7 @@ export async function registerRoutes(
 
   // PIN Login
   app.post("/api/auth/pin-login", async (req, res) => {
+    if (!checkLoginRateLimit(req, res)) return;
     try {
       const { pin } = pinLoginSchema.parse(req.body);
       const allUsers = await storage.getAllUsersWithPin();
@@ -234,6 +278,7 @@ export async function registerRoutes(
         const match = await storage.verifyPin(pin, u.pin!);
         if (match) {
           await storage.clearPinLock(u.id);
+          clearLoginRateLimit(req);
           req.session.userId = u.id;
           await storage.createAuditEvent({ actorType: "USER", actorUserId: u.id, action: "LOGIN_PIN", entityType: "USER", entityId: u.id, metadata: {} });
           const fullUser = await storage.getUser(u.id);
@@ -4291,7 +4336,34 @@ export async function registerRoutes(
   registerQrSubaccountRoutes(app, broadcast);
 
   // ==================== WEBSOCKET ====================
-  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true });
+  httpServer.on("upgrade", (request, socket, head) => {
+    const urlPath = (request.url || "").split("?")[0];
+    if (urlPath !== "/ws") {
+      socket.destroy();
+      return;
+    }
+    const res = new (require("http").ServerResponse)(request);
+    res.assignSocket(socket);
+    const sessionMiddleware = app.get("sessionMiddleware");
+    if (sessionMiddleware) {
+      sessionMiddleware(request as any, res as any, () => {
+        const sess = (request as any).session;
+        if (!sess?.userId) {
+          socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit("connection", ws, request);
+        });
+      });
+    } else {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    }
+  });
   wss.on("connection", (ws) => {
     wsClients.add(ws);
     ws.on("message", (raw) => {
@@ -4308,11 +4380,7 @@ export async function registerRoutes(
     ws.on("error", () => wsClients.delete(ws));
   });
 
-  app.post("/api/admin/fix-loyverse-timestamps", async (_req, res) => {
-    const token = _req.headers["x-fix-token"];
-    if (token !== "fix-loyverse-2026-02-18-onetime") {
-      return res.status(403).json({ message: "Forbidden" });
-    }
+  app.post("/api/admin/fix-loyverse-timestamps", requireRole("MANAGER"), async (_req, res) => {
     try {
       const result1 = await db.execute(sql`
         UPDATE sales_ledger_items 

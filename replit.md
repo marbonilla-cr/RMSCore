@@ -19,7 +19,7 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 -   **Framework:** Express.js with TypeScript for a robust and type-safe API.
 -   **Database:** PostgreSQL managed with Drizzle ORM.
 -   **Real-time Communication:** WebSocket (`ws` library) for live updates across modules.
--   **Authentication:** Session-based with `express-session` and `memorystore`. Features a PIN-based login and Role-Based Access Control (RBAC) with configurable, permission-based module access.
+-   **Authentication:** Session-based with `express-session` and `connect-pg-simple` (PostgreSQL session store). Features a PIN-based login and Role-Based Access Control (RBAC) with configurable, permission-based module access.
 -   **Core Business Logic:**
     -   **Timezone Management:** All business date calculations use `America/Costa_Rica` (UTC-6) to accurately assign orders and payments, especially across midnight.
     -   **Payment Integrity:** Robust payment validation, voiding, and cash session management ensuring financial accuracy.
@@ -76,6 +76,18 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 -   **Receipt printing:** Handled via `handlePayDialogSuccess` callback in pos.tsx which receives payment method info and triggers `triggerReceiptPrint` + auto-print + drawer open.
 -   **Animations:** `pos-vibrate` (split separation vibration, 0.4s), `pos-flash-success` (green glow confirmation, 0.7s) CSS keyframes. Applied via class toggling with setTimeout sequencing.
 
+### Security Hardening (February 21, 2026)
+-   **Status:** COMPLETED
+-   **Helmet:** Configured with strict CSP (self-only scripts/styles/fonts, no frames/objects), HSTS (1 year, includeSubDomains), X-Frame-Options: DENY, Referrer-Policy: strict-origin-when-cross-origin.
+-   **Login Rate Limiting:** In-memory per-IP rate limiter: 5 attempts per 15-minute window on `/api/auth/login` and `/api/auth/pin-login`. Returns 429 with Retry-After header. Clears on successful login.
+-   **Session Security:** `SESSION_SECRET` env var required (no hardcoded fallback). Sessions stored in PostgreSQL via `connect-pg-simple`. Cookies: httpOnly, secure, sameSite=none, partitioned, 24h maxAge.
+-   **Body Limits:** JSON: 2MB, URL-encoded: 1MB (reduced from 10MB).
+-   **Log Sanitization:** Response logs redact: password, pin, guestPhone, guestEmail, customerPhone, customerEmail, phone, email. Error responses return generic "Error interno del servidor" for 5xx (no stack traces in production).
+-   **HTML Sanitization:** Global middleware strips HTML tags from all string values in POST/PUT/PATCH request bodies before route handlers.
+-   **Endpoint Protection:** Sales cube reports (`/api/reports/sales-cube/*`) now require authentication + role-based permission check. `/api/admin/fix-loyverse-timestamps` requires MANAGER role.
+-   **WebSocket Authentication:** WS upgrade requests are verified against express-session. Unauthenticated connections receive 401 and are destroyed.
+-   **Existing Security:** bcrypt password/PIN hashing (salt 10), PIN lockout after failed attempts, RBAC with configurable permissions, Drizzle ORM (SQL injection prevention), audit trail for login/actions.
+
 ## External Dependencies
 -   **PostgreSQL:** Primary database.
 -   **Vite:** Frontend build tool.
@@ -87,5 +99,6 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 -   **Drizzle ORM:** PostgreSQL ORM.
 -   **ws:** WebSocket library.
 -   **express-session:** Session management middleware.
--   **memorystore:** Session store.
+-   **connect-pg-simple:** PostgreSQL session store.
+-   **helmet:** HTTP security headers middleware.
 -   **Nodemailer:** For email receipts (requires SMTP setup).

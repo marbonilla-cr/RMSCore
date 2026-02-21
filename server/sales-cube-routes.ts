@@ -1,11 +1,20 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { salesLedgerItems } from "@shared/schema";
 import { sql, and, eq, inArray, gte, lte, or, SQL } from "drizzle-orm";
+import * as storage from "./storage";
 
 function requirePermission(perm: string) {
-  return async (req: Request, res: Response, next: Function) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.session?.userId) return res.status(401).json({ message: "No autenticado" });
+    const user = await storage.getUser(req.session.userId);
+    if (!user || !user.active) return res.status(401).json({ message: "No autenticado" });
+    if (user.role !== "MANAGER") {
+      const keys = await storage.getPermissionKeysForRole(user.role);
+      if (!keys.includes(perm)) {
+        return res.status(403).json({ message: "Sin permisos" });
+      }
+    }
     next();
   };
 }
@@ -182,11 +191,11 @@ const PRESETS = {
 };
 
 export function registerSalesCubeRoutes(app: Express) {
-  app.get("/api/reports/sales-cube/presets", async (_req, res) => {
+  app.get("/api/reports/sales-cube/presets", requirePermission("reports"), async (_req, res) => {
     res.json(PRESETS);
   });
 
-  app.get("/api/reports/sales-cube/filter-options", async (_req, res) => {
+  app.get("/api/reports/sales-cube/filter-options", requirePermission("reports"), async (_req, res) => {
     try {
       const [categories, origins, products, waiters, dateRange] = await Promise.all([
         db.select({ value: sql<string>`DISTINCT ${salesLedgerItems.categoryNameSnapshot}` })
@@ -226,7 +235,7 @@ export function registerSalesCubeRoutes(app: Express) {
     }
   });
 
-  app.post("/api/reports/sales-cube/query", async (req: Request, res: Response) => {
+  app.post("/api/reports/sales-cube/query", requirePermission("reports"), async (req: Request, res: Response) => {
     try {
       const body = req.body as CubeRequest;
 
