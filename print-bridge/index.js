@@ -24,7 +24,7 @@ async function processPrintQueue() {
       log(`Error imprimiendo ${label}: ${err.message}`);
     }
     if (printQueue.length > 0) {
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 500));
     }
   }
   printing = false;
@@ -76,36 +76,47 @@ function findPrinter(destination) {
 function sendToPrinter(printer, data) {
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
+    socket.setNoDelay(true);
     let settled = false;
 
+    const settle = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      fn(val);
+    };
+
     const timeout = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        socket.destroy();
-        reject(new Error(`Timeout conectando a ${printer.ipAddress}:${printer.port}`));
-      }
-    }, 5000);
+      socket.destroy();
+      settle(reject, new Error(`Timeout conectando a ${printer.ipAddress}:${printer.port}`));
+    }, 8000);
 
     socket.connect(printer.port, printer.ipAddress, () => {
-      clearTimeout(timeout);
-      socket.write(data, () => {
-        socket.end();
-      });
-    });
-
-    socket.on("close", () => {
-      if (!settled) {
-        settled = true;
-        resolve();
+      const flushed = socket.write(data);
+      const finish = () => {
+        setTimeout(() => {
+          socket.end();
+          setTimeout(() => settle(resolve), 100);
+        }, 200);
+      };
+      if (flushed) {
+        finish();
+      } else {
+        socket.once("drain", finish);
       }
     });
+
+    socket.on("close", () => settle(resolve));
 
     socket.on("error", (err) => {
-      clearTimeout(timeout);
-      if (!settled) {
-        settled = true;
-        reject(err);
+      if (err.code === "ECONNRESET" && settled) return;
+      if (err.code === "ECONNRESET") {
+        log(`Impresora cerro conexion (ECONNRESET) - datos probablemente recibidos`);
+        settle(resolve);
+        return;
       }
+      socket.destroy();
+      settle(reject, err);
     });
   });
 }
