@@ -22,6 +22,7 @@ interface TableView {
   itemCount: number;
   totalAmount: string | null;
   lastSentToKitchenAt: string | null;
+  hasActiveReservation: boolean;
   upcomingReservation: {
     id: number;
     guestName: string;
@@ -156,6 +157,8 @@ export default function TablesPage() {
   const withOrder = filtered.filter(t => isEffectivelyOpen(t));
   const withoutOrder = filtered.filter(t => !isEffectivelyOpen(t));
   const occupiedCount = activeTables.filter(t => isEffectivelyOpen(t)).length;
+  const reservedCount = activeTables.filter(t => t.hasActiveReservation).length;
+  const freeForWalkins = activeTables.length - occupiedCount - activeTables.filter(t => !isEffectivelyOpen(t) && t.hasActiveReservation).length;
 
   const now = new Date();
   const dayName = now.toLocaleDateString("es-CR", { weekday: "long" });
@@ -220,6 +223,20 @@ export default function TablesPage() {
         .reservation-badge.later {
           background: var(--s2);
           color: var(--text3);
+        }
+        .res-tag {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          font-family: var(--f-mono);
+          font-size: 9px;
+          font-weight: 700;
+          letter-spacing: 0.5px;
+          padding: 2px 6px;
+          border-radius: var(--r-xs);
+          background: var(--acc-d, rgba(29,78,216,0.07));
+          color: var(--acc, #1d4ed8);
+          border: 1px solid var(--acc-m, rgba(29,78,216,0.18));
         }
         @keyframes pulse-badge {
           0%, 100% { opacity: 1; }
@@ -367,6 +384,29 @@ export default function TablesPage() {
           font-family: var(--f-mono);
           font-size: 13px;
         }
+
+        .host-bar {
+          display: flex;
+          gap: 6px;
+          padding: 0 18px 10px;
+          flex-wrap: wrap;
+        }
+        .host-chip {
+          font-family: var(--f-mono);
+          font-size: 10px;
+          font-weight: 600;
+          padding: 4px 10px;
+          border-radius: var(--r-xs);
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .host-chip.occupied { background: var(--sage-d); color: var(--sage); }
+        .host-chip.reserved { background: var(--acc-d); color: var(--acc); }
+        .host-chip.walkin { background: var(--s2); color: var(--text2); }
+        .host-chip.walkin.good { background: var(--sage-d); color: var(--sage); }
+        .host-chip.walkin.tight { background: var(--amber-d); color: var(--amber); }
+        .host-chip.walkin.full { background: var(--red-d); color: var(--red); }
       `}</style>
 
       <div className="screen-header">
@@ -427,6 +467,16 @@ export default function TablesPage() {
         </div>
       </div>
 
+      {!isLoading && activeTables.length > 0 && (
+        <div className="host-bar" data-testid="host-availability-bar">
+          <div className="host-chip occupied" data-testid="chip-occupied">{occupiedCount} ocupadas</div>
+          {reservedCount > 0 && <div className="host-chip reserved" data-testid="chip-reserved">{reservedCount} RES</div>}
+          <div className={`host-chip walkin ${freeForWalkins > 3 ? 'good' : freeForWalkins > 0 ? 'tight' : 'full'}`} data-testid="chip-walkin">
+            {freeForWalkins > 0 ? `${freeForWalkins} walk-in` : 'Sin espacio walk-in'}
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
         <div style={{ padding: "0 18px" }}>
           <TablesSkeleton />
@@ -451,6 +501,7 @@ export default function TablesPage() {
                 const resCardCls = resSoon ? " has-reservation-soon" : "";
                 return (
                   <Link key={table.id} href={`/tables/${table.id}`} className={`table-card ${statusCls}${resCardCls}`} data-testid={`card-table-${table.id}`}>
+                    {table.hasActiveReservation && <div className="res-tag" data-testid={`tag-res-${table.id}`}>RES</div>}
                     {table.pendingQrCount > 0 && (
                       <div className="qr-alert">{table.pendingQrCount}</div>
                     )}
@@ -504,7 +555,8 @@ export default function TablesPage() {
           {withoutOrder.length > 0 ? (
             <div className="tables-free-grid stagger-children">
               {withoutOrder.map(table => (
-                <Link key={table.id} href={`/tables/${table.id}`} className={`table-card-free${table.upcomingReservation && table.upcomingReservation.minutesUntil <= 60 ? ' has-reservation-soon' : ''}`} data-testid={`card-table-${table.id}`}>
+                <Link key={table.id} href={`/tables/${table.id}`} className={`table-card-free${table.upcomingReservation && table.upcomingReservation.minutesUntil <= 60 ? ' has-reservation-soon' : ''}`} style={{ position: 'relative' }} data-testid={`card-table-${table.id}`}>
+                  {table.hasActiveReservation && <div className="res-tag" data-testid={`tag-res-${table.id}`}>RES</div>}
                   <div className="tcf-name" data-testid={`text-table-name-${table.id}`}>{table.tableName}</div>
                   {table.upcomingReservation ? (
                     <div className={`reservation-badge ${table.upcomingReservation.minutesUntil <= 60 ? 'soon' : 'later'}`} style={{ fontSize: 9, marginTop: 2 }} data-testid={`badge-reservation-${table.id}`}>

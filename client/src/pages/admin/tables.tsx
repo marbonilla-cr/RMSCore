@@ -310,7 +310,8 @@ function ReservationSettingsSection() {
     openTime: "11:00",
     closeTime: "22:00",
     slotIntervalMinutes: 30,
-    maxReservationsPerDay: 20,
+    maxOccupancyPercent: 50,
+    turnoverBufferMinutes: 15,
     enabled: true,
   });
 
@@ -324,7 +325,8 @@ function ReservationSettingsSection() {
         openTime: settings.openTime,
         closeTime: settings.closeTime,
         slotIntervalMinutes: settings.slotIntervalMinutes,
-        maxReservationsPerDay: settings.maxReservationsPerDay,
+        maxOccupancyPercent: settings.maxOccupancyPercent,
+        turnoverBufferMinutes: settings.turnoverBufferMinutes,
         enabled: settings.enabled,
       });
     }
@@ -387,9 +389,9 @@ function ReservationSettingsSection() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1">
-            <Label className="text-xs">Intervalo de Slots (min)</Label>
+            <Label className="text-xs">Intervalo Slots (min)</Label>
             <Input
               type="number"
               min={15}
@@ -400,13 +402,26 @@ function ReservationSettingsSection() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Máx. Reservas / Día</Label>
+            <Label className="text-xs">% Ocupación Reservas</Label>
             <Input
               type="number"
-              min={1}
-              value={form.maxReservationsPerDay}
-              onChange={(e) => setForm({ ...form, maxReservationsPerDay: parseInt(e.target.value) || 20 })}
-              data-testid="input-max-daily"
+              min={10}
+              max={100}
+              step={5}
+              value={form.maxOccupancyPercent}
+              onChange={(e) => setForm({ ...form, maxOccupancyPercent: parseInt(e.target.value) || 50 })}
+              data-testid="input-occupancy-percent"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Buffer Mesa (min)</Label>
+            <Input
+              type="number"
+              min={0}
+              step={5}
+              value={form.turnoverBufferMinutes}
+              onChange={(e) => setForm({ ...form, turnoverBufferMinutes: parseInt(e.target.value) || 15 })}
+              data-testid="input-buffer-minutes"
             />
           </div>
         </div>

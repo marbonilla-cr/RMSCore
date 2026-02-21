@@ -995,7 +995,8 @@ export const reservationSettings = pgTable("reservation_settings", {
   openTime: text("open_time").notNull().default("11:00"),
   closeTime: text("close_time").notNull().default("22:00"),
   slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(30),
-  maxReservationsPerDay: integer("max_reservations_per_day").notNull().default(20),
+  maxOccupancyPercent: integer("max_occupancy_percent").notNull().default(50),
+  turnoverBufferMinutes: integer("turnover_buffer_minutes").notNull().default(15),
   enabled: boolean("enabled").notNull().default(true),
 });
 

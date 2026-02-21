@@ -1282,14 +1282,17 @@ export async function registerRoutes(
     const tomorrowDate = new Date(crNow);
     tomorrowDate.setDate(tomorrowDate.getDate() + 1);
     const tomorrowStr = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, '0')}-${String(tomorrowDate.getDate()).padStart(2, '0')}`;
+    const yesterdayDate = new Date(crNow);
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
 
     const [allItems, allSubs, waiters, upcomingReservations] = await Promise.all([
       storage.getOrderItemsByOrderIds(orderIds),
       storage.getPendingSubmissionsByOrderIds(orderIds),
       storage.getUsersByIds(waiterIds),
       db.select().from(reservations).where(and(
-        inArray(reservations.status, ['PENDING', 'CONFIRMED']),
-        or(eq(reservations.reservedDate, todayStr), eq(reservations.reservedDate, tomorrowStr)),
+        inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
+        or(eq(reservations.reservedDate, yesterdayStr), eq(reservations.reservedDate, todayStr), eq(reservations.reservedDate, tomorrowStr)),
       )),
     ]);
 
@@ -1329,6 +1332,7 @@ export async function registerRoutes(
       }
 
       let upcomingReservation: any = null;
+      let hasActiveReservation = false;
       const tableReservations = upcomingReservations
         .filter(r => r.tableId === t.id)
         .map(r => {
@@ -1359,6 +1363,27 @@ export async function registerRoutes(
         };
       }
 
+      const relevantTableRes = upcomingReservations.filter(r =>
+        r.tableId === t.id && (r.reservedDate === todayStr || r.reservedDate === yesterdayStr)
+      );
+      for (const r of relevantTableRes) {
+        const rTime = r.reservedTime as string;
+        const rStart = timeToMinutes(rTime);
+        const rEnd = rStart + r.durationMinutes;
+        if (r.reservedDate === todayStr) {
+          if (currentMinutes >= rStart && currentMinutes < rEnd) {
+            hasActiveReservation = true;
+            break;
+          }
+        } else {
+          const endMinutes = rEnd;
+          if (endMinutes > 1440 && currentMinutes < (endMinutes - 1440)) {
+            hasActiveReservation = true;
+            break;
+          }
+        }
+      }
+
       return {
         id: t.id,
         tableCode: t.tableCode,
@@ -1374,6 +1399,7 @@ export async function registerRoutes(
         totalAmount: order?.totalAmount || null,
         lastSentToKitchenAt,
         upcomingReservation,
+        hasActiveReservation,
       };
     });
     res.json(result);
@@ -4634,14 +4660,15 @@ export async function registerRoutes(
   // PUT /api/reservations/settings
   app.put("/api/reservations/settings", requireRole("MANAGER"), async (req, res) => {
     try {
-      const { openTime, closeTime, slotIntervalMinutes, maxReservationsPerDay, enabled } = req.body;
+      const { openTime, closeTime, slotIntervalMinutes, maxOccupancyPercent, turnoverBufferMinutes, enabled } = req.body;
       const rows = await db.select().from(reservationSettings);
       if (rows.length === 0) {
         const [created] = await db.insert(reservationSettings).values({
           openTime: openTime || "11:00",
           closeTime: closeTime || "22:00",
           slotIntervalMinutes: slotIntervalMinutes || 30,
-          maxReservationsPerDay: maxReservationsPerDay || 20,
+          maxOccupancyPercent: maxOccupancyPercent !== undefined ? maxOccupancyPercent : 50,
+          turnoverBufferMinutes: turnoverBufferMinutes !== undefined ? turnoverBufferMinutes : 15,
           enabled: enabled !== undefined ? enabled : true,
         }).returning();
         return res.json(created);
@@ -4651,7 +4678,8 @@ export async function registerRoutes(
           openTime: openTime || rows[0].openTime,
           closeTime: closeTime || rows[0].closeTime,
           slotIntervalMinutes: slotIntervalMinutes !== undefined ? slotIntervalMinutes : rows[0].slotIntervalMinutes,
-          maxReservationsPerDay: maxReservationsPerDay !== undefined ? maxReservationsPerDay : rows[0].maxReservationsPerDay,
+          maxOccupancyPercent: maxOccupancyPercent !== undefined ? maxOccupancyPercent : rows[0].maxOccupancyPercent,
+          turnoverBufferMinutes: turnoverBufferMinutes !== undefined ? turnoverBufferMinutes : rows[0].turnoverBufferMinutes,
           enabled: enabled !== undefined ? enabled : rows[0].enabled,
         })
         .where(eq(reservationSettings.id, rows[0].id))
@@ -4694,8 +4722,49 @@ export async function registerRoutes(
       }
       const duration = await getDurationForPartySize(partySize);
 
-      if (tableId) {
-        const conflict = await checkReservationConflict(tableId, reservedDate, reservedTime, duration);
+      const settingsRows = await db.select().from(reservationSettings);
+      const settings = settingsRows.length > 0 ? settingsRows[0] : { turnoverBufferMinutes: 15, maxOccupancyPercent: 50, enabled: true };
+      const buffer = settings.turnoverBufferMinutes;
+
+      if (!settings.enabled) {
+        return res.status(400).json({ message: "El sistema de reservaciones no está disponible." });
+      }
+
+      let assignedTableId = tableId || null;
+
+      if (!assignedTableId) {
+        const allTables = await storage.getAllTables();
+        const suitableTables = allTables
+          .filter(t => t.active && t.capacity >= partySize)
+          .sort((a, b) => a.capacity - b.capacity);
+
+        const dayReservations = await db.select().from(reservations)
+          .where(and(
+            eq(reservations.reservedDate, reservedDate),
+            inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
+          ));
+
+        const slotStart = timeToMinutes(reservedTime);
+        const slotEnd = slotStart + duration;
+
+        for (const table of suitableTables) {
+          const tableReservations = dayReservations.filter(r => r.tableId === table.id);
+          const hasConflict = tableReservations.some(r => {
+            const rStart = timeToMinutes(r.reservedTime);
+            const rEnd = rStart + r.durationMinutes + buffer;
+            return slotStart < rEnd && slotEnd > rStart;
+          });
+          if (!hasConflict) {
+            assignedTableId = table.id;
+            break;
+          }
+        }
+
+        if (!assignedTableId) {
+          return res.status(409).json({ message: "No hay mesas disponibles para ese horario. Por favor intente otro horario." });
+        }
+      } else {
+        const conflict = await checkReservationConflict(assignedTableId, reservedDate, reservedTime, duration);
         if (conflict.conflict) {
           return res.status(409).json({ message: "Esta mesa no esta disponible en ese horario." });
         }
@@ -4711,7 +4780,7 @@ export async function registerRoutes(
         reservedDate,
         reservedTime,
         durationMinutes: duration,
-        tableId: tableId || null,
+        tableId: assignedTableId,
         status: 'PENDING',
         notes: notes || null,
         createdBy: null,
@@ -4744,19 +4813,12 @@ export async function registerRoutes(
       const ps = parseInt(partySize as string);
 
       const settingsRows = await db.select().from(reservationSettings);
-      const settings = settingsRows.length > 0 ? settingsRows[0] : { openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30, maxReservationsPerDay: 20, enabled: true };
+      const settings = settingsRows.length > 0 ? settingsRows[0] : {
+        openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30,
+        maxOccupancyPercent: 50, turnoverBufferMinutes: 15, enabled: true
+      };
 
       if (!settings.enabled) {
-        return res.json([]);
-      }
-
-      const dayReservations = await db.select().from(reservations)
-        .where(and(
-          eq(reservations.reservedDate, date as string),
-          inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
-        ));
-
-      if (dayReservations.length >= settings.maxReservationsPerDay) {
         return res.json([]);
       }
 
@@ -4767,14 +4829,25 @@ export async function registerRoutes(
         return res.json([]);
       }
 
+      const maxReservableTables = Math.max(1, Math.floor(suitableTables.length * settings.maxOccupancyPercent / 100));
+
+      const dayReservations = await db.select().from(reservations)
+        .where(and(
+          eq(reservations.reservedDate, date as string),
+          inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
+        ));
+
       const openMinutes = timeToMinutes(settings.openTime);
-      const closeMinutes = timeToMinutes(settings.closeTime);
+      let closeMinutes = timeToMinutes(settings.closeTime);
+      if (closeMinutes <= openMinutes) closeMinutes += 1440;
       const interval = settings.slotIntervalMinutes;
       const duration = await getDurationForPartySize(ps);
+      const buffer = settings.turnoverBufferMinutes;
 
       const slots: { time: string; available: boolean; tablesAvailable: number }[] = [];
       for (let mins = openMinutes; mins <= closeMinutes; mins += interval) {
-        const timeStr = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+        const normalizedMins = mins % 1440;
+        const timeStr = `${String(Math.floor(normalizedMins / 60)).padStart(2, '0')}:${String(normalizedMins % 60).padStart(2, '0')}`;
         const slotStart = mins;
         const slotEnd = slotStart + duration;
 
@@ -4782,14 +4855,27 @@ export async function registerRoutes(
         for (const table of suitableTables) {
           const tableReservations = dayReservations.filter(r => r.tableId === table.id);
           const hasConflict = tableReservations.some(r => {
-            const rStart = timeToMinutes(r.reservedTime);
-            const rEnd = rStart + r.durationMinutes;
+            let rStart = timeToMinutes(r.reservedTime);
+            if (rStart < openMinutes) rStart += 1440;
+            const rEnd = rStart + r.durationMinutes + buffer;
             return slotStart < rEnd && slotEnd > rStart;
           });
           if (!hasConflict) tablesAvailableCount++;
         }
 
-        slots.push({ time: timeStr, available: tablesAvailableCount > 0, tablesAvailable: tablesAvailableCount });
+        const suitableTableIds = new Set(suitableTables.map(t => t.id));
+        const currentlyReservedInSlot = dayReservations.filter(r => {
+          if (!r.tableId || !suitableTableIds.has(r.tableId)) return false;
+          let rStart = timeToMinutes(r.reservedTime);
+          if (rStart < openMinutes) rStart += 1440;
+          const rEnd = rStart + r.durationMinutes + buffer;
+          return slotStart < rEnd && slotEnd > rStart;
+        }).length;
+
+        const stillAvailable = Math.max(0, maxReservableTables - currentlyReservedInSlot);
+        const finalAvailable = Math.min(tablesAvailableCount, stillAvailable);
+
+        slots.push({ time: timeStr, available: finalAvailable > 0, tablesAvailable: finalAvailable });
       }
 
       const today = getBusinessDate();
@@ -4818,6 +4904,10 @@ export async function registerRoutes(
       const ps = parseInt(partySize as string);
       const duration = await getDurationForPartySize(ps);
 
+      const settingsRows = await db.select().from(reservationSettings);
+      const settings = settingsRows.length > 0 ? settingsRows[0] : { turnoverBufferMinutes: 15 };
+      const buffer = settings.turnoverBufferMinutes;
+
       const allTables = await storage.getAllTables();
       const suitableTables = allTables.filter(t => t.active && t.capacity >= ps);
 
@@ -4834,7 +4924,7 @@ export async function registerRoutes(
         const tableReservations = dayReservations.filter(r => r.tableId === table.id);
         return !tableReservations.some(r => {
           const rStart = timeToMinutes(r.reservedTime);
-          const rEnd = rStart + r.durationMinutes;
+          const rEnd = rStart + r.durationMinutes + buffer;
           return slotStart < rEnd && slotEnd > rStart;
         });
       }).map(t => ({ id: t.id, tableName: t.tableName, tableCode: t.tableCode, capacity: t.capacity }));
