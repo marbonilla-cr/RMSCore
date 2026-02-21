@@ -4446,7 +4446,7 @@ export async function registerRoutes(
     }
 
     const urlParams = new URLSearchParams((request.url || "").split("?")[1] || "");
-    const bridgeToken = urlParams.get("bridge_token");
+    const bridgeToken = urlParams.get("bridge_token") || request.headers["x-bridge-token"] as string;
     console.log("[Bridge] URL recibida:", request.url);
     console.log("[Bridge] Token recibido:", bridgeToken);
     console.log("[Bridge] Token esperado:", BRIDGE_TOKEN);
