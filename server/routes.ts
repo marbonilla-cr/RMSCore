@@ -2691,6 +2691,160 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== POS: PAY MULTI (varios métodos) ====================
+  app.post("/api/pos/pay-multi", requirePermission("POS_PAY"), async (req, res) => {
+    try {
+      const { orderId, payments: legs, clientName, clientEmail } = req.body;
+      if (!orderId || !Array.isArray(legs) || legs.length < 2) {
+        return res.status(400).json({ message: "Se requieren al menos 2 tramos de pago" });
+      }
+      const userId = req.session.userId!;
+
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const totalDue = Number(order.balanceDue || order.totalAmount || 0);
+      const legsTotal = legs.reduce((s: number, l: any) => s + Number(l.amount), 0);
+      if (Math.abs(legsTotal - totalDue) > 1) {
+        return res.status(400).json({ message: `La suma de tramos (₡${legsTotal}) no coincide con el saldo (₡${totalDue})` });
+      }
+
+      const allPMs = await storage.getAllPaymentMethods();
+      const pmMap = new Map(allPMs.map(p => [p.id, p]));
+
+      for (const leg of legs) {
+        const pm = pmMap.get(leg.paymentMethodId);
+        if (!pm) return res.status(400).json({ message: `Método de pago ${leg.paymentMethodId} no encontrado` });
+        if (pm.paymentCode === "CASH") {
+          const cashSession = await storage.getActiveCashSession();
+          if (!cashSession) {
+            return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
+          }
+        }
+      }
+
+      const paymentIds: number[] = [];
+      const bd = getBusinessDate();
+
+      for (const leg of legs) {
+        const payAmount = Number(leg.amount);
+        const payment = await storage.createPayment({
+          orderId,
+          splitId: null,
+          amount: payAmount.toFixed(2),
+          paymentMethodId: leg.paymentMethodId,
+          cashierUserId: userId,
+          status: "PAID",
+          clientNameSnapshot: clientName || null,
+          clientEmailSnapshot: clientEmail || null,
+          businessDate: bd,
+        });
+        paymentIds.push(payment.id);
+
+        const pm = pmMap.get(leg.paymentMethodId);
+        if (pm?.paymentCode === "CASH") {
+          const session = await storage.getActiveCashSession();
+          if (session) {
+            const newExpected = Number(session.expectedCash || session.openingCash) + payAmount;
+            await storage.updateCashSession(session.id, { expectedCash: newExpected.toFixed(2) });
+          }
+        }
+
+        await storage.createAuditEvent({
+          actorType: "USER",
+          actorUserId: userId,
+          action: "PAYMENT_CREATED",
+          entityType: "payment",
+          entityId: payment.id,
+          tableId: order.tableId,
+          metadata: { orderId, amount: payAmount, paymentMethodId: leg.paymentMethodId, multiPay: true },
+        });
+      }
+
+      const { balanceDue } = await storage.updateOrderPaymentTotals(orderId);
+
+      if (balanceDue <= 0) {
+        const [, items] = await Promise.all([
+          storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() }),
+          storage.getOrderItems(orderId),
+        ]);
+
+        const now = new Date();
+        const activeItems = items.filter(i => i.status !== "VOIDED");
+
+        const itemUpdateOps = activeItems.flatMap(item => [
+          storage.updateOrderItem(item.id, { status: "PAID" }),
+          storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: now }),
+        ]);
+        await Promise.all(itemUpdateOps);
+
+        try {
+          const [hrSettings, allProducts] = await Promise.all([
+            storage.getHrSettings(),
+            storage.getAllProducts(),
+          ]);
+          const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
+          if (scRate > 0) {
+            const productMap = new Map(allProducts.map(p => [p.id, p]));
+            const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
+            const scOps: Promise<any>[] = [];
+            for (const item of activeItems) {
+              const prod = item.productId ? productMap.get(item.productId) : null;
+              if (prod && !prod.serviceTaxApplicable) continue;
+              const baseAmount = Number(item.productPriceSnapshot) * item.qty;
+              const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
+              if (serviceAmount > 0) {
+                scOps.push(storage.createServiceChargeLedgerEntry({
+                  businessDate: bd,
+                  orderId,
+                  orderItemId: item.id,
+                  tableId: order.tableId || null,
+                  tableNameSnapshot: tableName || null,
+                  responsibleWaiterEmployeeId: order.responsibleWaiterId || null,
+                  rateSnapshot: scRate.toFixed(4),
+                  baseAmountSnapshot: baseAmount.toFixed(2),
+                  serviceAmount: serviceAmount.toFixed(2),
+                  status: "PAID",
+                }));
+              }
+            }
+            if (scOps.length > 0) await Promise.all(scOps);
+          }
+        } catch (scErr) {
+          console.error("[ServiceCharge] Error creating ledger entries:", scErr);
+        }
+
+        const paidOrder = await storage.getOrder(orderId);
+        if (paidOrder?.parentOrderId) {
+          const siblings = await storage.getChildOrders(paidOrder.parentOrderId);
+          const allSiblingsPaid = siblings.every(s => s.status === "PAID" || s.status === "VOIDED");
+          if (allSiblingsPaid) {
+            const parentOrder = await storage.getOrder(paidOrder.parentOrderId);
+            if (parentOrder && (parentOrder.status === "SPLIT" || parentOrder.status === "OPEN")) {
+              const parentItems = await storage.getOrderItems(paidOrder.parentOrderId);
+              const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
+              if (parentActive.length === 0) {
+                await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() });
+              }
+            }
+          }
+        }
+      }
+
+      broadcast("payment_completed", { orderId });
+      broadcast("table_status_changed", {});
+
+      const hasCash = legs.some((l: any) => {
+        const pm = pmMap.get(l.paymentMethodId);
+        return pm && (pm.paymentCode.toUpperCase().includes("CASH") || pm.paymentCode.toUpperCase().includes("EFECT"));
+      });
+
+      res.json({ ok: true, paymentIds, hasCash });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ==================== CASH SESSION ====================
   app.get("/api/pos/cash-session", requirePermission("POS_VIEW"), async (req, res) => {
     const session = await storage.getLatestCashSession();
@@ -3113,7 +3267,14 @@ export async function registerRoutes(
       const payments = await storage.getPaymentsForOrder(orderId);
       const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
       let paymentMethodName = "";
-      if (lastPayment) {
+      if (payments.length > 1) {
+        const pmNames: string[] = [];
+        for (const pay of payments) {
+          const pm = await storage.getPaymentMethod(pay.paymentMethodId);
+          if (pm) pmNames.push(`${pm.paymentName} ₡${Number(pay.amount).toLocaleString()}`);
+        }
+        paymentMethodName = pmNames.join(" + ");
+      } else if (lastPayment) {
         const pm = await storage.getPaymentMethod(lastPayment.paymentMethodId);
         paymentMethodName = pm?.paymentName || "";
       }

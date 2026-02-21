@@ -61,6 +61,14 @@ interface PayDialogProps {
   onSuccess: (paymentMethodId: string, clientName: string, clientEmail: string, wasCash: boolean) => void;
 }
 
+interface PayLeg {
+  id: number;
+  paymentMethodId: number;
+  paymentName: string;
+  methodType: string;
+  amount: number;
+}
+
 const ROUND_TARGETS = [1000, 5000, 10000, 20000, 50000, 100000];
 
 function getSuggestedDenominations(total: number): number[] {
@@ -90,11 +98,24 @@ export function PayDialog({
   const [processing, setProcessing] = useState(false);
   const [activeDenom, setActiveDenom] = useState<number | null>(null);
 
+  const [multiMode, setMultiMode] = useState(false);
+  const [legs, setLegs] = useState<PayLeg[]>([]);
+  const [legNextId, setLegNextId] = useState(1);
+  const [legMethodId, setLegMethodId] = useState<string>("");
+  const [legAmount, setLegAmount] = useState("");
+  const [legCashReceived, setLegCashReceived] = useState(0);
+  const [legCashCustom, setLegCashCustom] = useState("");
+  const [legCashDenom, setLegCashDenom] = useState<number | null>(null);
+
   const total = splitId ? (splitTotal || 0) : Number(table?.totalAmount || 0);
   const change = received - total;
   const canPay = method === "CASH" ? change >= 0 && received > 0 : !!method;
 
   const activePaymentMethods = paymentMethods.filter((m) => m.active);
+
+  const legsTotal = legs.reduce((s, l) => s + l.amount, 0);
+  const legsRemaining = total - legsTotal;
+  const multiCanPay = legs.length >= 2 && Math.abs(legsRemaining) < 1;
 
   useEffect(() => {
     if (open) {
@@ -107,6 +128,14 @@ export function PayDialog({
       setClientEmail("");
       setProcessing(false);
       setActiveDenom(null);
+      setMultiMode(false);
+      setLegs([]);
+      setLegNextId(1);
+      setLegMethodId("");
+      setLegAmount("");
+      setLegCashReceived(0);
+      setLegCashCustom("");
+      setLegCashDenom(null);
     }
   }, [open]);
 
@@ -121,6 +150,12 @@ export function PayDialog({
     if (type === "CASH") return "$";
     if (type === "CARD") return "C";
     return "S";
+  };
+
+  const getMethodColor = (type: string) => {
+    if (type === "CASH") return "var(--c-green)";
+    if (type === "CARD") return "var(--c-blue)";
+    return "var(--c-amber)";
   };
 
   const selectMethod = (pm: PaymentMethod) => {
@@ -183,6 +218,56 @@ export function PayDialog({
     }
   }, [table, methodId, splitId, clientName, clientEmail, processing, paymentMethods, onSuccess, onClose, toast]);
 
+  const handleMultiProcess = useCallback(async () => {
+    if (!table || processing || !multiCanPay) return;
+    setProcessing(true);
+
+    try {
+      const res = await apiRequest("POST", "/api/pos/pay-multi", {
+        orderId: table.orderId,
+        payments: legs.map(l => ({ paymentMethodId: l.paymentMethodId, amount: l.amount })),
+        clientName: clientName || null,
+        clientEmail: clientEmail || null,
+      });
+      const data = await res.json();
+
+      if (dialogRef.current) {
+        dialogRef.current.classList.add("pos-flash-green");
+      }
+
+      setTimeout(() => {
+        onSuccess("multi", clientName, clientEmail, data.hasCash || false);
+        onClose();
+      }, 800);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+      setProcessing(false);
+    }
+  }, [table, processing, multiCanPay, legs, clientName, clientEmail, onSuccess, onClose, toast]);
+
+  const addLeg = (pmId: string, amount: number) => {
+    const pm = activePaymentMethods.find(m => m.id.toString() === pmId);
+    if (!pm || amount <= 0) return;
+    const type = getMethodType(pm);
+    setLegs(prev => [...prev, {
+      id: legNextId,
+      paymentMethodId: pm.id,
+      paymentName: pm.paymentName,
+      methodType: type,
+      amount,
+    }]);
+    setLegNextId(prev => prev + 1);
+    setLegMethodId("");
+    setLegAmount("");
+    setLegCashReceived(0);
+    setLegCashCustom("");
+    setLegCashDenom(null);
+  };
+
+  const removeLeg = (id: number) => {
+    setLegs(prev => prev.filter(l => l.id !== id));
+  };
+
   const sendTicketMutation = useMutation({
     mutationFn: async () => {
       return apiRequest("POST", "/api/pos/send-ticket", {
@@ -212,6 +297,258 @@ export function PayDialog({
   const orderNum = table.globalNumber ? `G-${table.globalNumber}` : (table.dailyNumber ? `D-${table.dailyNumber}` : `#${table.orderId}`);
   const subtotal = items.reduce((s, i) => s + getItemUnitPrice(i) * i.qty, 0);
 
+  const selectedLegPm = activePaymentMethods.find(m => m.id.toString() === legMethodId);
+  const selectedLegType = selectedLegPm ? getMethodType(selectedLegPm) : null;
+  const legAmountNum = parseInt(legAmount) || 0;
+  const legMaxAmount = legsRemaining;
+
+  const renderMultiPanel = () => (
+    <div className="pos-step-panel" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="pos-col-header">
+        <span className="pos-col-h-tag" style={{ background: "var(--c-amber)" }}>Multi</span>
+        <span className="pos-col-h-title">Varios Métodos</span>
+      </div>
+
+      {legs.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {legs.map(leg => (
+            <div key={leg.id} style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "8px 12px", borderRadius: 8, background: "var(--bg2)", border: "1px solid var(--border1)"
+            }} data-testid={`multi-leg-${leg.id}`}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{
+                  width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 12, fontWeight: 700, color: "#fff", background: getMethodColor(leg.methodType)
+                }}>
+                  {getMethodIcon(leg.methodType)}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg1)" }}>{leg.paymentName}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 14, fontWeight: 600, color: "var(--fg1)" }}>
+                  ₡{leg.amount.toLocaleString()}
+                </span>
+                <button
+                  onClick={() => removeLeg(leg.id)}
+                  style={{
+                    width: 24, height: 24, borderRadius: "50%", border: "none", cursor: "pointer",
+                    background: "rgba(231,76,60,0.15)", color: "#e74c3c", fontSize: 14, fontWeight: 700,
+                    display: "flex", alignItems: "center", justifyContent: "center"
+                  }}
+                  data-testid={`multi-leg-remove-${leg.id}`}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: "10px 12px", borderRadius: 8,
+        background: legsRemaining <= 0 ? "rgba(46,204,113,0.1)" : "rgba(243,156,18,0.1)",
+        border: `1px solid ${legsRemaining <= 0 ? "rgba(46,204,113,0.3)" : "rgba(243,156,18,0.3)"}`
+      }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg2)" }}>Saldo restante</span>
+        <span style={{
+          fontFamily: "var(--f-mono)", fontSize: 16, fontWeight: 700,
+          color: legsRemaining <= 0 ? "var(--c-green)" : "var(--c-amber)"
+        }} data-testid="multi-remaining">
+          ₡{Math.max(0, Math.round(legsRemaining)).toLocaleString()}
+        </span>
+      </div>
+
+      {legsRemaining > 0 && (
+        <>
+          <div className="pos-sep" />
+          <div className="pos-sect-lbl">Agregar tramo</div>
+
+          <div className="pos-method-grid">
+            {activePaymentMethods.map((pm) => {
+              const type = getMethodType(pm);
+              const isSelected = legMethodId === pm.id.toString();
+              const selClass = isSelected ? `sel-${type.toLowerCase()}` : "";
+              return (
+                <button
+                  key={pm.id}
+                  className={`pos-method-btn ${selClass}`}
+                  onClick={() => {
+                    setLegMethodId(pm.id.toString());
+                    setLegAmount("");
+                    setLegCashReceived(0);
+                    setLegCashCustom("");
+                    setLegCashDenom(null);
+                  }}
+                  data-testid={`multi-method-${pm.id}`}
+                >
+                  <span className="pos-method-ico">{getMethodIcon(type)}</span>
+                  <span>{pm.paymentName}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedLegPm && selectedLegType !== "CASH" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div className="pos-field">
+                <div className="pos-field-lbl">Monto</div>
+                <input
+                  className="pos-field-input mono"
+                  type="number"
+                  placeholder={`Máx ₡${Math.round(legMaxAmount).toLocaleString()}`}
+                  value={legAmount}
+                  onChange={(e) => setLegAmount(e.target.value)}
+                  data-testid="multi-leg-amount-input"
+                />
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[20000, 50000].filter(v => v <= legMaxAmount).map(preset => (
+                  <button
+                    key={preset}
+                    className={`pos-denom-btn ${legAmount === String(preset) ? "active" : ""}`}
+                    onClick={() => setLegAmount(String(preset))}
+                    style={{ flex: 1, minWidth: 80 }}
+                    data-testid={`multi-preset-${preset}`}
+                  >
+                    ₡{preset.toLocaleString()}
+                  </button>
+                ))}
+                <button
+                  className={`pos-denom-btn ${legAmount === String(Math.round(legMaxAmount)) ? "active" : ""}`}
+                  onClick={() => setLegAmount(String(Math.round(legMaxAmount)))}
+                  style={{ flex: 1, minWidth: 80, fontWeight: 600 }}
+                  data-testid="multi-preset-rest"
+                >
+                  Resto ₡{Math.round(legMaxAmount).toLocaleString()}
+                </button>
+              </div>
+              <button
+                className="pos-primary-btn"
+                disabled={legAmountNum <= 0 || legAmountNum > legMaxAmount + 1}
+                onClick={() => addLeg(legMethodId, legAmountNum)}
+                data-testid="multi-add-leg"
+                style={{ marginTop: 4 }}
+              >
+                AGREGAR ₡{legAmountNum.toLocaleString()} — {selectedLegPm.paymentName}
+              </button>
+            </div>
+          )}
+
+          {selectedLegPm && selectedLegType === "CASH" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div className="pos-field">
+                <div className="pos-field-lbl">Monto en efectivo</div>
+                <input
+                  className="pos-field-input mono"
+                  type="number"
+                  placeholder={`Máx ₡${Math.round(legMaxAmount).toLocaleString()}`}
+                  value={legAmount}
+                  onChange={(e) => setLegAmount(e.target.value)}
+                  data-testid="multi-leg-cash-amount"
+                />
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button
+                  className={`pos-denom-btn ${legAmount === String(Math.round(legMaxAmount)) ? "active" : ""}`}
+                  onClick={() => setLegAmount(String(Math.round(legMaxAmount)))}
+                  style={{ flex: 1, minWidth: 80, fontWeight: 600 }}
+                  data-testid="multi-cash-preset-rest"
+                >
+                  Resto ₡{Math.round(legMaxAmount).toLocaleString()}
+                </button>
+              </div>
+
+              {legAmountNum > 0 && (
+                <>
+                  <div className="pos-sep" />
+                  <div className="pos-sect-lbl">Recibido del cliente</div>
+                  <div className="pos-denom-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+                    <button
+                      className={`pos-denom-btn ${legCashDenom === legAmountNum ? "active" : ""}`}
+                      onClick={() => { setLegCashReceived(legAmountNum); setLegCashCustom(""); setLegCashDenom(legAmountNum); }}
+                      style={{ fontWeight: 600 }}
+                      data-testid="multi-cash-denom-exact"
+                    >
+                      Exacto
+                    </button>
+                    {getSuggestedDenominations(legAmountNum).slice(0, 5).map(d => (
+                      <button
+                        key={d}
+                        className={`pos-denom-btn ${legCashDenom === d ? "active" : ""}`}
+                        onClick={() => { setLegCashReceived(d); setLegCashCustom(""); setLegCashDenom(d); }}
+                        data-testid={`multi-cash-denom-${d}`}
+                      >
+                        ₡{d.toLocaleString()}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="pos-field">
+                    <div className="pos-field-lbl">Otro monto recibido</div>
+                    <input
+                      className="pos-field-input mono"
+                      type="number"
+                      placeholder="₡ Monto"
+                      value={legCashCustom}
+                      onChange={(e) => { setLegCashCustom(e.target.value); setLegCashReceived(parseInt(e.target.value) || 0); setLegCashDenom(null); }}
+                      data-testid="multi-cash-custom-input"
+                    />
+                  </div>
+
+                  <div style={{
+                    padding: "8px 12px", borderRadius: 8, background: "var(--bg2)", border: "1px solid var(--border1)",
+                    display: "flex", justifyContent: "space-between", alignItems: "center"
+                  }}>
+                    <span style={{ fontSize: 13, color: "var(--fg2)" }}>Vuelto</span>
+                    <span style={{
+                      fontFamily: "var(--f-mono)", fontSize: 16, fontWeight: 700,
+                      color: legCashReceived >= legAmountNum ? "var(--c-green)" : "var(--fg3)"
+                    }} data-testid="multi-cash-change">
+                      ₡{Math.max(0, legCashReceived - legAmountNum).toLocaleString()}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              <button
+                className="pos-primary-btn"
+                disabled={legAmountNum <= 0 || legAmountNum > legMaxAmount + 1 || legCashReceived < legAmountNum}
+                onClick={() => addLeg(legMethodId, legAmountNum)}
+                data-testid="multi-add-cash-leg"
+                style={{ marginTop: 4 }}
+              >
+                AGREGAR ₡{legAmountNum.toLocaleString()} — {selectedLegPm.paymentName}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {multiCanPay && (
+        <button
+          className="pos-primary-btn"
+          onClick={handleMultiProcess}
+          disabled={processing}
+          data-testid="multi-process-btn"
+          style={{ marginTop: 8 }}
+        >
+          {processing ? "Procesando..." : `PROCESAR PAGO — ₡${total.toLocaleString()}`}
+        </button>
+      )}
+
+      <button
+        className="pos-secondary-btn"
+        onClick={() => { setMultiMode(false); setLegs([]); setLegMethodId(""); setLegAmount(""); }}
+        data-testid="multi-back-single"
+        style={{ marginTop: 4 }}
+      >
+        Volver a pago único
+      </button>
+    </div>
+  );
+
   return (
     <div
       className={`pos-overlay ${open ? "open" : ""}`}
@@ -221,9 +558,8 @@ export function PayDialog({
       <div className="pos-dialog pos-dialog-pay" ref={dialogRef} data-testid="pay-dialog">
         <div className="pos-drag-handle" />
 
-        {/* HEADER */}
         <div className="pos-dlg-header">
-          <span className="pos-dlg-tag">Pago</span>
+          <span className="pos-dlg-tag">{multiMode ? "Pago Mixto" : "Pago"}</span>
           <span className="pos-dlg-title" data-testid="pay-dialog-title">
             {table.tableName}
             {splitLabel && <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 8, opacity: 0.6 }}>({splitLabel})</span>}
@@ -236,301 +572,316 @@ export function PayDialog({
           </div>
         </div>
 
-        {/* STEP TABS (mobile) */}
-        <div className="pos-step-nav" data-testid="pay-step-nav">
-          {["Orden", "Método", "Efectivo"].map((label, i) => {
-            const n = i + 1;
-            const cls = n === step ? "active" : n < step ? "done" : "";
-            return (
-              <button key={n} className={`pos-step-tab ${cls}`} onClick={() => setStep(n)} data-testid={`pay-step-tab-${n}`}>
-                <span className="pos-step-num">{n < step ? "✓" : n}</span>
-                {label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* PANELS */}
-        <div className={`pos-step-panels slide-${step}`} data-testid="pay-panels">
-
-          {/* ── PANEL 1: Order Summary ── */}
-          <div className="pos-step-panel">
-            <div className="pos-col-header">
-              <span className="pos-col-h-tag">Orden</span>
-              <span className="pos-col-h-title">Resumen</span>
-            </div>
-
-            <div className="pos-order-title-row">
-              <div>
-                <div className="pos-order-big-title">{table.tableName}</div>
-                <div className="pos-order-meta">{items.length} items · {orderNum}</div>
-              </div>
-              <div className="pos-chip pos-chip-green">ABIERTA</div>
-            </div>
-
-            <div className="pos-item-list" data-testid="pay-items-list">
-              {items.map((item) => (
-                <div key={item.id} className="pos-item-row">
-                  <span className="pos-item-qty">×{item.qty}</span>
-                  <div>
-                    <div className="pos-item-name">{item.productNameSnapshot}</div>
-                    {item.customerNameSnapshot && <div className="pos-item-sub">{item.customerNameSnapshot}</div>}
-                    {item.modifiers && item.modifiers.length > 0 && (
-                      <div className="pos-item-sub">{item.modifiers.map(m => m.nameSnapshot).join(", ")}</div>
-                    )}
-                  </div>
-                  <span className="pos-item-price">₡{(getItemUnitPrice(item) * item.qty).toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="pos-sep" />
-
-            <div className="pos-totals-box">
-              <div className="pos-totals-row">
-                <span className="pos-totals-label">Subtotal</span>
-                <span className="pos-totals-value">₡{subtotal.toLocaleString()}</span>
-              </div>
-              {table.taxBreakdown && table.taxBreakdown.length > 0 && table.taxBreakdown.map((tb, idx) => (
-                <div key={idx} className="pos-totals-row">
-                  <span className="pos-totals-label">{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
-                  <span className="pos-totals-value">{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
-                </div>
-              ))}
-              {Number(table.totalDiscounts || 0) > 0 && (
-                <div className="pos-totals-row">
-                  <span className="pos-totals-label">Descuentos</span>
-                  <span className="pos-totals-value pos-totals-discount">−₡{Number(table.totalDiscounts).toLocaleString()}</span>
-                </div>
-              )}
-              <div className="pos-sep" />
-              <div className="pos-totals-row pos-totals-grand">
-                <span className="pos-totals-label">TOTAL</span>
-                <span className="pos-totals-value">₡{total.toLocaleString()}</span>
-              </div>
-            </div>
-
-            <div className="pos-mobile-only">
-              <button className="pos-primary-btn" onClick={() => setStep(2)} data-testid="pay-mobile-continue-1">
-                CONTINUAR →
-              </button>
-            </div>
-            <div className="pos-desktop-only" />
+        {!multiMode && (
+          <div className="pos-step-nav" data-testid="pay-step-nav">
+            {["Orden", "Método", "Efectivo"].map((label, i) => {
+              const n = i + 1;
+              const cls = n === step ? "active" : n < step ? "done" : "";
+              return (
+                <button key={n} className={`pos-step-tab ${cls}`} onClick={() => setStep(n)} data-testid={`pay-step-tab-${n}`}>
+                  <span className="pos-step-num">{n < step ? "✓" : n}</span>
+                  {label}
+                </button>
+              );
+            })}
           </div>
+        )}
 
-          {/* ── PANEL 2: Method & Client ── */}
-          <div className="pos-step-panel">
-            <div className="pos-col-header">
-              <span className="pos-col-h-tag">Pago</span>
-              <span className="pos-col-h-title">Método & Cliente</span>
-            </div>
+        {multiMode ? (
+          <div style={{ padding: "0 16px 16px", overflowY: "auto", flex: 1 }}>
+            {renderMultiPanel()}
+          </div>
+        ) : (
+          <div className={`pos-step-panels slide-${step}`} data-testid="pay-panels">
 
-            {canEditCustomer && (
-              <>
-                <div className="pos-field">
-                  <div className="pos-field-lbl">Cliente (opcional)</div>
-                  <input
-                    className="pos-field-input"
-                    placeholder="Nombre"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    data-testid="pay-input-client-name"
-                  />
+            <div className="pos-step-panel">
+              <div className="pos-col-header">
+                <span className="pos-col-h-tag">Orden</span>
+                <span className="pos-col-h-title">Resumen</span>
+              </div>
+
+              <div className="pos-order-title-row">
+                <div>
+                  <div className="pos-order-big-title">{table.tableName}</div>
+                  <div className="pos-order-meta">{items.length} items · {orderNum}</div>
                 </div>
-                <div className="pos-field">
-                  <div className="pos-field-lbl">Email (opcional)</div>
-                  <input
-                    className="pos-field-input"
-                    type="email"
-                    placeholder="correo@ejemplo.com"
-                    value={clientEmail}
-                    onChange={(e) => setClientEmail(e.target.value)}
-                    data-testid="pay-input-client-email"
-                  />
+                <div className="pos-chip pos-chip-green">ABIERTA</div>
+              </div>
+
+              <div className="pos-item-list" data-testid="pay-items-list">
+                {items.map((item) => (
+                  <div key={item.id} className="pos-item-row">
+                    <span className="pos-item-qty">×{item.qty}</span>
+                    <div>
+                      <div className="pos-item-name">{item.productNameSnapshot}</div>
+                      {item.customerNameSnapshot && <div className="pos-item-sub">{item.customerNameSnapshot}</div>}
+                      {item.modifiers && item.modifiers.length > 0 && (
+                        <div className="pos-item-sub">{item.modifiers.map(m => m.nameSnapshot).join(", ")}</div>
+                      )}
+                    </div>
+                    <span className="pos-item-price">₡{(getItemUnitPrice(item) * item.qty).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pos-sep" />
+
+              <div className="pos-totals-box">
+                <div className="pos-totals-row">
+                  <span className="pos-totals-label">Subtotal</span>
+                  <span className="pos-totals-value">₡{subtotal.toLocaleString()}</span>
                 </div>
-              </>
-            )}
-
-            {canEmailTicket && clientEmail && (
-              <button
-                className="pos-secondary-btn"
-                onClick={() => sendTicketMutation.mutate()}
-                disabled={!clientEmail || sendTicketMutation.isPending}
-                data-testid="pay-button-send-ticket"
-              >
-                {sendTicketMutation.isPending ? "Enviando..." : "Enviar Ticket por Email"}
-              </button>
-            )}
-
-            <div className="pos-sep" />
-
-            <div className="pos-sect-lbl">Método de pago</div>
-            <div className="pos-method-grid">
-              {activePaymentMethods.map((pm) => {
-                const type = getMethodType(pm);
-                const isSelected = methodId === pm.id.toString();
-                const selClass = isSelected ? `sel-${type.toLowerCase()}` : "";
-                return (
-                  <button
-                    key={pm.id}
-                    className={`pos-method-btn ${selClass}`}
-                    onClick={() => selectMethod(pm)}
-                    data-testid={`pay-method-${pm.id}`}
-                  >
-                    <span className="pos-method-ico">{getMethodIcon(type)}</span>
-                    <span>{pm.paymentName}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Card/SINPE instant pay */}
-            {method && method !== "CASH" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div className="pos-pay-summary">
-                  <div className="pos-pay-summary-label">Total a cobrar</div>
-                  <div className="pos-pay-summary-amount" data-testid="pay-instant-amount">₡{total.toLocaleString()}</div>
-                </div>
-                <div className="pos-desktop-only">
-                  <button
-                    className="pos-primary-btn"
-                    onClick={handleProcess}
-                    disabled={processing}
-                    data-testid="pay-process-card-desktop"
-                  >
-                    {processing ? "Procesando..." : `PROCESAR PAGO — ₡${total.toLocaleString()}`}
-                  </button>
-                </div>
-                <div className="pos-mobile-only">
-                  <button
-                    className="pos-primary-btn"
-                    onClick={handleProcess}
-                    disabled={processing}
-                    data-testid="pay-process-card-mobile"
-                  >
-                    {processing ? "Procesando..." : `PROCESAR PAGO — ₡${total.toLocaleString()}`}
-                  </button>
+                {table.taxBreakdown && table.taxBreakdown.length > 0 && table.taxBreakdown.map((tb, idx) => (
+                  <div key={idx} className="pos-totals-row">
+                    <span className="pos-totals-label">{tb.taxName}{tb.inclusive ? " (ii)" : ""}</span>
+                    <span className="pos-totals-value">{tb.inclusive ? "" : "+"}₡{Number(tb.totalAmount).toLocaleString()}</span>
+                  </div>
+                ))}
+                {Number(table.totalDiscounts || 0) > 0 && (
+                  <div className="pos-totals-row">
+                    <span className="pos-totals-label">Descuentos</span>
+                    <span className="pos-totals-value pos-totals-discount">−₡{Number(table.totalDiscounts).toLocaleString()}</span>
+                  </div>
+                )}
+                <div className="pos-sep" />
+                <div className="pos-totals-row pos-totals-grand">
+                  <span className="pos-totals-label">TOTAL</span>
+                  <span className="pos-totals-value">₡{total.toLocaleString()}</span>
                 </div>
               </div>
-            )}
 
-            {/* Cash hint (desktop) */}
-            {method === "CASH" && (
-              <div className="pos-desktop-only">
-                <div className="pos-info-box">
-                  <span style={{ fontFamily: "var(--f-mono)", fontWeight: 600 }}>$</span>
-                  <span>Selecciona denominación en el panel de efectivo →</span>
-                </div>
-              </div>
-            )}
-
-            {/* Mobile: go to cash or show back */}
-            {method === "CASH" && (
               <div className="pos-mobile-only">
-                <button className="pos-primary-btn" onClick={() => setStep(3)} data-testid="pay-mobile-go-cash">
-                  VER EFECTIVO →
+                <button className="pos-primary-btn" onClick={() => setStep(2)} data-testid="pay-mobile-continue-1">
+                  CONTINUAR →
                 </button>
               </div>
-            )}
+              <div className="pos-desktop-only" />
+            </div>
 
-            {!method && (
-              <div className="pos-mobile-only" style={{ marginTop: "auto" }}>
-                <button className="pos-secondary-btn" onClick={() => setStep(1)} data-testid="pay-mobile-back-1">
+            <div className="pos-step-panel">
+              <div className="pos-col-header">
+                <span className="pos-col-h-tag">Pago</span>
+                <span className="pos-col-h-title">Método & Cliente</span>
+              </div>
+
+              {canEditCustomer && (
+                <>
+                  <div className="pos-field">
+                    <div className="pos-field-lbl">Cliente (opcional)</div>
+                    <input
+                      className="pos-field-input"
+                      placeholder="Nombre"
+                      value={clientName}
+                      onChange={(e) => setClientName(e.target.value)}
+                      data-testid="pay-input-client-name"
+                    />
+                  </div>
+                  <div className="pos-field">
+                    <div className="pos-field-lbl">Email (opcional)</div>
+                    <input
+                      className="pos-field-input"
+                      type="email"
+                      placeholder="correo@ejemplo.com"
+                      value={clientEmail}
+                      onChange={(e) => setClientEmail(e.target.value)}
+                      data-testid="pay-input-client-email"
+                    />
+                  </div>
+                </>
+              )}
+
+              {canEmailTicket && clientEmail && (
+                <button
+                  className="pos-secondary-btn"
+                  onClick={() => sendTicketMutation.mutate()}
+                  disabled={!clientEmail || sendTicketMutation.isPending}
+                  data-testid="pay-button-send-ticket"
+                >
+                  {sendTicketMutation.isPending ? "Enviando..." : "Enviar Ticket por Email"}
+                </button>
+              )}
+
+              <div className="pos-sep" />
+
+              <div className="pos-sect-lbl">Método de pago</div>
+              <div className="pos-method-grid">
+                {activePaymentMethods.map((pm) => {
+                  const type = getMethodType(pm);
+                  const isSelected = methodId === pm.id.toString();
+                  const selClass = isSelected ? `sel-${type.toLowerCase()}` : "";
+                  return (
+                    <button
+                      key={pm.id}
+                      className={`pos-method-btn ${selClass}`}
+                      onClick={() => selectMethod(pm)}
+                      data-testid={`pay-method-${pm.id}`}
+                    >
+                      <span className="pos-method-ico">{getMethodIcon(type)}</span>
+                      <span>{pm.paymentName}</span>
+                    </button>
+                  );
+                })}
+                {activePaymentMethods.length >= 2 && !splitId && (
+                  <button
+                    className="pos-method-btn"
+                    onClick={() => {
+                      setMultiMode(true);
+                      setMethod(null);
+                      setMethodId("");
+                    }}
+                    style={{ borderStyle: "dashed" }}
+                    data-testid="pay-method-multi"
+                  >
+                    <span className="pos-method-ico" style={{ fontSize: 16 }}>⊞</span>
+                    <span>Varios</span>
+                  </button>
+                )}
+              </div>
+
+              {method && method !== "CASH" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div className="pos-pay-summary">
+                    <div className="pos-pay-summary-label">Total a cobrar</div>
+                    <div className="pos-pay-summary-amount" data-testid="pay-instant-amount">₡{total.toLocaleString()}</div>
+                  </div>
+                  <div className="pos-desktop-only">
+                    <button
+                      className="pos-primary-btn"
+                      onClick={handleProcess}
+                      disabled={processing}
+                      data-testid="pay-process-card-desktop"
+                    >
+                      {processing ? "Procesando..." : `PROCESAR PAGO — ₡${total.toLocaleString()}`}
+                    </button>
+                  </div>
+                  <div className="pos-mobile-only">
+                    <button
+                      className="pos-primary-btn"
+                      onClick={handleProcess}
+                      disabled={processing}
+                      data-testid="pay-process-card-mobile"
+                    >
+                      {processing ? "Procesando..." : `PROCESAR PAGO — ₡${total.toLocaleString()}`}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {method === "CASH" && (
+                <div className="pos-desktop-only">
+                  <div className="pos-info-box">
+                    <span style={{ fontFamily: "var(--f-mono)", fontWeight: 600 }}>$</span>
+                    <span>Selecciona denominación en el panel de efectivo →</span>
+                  </div>
+                </div>
+              )}
+
+              {method === "CASH" && (
+                <div className="pos-mobile-only">
+                  <button className="pos-primary-btn" onClick={() => setStep(3)} data-testid="pay-mobile-go-cash">
+                    VER EFECTIVO →
+                  </button>
+                </div>
+              )}
+
+              {!method && (
+                <div className="pos-mobile-only" style={{ marginTop: "auto" }}>
+                  <button className="pos-secondary-btn" onClick={() => setStep(1)} data-testid="pay-mobile-back-1">
+                    ‹ Atrás
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className={`pos-step-panel ${method === "CASH" ? "pos-cash-panel-active" : "pos-cash-panel-inactive"}`}>
+              <div className="pos-col-header">
+                <span className="pos-col-h-tag">Efectivo</span>
+                <span className="pos-col-h-title">Denominaciones</span>
+              </div>
+
+              <div className="pos-sect-lbl">Monto recibido</div>
+              <div className="pos-denom-grid">
+                <button
+                  className={`pos-denom-btn ${activeDenom === total ? "active" : ""}`}
+                  onClick={() => setDenom(total)}
+                  data-testid="pay-denom-exact"
+                  style={{ background: activeDenom === total ? undefined : 'var(--bg3)', fontWeight: 600 }}
+                >
+                  Exacto ₡{total.toLocaleString()}
+                </button>
+                {getSuggestedDenominations(total).map((d) => (
+                  <button
+                    key={d}
+                    className={`pos-denom-btn ${activeDenom === d ? "active" : ""}`}
+                    onClick={() => setDenom(d)}
+                    data-testid={`pay-denom-${d}`}
+                  >
+                    ₡{d.toLocaleString()}
+                  </button>
+                ))}
+              </div>
+
+              <div className="pos-field">
+                <div className="pos-field-lbl">Otro monto</div>
+                <input
+                  className="pos-field-input mono"
+                  type="number"
+                  placeholder="₡ Monto"
+                  value={customInput}
+                  onChange={(e) => setCustom(e.target.value)}
+                  data-testid="pay-input-custom-cash"
+                />
+              </div>
+
+              <div className="pos-change-card">
+                <div className="pos-change-row">
+                  <span className="pos-change-label">Total</span>
+                  <span className="pos-change-value">₡{total.toLocaleString()}</span>
+                </div>
+                <div className="pos-change-row">
+                  <span className="pos-change-label">Recibido</span>
+                  <span className="pos-change-value" data-testid="pay-received-display">₡{received.toLocaleString()}</span>
+                </div>
+                <div className="pos-sep" />
+                <div className="pos-change-row pos-change-big">
+                  <span className="pos-change-label">Vuelto</span>
+                  <span
+                    className={`pos-change-value ${change >= 0 && received > 0 ? "pos-change-positive" : "pos-change-zero"}`}
+                    data-testid="pay-change-display"
+                  >
+                    ₡{(change >= 0 ? change : 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="pos-desktop-only">
+                <button
+                  className="pos-primary-btn"
+                  onClick={handleProcess}
+                  disabled={!canPay || processing}
+                  data-testid="pay-cash-btn-desktop"
+                >
+                  {processing ? "Procesando..." : `COBRAR — ₡${total.toLocaleString()}`}
+                </button>
+              </div>
+
+              <div className="pos-mobile-only">
+                <button
+                  className="pos-primary-btn"
+                  onClick={handleProcess}
+                  disabled={!canPay || processing}
+                  data-testid="pay-cash-btn-mobile"
+                >
+                  {processing ? "Procesando..." : `COBRAR — ₡${total.toLocaleString()}`}
+                </button>
+                <button className="pos-secondary-btn" onClick={() => setStep(2)} data-testid="pay-mobile-back-2">
                   ‹ Atrás
                 </button>
               </div>
-            )}
+            </div>
+
           </div>
-
-          {/* ── PANEL 3: Cash / Denominations ── */}
-          <div className={`pos-step-panel ${method === "CASH" ? "pos-cash-panel-active" : "pos-cash-panel-inactive"}`}>
-            <div className="pos-col-header">
-              <span className="pos-col-h-tag">Efectivo</span>
-              <span className="pos-col-h-title">Denominaciones</span>
-            </div>
-
-            <div className="pos-sect-lbl">Monto recibido</div>
-            <div className="pos-denom-grid">
-              <button
-                className={`pos-denom-btn ${activeDenom === total ? "active" : ""}`}
-                onClick={() => setDenom(total)}
-                data-testid="pay-denom-exact"
-                style={{ background: activeDenom === total ? undefined : 'var(--bg3)', fontWeight: 600 }}
-              >
-                Exacto ₡{total.toLocaleString()}
-              </button>
-              {getSuggestedDenominations(total).map((d) => (
-                <button
-                  key={d}
-                  className={`pos-denom-btn ${activeDenom === d ? "active" : ""}`}
-                  onClick={() => setDenom(d)}
-                  data-testid={`pay-denom-${d}`}
-                >
-                  ₡{d.toLocaleString()}
-                </button>
-              ))}
-            </div>
-
-            <div className="pos-field">
-              <div className="pos-field-lbl">Otro monto</div>
-              <input
-                className="pos-field-input mono"
-                type="number"
-                placeholder="₡ Monto"
-                value={customInput}
-                onChange={(e) => setCustom(e.target.value)}
-                data-testid="pay-input-custom-cash"
-              />
-            </div>
-
-            <div className="pos-change-card">
-              <div className="pos-change-row">
-                <span className="pos-change-label">Total</span>
-                <span className="pos-change-value">₡{total.toLocaleString()}</span>
-              </div>
-              <div className="pos-change-row">
-                <span className="pos-change-label">Recibido</span>
-                <span className="pos-change-value" data-testid="pay-received-display">₡{received.toLocaleString()}</span>
-              </div>
-              <div className="pos-sep" />
-              <div className="pos-change-row pos-change-big">
-                <span className="pos-change-label">Vuelto</span>
-                <span
-                  className={`pos-change-value ${change >= 0 && received > 0 ? "pos-change-positive" : "pos-change-zero"}`}
-                  data-testid="pay-change-display"
-                >
-                  ₡{(change >= 0 ? change : 0).toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            <div className="pos-desktop-only">
-              <button
-                className="pos-primary-btn"
-                onClick={handleProcess}
-                disabled={!canPay || processing}
-                data-testid="pay-cash-btn-desktop"
-              >
-                {processing ? "Procesando..." : `COBRAR — ₡${total.toLocaleString()}`}
-              </button>
-            </div>
-
-            <div className="pos-mobile-only">
-              <button
-                className="pos-primary-btn"
-                onClick={handleProcess}
-                disabled={!canPay || processing}
-                data-testid="pay-cash-btn-mobile"
-              >
-                {processing ? "Procesando..." : `COBRAR — ₡${total.toLocaleString()}`}
-              </button>
-              <button className="pos-secondary-btn" onClick={() => setStep(2)} data-testid="pay-mobile-back-2">
-                ‹ Atrás
-              </button>
-            </div>
-          </div>
-
-        </div>
+        )}
       </div>
     </div>
   );
