@@ -299,32 +299,11 @@ export default function POSPage() {
     },
     onSuccess: () => {
       const tbl = selectedTable!;
-      const pm = paymentMethods.find((m) => m.id === parseInt(paymentMethodId));
-      const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
-      const receiptItems = tbl.items.filter(i => i.status !== "VOIDED").map((i) => {
-        const modDelta = (i.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
-        const modLabel = (i.modifiers && i.modifiers.length > 0) ? ` (${i.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(Number(m.priceDeltaSnapshot))}` : "")).join(", ")})` : "";
-        const unitPrice = Number(i.productPriceSnapshot) + modDelta;
-        return { name: i.productNameSnapshot + modLabel, qty: i.qty, price: unitPrice, total: unitPrice * i.qty };
-      });
 
-      const orderId = tbl.orderId;
-      const tableName = tbl.tableName;
-      const pmName = pm?.paymentName || "";
-      const clName = clientName || undefined;
-      const totalAmount = Number(tbl.totalAmount);
-      const totalDiscounts = Number(tbl.totalDiscounts || 0);
-      const totalTaxes = Number(tbl.totalTaxes || 0);
-      const taxBk = tbl.taxBreakdown;
-
-      triggerReceiptPrint(receiptItems, totalAmount, pmName, tableName, orderNum, clName, totalDiscounts, totalTaxes, taxBk);
-
-      if (canPrint) {
-        apiRequest("POST", "/api/pos/print-receipt", { orderId })
-          .then(r => r.json())
-          .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
-          .catch(() => {});
-      }
+      apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId })
+        .then(r => r.json())
+        .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
+        .catch(() => {});
 
       const pmUsed = paymentMethods.find(m => m.id.toString() === paymentMethodId);
       const wasCash = pmUsed ? (pmUsed.paymentCode.toUpperCase().includes("CASH") || pmUsed.paymentCode.toUpperCase().includes("EFECT")) : false;
@@ -361,23 +340,11 @@ export default function POSPage() {
     },
     onSuccess: () => {
       const tbl = selectedTable!;
-      const pm = paymentMethods.find((m) => m.id === parseInt(paymentMethodId));
-      const split = splits.find((s) => s.id === payingSplitId);
-      let receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
-      let total = 0;
-      if (split && tbl) {
-        receiptItems = split.items.map((si) => {
-          const oi = tbl.items.find((i) => i.id === si.orderItemId);
-          if (!oi) return { name: "", qty: 0, price: 0, total: 0 };
-          const modDelta = (oi.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
-          const modLabel = (oi.modifiers && oi.modifiers.length > 0) ? ` (${oi.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(Number(m.priceDeltaSnapshot))}` : "")).join(", ")})` : "";
-          const unitPrice = Number(oi.productPriceSnapshot) + modDelta;
-          return { name: oi.productNameSnapshot + modLabel, qty: oi.qty, price: unitPrice, total: unitPrice * oi.qty };
-        });
-        total = receiptItems.reduce((s, i) => s + i.total, 0);
-      }
-      const orderNum = tbl?.globalNumber ? `G-${tbl.globalNumber}` : (tbl?.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl?.orderId}`);
-      triggerReceiptPrint(receiptItems, total, pm?.paymentName || "", tbl?.tableName || "", `${orderNum} (${split?.label || ""})`, clientName || undefined);
+
+      apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId })
+        .then(r => r.json())
+        .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
+        .catch(() => {});
 
       const pmUsed = paymentMethods.find(m => m.id.toString() === paymentMethodId);
       const wasCash = pmUsed ? (pmUsed.paymentCode.toUpperCase().includes("CASH") || pmUsed.paymentCode.toUpperCase().includes("EFECT")) : false;
@@ -907,44 +874,11 @@ export default function POSPage() {
   const handlePayDialogSuccess = (pmId: string, clName: string, clEmail: string, wasCash: boolean) => {
     if (!selectedTable) return;
     const tbl = selectedTable;
-    const pm = paymentMethods.find(m => m.id.toString() === pmId);
-    const orderNum = tbl.globalNumber ? `G-${tbl.globalNumber}` : (tbl.dailyNumber ? `D-${tbl.dailyNumber}` : `#${tbl.orderId}`);
 
-    if (payDialogSplitId) {
-      const split = splits.find(s => s.id === payDialogSplitId);
-      let receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
-      let total = 0;
-      if (split && tbl) {
-        receiptItems = split.items.map(si => {
-          const oi = tbl.items.find(i => i.id === si.orderItemId);
-          if (!oi) return { name: "", qty: 0, price: 0, total: 0 };
-          const modDelta = (oi.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
-          const modLabel = (oi.modifiers && oi.modifiers.length > 0) ? ` (${oi.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(Number(m.priceDeltaSnapshot))}` : "")).join(", ")})` : "";
-          const unitPrice = Number(oi.productPriceSnapshot) + modDelta;
-          return { name: oi.productNameSnapshot + modLabel, qty: oi.qty, price: unitPrice, total: unitPrice * oi.qty };
-        });
-        total = receiptItems.reduce((s, i) => s + i.total, 0);
-      }
-      triggerReceiptPrint(receiptItems, total, pm?.paymentName || "", tbl.tableName, `${orderNum} (${split?.label || ""})`, clName || undefined);
-    } else {
-      const receiptItems = tbl.items.filter(i => i.status !== "VOIDED").map(i => {
-        const modDelta = (i.modifiers || []).reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
-        const modLabel = (i.modifiers && i.modifiers.length > 0) ? ` (${i.modifiers.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${formatCurrency(Number(m.priceDeltaSnapshot))}` : "")).join(", ")})` : "";
-        const unitPrice = Number(i.productPriceSnapshot) + modDelta;
-        return { name: i.productNameSnapshot + modLabel, qty: i.qty, price: unitPrice, total: unitPrice * i.qty };
-      });
-      const totalAmount = Number(tbl.totalAmount);
-      const totalDiscounts = Number(tbl.totalDiscounts || 0);
-      const totalTaxes = Number(tbl.totalTaxes || 0);
-      triggerReceiptPrint(receiptItems, totalAmount, pm?.paymentName || "", tbl.tableName, orderNum, clName || undefined, totalDiscounts, totalTaxes, tbl.taxBreakdown);
-
-      if (canPrint) {
-        apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId })
-          .then(r => r.json())
-          .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
-          .catch(() => {});
-      }
-    }
+    apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId })
+      .then(r => r.json())
+      .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
+      .catch(() => {});
 
     if (wasCash) {
       apiRequest("POST", "/api/pos/open-drawer", {}).catch(() => {});
