@@ -1439,11 +1439,18 @@ export default function POSPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
           <button
             style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: '1px solid var(--border2)', background: 'var(--bg2)', color: 'var(--text2)', cursor: 'pointer', whiteSpace: 'nowrap' }}
-            onClick={() => {
+            onClick={(e) => {
+              const btn = e.currentTarget;
+              if (btn.disabled) return;
+              btn.disabled = true;
+              btn.style.opacity = "0.5";
               apiRequest("POST", "/api/pos/open-drawer", {})
                 .then(r => r.json())
                 .then(() => toast({ title: "Gaveta abierta" }))
-                .catch(() => toast({ title: "Error", description: "No se pudo abrir la gaveta", variant: "destructive" }));
+                .catch(() => toast({ title: "Error", description: "No se pudo abrir la gaveta", variant: "destructive" }))
+                .finally(() => {
+                  setTimeout(() => { btn.disabled = false; btn.style.opacity = "1"; }, 2000);
+                });
             }}
             data-testid="button-open-drawer"
           >

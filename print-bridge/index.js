@@ -7,6 +7,32 @@ let pingTimer = null;
 let reconnectTimer = null;
 let alive = false;
 
+const printQueue = [];
+let printing = false;
+
+async function processPrintQueue() {
+  if (printing || printQueue.length === 0) return;
+  printing = true;
+  while (printQueue.length > 0) {
+    const { printer, data, label } = printQueue.shift();
+    try {
+      await sendToPrinter(printer, data);
+      log(`${label} impreso en ${printer.name} (${data.length} bytes)`);
+    } catch (err) {
+      log(`Error imprimiendo ${label}: ${err.message}`);
+    }
+    if (printQueue.length > 0) {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  printing = false;
+}
+
+function enqueuePrint(printer, data, label) {
+  printQueue.push({ printer, data, label });
+  processPrintQueue();
+}
+
 function log(msg) {
   const ts = new Date().toLocaleTimeString("es-CR", { hour12: false });
   console.log(`[${ts}] ${msg}`);
@@ -190,20 +216,13 @@ async function handlePrintJob(job) {
 
     const printer = findPrinter(destination);
     if (printer) {
-      try {
-        const testText =
-          "=== PRUEBA DE IMPRESION ===\n" +
-          `Bridge: ${config.bridgeId}\n` +
-          `Impresora: ${printer.name}\n` +
-          `Fecha: ${new Date().toLocaleString("es-CR")}\n` +
-          "===========================\n\n\n";
-        await sendToPrinter(printer, Buffer.from(testText));
-        log(
-          `Prueba impresa en ${printer.name} (${printer.ipAddress}:${printer.port})`
-        );
-      } catch (err) {
-        log(`Error imprimiendo prueba: ${err.message}`);
-      }
+      const testText =
+        "=== PRUEBA DE IMPRESION ===\n" +
+        `Bridge: ${config.bridgeId}\n` +
+        `Impresora: ${printer.name}\n` +
+        `Fecha: ${new Date().toLocaleString("es-CR")}\n` +
+        "===========================\n\n\n";
+      enqueuePrint(printer, Buffer.from(testText), "Prueba");
     }
     return;
   }
@@ -214,13 +233,8 @@ async function handlePrintJob(job) {
       log("No hay impresora disponible para trabajo raw");
       return;
     }
-    try {
-      const buffer = Buffer.from(payload.raw, "base64");
-      await sendToPrinter(printer, buffer);
-      log(`Raw impreso en ${printer.name} (${buffer.length} bytes)`);
-    } catch (err) {
-      log(`Error imprimiendo raw: ${err.message}`);
-    }
+    const buffer = Buffer.from(payload.raw, "base64");
+    enqueuePrint(printer, buffer, "Raw");
     return;
   }
 
@@ -233,12 +247,7 @@ async function handlePrintJob(job) {
       console.log("\u2500".repeat(42));
       return;
     }
-    try {
-      await sendToPrinter(printer, Buffer.from(payload.text));
-      log(`Recibo impreso en ${printer.name}`);
-    } catch (err) {
-      log(`Error imprimiendo recibo: ${err.message}`);
-    }
+    enqueuePrint(printer, Buffer.from(payload.text), "Recibo");
     return;
   }
 
