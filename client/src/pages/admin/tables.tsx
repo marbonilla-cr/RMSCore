@@ -313,6 +313,7 @@ function ReservationSettingsSection() {
     maxOccupancyPercent: 50,
     turnoverBufferMinutes: 15,
     maxPartySize: 20,
+    occupancyThresholdPercent: 10,
     enabled: true,
   });
 
@@ -329,6 +330,7 @@ function ReservationSettingsSection() {
         maxOccupancyPercent: settings.maxOccupancyPercent,
         turnoverBufferMinutes: settings.turnoverBufferMinutes,
         maxPartySize: settings.maxPartySize ?? 20,
+        occupancyThresholdPercent: settings.occupancyThresholdPercent ?? 10,
         enabled: settings.enabled,
       });
     }
@@ -436,6 +438,21 @@ function ReservationSettingsSection() {
               onChange={(e) => setForm({ ...form, maxPartySize: parseInt(e.target.value) || 20 })}
               data-testid="input-max-party-size"
             />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">% Umbral Flexibilidad</Label>
+            <Input
+              type="number"
+              min={0}
+              max={50}
+              step={5}
+              value={form.occupancyThresholdPercent}
+              onChange={(e) => setForm({ ...form, occupancyThresholdPercent: parseInt(e.target.value) || 0 })}
+              data-testid="input-threshold-percent"
+            />
+            <p className="text-[10px] text-muted-foreground">Permite rebasar el % ocupación hasta este margen adicional</p>
           </div>
         </div>
         <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save-settings">

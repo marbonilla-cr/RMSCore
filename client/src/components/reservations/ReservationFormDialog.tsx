@@ -16,6 +16,7 @@ interface ReservationRow {
   reservedTime: string;
   durationMinutes: number;
   tableId: number | null;
+  tableIds: number[] | null;
   status: string;
   notes: string | null;
 }
@@ -63,7 +64,7 @@ export function ReservationFormDialog({
   const [partySize, setPartySize] = useState(2);
   const [reservedDate, setReservedDate] = useState(selectedDate);
   const [reservedTime, setReservedTime] = useState("19:00");
-  const [tableId, setTableId] = useState<number | null>(null);
+  const [selectedTableIds, setSelectedTableIds] = useState<number[]>([]);
   const [notes, setNotes] = useState("");
 
   useEffect(() => {
@@ -75,7 +76,7 @@ export function ReservationFormDialog({
         setPartySize(reservation.partySize);
         setReservedDate(reservation.reservedDate);
         setReservedTime(reservation.reservedTime.slice(0, 5));
-        setTableId(reservation.tableId);
+        setSelectedTableIds(reservation.tableIds || (reservation.tableId ? [reservation.tableId] : []));
         setNotes(reservation.notes || "");
       } else {
         setGuestName("");
@@ -84,7 +85,7 @@ export function ReservationFormDialog({
         setPartySize(2);
         setReservedDate(selectedDate);
         setReservedTime("19:00");
-        setTableId(null);
+        setSelectedTableIds([]);
         setNotes("");
       }
     }
@@ -102,14 +103,14 @@ export function ReservationFormDialog({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const body = {
+      const body: any = {
         guestName,
         guestPhone,
         guestEmail: guestEmail || undefined,
         partySize,
         reservedDate,
         reservedTime,
-        tableId: tableId || undefined,
+        tableIds: selectedTableIds.length > 0 ? selectedTableIds : undefined,
         notes: notes || undefined,
       };
       if (isEdit) {
@@ -218,20 +219,43 @@ export function ReservationFormDialog({
             </div>
 
             <div className="rf-field">
-              <label className="rf-label">Mesa (opcional)</label>
-              <select
-                className="rf-input"
-                value={tableId === null ? "" : String(tableId)}
-                onChange={e => setTableId(e.target.value ? parseInt(e.target.value) : null)}
-                data-testid="select-table"
-              >
-                <option value="">Auto (sin asignar)</option>
-                {tableOptions.map(t => (
-                  <option key={t.id} value={String(t.id)}>
-                    {t.tableName} — Cap. {t.capacity}{t.conflictCount > 0 ? ` (${t.conflictCount} reserva${t.conflictCount > 1 ? "s" : ""})` : ""}
-                  </option>
-                ))}
-              </select>
+              <label className="rf-label">
+                Mesas ({selectedTableIds.length === 0 ? "Auto" : selectedTableIds.length + " sel."})
+                {selectedTableIds.length > 0 && (
+                  <span style={{ marginLeft: 8, color: "var(--green)", cursor: "pointer", fontWeight: 400 }} onClick={() => setSelectedTableIds([])}>Limpiar</span>
+                )}
+              </label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {tableOptions.map(t => {
+                  const isSelected = selectedTableIds.includes(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      data-testid={`table-chip-${t.id}`}
+                      onClick={() => {
+                        setSelectedTableIds(prev =>
+                          prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id]
+                        );
+                      }}
+                      style={{
+                        padding: "6px 10px", borderRadius: "var(--r-sm)", fontSize: 11,
+                        fontFamily: "var(--f-mono)", fontWeight: 600, cursor: "pointer",
+                        border: isSelected ? "1px solid var(--green)" : "1px solid var(--border-ds)",
+                        background: isSelected ? "rgba(46,204,113,0.15)" : "var(--s2)",
+                        color: isSelected ? "var(--green)" : "var(--text2)",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      {t.tableName} ({t.capacity}p)
+                      {t.conflictCount > 0 && <span style={{ color: "#f39c12", marginLeft: 4 }}>({t.conflictCount}R)</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--text3)" }}>
+                {selectedTableIds.length === 0 ? "Sin selección = asignación automática" : `${tableOptions.filter(t => selectedTableIds.includes(t.id)).reduce((s, t) => s + t.capacity, 0)} sillas seleccionadas`}
+              </span>
             </div>
 
             <div className="rf-field">

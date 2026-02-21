@@ -4489,7 +4489,7 @@ export async function registerRoutes(
       if (!date || !partySize) return res.status(400).json({ message: "date y partySize son requeridos" });
       const ps = parseInt(partySize as string);
       const allTables = await storage.getAllTables();
-      const activeTables = allTables.filter(t => t.active && t.capacity >= ps);
+      const activeTables = allTables.filter(t => t.active);
 
       const dayReservations = await db.select().from(reservations)
         .where(and(

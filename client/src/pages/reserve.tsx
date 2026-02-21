@@ -8,7 +8,7 @@ function todayStr() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-type TimeSlot = { time: string; available: boolean; tablesAvailable: number };
+type TimeSlot = { time: string; available: boolean; seatsAvailable: number };
 type ResSettings = { openTime: string; closeTime: string; slotIntervalMinutes: number; enabled: boolean; maxPartySize: number };
 
 export default function PublicReservePage() {
