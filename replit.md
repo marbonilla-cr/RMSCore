@@ -78,9 +78,10 @@ The system is built as a PWA, ensuring accessibility across various devices, and
 
 ### Security Hardening (February 21, 2026)
 -   **Status:** COMPLETED
--   **Helmet:** Configured with strict CSP (self-only scripts/styles/fonts, no frames/objects), HSTS (1 year, includeSubDomains), X-Frame-Options: DENY, Referrer-Policy: strict-origin-when-cross-origin.
+-   **Helmet:** Production-only (disabled in development for Replit preview compatibility). Configured with strict CSP (self-only scripts/styles/fonts, no frames/objects), HSTS (1 year, includeSubDomains), COOP/CORP same-origin, Referrer-Policy: strict-origin-when-cross-origin. `xFrameOptions` disabled in favor of CSP `frame-ancestors` (self + Replit domains). `x-powered-by` disabled in all environments.
 -   **Login Rate Limiting:** In-memory per-IP rate limiter: 5 attempts per 15-minute window on `/api/auth/login` and `/api/auth/pin-login`. Returns 429 with Retry-After header. Clears on successful login.
--   **Session Security:** `SESSION_SECRET` env var required (no hardcoded fallback). Sessions stored in PostgreSQL via `connect-pg-simple`. Cookies: httpOnly, secure, sameSite=none, partitioned, 24h maxAge.
+-   **Session Security:** `SESSION_SECRET` env var required (no hardcoded fallback). Sessions stored in PostgreSQL via `connect-pg-simple`. Cookies: httpOnly, 24h maxAge. Environment-aware: production uses secure+sameSite=none; development uses sameSite=lax (no secure, no partitioned) for Replit preview iframe compatibility.
+-   **Service Worker:** Registered only in production. In Replit dev environments (*.replit.dev, *.repl.co), existing SWs are unregistered to prevent cache conflicts with preview iframe.
 -   **Body Limits:** JSON: 2MB, URL-encoded: 1MB (reduced from 10MB).
 -   **Log Sanitization:** Response logs redact: password, pin, guestPhone, guestEmail, customerPhone, customerEmail, phone, email. Error responses return generic "Error interno del servidor" for 5xx (no stack traces in production).
 -   **HTML Sanitization:** Global middleware strips HTML tags from all string values in POST/PUT/PATCH request bodies before route handlers.

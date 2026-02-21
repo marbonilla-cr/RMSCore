@@ -9,30 +9,35 @@ import { startHrBackgroundJobs } from "./hr-jobs";
 const app = express();
 const httpServer = createServer(app);
 
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'", "ws:", "wss:"],
-      frameSrc: ["'none'"],
-      objectSrc: ["'none'"],
-      baseUri: ["'self'"],
-      formAction: ["'self'"],
-      frameAncestors: ["'self'", "https://*.replit.dev", "https://*.replit.app", "https://*.repl.co"],
-      upgradeInsecureRequests: [],
+app.disable("x-powered-by");
+const isProduction = process.env.NODE_ENV === "production";
+
+if (isProduction) {
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'", "ws:", "wss:"],
+        frameSrc: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'", "https://*.replit.app", "https://*.replit.dev", "https://*.repl.co"],
+        upgradeInsecureRequests: [],
+      },
     },
-  },
-  crossOriginEmbedderPolicy: false,
-  crossOriginOpenerPolicy: false,
-  crossOriginResourcePolicy: false,
-  hsts: { maxAge: 31536000, includeSubDomains: true },
-  referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-  xFrameOptions: false,
-}));
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: "same-origin" },
+    crossOriginResourcePolicy: { policy: "same-origin" },
+    hsts: { maxAge: 31536000, includeSubDomains: true },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    xFrameOptions: false,
+  }));
+}
 
 app.use(compression());
 
