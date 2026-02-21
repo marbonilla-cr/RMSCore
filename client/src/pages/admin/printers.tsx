@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Printer, Loader2, Wifi } from "lucide-react";
+import { Plus, Pencil, Trash2, Printer, Loader2, Wifi, Send } from "lucide-react";
 import type { Printer as PrinterType } from "@shared/schema";
 
 const PRINTER_TYPES = [
@@ -69,6 +69,24 @@ export default function AdminPrintersPage() {
     },
   });
 
+  const { data: bridgeStatus } = useQuery<{ available: boolean }>({
+    queryKey: ["/api/admin/print-bridge/status"],
+    refetchInterval: 10000,
+  });
+
+  const testBridgeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/print-bridge/test");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Trabajo enviado al Print Bridge" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const resetForm = () => {
     setForm({ name: "", type: "caja", ipAddress: "", port: 9100, paperWidth: 80, enabled: true });
     setEditing(null);
@@ -108,6 +126,28 @@ export default function AdminPrintersPage() {
         <div className="flex items-center gap-2">
           <Printer className="w-5 h-5" />
           <h1 className="admin-page-title" data-testid="text-page-title">Impresoras</h1>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-block w-3 h-3 rounded-full"
+              style={{ background: bridgeStatus?.available ? "#2ecc71" : "#e74c3c" }}
+              data-testid="indicator-bridge-status"
+            />
+            <span className="text-sm" data-testid="text-bridge-status">
+              {bridgeStatus?.available ? "Print Bridge conectado" : "Print Bridge desconectado"}
+            </span>
+          </div>
+          <Button
+            onClick={() => testBridgeMutation.mutate()}
+            disabled={testBridgeMutation.isPending}
+            className="bg-green-600 hover:bg-green-700 text-white"
+            data-testid="button-test-bridge"
+          >
+            {testBridgeMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+            Probar Impresión
+          </Button>
         </div>
 
         <Dialog open={open} onOpenChange={(o) => { if (!o) resetForm(); setOpen(o); }}>
