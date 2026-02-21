@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, QrCode, Grid3x3, Loader2, ExternalLink, Download, Clock, Save, Settings2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Plus, Pencil, QrCode, Grid3x3, Loader2, ExternalLink, Download, Clock, Save, Settings2, Trash2 } from "lucide-react";
 import type { Table as RestTable, ReservationDurationConfig, ReservationSettings } from "@shared/schema";
 
 export default function AdminTablesPage() {
@@ -34,6 +35,19 @@ export default function AdminTablesPage() {
       setOpen(false);
       setEditing(null);
       toast({ title: editing ? "Mesa actualizada" : "Mesa creada" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return apiRequest("PATCH", `/api/admin/tables/${id}/archive`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/tables"] });
+      toast({ title: "Mesa eliminada correctamente" });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -194,6 +208,27 @@ export default function AdminTablesPage() {
                   <Button size="icon" variant="ghost" onClick={() => openEdit(table)} data-testid={`button-edit-table-${table.id}`} title="Editar">
                     <Pencil className="w-4 h-4" />
                   </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button size="icon" variant="ghost" className="text-destructive" data-testid={`button-delete-table-${table.id}`} title="Eliminar" disabled={archiveMutation.isPending}>
+                        {archiveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>¿Eliminar mesa "{table.tableName}"?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          La mesa será archivada y ya no aparecerá en el sistema. Los datos históricos se conservan.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => archiveMutation.mutate(table.id)} className="bg-destructive text-destructive-foreground">
+                          Eliminar
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               </CardContent>
             </Card>

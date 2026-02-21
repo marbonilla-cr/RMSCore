@@ -37,6 +37,7 @@ export const tables = pgTable("tables", {
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
   capacity: integer("capacity").notNull().default(4),
+  deletedAt: timestamp("deleted_at"),
 });
 
 export const categories = pgTable("categories", {

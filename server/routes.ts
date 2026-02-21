@@ -670,6 +670,16 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/admin/tables/:id/archive", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const result = await storage.softDeleteTable(parseInt(req.params.id as string));
+      if (!result) return res.status(404).json({ message: "Mesa no encontrada" });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Error al archivar mesa" });
+    }
+  });
+
   app.get("/api/admin/tables/:id/qr", requireRole("MANAGER"), async (req, res) => {
     const table = await storage.getTable(parseInt(req.params.id as string));
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });

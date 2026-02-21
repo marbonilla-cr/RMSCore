@@ -260,8 +260,11 @@ export async function getEffectivePermissions(userId: number): Promise<string[]>
 }
 
 // Tables
-export async function getAllTables() {
-  return db.select().from(tables).orderBy(asc(tables.sortOrder), asc(tables.id));
+export async function getAllTables(includeDeleted = false) {
+  if (includeDeleted) {
+    return db.select().from(tables).orderBy(asc(tables.sortOrder), asc(tables.id));
+  }
+  return db.select().from(tables).where(isNull(tables.deletedAt)).orderBy(asc(tables.sortOrder), asc(tables.id));
 }
 
 export async function getTable(id: number) {
@@ -270,8 +273,22 @@ export async function getTable(id: number) {
 }
 
 export async function getTableByCode(code: string) {
-  const [table] = await db.select().from(tables).where(eq(tables.tableCode, code));
+  const [table] = await db.select().from(tables).where(and(eq(tables.tableCode, code), isNull(tables.deletedAt)));
   return table;
+}
+
+export async function softDeleteTable(id: number) {
+  const [table] = await db.select().from(tables).where(eq(tables.id, id));
+  if (!table) return null;
+  if (table.deletedAt) return table;
+  const suffix = `[DEL-${Date.now().toString(36)}]`;
+  const [updated] = await db.update(tables).set({
+    deletedAt: new Date(),
+    tableCode: `${table.tableCode}-${suffix}`,
+    tableName: `${table.tableName} ${suffix}`,
+    active: false,
+  }).where(eq(tables.id, id)).returning();
+  return updated;
 }
 
 export async function createTable(data: InsertTable) {
