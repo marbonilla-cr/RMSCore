@@ -22,13 +22,15 @@ app.use(helmet({
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
       formAction: ["'self'"],
+      frameAncestors: ["'self'", "https://*.replit.dev", "https://*.replit.app", "https://*.repl.co"],
       upgradeInsecureRequests: [],
     },
   },
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
   hsts: { maxAge: 31536000, includeSubDomains: true },
   referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-  xFrameOptions: { action: "deny" },
+  xFrameOptions: false,
 }));
 
 app.use(compression());
