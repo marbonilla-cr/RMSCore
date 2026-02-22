@@ -66,7 +66,7 @@ async function getOrCreateOrderForTable(tableId: number) {
 
 async function getMaxSubaccounts(): Promise<number> {
   const config = await storage.getBusinessConfig();
-  return (config as any)?.maxSubaccounts ?? 6;
+  return (config as any)?.maxSubaccounts ?? 15;
 }
 
 interface QrSecurityUtils {

@@ -128,7 +128,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
       const res = await apiRequest("GET", `/api/kds/tickets/active?destination=${destination}`);
       return res.json();
     },
-    refetchInterval: 5000,
+    refetchInterval: 2000,
   });
 
   const groupedTickets = useMemo(() => groupTicketsByOrder(activeTickets), [activeTickets]);
@@ -177,17 +177,15 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
 
   useEffect(() => {
     wsManager.connect();
-    const unsub = wsManager.on("kitchen_ticket_created", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
-    });
-    const unsub2 = wsManager.on("kitchen_item_status_changed", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
-    });
-    const unsub3 = wsManager.on("order_updated", () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
-    });
+    const refetchAll = () => {
+      queryClient.refetchQueries({ queryKey: ["/api/kds/tickets", "active", destination] });
+      queryClient.refetchQueries({ queryKey: ["/api/kds/tickets", "history", destination] });
+    };
+    const unsub = wsManager.on("kitchen_ticket_created", refetchAll);
+    const unsub2 = wsManager.on("kitchen_item_status_changed", refetchAll);
+    const unsub3 = wsManager.on("order_updated", refetchAll);
     return () => { unsub(); unsub2(); unsub3(); };
-  }, []);
+  }, [destination]);
 
   useEffect(() => {
     const update = () => {

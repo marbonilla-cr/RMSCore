@@ -826,7 +826,7 @@ export const businessConfig = pgTable("business_config", {
   email: text("email").notNull().default(""),
   legalNote: text("legal_note").notNull().default(""),
   updatedAt: timestamp("updated_at").defaultNow(),
-  maxSubaccounts: integer("max_subaccounts").notNull().default(6),
+  maxSubaccounts: integer("max_subaccounts").notNull().default(15),
 });
 
 export const printers = pgTable("printers", {

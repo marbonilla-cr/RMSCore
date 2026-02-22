@@ -2262,7 +2262,7 @@ export async function registerRoutes(
     const table = await storage.getTableByCode(req.params.tableCode);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
     const config = await storage.getBusinessConfig();
-    const maxSubaccounts = (config as any)?.maxSubaccounts ?? 6;
+    const maxSubaccounts = (config as any)?.maxSubaccounts ?? 15;
     res.json({ tableName: table.tableName, tableCode: table.tableCode, maxSubaccounts });
   });
 

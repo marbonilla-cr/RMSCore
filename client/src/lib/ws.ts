@@ -92,7 +92,7 @@ class WSManager {
           this.ws.close();
         }
       }
-    }, 10000);
+    }, 5000);
   }
 
   private stopHeartbeat() {

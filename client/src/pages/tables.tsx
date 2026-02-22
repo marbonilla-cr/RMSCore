@@ -107,13 +107,13 @@ export default function TablesPage() {
 
   const { data: tables = [], isLoading } = useQuery<TableView[]>({
     queryKey: ["/api/waiter/tables"],
-    refetchInterval: 5000,
+    refetchInterval: 2000,
   });
 
   useEffect(() => {
     wsManager.connect();
     const invalidate = () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      queryClient.refetchQueries({ queryKey: ["/api/waiter/tables"] });
     };
     const unsubs = [
       wsManager.on("table_status_changed", invalidate),

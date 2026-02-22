@@ -155,19 +155,19 @@ export default function POSPage() {
   useEffect(() => {
     wsManager.connect();
     const invalidateTables = () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      queryClient.refetchQueries({ queryKey: ["/api/pos/tables"] });
     };
     const invalidateOrderDetail = () => {
       if (selectedTable?.orderId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "splits"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "payments"] });
+        queryClient.refetchQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "splits"] });
+        queryClient.refetchQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "payments"] });
       }
     };
     const invalidatePaymentData = () => {
       invalidateTables();
       invalidateOrderDetail();
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/paid-orders"] });
+      queryClient.refetchQueries({ queryKey: ["/api/pos/cash-session"] });
+      queryClient.refetchQueries({ queryKey: ["/api/pos/paid-orders"] });
     };
     const unsubs = [
       wsManager.on("order_updated", () => { invalidateTables(); invalidateOrderDetail(); }),
@@ -182,7 +182,7 @@ export default function POSPage() {
 
   const { data: posTables = [], isLoading } = useQuery<POSTable[]>({
     queryKey: ["/api/pos/tables"],
-    refetchInterval: 5000,
+    refetchInterval: 2000,
   });
 
   useEffect(() => {

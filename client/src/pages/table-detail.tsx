@@ -138,7 +138,7 @@ export default function TableDetailPage() {
   const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
     queryKey: ["/api/tables", tableId, "current"],
     enabled: !!tableId,
-    refetchInterval: 5000,
+    refetchInterval: 2000,
   });
 
   const { data: products = [] } = useQuery<Product[]>({
@@ -156,7 +156,7 @@ export default function TableDetailPage() {
   useEffect(() => {
     wsManager.connect();
     const invalidate = () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+      queryClient.refetchQueries({ queryKey: ["/api/tables", tableId, "current"] });
     };
     const unsubs = [
       wsManager.on("order_updated", (p: any) => {
