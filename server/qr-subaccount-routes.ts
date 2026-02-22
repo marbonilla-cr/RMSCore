@@ -666,6 +666,11 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           }
           existingWithItems.push({ ...s, items: validItems });
         }
+        const labelSet = new Set(existingSplits.map(s => (s.label || "").trim()));
+        const hasDuplicateLabels = labelSet.size < existingSplits.length;
+        if (hasDuplicateLabels) {
+          existingValid = false;
+        }
         if (existingValid && existingWithItems.some(s => s.items.length > 0)) {
           return res.json(existingWithItems);
         }
@@ -674,13 +679,20 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         }
       }
 
-      const result: any[] = [];
+      const subIdSet = new Set(subs.map(s => s.id));
+      const nameGroups = new Map<string, typeof activeItems>();
       for (const sub of subs) {
+        const name = (sub.label || `Mesa ${sub.code}`).trim();
         const subItems = activeItems.filter((i: any) => (i as any).subaccountId === sub.id);
         if (subItems.length === 0) continue;
+        const existing = nameGroups.get(name) || [];
+        nameGroups.set(name, [...existing, ...subItems]);
+      }
 
-        const split = await storage.createSplitAccount({ orderId, label: sub.label || `Mesa ${sub.code}` });
-        for (const item of subItems) {
+      const result: any[] = [];
+      for (const [name, groupItems] of nameGroups) {
+        const split = await storage.createSplitAccount({ orderId, label: name });
+        for (const item of groupItems) {
           await storage.createSplitItem({ splitId: split.id, orderItemId: item.id });
         }
         const items = await storage.getSplitItemsForSplit(split.id);
