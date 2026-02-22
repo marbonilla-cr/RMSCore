@@ -2632,7 +2632,7 @@ export async function registerRoutes(
       }
     }
 
-    const activeItems = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PENDING");
+    const activeItems = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PENDING" && i.status !== "PAID");
     const allItemIds = allItems.map(i => i.id);
     const activeItemIds = activeItems.map(i => i.id);
 
@@ -2780,6 +2780,11 @@ export async function registerRoutes(
           storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: now }),
         ]);
         await Promise.all(itemUpdateOps);
+
+        const remainingSplitsFullPay = await storage.getSplitAccountsForOrder(orderId);
+        for (const sp of remainingSplitsFullPay) {
+          await storage.deleteSplitAccount(sp.id);
+        }
 
         try {
           const [hrSettings, allProducts] = await Promise.all([
@@ -2952,6 +2957,11 @@ export async function registerRoutes(
           storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: now }),
         ]);
         await Promise.all(itemUpdateOps);
+
+        const remainingSplitsMulti = await storage.getSplitAccountsForOrder(orderId);
+        for (const sp of remainingSplitsMulti) {
+          await storage.deleteSplitAccount(sp.id);
+        }
 
         try {
           const [hrSettings, allProducts] = await Promise.all([
@@ -3388,6 +3398,9 @@ export async function registerRoutes(
         }
       }
 
+      await storage.deleteSplitAccount(splitId);
+
+      await storage.recalcOrderTotal(orderId);
       await storage.updateOrderPaymentTotals(orderId);
 
       const allItems = await storage.getOrderItems(orderId);
@@ -3401,7 +3414,8 @@ export async function registerRoutes(
 
       qbo.enqueueSyncForPayment(payment.id, orderId).catch(() => {});
 
-      res.json({ ok: true, paymentId: payment.id });
+      const paidItemIds = splitItemsList.map(si => si.orderItemId);
+      res.json({ ok: true, paymentId: payment.id, splitLabel: splitAccount.label, paidItemIds });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -3410,7 +3424,7 @@ export async function registerRoutes(
   // ==================== POS: PRINT RECEIPT (direct to printer) ====================
   app.post("/api/pos/print-receipt", requirePermission("POS_PRINT"), async (req, res) => {
     try {
-      const { orderId, cashReceived, changeAmount } = req.body;
+      const { orderId, cashReceived, changeAmount, splitPaymentId, splitLabel, paidItemIds: bodyPaidItemIds } = req.body;
       if (!orderId || typeof orderId !== "number") return res.status(400).json({ message: "orderId requerido (número)" });
 
       const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
@@ -3427,12 +3441,33 @@ export async function registerRoutes(
 
       const table = await storage.getTable(order.tableId);
       const items = await storage.getOrderItems(orderId);
-      const activeItems = items.filter(i => i.status !== "VOIDED");
+
+      let targetItems: typeof items;
+
+      if (splitPaymentId && Array.isArray(bodyPaidItemIds) && bodyPaidItemIds.length > 0) {
+        const paidSet = new Set(bodyPaidItemIds as number[]);
+        targetItems = items.filter(i => paidSet.has(i.id));
+      } else if (splitPaymentId) {
+        const splitPay = (await storage.getPaymentsForOrder(orderId)).find(p => p.id === splitPaymentId);
+        if (splitPay && splitPay.splitId) {
+          const splitItemsList = await storage.getSplitItemsForSplit(splitPay.splitId).catch(() => []);
+          const splitItemOrderIds = new Set(splitItemsList.map(si => si.orderItemId));
+          if (splitItemOrderIds.size > 0) {
+            targetItems = items.filter(i => splitItemOrderIds.has(i.id));
+          } else {
+            return res.status(400).json({ message: "No se encontraron items para esta subcuenta. Datos de impresión no disponibles." });
+          }
+        } else {
+          targetItems = items.filter(i => i.status !== "VOIDED");
+        }
+      } else {
+        targetItems = items.filter(i => i.status !== "VOIDED");
+      }
 
       const cashier = req.session.userId ? await storage.getUser(req.session.userId) : null;
 
       const receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
-      for (const i of activeItems) {
+      for (const i of targetItems) {
         const mods = await storage.getOrderItemModifiers(i.id);
         const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
         receiptItems.push({
@@ -3444,13 +3479,17 @@ export async function registerRoutes(
       }
 
       const oNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `#${order.id}`);
+      const receiptOrderNum = splitLabel ? `${oNum} — ${splitLabel}` : oNum;
 
-      const payments = await storage.getPaymentsForOrder(orderId);
-      const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+      const allPayments = await storage.getPaymentsForOrder(orderId);
+      const relevantPayments = splitPaymentId
+        ? allPayments.filter(p => p.id === splitPaymentId)
+        : allPayments;
+      const lastPayment = relevantPayments.length > 0 ? relevantPayments[relevantPayments.length - 1] : null;
       let paymentMethodName = "";
-      if (payments.length > 1) {
+      if (relevantPayments.length > 1) {
         const pmNames: string[] = [];
-        for (const pay of payments) {
+        for (const pay of relevantPayments) {
           const pm = await storage.getPaymentMethod(pay.paymentMethodId);
           if (pm) pmNames.push(`${pm.paymentName} ₡${Number(pay.amount).toLocaleString()}`);
         }
@@ -3460,8 +3499,13 @@ export async function registerRoutes(
         paymentMethodName = pm?.paymentName || "";
       }
 
-      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
-      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
+      const receiptTotal = splitPaymentId && lastPayment
+        ? Number(lastPayment.amount)
+        : Number(order.totalAmount);
+
+      const itemIds = new Set(targetItems.map(i => i.id));
+      const orderDiscountsList = (await storage.getOrderItemDiscountsByOrder(orderId)).filter(d => itemIds.has(d.orderItemId));
+      const orderTaxesList = (await storage.getOrderItemTaxesByOrder(orderId)).filter(t => itemIds.has(t.orderItemId));
       const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
       const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
 
@@ -3473,10 +3517,10 @@ export async function registerRoutes(
         phone: config?.phone || "",
         email: config?.email || "",
         legalNote: config?.legalNote || "",
-        orderNumber: oNum,
+        orderNumber: receiptOrderNum,
         tableName: table?.tableName || "",
         items: receiptItems,
-        totalAmount: Number(order.totalAmount),
+        totalAmount: receiptTotal,
         totalDiscounts: totalDiscounts > 0 ? totalDiscounts : undefined,
         totalTaxes: totalTaxes > 0 ? totalTaxes : undefined,
         taxBreakdown: orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : undefined,

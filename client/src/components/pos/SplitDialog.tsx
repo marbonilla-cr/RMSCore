@@ -346,7 +346,7 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
               )}
             </div>
 
-            {/* Desktop: subtotal + separate */}
+            {/* Desktop: subtotal + pay + separate */}
             <div className="pos-desktop-only" style={{ gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span className="pos-sect-lbl">Subtotal</span>
@@ -354,6 +354,15 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
                   ₡{activeSplitTotal.toLocaleString()}
                 </span>
               </div>
+              {activeSplit && activeSplit.items.length > 0 && (
+                <button
+                  className="pos-primary-btn"
+                  onClick={() => onPaySplit(activeSplit.id, activeSplit.label, activeSplitTotal)}
+                  data-testid="split-pay-active-desktop"
+                >
+                  PAGAR {activeSplit.label} — ₡{activeSplitTotal.toLocaleString()}
+                </button>
+              )}
               <button
                 className={`pos-separate-btn ${hasSplitsWithItems ? "ready" : ""}`}
                 onClick={() => splitOrderMutation.mutate()}
@@ -364,7 +373,7 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
               </button>
             </div>
 
-            {/* Mobile: subtotal + separate + nav */}
+            {/* Mobile: subtotal + pay + separate + nav */}
             <div className="pos-mobile-only" style={{ marginTop: "auto", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 2px" }}>
                 <span className="pos-sect-lbl">Subtotal subcuenta</span>
@@ -372,6 +381,15 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
                   ₡{activeSplitTotal.toLocaleString()}
                 </span>
               </div>
+              {activeSplit && activeSplit.items.length > 0 && (
+                <button
+                  className="pos-primary-btn"
+                  onClick={() => onPaySplit(activeSplit.id, activeSplit.label, activeSplitTotal)}
+                  data-testid="split-pay-active-mobile"
+                >
+                  PAGAR {activeSplit.label} — ₡{activeSplitTotal.toLocaleString()}
+                </button>
+              )}
               <button
                 className={`pos-separate-btn ${hasSplitsWithItems ? "ready" : ""}`}
                 onClick={() => splitOrderMutation.mutate()}

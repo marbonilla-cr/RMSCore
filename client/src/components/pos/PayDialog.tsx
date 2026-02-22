@@ -58,7 +58,7 @@ interface PayDialogProps {
   canEditCustomer: boolean;
   canEmailTicket: boolean;
   canPrint: boolean;
-  onSuccess: (paymentMethodId: string, clientName: string, clientEmail: string, wasCash: boolean, cashReceived?: number, changeAmount?: number) => void;
+  onSuccess: (paymentMethodId: string, clientName: string, clientEmail: string, wasCash: boolean, cashReceived?: number, changeAmount?: number, paymentId?: number, paidItemIds?: number[]) => void;
 }
 
 interface PayLeg {
@@ -184,21 +184,28 @@ export function PayDialog({
     setProcessing(true);
 
     try {
+      let responsePaymentId: number | undefined;
+      let responsePaidItemIds: number[] | undefined;
       if (splitId) {
-        await apiRequest("POST", "/api/pos/pay-split", {
+        const resp = await apiRequest("POST", "/api/pos/pay-split", {
           splitId,
           paymentMethodId: parseInt(methodId),
           clientName: clientName || null,
           clientEmail: clientEmail || null,
         });
+        const data = await resp.json();
+        responsePaymentId = data?.paymentId;
+        responsePaidItemIds = data?.paidItemIds;
       } else {
-        await apiRequest("POST", "/api/pos/pay", {
+        const resp = await apiRequest("POST", "/api/pos/pay", {
           orderId: table.orderId,
           paymentMethodId: parseInt(methodId),
           amount: table.totalAmount,
           clientName: clientName || null,
           clientEmail: clientEmail || null,
         });
+        const data = await resp.json();
+        responsePaymentId = data?.paymentId;
       }
 
       if (dialogRef.current) {
@@ -209,7 +216,7 @@ export function PayDialog({
       const wasCash = pm ? (pm.paymentCode.toUpperCase().includes("CASH") || pm.paymentCode.toUpperCase().includes("EFECT")) : false;
 
       setTimeout(() => {
-        onSuccess(methodId, clientName, clientEmail, wasCash, wasCash ? received : undefined, wasCash && change > 0 ? change : undefined);
+        onSuccess(methodId, clientName, clientEmail, wasCash, wasCash ? received : undefined, wasCash && change > 0 ? change : undefined, responsePaymentId, responsePaidItemIds);
         onClose();
       }, 800);
     } catch (err: any) {

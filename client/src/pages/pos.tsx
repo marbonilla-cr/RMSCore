@@ -148,6 +148,9 @@ export default function POSPage() {
   const [discountItemId, setDiscountItemId] = useState<number | null>(null);
 
   const [printConfirmOrderId, setPrintConfirmOrderId] = useState<number | null>(null);
+  const [printConfirmSplitPaymentId, setPrintConfirmSplitPaymentId] = useState<number | null>(null);
+  const [printConfirmSplitLabel, setPrintConfirmSplitLabel] = useState<string>("");
+  const [printConfirmPaidItemIds, setPrintConfirmPaidItemIds] = useState<number[]>([]);
   const [paidTicketActions, setPaidTicketActions] = useState<{orderId: number; tableName: string; ticketNumber: string} | null>(null);
   const [paidEmailInput, setPaidEmailInput] = useState("");
   const [paidShowEmailForm, setPaidShowEmailForm] = useState(false);
@@ -330,14 +333,15 @@ export default function POSPage() {
 
   const paySplitMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest("POST", "/api/pos/pay-split", {
+      const resp = await apiRequest("POST", "/api/pos/pay-split", {
         splitId: payingSplitId,
         paymentMethodId: parseInt(paymentMethodId),
         clientName: clientName || null,
         clientEmail: clientEmail || null,
       });
+      return resp.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       const tbl = selectedTable!;
       const savedOrderId = tbl.orderId;
 
@@ -359,6 +363,9 @@ export default function POSPage() {
       setCashReceived(0);
       setCustomCashInput("");
       toast({ title: "Subcuenta pagada" });
+      setPrintConfirmSplitPaymentId(data?.paymentId || null);
+      setPrintConfirmSplitLabel(data?.splitLabel || "");
+      setPrintConfirmPaidItemIds(data?.paidItemIds || []);
       setPrintConfirmOrderId(savedOrderId);
     },
     onError: (err: any) => {
@@ -867,14 +874,9 @@ export default function POSPage() {
     setPayDialogOpen(true);
   };
 
-  const handlePayDialogSuccess = (pmId: string, clName: string, clEmail: string, wasCash: boolean, cashReceived?: number, changeAmount?: number) => {
+  const handlePayDialogSuccess = (pmId: string, clName: string, clEmail: string, wasCash: boolean, cashReceived?: number, changeAmount?: number, paymentId?: number, paidItemIds?: number[]) => {
     if (!selectedTable) return;
     const tbl = selectedTable;
-
-    apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId, cashReceived, changeAmount })
-      .then(r => r.json())
-      .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
-      .catch(() => {});
 
     if (wasCash) {
       apiRequest("POST", "/api/pos/open-drawer", {}).catch(() => {});
@@ -886,11 +888,22 @@ export default function POSPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", tbl.orderId, "splits"] });
     queryClient.invalidateQueries({ queryKey: ["/api/pos/paid-orders"] });
 
+    if (payDialogSplitId && paymentId) {
+      setPrintConfirmSplitPaymentId(paymentId);
+      setPrintConfirmSplitLabel(payDialogSplitLabel);
+      setPrintConfirmPaidItemIds(paidItemIds || []);
+    } else {
+      setPrintConfirmSplitPaymentId(null);
+      setPrintConfirmSplitLabel("");
+      setPrintConfirmPaidItemIds([]);
+    }
+
     if (!payDialogSplitId) {
       setSelectedTable(null);
       setDetailView(false);
     }
     toast({ title: payDialogSplitId ? "Subcuenta pagada" : "Pago procesado" });
+    setPrintConfirmOrderId(tbl.orderId);
   };
 
   const openSplitDialog = async (table: POSTable) => {
@@ -2448,10 +2461,10 @@ export default function POSPage() {
       )}
 
       {printConfirmOrderId !== null && (
-        <div className="ds-overlay" onClick={(e) => { if (e.target === e.currentTarget) setPrintConfirmOrderId(null); }}>
+        <div className="ds-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setPrintConfirmOrderId(null); setPrintConfirmSplitPaymentId(null); setPrintConfirmSplitLabel(""); setPrintConfirmPaidItemIds([]); } }}>
           <div className="ds-dialog" style={{ maxWidth: 360 }}>
             <div className="ds-dlg-header">
-              <div className="ds-dlg-title">Imprimir Recibo</div>
+              <div className="ds-dlg-title">Imprimir Recibo{printConfirmSplitLabel ? ` — ${printConfirmSplitLabel}` : ""}</div>
             </div>
             <div className="ds-dlg-body" style={{ textAlign: 'center', padding: '20px 24px' }}>
               <p style={{ fontSize: 15, marginBottom: 20 }}>¿Desea imprimir el recibo?</p>
@@ -2461,11 +2474,22 @@ export default function POSPage() {
                   data-testid="button-print-yes"
                   style={{ minWidth: 120 }}
                   onClick={() => {
-                    apiRequest("POST", "/api/pos/print-receipt", { orderId: printConfirmOrderId })
+                    const printBody: any = { orderId: printConfirmOrderId };
+                    if (printConfirmSplitPaymentId) {
+                      printBody.splitPaymentId = printConfirmSplitPaymentId;
+                      printBody.splitLabel = printConfirmSplitLabel;
+                      if (printConfirmPaidItemIds.length > 0) {
+                        printBody.paidItemIds = printConfirmPaidItemIds;
+                      }
+                    }
+                    apiRequest("POST", "/api/pos/print-receipt", printBody)
                       .then(r => r.json())
                       .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
                       .catch(() => toast({ title: "Error al imprimir", variant: "destructive" }));
                     setPrintConfirmOrderId(null);
+                    setPrintConfirmSplitPaymentId(null);
+                    setPrintConfirmSplitLabel("");
+                    setPrintConfirmPaidItemIds([]);
                   }}
                 >
                   Sí, Imprimir
@@ -2474,7 +2498,7 @@ export default function POSPage() {
                   className="btn-secondary"
                   data-testid="button-print-no"
                   style={{ minWidth: 120 }}
-                  onClick={() => setPrintConfirmOrderId(null)}
+                  onClick={() => { setPrintConfirmOrderId(null); setPrintConfirmSplitPaymentId(null); setPrintConfirmSplitLabel(""); setPrintConfirmPaidItemIds([]); }}
                 >
                   No Imprimir
                 </button>
