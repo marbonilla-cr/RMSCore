@@ -10,10 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import {
   Link2, Unlink, Settings2, RefreshCw, Loader2, CheckCircle2, XCircle,
-  Clock, AlertTriangle, ArrowUpDown, Play
+  Clock, AlertTriangle, ArrowUpDown, Play, Eye, EyeOff, Key, Shield
 } from "lucide-react";
 
-type TabId = "connection" | "accounting" | "mappings" | "sync";
+type TabId = "credentials" | "connection" | "accounting" | "mappings" | "sync";
 
 export default function AdminQuickBooksPage() {
   const { toast } = useToast();
@@ -32,6 +32,7 @@ export default function AdminQuickBooksPage() {
   }, []);
 
   const tabs: { id: TabId; label: string }[] = [
+    { id: "credentials", label: "Credenciales" },
     { id: "connection", label: "Conexión" },
     { id: "accounting", label: "Config Contable" },
     { id: "mappings", label: "Mapeo" },
@@ -59,11 +60,190 @@ export default function AdminQuickBooksPage() {
         ))}
       </div>
 
+      {activeTab === "credentials" && <CredentialsTab />}
       {activeTab === "connection" && <ConnectionTab />}
       {activeTab === "accounting" && <AccountingTab />}
       {activeTab === "mappings" && <MappingsTab />}
       {activeTab === "sync" && <SyncTab />}
     </div>
+  );
+}
+
+function CredentialsTab() {
+  const { toast } = useToast();
+  const [showClientId, setShowClientId] = useState(false);
+  const [showClientSecret, setShowClientSecret] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [redirectUri, setRedirectUri] = useState("");
+  const [environment, setEnvironment] = useState("sandbox");
+
+  const credQuery = useQuery<{
+    hasClientId: boolean;
+    hasClientSecret: boolean;
+    hasEncryptKey: boolean;
+    redirectUri: string;
+    environment: string;
+    source: string;
+  }>({
+    queryKey: ["/api/qbo/credentials"],
+  });
+
+  useEffect(() => {
+    if (credQuery.data) {
+      setRedirectUri(credQuery.data.redirectUri || "");
+      setEnvironment(credQuery.data.environment || "sandbox");
+    }
+  }, [credQuery.data]);
+
+  const saveMut = useMutation({
+    mutationFn: async (data: Record<string, string>) => {
+      await apiRequest("PUT", "/api/qbo/credentials", data);
+    },
+    onSuccess: () => {
+      toast({ title: "Guardado", description: "Credenciales actualizadas" });
+      queryClient.invalidateQueries({ queryKey: ["/api/qbo/credentials"] });
+      setClientId("");
+      setClientSecret("");
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleSave = () => {
+    const data: Record<string, string> = {};
+    if (clientId) data.clientId = clientId;
+    if (clientSecret) data.clientSecret = clientSecret;
+    data.redirectUri = redirectUri;
+    data.environment = environment;
+    saveMut.mutate(data);
+  };
+
+  if (credQuery.isLoading) {
+    return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
+  }
+
+  const cred = credQuery.data;
+
+  return (
+    <Card data-testid="credentials-card">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Key className="h-5 w-5" />
+          Credenciales de API
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">
+          <Shield className="h-4 w-4 flex-shrink-0" />
+          <span>Las credenciales se almacenan encriptadas. Los campos sensibles se muestran enmascarados.</span>
+        </div>
+
+        {cred?.source && (
+          <div className="text-sm">
+            <Badge variant={cred.source === "database" ? "default" : cred.source === "environment" ? "secondary" : "outline"}>
+              Fuente: {cred.source === "database" ? "Base de datos" : cred.source === "environment" ? "Variables de entorno" : "No configurado"}
+            </Badge>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor="cred-client-id">Client ID</Label>
+            <div className="flex gap-2 mt-1">
+              <div className="relative flex-1">
+                <Input
+                  id="cred-client-id"
+                  data-testid="input-qbo-client-id"
+                  type={showClientId ? "text" : "password"}
+                  placeholder={cred?.hasClientId ? "••••••••••••••• (configurado)" : "Ingrese Client ID"}
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                data-testid="toggle-client-id-visibility"
+                onClick={() => setShowClientId(!showClientId)}
+              >
+                {showClientId ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+              {cred?.hasClientId && <CheckCircle2 className="h-5 w-5 text-green-500 self-center" />}
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="cred-client-secret">Client Secret</Label>
+            <div className="flex gap-2 mt-1">
+              <div className="relative flex-1">
+                <Input
+                  id="cred-client-secret"
+                  data-testid="input-qbo-client-secret"
+                  type={showClientSecret ? "text" : "password"}
+                  placeholder={cred?.hasClientSecret ? "••••••••••••••• (configurado)" : "Ingrese Client Secret"}
+                  value={clientSecret}
+                  onChange={(e) => setClientSecret(e.target.value)}
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                data-testid="toggle-client-secret-visibility"
+                onClick={() => setShowClientSecret(!showClientSecret)}
+              >
+                {showClientSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+              {cred?.hasClientSecret && <CheckCircle2 className="h-5 w-5 text-green-500 self-center" />}
+            </div>
+          </div>
+
+          {cred && (
+            <div className="flex items-center gap-2 text-sm">
+              <Badge variant={cred.hasEncryptKey ? "default" : "destructive"}>
+                {cred.hasEncryptKey ? "Clave maestra configurada (env)" : "Clave maestra no configurada"}
+              </Badge>
+            </div>
+          )}
+
+          <div>
+            <Label htmlFor="cred-redirect-uri">Redirect URI</Label>
+            <Input
+              id="cred-redirect-uri"
+              data-testid="input-qbo-redirect-uri"
+              placeholder="https://your-domain.com/api/qbo/callback"
+              value={redirectUri}
+              onChange={(e) => setRedirectUri(e.target.value)}
+              className="mt-1"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="cred-environment">Ambiente</Label>
+            <Select value={environment} onValueChange={setEnvironment}>
+              <SelectTrigger data-testid="select-qbo-environment" className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="sandbox">Sandbox (Pruebas)</SelectItem>
+                <SelectItem value="production">Producción</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <Button
+          data-testid="button-save-credentials"
+          onClick={handleSave}
+          disabled={saveMut.isPending}
+          className="w-full"
+        >
+          {saveMut.isPending ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Shield className="mr-2 h-4 w-4" />}
+          Guardar Credenciales
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

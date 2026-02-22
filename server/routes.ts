@@ -5487,7 +5487,7 @@ export async function registerRoutes(
   // ==================== QUICKBOOKS ONLINE INTEGRATION ====================
   app.get("/api/qbo/auth-url", requirePermission("ADMIN"), async (_req, res) => {
     try {
-      const url = qbo.getAuthUrl();
+      const url = await qbo.getAuthUrl();
       res.json({ url });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -5532,6 +5532,25 @@ export async function registerRoutes(
   app.post("/api/qbo/disconnect", requirePermission("ADMIN"), async (_req, res) => {
     try {
       await qbo.disconnectQBO();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/qbo/credentials", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const status = await qbo.getCredentialStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/qbo/credentials", requirePermission("ADMIN"), async (req, res) => {
+    try {
+      const { clientId, clientSecret, redirectUri, environment } = req.body;
+      await qbo.saveCredentials({ clientId, clientSecret, redirectUri, environment });
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });

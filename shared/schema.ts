@@ -1027,6 +1027,10 @@ export const qboConfig = pgTable("qbo_config", {
   connectedAt: timestamp("connected_at"),
   lastTokenRefresh: timestamp("last_token_refresh"),
   syncFromDate: date("sync_from_date"),
+  dbClientId: text("db_client_id"),
+  dbClientSecret: text("db_client_secret"),
+  dbRedirectUri: text("db_redirect_uri"),
+  dbEnvironment: varchar("db_environment", { length: 20 }),
 });
 
 export const qboCategoryMapping = pgTable("qbo_category_mapping", {

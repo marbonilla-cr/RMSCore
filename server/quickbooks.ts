@@ -8,28 +8,58 @@ import {
 } from "@shared/schema";
 import * as storage from "./storage";
 
-const QBO_CLIENT_ID = process.env.QBO_CLIENT_ID || "";
-const QBO_CLIENT_SECRET = process.env.QBO_CLIENT_SECRET || "";
-const QBO_REDIRECT_URI = process.env.QBO_REDIRECT_URI || "";
-const QBO_ENVIRONMENT = process.env.QBO_ENVIRONMENT || "sandbox";
-const QBO_ENCRYPT_KEY = process.env.QBO_ENCRYPT_KEY || "";
-
-const QBO_BASE_URL = QBO_ENVIRONMENT === "production"
-  ? "https://quickbooks.api.intuit.com"
-  : "https://sandbox-quickbooks.api.intuit.com";
-
 const oauthStateStore = new Map<string, number>();
 const STATE_TTL_MS = 10 * 60 * 1000;
 
 const ALGORITHM = "aes-256-cbc";
 const IV_LENGTH = 16;
 
+interface QboCredentials {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  environment: string;
+  encryptKey: string;
+}
+
+async function getCredentials(): Promise<QboCredentials> {
+  const config = await getQboConfig();
+  let clientId = process.env.QBO_CLIENT_ID || "";
+  let clientSecret = process.env.QBO_CLIENT_SECRET || "";
+
+  try {
+    if (config?.dbClientId) clientId = decrypt(config.dbClientId);
+    if (config?.dbClientSecret) clientSecret = decrypt(config.dbClientSecret);
+  } catch {
+    console.warn("[QBO] Failed to decrypt DB credentials, falling back to env vars");
+  }
+
+  return {
+    clientId,
+    clientSecret,
+    redirectUri: config?.dbRedirectUri || process.env.QBO_REDIRECT_URI || "",
+    environment: config?.dbEnvironment || process.env.QBO_ENVIRONMENT || "sandbox",
+    encryptKey: process.env.QBO_ENCRYPT_KEY || "",
+  };
+}
+
+function getEncryptKeyForCrypto(): string {
+  return process.env.QBO_ENCRYPT_KEY || "";
+}
+
 function deriveKey(): Buffer {
-  return crypto.createHash("sha256").update(QBO_ENCRYPT_KEY).digest();
+  const key = getEncryptKeyForCrypto();
+  if (!key) throw new Error("QBO_ENCRYPT_KEY not configured");
+  return crypto.createHash("sha256").update(key).digest();
+}
+
+function getBaseUrl(environment: string): string {
+  return environment === "production"
+    ? "https://quickbooks.api.intuit.com"
+    : "https://sandbox-quickbooks.api.intuit.com";
 }
 
 export function encrypt(text: string): string {
-  if (!QBO_ENCRYPT_KEY) throw new Error("QBO_ENCRYPT_KEY not configured");
   const key = deriveKey();
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -39,7 +69,6 @@ export function encrypt(text: string): string {
 }
 
 export function decrypt(text: string): string {
-  if (!QBO_ENCRYPT_KEY) throw new Error("QBO_ENCRYPT_KEY not configured");
   const key32 = deriveKey();
   const parts = text.split(":");
   const iv = Buffer.from(parts[0], "hex");
@@ -64,20 +93,57 @@ async function upsertQboConfig(data: Partial<QboConfig>) {
   }
 }
 
-export function getAuthUrl(): string {
+export async function saveCredentials(data: {
+  clientId?: string;
+  clientSecret?: string;
+  redirectUri?: string;
+  environment?: string;
+}): Promise<void> {
+  const updateData: Partial<QboConfig> = {};
+  if (data.clientId !== undefined) updateData.dbClientId = data.clientId ? encrypt(data.clientId) : null;
+  if (data.clientSecret !== undefined) updateData.dbClientSecret = data.clientSecret ? encrypt(data.clientSecret) : null;
+  if (data.redirectUri !== undefined) updateData.dbRedirectUri = data.redirectUri || null;
+  if (data.environment !== undefined) updateData.dbEnvironment = data.environment || null;
+  await upsertQboConfig(updateData);
+}
+
+export async function getCredentialStatus(): Promise<{
+  hasClientId: boolean;
+  hasClientSecret: boolean;
+  hasEncryptKey: boolean;
+  redirectUri: string;
+  environment: string;
+  source: string;
+}> {
+  const config = await getQboConfig();
+  const hasDbClientId = !!(config?.dbClientId);
+  const hasEnvClientId = !!process.env.QBO_CLIENT_ID;
+
+  return {
+    hasClientId: hasDbClientId || hasEnvClientId,
+    hasClientSecret: !!(config?.dbClientSecret) || !!process.env.QBO_CLIENT_SECRET,
+    hasEncryptKey: !!process.env.QBO_ENCRYPT_KEY,
+    redirectUri: config?.dbRedirectUri || process.env.QBO_REDIRECT_URI || "",
+    environment: config?.dbEnvironment || process.env.QBO_ENVIRONMENT || "sandbox",
+    source: hasDbClientId ? "database" : hasEnvClientId ? "environment" : "none",
+  };
+}
+
+export async function getAuthUrl(): Promise<string> {
   oauthStateStore.forEach((ts, key) => {
     if (Date.now() - ts > STATE_TTL_MS) oauthStateStore.delete(key);
   });
 
+  const creds = await getCredentials();
   const scopes = "com.intuit.quickbooks.accounting";
   const state = crypto.randomBytes(16).toString("hex");
   oauthStateStore.set(state, Date.now());
 
   const authBase = "https://appcenter.intuit.com/connect/oauth2";
   const params = new URLSearchParams({
-    client_id: QBO_CLIENT_ID,
+    client_id: creds.clientId,
     scope: scopes,
-    redirect_uri: QBO_REDIRECT_URI,
+    redirect_uri: creds.redirectUri,
     response_type: "code",
     state,
   });
@@ -92,7 +158,8 @@ export function validateOAuthState(state: string): boolean {
 }
 
 async function exchangeToken(code: string): Promise<{ access_token: string; refresh_token: string; expires_in: number; x_refresh_token_expires_in: number }> {
-  const credentials = Buffer.from(`${QBO_CLIENT_ID}:${QBO_CLIENT_SECRET}`).toString("base64");
+  const creds = await getCredentials();
+  const credentials = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString("base64");
   const res = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
     method: "POST",
     headers: {
@@ -103,7 +170,7 @@ async function exchangeToken(code: string): Promise<{ access_token: string; refr
     body: new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: QBO_REDIRECT_URI,
+      redirect_uri: creds.redirectUri,
     }).toString(),
   });
   if (!res.ok) {
@@ -143,7 +210,8 @@ export async function ensureFreshToken(): Promise<string> {
   }
 
   const refreshToken = decrypt(config.refreshToken);
-  const credentials = Buffer.from(`${QBO_CLIENT_ID}:${QBO_CLIENT_SECRET}`).toString("base64");
+  const creds = await getCredentials();
+  const credentials = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString("base64");
 
   const res = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
     method: "POST",
@@ -182,7 +250,8 @@ async function qboApiGet(path: string): Promise<any> {
   const config = await getQboConfig();
   if (!config?.realmId) throw new Error("QBO realmId not configured");
   const token = await ensureFreshToken();
-  const url = `${QBO_BASE_URL}/v3/company/${config.realmId}${path}`;
+  const creds = await getCredentials();
+  const url = `${getBaseUrl(creds.environment)}/v3/company/${config.realmId}${path}`;
   const res = await fetch(url, {
     headers: {
       "Authorization": `Bearer ${token}`,
@@ -200,7 +269,8 @@ async function qboApiPost(path: string, body: any): Promise<any> {
   const config = await getQboConfig();
   if (!config?.realmId) throw new Error("QBO realmId not configured");
   const token = await ensureFreshToken();
-  const url = `${QBO_BASE_URL}/v3/company/${config.realmId}${path}`;
+  const creds = await getCredentials();
+  const url = `${getBaseUrl(creds.environment)}/v3/company/${config.realmId}${path}`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
