@@ -49,5 +49,7 @@ SMTP_USER = "gmg.srl.cr@gmail.com"
 SMTP_FROM = "La Antigua Lechería <gmg.srl.cr@gmail.com>"
 TZ = "America/Costa_Rica"
 PRINT_BRIDGE_TOKEN = "restaurante-bridge-2024"
+QBO_REDIRECT_URI = "https://rms.restlaantigua.com/api/qbo/callback"
+QBO_ENVIRONMENT = "production"
 
 [userenv.production]
