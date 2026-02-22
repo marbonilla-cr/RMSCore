@@ -2619,8 +2619,10 @@ export async function registerRoutes(
     const orderIds = relevantOrders.map(o => o.id);
     const allItems = await storage.getOrderItemsByOrderIds(orderIds);
 
-    const allSubaccounts = orderIds.length > 0
-      ? await db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, orderIds))
+    const parentOrderIds = relevantOrders.filter(o => o.parentOrderId).map(o => o.parentOrderId!);
+    const allSubaccountQueryIds = Array.from(new Set([...orderIds, ...parentOrderIds]));
+    const allSubaccounts = allSubaccountQueryIds.length > 0
+      ? await db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, allSubaccountQueryIds))
       : [];
     const subaccountsByOrder = new Map<number, string[]>();
     for (const sa of allSubaccounts) {
@@ -2710,7 +2712,19 @@ export async function registerRoutes(
         totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
         totalTaxes: orderTaxesList.reduce((s, t) => s + Number(t.taxAmount), 0).toFixed(2),
         taxBreakdown: aggregateTaxBreakdown(orderTaxesList),
-        subaccountNames: subaccountsByOrder.get(order.id) || [],
+        subaccountNames: (() => {
+          const names = new Set<string>();
+          const saNames = subaccountsByOrder.get(order.id) || [];
+          saNames.forEach(n => names.add(n));
+          if (order.parentOrderId) {
+            const parentSaNames = subaccountsByOrder.get(order.parentOrderId) || [];
+            parentSaNames.forEach(n => names.add(n));
+          }
+          for (const item of orderActiveItems) {
+            if (item.customerNameSnapshot) names.add(item.customerNameSnapshot);
+          }
+          return Array.from(names);
+        })(),
       });
     }
     res.json(result);

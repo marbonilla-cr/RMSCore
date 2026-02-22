@@ -147,6 +147,7 @@ export default function POSPage() {
   const [discountOpen, setDiscountOpen] = useState(false);
   const [discountItemId, setDiscountItemId] = useState<number | null>(null);
 
+  const [printConfirmOrderId, setPrintConfirmOrderId] = useState<number | null>(null);
   const [paidTicketActions, setPaidTicketActions] = useState<{orderId: number; tableName: string; ticketNumber: string} | null>(null);
   const [paidEmailInput, setPaidEmailInput] = useState("");
   const [paidShowEmailForm, setPaidShowEmailForm] = useState(false);
@@ -300,11 +301,7 @@ export default function POSPage() {
     },
     onSuccess: () => {
       const tbl = selectedTable!;
-
-      apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId })
-        .then(r => r.json())
-        .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
-        .catch(() => {});
+      const savedOrderId = tbl.orderId;
 
       const pmUsed = paymentMethods.find(m => m.id.toString() === paymentMethodId);
       const wasCash = pmUsed ? (pmUsed.paymentCode.toUpperCase().includes("CASH") || pmUsed.paymentCode.toUpperCase().includes("EFECT")) : false;
@@ -324,6 +321,7 @@ export default function POSPage() {
       setCashReceived(0);
       setCustomCashInput("");
       toast({ title: "Pago procesado" });
+      setPrintConfirmOrderId(savedOrderId);
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -341,11 +339,7 @@ export default function POSPage() {
     },
     onSuccess: () => {
       const tbl = selectedTable!;
-
-      apiRequest("POST", "/api/pos/print-receipt", { orderId: tbl.orderId })
-        .then(r => r.json())
-        .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
-        .catch(() => {});
+      const savedOrderId = tbl.orderId;
 
       const pmUsed = paymentMethods.find(m => m.id.toString() === paymentMethodId);
       const wasCash = pmUsed ? (pmUsed.paymentCode.toUpperCase().includes("CASH") || pmUsed.paymentCode.toUpperCase().includes("EFECT")) : false;
@@ -365,6 +359,7 @@ export default function POSPage() {
       setCashReceived(0);
       setCustomCashInput("");
       toast({ title: "Subcuenta pagada" });
+      setPrintConfirmOrderId(savedOrderId);
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -2447,6 +2442,43 @@ export default function POSPage() {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {printConfirmOrderId !== null && (
+        <div className="ds-overlay" onClick={(e) => { if (e.target === e.currentTarget) setPrintConfirmOrderId(null); }}>
+          <div className="ds-dialog" style={{ maxWidth: 360 }}>
+            <div className="ds-dlg-header">
+              <div className="ds-dlg-title">Imprimir Recibo</div>
+            </div>
+            <div className="ds-dlg-body" style={{ textAlign: 'center', padding: '20px 24px' }}>
+              <p style={{ fontSize: 15, marginBottom: 20 }}>¿Desea imprimir el recibo?</p>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                <button
+                  className="btn-primary"
+                  data-testid="button-print-yes"
+                  style={{ minWidth: 120 }}
+                  onClick={() => {
+                    apiRequest("POST", "/api/pos/print-receipt", { orderId: printConfirmOrderId })
+                      .then(r => r.json())
+                      .then(data => toast({ title: "Impreso", description: `Enviado a ${data.printer}` }))
+                      .catch(() => toast({ title: "Error al imprimir", variant: "destructive" }));
+                    setPrintConfirmOrderId(null);
+                  }}
+                >
+                  Sí, Imprimir
+                </button>
+                <button
+                  className="btn-secondary"
+                  data-testid="button-print-no"
+                  style={{ minWidth: 120 }}
+                  onClick={() => setPrintConfirmOrderId(null)}
+                >
+                  No Imprimir
+                </button>
+              </div>
             </div>
           </div>
         </div>
