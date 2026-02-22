@@ -5,6 +5,7 @@ import { registerRoutes } from "./routes";
 import { createServer } from "http";
 import { ensureSystemPermissions } from "./storage";
 import { startHrBackgroundJobs } from "./hr-jobs";
+import { retryPendingSync } from "./quickbooks";
 
 const app = express();
 const httpServer = createServer(app);
@@ -166,6 +167,9 @@ app.use((req, res, next) => {
     () => {
       log(`serving on port ${port}`);
       startHrBackgroundJobs();
+      setInterval(() => {
+        retryPendingSync().catch(err => console.error("[QBO] Retry queue error:", err.message));
+      }, 5 * 60 * 1000);
     },
   );
 })();

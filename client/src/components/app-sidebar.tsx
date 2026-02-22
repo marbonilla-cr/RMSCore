@@ -42,6 +42,7 @@ import {
   BookOpen,
   TrendingUp,
   AlertTriangle,
+  Link2,
   List,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
@@ -75,6 +76,7 @@ const adminItems = [
   { title: "Métodos de Pago", url: "/admin/payment-methods", icon: Wallet },
   { title: "Config. Negocio", url: "/admin/business-config", icon: Building2 },
   { title: "Impresoras", url: "/admin/printers", icon: Printer },
+  { title: "QuickBooks", url: "/admin/quickbooks", icon: Link2 },
 ];
 
 const productsItem = { title: "Productos", url: "/admin/products", icon: ShoppingBag };

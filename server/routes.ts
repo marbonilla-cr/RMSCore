@@ -12,6 +12,7 @@ import { registerShortageRoutes } from "./shortage-routes";
 import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
+import * as qbo from "./quickbooks";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema } from "@shared/schema";
 
 declare module "express-session" {
@@ -2685,6 +2686,8 @@ export async function registerRoutes(
       broadcast("payment_completed", { orderId });
       broadcast("table_status_changed", {});
 
+      qbo.enqueueSyncForPayment(payment.id, orderId).catch(() => {});
+
       res.json({ ok: true, paymentId: payment.id });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2838,6 +2841,10 @@ export async function registerRoutes(
         const pm = pmMap.get(l.paymentMethodId);
         return pm && (pm.paymentCode.toUpperCase().includes("CASH") || pm.paymentCode.toUpperCase().includes("EFECT"));
       });
+
+      for (const pid of paymentIds) {
+        qbo.enqueueSyncForPayment(pid, orderId).catch(() => {});
+      }
 
       res.json({ ok: true, paymentIds, hasCash });
     } catch (err: any) {
@@ -3219,6 +3226,8 @@ export async function registerRoutes(
 
       broadcast("payment_completed", { orderId });
       broadcast("table_status_changed", {});
+
+      qbo.enqueueSyncForPayment(payment.id, orderId).catch(() => {});
 
       res.json({ ok: true, paymentId: payment.id });
     } catch (err: any) {
@@ -3728,6 +3737,8 @@ export async function registerRoutes(
       broadcast("payment_voided", { orderId: payment.orderId, paymentId });
       broadcast("table_status_changed", {});
       broadcast("order_updated", { orderId: payment.orderId });
+
+      qbo.voidSalesReceipt(paymentId).catch(() => {});
 
       res.json({ ok: true });
     } catch (err: any) {
@@ -5468,6 +5479,152 @@ export async function registerRoutes(
         .map(t => ({ id: t.id, tableName: t.tableName, tableCode: t.tableCode, capacity: t.capacity }));
 
       res.json(available);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== QUICKBOOKS ONLINE INTEGRATION ====================
+  app.get("/api/qbo/auth-url", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const url = qbo.getAuthUrl();
+      res.json({ url });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/qbo/callback", async (req, res) => {
+    try {
+      const { code, realmId } = req.query;
+      if (!code || !realmId) return res.status(400).send("Missing code or realmId");
+      await qbo.handleOAuthCallback(code as string, realmId as string);
+      res.redirect("/admin/quickbooks?connected=true");
+    } catch (err: any) {
+      console.error("[QBO] OAuth callback error:", err.message);
+      res.redirect("/admin/quickbooks?error=" + encodeURIComponent(err.message));
+    }
+  });
+
+  app.get("/api/qbo/status", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const config = await qbo.getQboConfig();
+      if (!config) return res.json({ connected: false });
+      res.json({
+        connected: config.isConnected,
+        realmId: config.realmId,
+        connectedAt: config.connectedAt,
+        lastTokenRefresh: config.lastTokenRefresh,
+        depositAccountCash: config.depositAccountCash,
+        depositAccountCard: config.depositAccountCard,
+        depositAccountSinpe: config.depositAccountSinpe,
+        taxCodeRef: config.taxCodeRef,
+        syncFromDate: config.syncFromDate,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/qbo/disconnect", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      await qbo.disconnectQBO();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/qbo/settings", requirePermission("ADMIN"), async (req, res) => {
+    try {
+      await qbo.updateQboSettings(req.body);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/qbo/items", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const items = await qbo.getQBOItems();
+      res.json(items);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/qbo/accounts", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const accounts = await qbo.getQBOAccounts();
+      res.json(accounts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/qbo/tax-codes", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const codes = await qbo.getQBOTaxCodes();
+      res.json(codes);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/qbo/mappings", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const mappings = await qbo.getMappings();
+      res.json(mappings);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/qbo/mappings", requirePermission("ADMIN"), async (req, res) => {
+    try {
+      await qbo.saveMappings(req.body.mappings || []);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/qbo/sync-log", requirePermission("ADMIN"), async (req, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const logs = await qbo.getSyncLog(status, limit, offset);
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/qbo/sync-stats", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const stats = await qbo.getSyncStats();
+      res.json(stats);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/qbo/retry-pending", requirePermission("ADMIN"), async (_req, res) => {
+    try {
+      const count = await qbo.retryPendingSync();
+      res.json({ ok: true, processed: count });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/qbo/initial-sync", requirePermission("ADMIN"), async (req, res) => {
+    try {
+      const { fromDate } = req.body;
+      if (!fromDate) return res.status(400).json({ message: "fromDate requerido" });
+      const queued = await qbo.initialSync(fromDate);
+      res.json({ ok: true, queued });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

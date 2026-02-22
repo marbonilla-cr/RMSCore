@@ -49,6 +49,7 @@ import ShortagesReportPage from "@/pages/shortages/report";
 import ShortagesActivePage from "@/pages/shortages/active";
 import ShortagesAuditPage from "@/pages/shortages/audit";
 import SalesCubePage from "@/pages/sales-cube";
+import AdminQuickBooksPage from "@/pages/admin/quickbooks";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRouteByPermissions(perms: string[]): string {
@@ -137,6 +138,7 @@ function AuthenticatedRouter() {
       <Route path="/admin/modifiers" component={AdminModifiersPage} />
       <Route path="/admin/discounts" component={AdminDiscountsPage} />
       <Route path="/admin/tax-categories" component={AdminTaxCategoriesPage} />
+      <Route path="/admin/quickbooks" component={AdminQuickBooksPage} />
       <Route path="/hr/mi-turno" component={HrMiTurnoPage} />
       <Route path="/hr/horarios" component={HrSchedulesPage} />
       <Route path="/hr/marcas" component={HrPunchesPage} />
