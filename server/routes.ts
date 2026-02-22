@@ -1627,7 +1627,9 @@ export async function registerRoutes(
       if (sourceOrder.tableId === destTableId) return res.status(400).json({ message: "La subcuenta ya está en esa mesa" });
 
       let destOrder = await storage.getOpenOrderForTable(destTableId);
-      if (destOrder && destOrder.status !== "OPEN") return res.status(400).json({ message: "La orden destino no está abierta" });
+      if (destOrder && !["OPEN", "IN_KITCHEN", "PREPARING", "READY"].includes(destOrder.status)) {
+        return res.status(400).json({ message: "La orden destino no está activa" });
+      }
 
       await db.transaction(async (tx) => {
         if (!destOrder) {

@@ -263,6 +263,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           .where(eq(orderSubaccounts.id, subaccountId));
       }
 
+      broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id, itemsCount: items.length });
       broadcast("qr_submission", { tableId: table.id, submissionId: sub.id });
 
       res.json({ submissionId: sub.id, message: "Pedido enviado" });
