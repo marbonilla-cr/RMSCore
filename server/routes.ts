@@ -5496,8 +5496,11 @@ export async function registerRoutes(
 
   app.get("/api/qbo/callback", async (req, res) => {
     try {
-      const { code, realmId } = req.query;
+      const { code, realmId, state } = req.query;
       if (!code || !realmId) return res.status(400).send("Missing code or realmId");
+      if (!state || !qbo.validateOAuthState(state as string)) {
+        return res.status(403).send("Invalid or expired OAuth state");
+      }
       await qbo.handleOAuthCallback(code as string, realmId as string);
       res.redirect("/admin/quickbooks?connected=true");
     } catch (err: any) {

@@ -18,23 +18,21 @@ const QBO_BASE_URL = QBO_ENVIRONMENT === "production"
   ? "https://quickbooks.api.intuit.com"
   : "https://sandbox-quickbooks.api.intuit.com";
 
+const oauthStateStore = new Map<string, number>();
+const STATE_TTL_MS = 10 * 60 * 1000;
+
 const ALGORITHM = "aes-256-cbc";
 const IV_LENGTH = 16;
 
+function deriveKey(): Buffer {
+  return crypto.createHash("sha256").update(QBO_ENCRYPT_KEY).digest();
+}
+
 export function encrypt(text: string): string {
   if (!QBO_ENCRYPT_KEY) throw new Error("QBO_ENCRYPT_KEY not configured");
-  const key = Buffer.from(QBO_ENCRYPT_KEY, "hex");
-  if (key.length !== 16) {
-    const key32 = crypto.createHash("sha256").update(QBO_ENCRYPT_KEY).digest();
-    const iv = crypto.randomBytes(IV_LENGTH);
-    const cipher = crypto.createCipheriv(ALGORITHM, key32, iv);
-    let encrypted = cipher.update(text, "utf8", "hex");
-    encrypted += cipher.final("hex");
-    return iv.toString("hex") + ":" + encrypted;
-  }
-  const key32 = crypto.createHash("sha256").update(QBO_ENCRYPT_KEY).digest();
+  const key = deriveKey();
   const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, key32, iv);
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
   let encrypted = cipher.update(text, "utf8", "hex");
   encrypted += cipher.final("hex");
   return iv.toString("hex") + ":" + encrypted;
@@ -42,7 +40,7 @@ export function encrypt(text: string): string {
 
 export function decrypt(text: string): string {
   if (!QBO_ENCRYPT_KEY) throw new Error("QBO_ENCRYPT_KEY not configured");
-  const key32 = crypto.createHash("sha256").update(QBO_ENCRYPT_KEY).digest();
+  const key32 = deriveKey();
   const parts = text.split(":");
   const iv = Buffer.from(parts[0], "hex");
   const encrypted = parts[1];
@@ -67,11 +65,15 @@ async function upsertQboConfig(data: Partial<QboConfig>) {
 }
 
 export function getAuthUrl(): string {
+  oauthStateStore.forEach((ts, key) => {
+    if (Date.now() - ts > STATE_TTL_MS) oauthStateStore.delete(key);
+  });
+
   const scopes = "com.intuit.quickbooks.accounting";
-  const state = crypto.randomBytes(8).toString("hex");
-  const authBase = QBO_ENVIRONMENT === "production"
-    ? "https://appcenter.intuit.com/connect/oauth2"
-    : "https://appcenter.intuit.com/connect/oauth2";
+  const state = crypto.randomBytes(16).toString("hex");
+  oauthStateStore.set(state, Date.now());
+
+  const authBase = "https://appcenter.intuit.com/connect/oauth2";
   const params = new URLSearchParams({
     client_id: QBO_CLIENT_ID,
     scope: scopes,
@@ -80,6 +82,13 @@ export function getAuthUrl(): string {
     state,
   });
   return `${authBase}?${params.toString()}`;
+}
+
+export function validateOAuthState(state: string): boolean {
+  const ts = oauthStateStore.get(state);
+  if (!ts) return false;
+  oauthStateStore.delete(state);
+  return Date.now() - ts < STATE_TTL_MS;
 }
 
 async function exchangeToken(code: string): Promise<{ access_token: string; refresh_token: string; expires_in: number; x_refresh_token_expires_in: number }> {
