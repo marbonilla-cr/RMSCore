@@ -90,6 +90,10 @@ export default function TablesPage() {
   const [moveSource, setMoveSource] = useState<number | null>(null);
   const [moveDest, setMoveDest] = useState<number | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
+  const [moveMode, setMoveMode] = useState<"table" | "subaccount">("table");
+  const [subaccounts, setSubaccounts] = useState<any[]>([]);
+  const [selectedSubaccount, setSelectedSubaccount] = useState<number | null>(null);
+  const [loadingSubaccounts, setLoadingSubaccounts] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     try {
       const saved = localStorage.getItem("tables_visible_columns");
@@ -168,32 +172,75 @@ export default function TablesPage() {
   const dayName = now.toLocaleDateString("es-CR", { weekday: "long" });
   const timeStr = now.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", hour12: true });
 
-  const handleMove = async () => {
-    if (!moveSource || !moveDest) return;
-    setMoveLoading(true);
+  const fetchSubaccounts = async (tableId: number) => {
+    const table = activeTables.find(t => t.id === tableId);
+    if (!table?.orderId) return;
+    setLoadingSubaccounts(true);
     try {
-      const res = await fetch("/api/tables/move", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ sourceTableId: moveSource, destTableId: moveDest }),
-      });
+      const res = await fetch(`/api/waiter/orders/${table.orderId}/by-subaccount`, { credentials: "include" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Error al mover mesa");
-      toast({ title: "Mesa movida", description: data.message });
-      setMoveDialogOpen(false);
-      setMoveSource(null);
-      setMoveDest(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setMoveLoading(false);
+      setSubaccounts(data.groups || []);
+    } catch { setSubaccounts([]); }
+    finally { setLoadingSubaccounts(false); }
+  };
+
+  const handleSelectSource = (tableId: number) => {
+    setMoveSource(tableId);
+    setMoveDest(null);
+    setSelectedSubaccount(null);
+    if (moveMode === "subaccount") fetchSubaccounts(tableId);
+  };
+
+  const handleMove = async () => {
+    if (moveMode === "subaccount") {
+      if (!selectedSubaccount || !moveDest) return;
+      setMoveLoading(true);
+      try {
+        const res = await fetch("/api/tables/move-subaccount", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ subaccountId: selectedSubaccount, destTableId: moveDest }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "Error al mover subcuenta");
+        toast({ title: "Subcuenta movida", description: data.message });
+        setMoveDialogOpen(false);
+        setMoveSource(null);
+        setMoveDest(null);
+        setSelectedSubaccount(null);
+        queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      } catch (err: any) {
+        toast({ title: "Error", description: err.message, variant: "destructive" });
+      } finally { setMoveLoading(false); }
+    } else {
+      if (!moveSource || !moveDest) return;
+      setMoveLoading(true);
+      try {
+        const res = await fetch("/api/tables/move", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ sourceTableId: moveSource, destTableId: moveDest }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "Error al mover mesa");
+        toast({ title: "Mesa movida", description: data.message });
+        setMoveDialogOpen(false);
+        setMoveSource(null);
+        setMoveDest(null);
+        queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      } catch (err: any) {
+        toast({ title: "Error", description: err.message, variant: "destructive" });
+      } finally { setMoveLoading(false); }
     }
   };
 
   const occupiedTables = activeTables.filter(t => isEffectivelyOpen(t));
   const availableTables = activeTables.filter(t => !isEffectivelyOpen(t));
+  const moveDestTables = moveMode === "subaccount"
+    ? activeTables.filter(t => t.id !== moveSource)
+    : availableTables;
 
   return (
     <div className="screen-tables page-enter">
@@ -595,6 +642,34 @@ export default function TablesPage() {
           font-family: var(--f-mono);
           font-size: 12px;
         }
+        .move-mode-toggle {
+          display: flex;
+          gap: 0;
+          padding: 8px 18px;
+          border-bottom: 1px solid var(--border-ds);
+        }
+        .move-mode-btn {
+          flex: 1;
+          padding: 8px;
+          border: 1px solid var(--border-ds);
+          background: var(--s2);
+          color: var(--text3);
+          font-family: var(--f-mono);
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all var(--t-fast);
+        }
+        .move-mode-btn:first-child { border-radius: var(--r-sm) 0 0 var(--r-sm); }
+        .move-mode-btn:last-child { border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+        .move-mode-btn.active {
+          background: var(--green);
+          color: #050f08;
+          border-color: var(--green);
+        }
+        .move-sub-section {
+          border-top: 1px solid var(--border-ds);
+        }
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
@@ -608,7 +683,7 @@ export default function TablesPage() {
         </div>
         <button
           className="header-action"
-          onClick={() => { setMoveDialogOpen(true); setMoveSource(null); setMoveDest(null); }}
+          onClick={() => { setMoveDialogOpen(true); setMoveSource(null); setMoveDest(null); setMoveMode("table"); setSelectedSubaccount(null); setSubaccounts([]); }}
           data-testid="button-move-table"
           style={{ marginRight: 6 }}
           title="Mover mesa"
@@ -640,8 +715,20 @@ export default function TablesPage() {
           <div className="move-dialog" data-testid="dialog-move-table">
             <div className="move-dialog-header">
               <ArrowRightLeft size={18} />
-              <span>Mover mesa</span>
+              <span>Mover {moveMode === "subaccount" ? "subcuenta" : "mesa"}</span>
               <button onClick={() => setMoveDialogOpen(false)} data-testid="button-close-move" style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--text3)", cursor: "pointer", fontSize: 18 }}>&times;</button>
+            </div>
+            <div className="move-mode-toggle" data-testid="move-mode-toggle">
+              <button
+                className={`move-mode-btn${moveMode === "table" ? " active" : ""}`}
+                onClick={() => { setMoveMode("table"); setMoveSource(null); setMoveDest(null); setSelectedSubaccount(null); setSubaccounts([]); }}
+                data-testid="button-mode-table"
+              >Mesa completa</button>
+              <button
+                className={`move-mode-btn${moveMode === "subaccount" ? " active" : ""}`}
+                onClick={() => { setMoveMode("subaccount"); setMoveSource(null); setMoveDest(null); setSelectedSubaccount(null); setSubaccounts([]); }}
+                data-testid="button-mode-subaccount"
+              >Subcuenta</button>
             </div>
             <div className="move-dialog-body">
               <div className="move-col">
@@ -653,7 +740,7 @@ export default function TablesPage() {
                     <button
                       key={t.id}
                       className={`move-item${moveSource === t.id ? " selected" : ""}`}
-                      onClick={() => { setMoveSource(t.id); setMoveDest(null); }}
+                      onClick={() => handleSelectSource(t.id)}
                       data-testid={`move-source-${t.id}`}
                     >
                       <div className="move-item-name">{t.tableName}</div>
@@ -661,40 +748,69 @@ export default function TablesPage() {
                     </button>
                   ))}
                 </div>
+                {moveMode === "subaccount" && moveSource && (
+                  <div className="move-sub-section">
+                    <div className="move-col-title">Subcuentas</div>
+                    <div className="move-col-list" style={{ maxHeight: 140 }}>
+                      {loadingSubaccounts ? (
+                        <div className="move-empty"><Loader2 size={16} className="spin" /></div>
+                      ) : subaccounts.length === 0 ? (
+                        <div className="move-empty">Sin subcuentas</div>
+                      ) : subaccounts.map((g: any) => (
+                        <button
+                          key={g.subaccount.id}
+                          className={`move-item${selectedSubaccount === g.subaccount.id ? " selected" : ""}`}
+                          onClick={() => { setSelectedSubaccount(g.subaccount.id); setMoveDest(null); }}
+                          data-testid={`move-sub-${g.subaccount.id}`}
+                        >
+                          <div className="move-item-name">{g.subaccount.label || g.subaccount.code}</div>
+                          <div className="move-item-detail">{g.items?.length || 0} items</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="move-arrow-sep">
-                <ArrowRightLeft size={20} style={{ color: moveSource ? "var(--green)" : "var(--text3)" }} />
+                <ArrowRightLeft size={20} style={{ color: (moveMode === "table" ? moveSource : selectedSubaccount) ? "var(--green)" : "var(--text3)" }} />
               </div>
               <div className="move-col">
-                <div className="move-col-title">Destino (libre)</div>
+                <div className="move-col-title">Destino {moveMode === "table" ? "(libre)" : "(cualquier mesa)"}</div>
                 <div className="move-col-list">
-                  {availableTables.length === 0 ? (
-                    <div className="move-empty">No hay mesas libres</div>
-                  ) : availableTables.map(t => (
-                    <button
-                      key={t.id}
-                      className={`move-item${moveDest === t.id ? " selected" : ""}${!moveSource ? " disabled" : ""}`}
-                      onClick={() => moveSource && setMoveDest(t.id)}
-                      disabled={!moveSource}
-                      data-testid={`move-dest-${t.id}`}
-                    >
-                      <div className="move-item-name">{t.tableName}</div>
-                      <div className="move-item-detail">Libre</div>
-                    </button>
-                  ))}
+                  {moveDestTables.length === 0 ? (
+                    <div className="move-empty">No hay mesas disponibles</div>
+                  ) : moveDestTables.map(t => {
+                    const canSelect = moveMode === "table" ? !!moveSource : !!selectedSubaccount;
+                    const isOccupied = isEffectivelyOpen(t);
+                    return (
+                      <button
+                        key={t.id}
+                        className={`move-item${moveDest === t.id ? " selected" : ""}${!canSelect ? " disabled" : ""}`}
+                        onClick={() => canSelect && setMoveDest(t.id)}
+                        disabled={!canSelect}
+                        data-testid={`move-dest-${t.id}`}
+                      >
+                        <div className="move-item-name">{t.tableName}</div>
+                        <div className="move-item-detail">{isOccupied ? `${t.itemCount} items` : "Libre"}</div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
-            {moveSource && moveDest && (
+            {moveDest && (moveMode === "table" ? moveSource : selectedSubaccount) && (
               <div className="move-summary" data-testid="move-summary">
-                {activeTables.find(t => t.id === moveSource)?.tableName} → {activeTables.find(t => t.id === moveDest)?.tableName}
+                {moveMode === "subaccount" && selectedSubaccount
+                  ? `${subaccounts.find((g: any) => g.subaccount.id === selectedSubaccount)?.subaccount.label || "Subcuenta"} → ${activeTables.find(t => t.id === moveDest)?.tableName}`
+                  : `${activeTables.find(t => t.id === moveSource)?.tableName} → ${activeTables.find(t => t.id === moveDest)?.tableName}`
+                }
               </div>
             )}
             <div className="move-dialog-footer">
               <button className="move-cancel" onClick={() => setMoveDialogOpen(false)} data-testid="button-cancel-move">Cancelar</button>
               <button
                 className="move-confirm"
-                disabled={!moveSource || !moveDest || moveLoading}
+                disabled={moveMode === "table" ? (!moveSource || !moveDest || moveLoading) : (!selectedSubaccount || !moveDest || moveLoading)}
                 onClick={handleMove}
                 data-testid="button-confirm-move"
               >

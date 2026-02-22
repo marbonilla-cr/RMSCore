@@ -13,7 +13,7 @@ import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
 import * as qbo from "./quickbooks";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -1604,6 +1604,115 @@ export async function registerRoutes(
       broadcast("kds_refresh", {});
 
       res.json({ ok: true, message: `Mesa ${sourceTable.tableName} movida a ${destTable.tableName}` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/tables/move-subaccount", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const subaccountId = parseInt(req.body.subaccountId);
+      const destTableId = parseInt(req.body.destTableId);
+      if (isNaN(subaccountId) || isNaN(destTableId)) return res.status(400).json({ message: "Parámetros inválidos" });
+
+      const [subaccount] = await db.select().from(orderSubaccounts).where(eq(orderSubaccounts.id, subaccountId));
+      if (!subaccount) return res.status(404).json({ message: "Subcuenta no encontrada" });
+
+      const sourceOrder = await storage.getOrder(subaccount.orderId);
+      if (!sourceOrder || sourceOrder.status === "CLOSED") return res.status(400).json({ message: "Orden origen no válida" });
+
+      const sourceTable = await storage.getTable(sourceOrder.tableId);
+      const destTable = await storage.getTable(destTableId);
+      if (!destTable || !destTable.active) return res.status(404).json({ message: "Mesa destino no encontrada o inactiva" });
+      if (sourceOrder.tableId === destTableId) return res.status(400).json({ message: "La subcuenta ya está en esa mesa" });
+
+      let destOrder = await storage.getOpenOrderForTable(destTableId);
+      if (destOrder && destOrder.status !== "OPEN") return res.status(400).json({ message: "La orden destino no está abierta" });
+
+      await db.transaction(async (tx) => {
+        if (!destOrder) {
+          const [newOrder] = await tx.insert(orders).values({
+            tableId: destTableId,
+            status: "OPEN",
+            responsibleWaiterId: sourceOrder.responsibleWaiterId,
+            businessDate: getBusinessDateCR(),
+          }).returning();
+          destOrder = newOrder;
+        }
+
+        const subItems = await tx.select().from(orderItems)
+          .where(and(eq(orderItems.orderId, sourceOrder.id), eq(orderItems.subaccountId, subaccountId)));
+
+        const subItemIds = subItems.map(i => i.id);
+
+        if (subItemIds.length > 0) {
+          await tx.update(orderItems).set({ orderId: destOrder!.id })
+            .where(inArray(orderItems.id, subItemIds));
+
+          const relatedTicketItems = await tx.select().from(kitchenTicketItems)
+            .where(inArray(kitchenTicketItems.orderItemId, subItemIds));
+          const ticketIdSet = new Set(relatedTicketItems.map(ti => ti.kitchenTicketId));
+          const ticketIds = Array.from(ticketIdSet);
+
+          for (const ticketId of ticketIds) {
+            const allTicketItems = await tx.select().from(kitchenTicketItems)
+              .where(eq(kitchenTicketItems.kitchenTicketId, ticketId));
+            const movedIds = new Set(subItemIds);
+            const remainingItems = allTicketItems.filter(ti => !movedIds.has(ti.orderItemId));
+
+            if (remainingItems.length === 0) {
+              await tx.update(kitchenTickets).set({
+                orderId: destOrder!.id,
+                tableId: destTableId,
+                tableNameSnapshot: destTable.tableName,
+              }).where(eq(kitchenTickets.id, ticketId));
+            } else {
+              const movedItems = allTicketItems.filter(ti => movedIds.has(ti.orderItemId));
+              if (movedItems.length > 0) {
+                const [origTicket] = await tx.select().from(kitchenTickets).where(eq(kitchenTickets.id, ticketId));
+                const [newTicket] = await tx.insert(kitchenTickets).values({
+                  orderId: destOrder!.id,
+                  tableId: destTableId,
+                  tableNameSnapshot: destTable.tableName,
+                  status: origTicket.status,
+                  kdsDestination: origTicket.kdsDestination,
+                }).returning();
+                await tx.update(kitchenTicketItems).set({ kitchenTicketId: newTicket.id })
+                  .where(inArray(kitchenTicketItems.id, movedItems.map(m => m.id)));
+              }
+            }
+          }
+
+          await tx.update(salesLedgerItems).set({ orderId: destOrder!.id, tableId: destTableId, tableNameSnapshot: destTable.tableName })
+            .where(inArray(salesLedgerItems.orderItemId, subItemIds));
+        }
+
+        const relatedSubs = await tx.select().from(qrSubmissions)
+          .where(eq(qrSubmissions.orderId, sourceOrder.id));
+        for (const qs of relatedSubs) {
+          const payload = qs.payloadSnapshot as any;
+          if (payload?.subaccountId === subaccountId) {
+            await tx.update(qrSubmissions).set({ orderId: destOrder!.id, tableId: destTableId })
+              .where(eq(qrSubmissions.id, qs.id));
+          }
+        }
+
+        await tx.update(orderSubaccounts).set({
+          orderId: destOrder!.id,
+          tableId: destTableId,
+        }).where(eq(orderSubaccounts.id, subaccountId));
+      });
+
+      await storage.recalcOrderTotal(sourceOrder.id);
+      await storage.recalcOrderTotal(destOrder!.id);
+
+      broadcast("table_status_changed", { tableId: sourceOrder.tableId });
+      broadcast("table_status_changed", { tableId: destTableId });
+      broadcast("order_updated", { tableId: sourceOrder.tableId, orderId: sourceOrder.id });
+      broadcast("order_updated", { tableId: destTableId, orderId: destOrder!.id });
+      broadcast("kds_refresh", {});
+
+      res.json({ ok: true, message: `Subcuenta "${subaccount.label}" movida de ${sourceTable?.tableName} a ${destTable.tableName}` });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
