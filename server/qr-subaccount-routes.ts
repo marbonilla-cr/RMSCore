@@ -645,12 +645,17 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     try {
       const orderId = parseInt(req.params.orderId as string);
 
-      const subs = await db.select().from(orderSubaccounts)
-        .where(and(eq(orderSubaccounts.orderId, orderId), eq(orderSubaccounts.isActive, true)));
-      if (subs.length === 0) return res.status(400).json({ message: "No hay subcuentas para esta orden" });
-
       const allItems = await storage.getOrderItems(orderId);
       const activeItems = allItems.filter((i: any) => i.status !== "VOIDED" && i.status !== "PAID");
+
+      if (activeItems.length === 0) {
+        return res.status(400).json({ message: "No hay items activos para dividir" });
+      }
+
+      const hasNames = activeItems.some((i: any) => (i as any).customerNameSnapshot);
+      if (!hasNames) {
+        return res.status(400).json({ message: "Los items no tienen nombres de subcuenta asignados" });
+      }
 
       const existingSplits = await storage.getSplitAccountsForOrder(orderId);
 
@@ -667,8 +672,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           existingWithItems.push({ ...s, items: validItems });
         }
         const labelSet = new Set(existingSplits.map(s => (s.label || "").trim()));
-        const hasDuplicateLabels = labelSet.size < existingSplits.length;
-        if (hasDuplicateLabels) {
+        if (labelSet.size < existingSplits.length) {
           existingValid = false;
         }
         if (existingValid && existingWithItems.some(s => s.items.length > 0)) {
@@ -679,30 +683,19 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         }
       }
 
-      const subIdSet = new Set(subs.map(s => s.id));
-      const nameGroups = new Map<string, typeof activeItems>();
-      for (const sub of subs) {
-        const name = (sub.label || `Mesa ${sub.code}`).trim();
-        const subItems = activeItems.filter((i: any) => (i as any).subaccountId === sub.id);
-        if (subItems.length === 0) continue;
-        const existing = nameGroups.get(name) || [];
-        nameGroups.set(name, [...existing, ...subItems]);
+      const nameGroups: Record<string, typeof activeItems> = {};
+      for (const item of activeItems) {
+        const name = ((item as any).customerNameSnapshot || "").trim();
+        const key = name || "Sin subcuenta";
+        if (!nameGroups[key]) nameGroups[key] = [];
+        nameGroups[key].push(item);
       }
 
       const result: any[] = [];
-      for (const [name, groupItems] of nameGroups) {
+      for (const name of Object.keys(nameGroups)) {
+        const groupItems = nameGroups[name];
         const split = await storage.createSplitAccount({ orderId, label: name });
         for (const item of groupItems) {
-          await storage.createSplitItem({ splitId: split.id, orderItemId: item.id });
-        }
-        const items = await storage.getSplitItemsForSplit(split.id);
-        result.push({ ...split, items });
-      }
-
-      const unassignedItems = activeItems.filter((i: any) => !(i as any).subaccountId || !subs.find(s => s.id === (i as any).subaccountId));
-      if (unassignedItems.length > 0) {
-        const split = await storage.createSplitAccount({ orderId, label: "Sin subcuenta" });
-        for (const item of unassignedItems) {
           await storage.createSplitItem({ splitId: split.id, orderItemId: item.id });
         }
         const items = await storage.getSplitItemsForSplit(split.id);
