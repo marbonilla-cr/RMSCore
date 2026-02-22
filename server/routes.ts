@@ -13,7 +13,7 @@ import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
 import * as qbo from "./quickbooks";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -1569,6 +1569,41 @@ export async function registerRoutes(
       }));
 
       res.json({ table, activeOrder: order, orderItems: itemsWithMods, pendingQrSubmissions: subsWithItems, voidedItems: voidedItemsWithNames });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/tables/move", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const srcId = parseInt(req.body.sourceTableId);
+      const dstId = parseInt(req.body.destTableId);
+      if (isNaN(srcId) || isNaN(dstId)) return res.status(400).json({ message: "IDs de mesa inválidos" });
+      if (srcId === dstId) return res.status(400).json({ message: "La mesa origen y destino no pueden ser la misma" });
+
+      const sourceTable = await storage.getTable(srcId);
+      const destTable = await storage.getTable(dstId);
+      if (!sourceTable || !sourceTable.active) return res.status(404).json({ message: "Mesa origen no encontrada o inactiva" });
+      if (!destTable || !destTable.active) return res.status(404).json({ message: "Mesa destino no encontrada o inactiva" });
+
+      const sourceOrder = await storage.getOpenOrderForTable(srcId);
+      if (!sourceOrder) return res.status(400).json({ message: "La mesa origen no tiene una orden abierta" });
+
+      const destOrder = await storage.getOpenOrderForTable(dstId);
+      if (destOrder) return res.status(400).json({ message: "La mesa destino ya tiene una orden abierta" });
+
+      await db.transaction(async (tx) => {
+        await tx.update(orders).set({ tableId: dstId }).where(eq(orders.id, sourceOrder.id));
+        await tx.update(qrSubmissions).set({ tableId: dstId }).where(and(eq(qrSubmissions.orderId, sourceOrder.id), eq(qrSubmissions.tableId, srcId)));
+        await tx.update(kitchenTickets).set({ tableId: dstId, tableNameSnapshot: destTable.tableName }).where(and(eq(kitchenTickets.orderId, sourceOrder.id), eq(kitchenTickets.tableId, srcId)));
+      });
+
+      broadcast("table_status_changed", { tableId: srcId });
+      broadcast("table_status_changed", { tableId: dstId });
+      broadcast("order_updated", { tableId: dstId, orderId: sourceOrder.id });
+      broadcast("kds_refresh", {});
+
+      res.json({ ok: true, message: `Mesa ${sourceTable.tableName} movida a ${destTable.tableName}` });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

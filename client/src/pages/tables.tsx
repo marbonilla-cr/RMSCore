@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell } from "lucide-react";
+import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell, ArrowRightLeft } from "lucide-react";
 import { wsManager } from "@/lib/ws";
 import { formatCurrency, timeAgo } from "@/lib/utils";
 import { ReservationsSheet } from "@/components/reservations/ReservationsSheet";
@@ -86,6 +86,10 @@ export default function TablesPage() {
   const [search, setSearch] = useState("");
   const [showColumnPicker, setShowColumnPicker] = useState(false);
   const [reservationsOpen, setReservationsOpen] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [moveSource, setMoveSource] = useState<number | null>(null);
+  const [moveDest, setMoveDest] = useState<number | null>(null);
+  const [moveLoading, setMoveLoading] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     try {
       const saved = localStorage.getItem("tables_visible_columns");
@@ -163,6 +167,33 @@ export default function TablesPage() {
   const now = new Date();
   const dayName = now.toLocaleDateString("es-CR", { weekday: "long" });
   const timeStr = now.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", hour12: true });
+
+  const handleMove = async () => {
+    if (!moveSource || !moveDest) return;
+    setMoveLoading(true);
+    try {
+      const res = await fetch("/api/tables/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ sourceTableId: moveSource, destTableId: moveDest }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Error al mover mesa");
+      toast({ title: "Mesa movida", description: data.message });
+      setMoveDialogOpen(false);
+      setMoveSource(null);
+      setMoveDest(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setMoveLoading(false);
+    }
+  };
+
+  const occupiedTables = activeTables.filter(t => isEffectivelyOpen(t));
+  const availableTables = activeTables.filter(t => !isEffectivelyOpen(t));
 
   return (
     <div className="screen-tables page-enter">
@@ -407,6 +438,165 @@ export default function TablesPage() {
         .host-chip.walkin.good { background: var(--sage-d); color: var(--sage); }
         .host-chip.walkin.tight { background: var(--amber-d); color: var(--amber); }
         .host-chip.walkin.full { background: var(--red-d); color: var(--red); }
+
+        .move-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.5);
+          z-index: 200;
+        }
+        .move-dialog {
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          z-index: 201;
+          background: var(--s1);
+          border: 1px solid var(--border-ds);
+          border-radius: var(--r-lg);
+          width: min(94vw, 520px);
+          max-height: 80dvh;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .move-dialog-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 16px 18px;
+          border-bottom: 1px solid var(--border-ds);
+          font-family: var(--f-disp);
+          font-size: 16px;
+          font-weight: 700;
+        }
+        .move-dialog-body {
+          display: flex;
+          gap: 0;
+          flex: 1;
+          overflow: hidden;
+          min-height: 200px;
+        }
+        .move-col {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .move-col-title {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text3);
+          padding: 10px 14px 6px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .move-col-list {
+          flex: 1;
+          overflow-y: auto;
+          padding: 4px 8px 8px;
+        }
+        .move-arrow-sep {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 40px;
+          flex-shrink: 0;
+          border-left: 1px solid var(--border-ds);
+          border-right: 1px solid var(--border-ds);
+        }
+        .move-item {
+          display: block;
+          width: 100%;
+          text-align: left;
+          padding: 10px 12px;
+          border-radius: var(--r-sm);
+          border: 1.5px solid transparent;
+          background: none;
+          cursor: pointer;
+          transition: all var(--t-fast);
+          color: var(--text);
+          font-family: var(--f-body);
+          margin-bottom: 4px;
+        }
+        .move-item:hover { background: var(--s2); }
+        .move-item:active { background: var(--s3, var(--s2)); }
+        .move-item.selected {
+          border-color: var(--green);
+          background: var(--sage-d);
+        }
+        .move-item.disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+        .move-item-name {
+          font-family: var(--f-disp);
+          font-size: 14px;
+          font-weight: 700;
+        }
+        .move-item-detail {
+          font-family: var(--f-mono);
+          font-size: 10px;
+          color: var(--text3);
+          margin-top: 2px;
+        }
+        .move-summary {
+          text-align: center;
+          padding: 10px 18px;
+          font-family: var(--f-disp);
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--green);
+          border-top: 1px solid var(--border-ds);
+        }
+        .move-dialog-footer {
+          display: flex;
+          gap: 10px;
+          padding: 14px 18px;
+          border-top: 1px solid var(--border-ds);
+        }
+        .move-cancel {
+          flex: 1;
+          padding: 10px;
+          border-radius: var(--r-sm);
+          border: 1px solid var(--border-ds);
+          background: var(--s2);
+          color: var(--text2);
+          font-family: var(--f-mono);
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .move-confirm {
+          flex: 1;
+          padding: 10px;
+          border-radius: var(--r-sm);
+          border: none;
+          background: var(--green);
+          color: #050f08;
+          font-family: var(--f-mono);
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+        }
+        .move-confirm:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+        .move-empty {
+          text-align: center;
+          padding: 24px 12px;
+          color: var(--text3);
+          font-family: var(--f-mono);
+          font-size: 12px;
+        }
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
 
       <div className="screen-header">
@@ -416,6 +606,15 @@ export default function TablesPage() {
             {dayName} · {timeStr} · <span style={{ color: "var(--green)" }}>{occupiedCount} activas</span>
           </div>
         </div>
+        <button
+          className="header-action"
+          onClick={() => { setMoveDialogOpen(true); setMoveSource(null); setMoveDest(null); }}
+          data-testid="button-move-table"
+          style={{ marginRight: 6 }}
+          title="Mover mesa"
+        >
+          <ArrowRightLeft size={16} />
+        </button>
         <button
           className="header-action"
           onClick={() => setReservationsOpen(true)}
@@ -434,6 +633,77 @@ export default function TablesPage() {
       </div>
 
       <ReservationsSheet open={reservationsOpen} onOpenChange={setReservationsOpen} />
+
+      {moveDialogOpen && (
+        <>
+          <div className="move-overlay" onClick={() => setMoveDialogOpen(false)} />
+          <div className="move-dialog" data-testid="dialog-move-table">
+            <div className="move-dialog-header">
+              <ArrowRightLeft size={18} />
+              <span>Mover mesa</span>
+              <button onClick={() => setMoveDialogOpen(false)} data-testid="button-close-move" style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--text3)", cursor: "pointer", fontSize: 18 }}>&times;</button>
+            </div>
+            <div className="move-dialog-body">
+              <div className="move-col">
+                <div className="move-col-title">Origen (con cuenta)</div>
+                <div className="move-col-list">
+                  {occupiedTables.length === 0 ? (
+                    <div className="move-empty">No hay mesas ocupadas</div>
+                  ) : occupiedTables.map(t => (
+                    <button
+                      key={t.id}
+                      className={`move-item${moveSource === t.id ? " selected" : ""}`}
+                      onClick={() => { setMoveSource(t.id); setMoveDest(null); }}
+                      data-testid={`move-source-${t.id}`}
+                    >
+                      <div className="move-item-name">{t.tableName}</div>
+                      <div className="move-item-detail">{t.itemCount} items · {t.responsibleWaiterName || "Sin salonero"}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="move-arrow-sep">
+                <ArrowRightLeft size={20} style={{ color: moveSource ? "var(--green)" : "var(--text3)" }} />
+              </div>
+              <div className="move-col">
+                <div className="move-col-title">Destino (libre)</div>
+                <div className="move-col-list">
+                  {availableTables.length === 0 ? (
+                    <div className="move-empty">No hay mesas libres</div>
+                  ) : availableTables.map(t => (
+                    <button
+                      key={t.id}
+                      className={`move-item${moveDest === t.id ? " selected" : ""}${!moveSource ? " disabled" : ""}`}
+                      onClick={() => moveSource && setMoveDest(t.id)}
+                      disabled={!moveSource}
+                      data-testid={`move-dest-${t.id}`}
+                    >
+                      <div className="move-item-name">{t.tableName}</div>
+                      <div className="move-item-detail">Libre</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {moveSource && moveDest && (
+              <div className="move-summary" data-testid="move-summary">
+                {activeTables.find(t => t.id === moveSource)?.tableName} → {activeTables.find(t => t.id === moveDest)?.tableName}
+              </div>
+            )}
+            <div className="move-dialog-footer">
+              <button className="move-cancel" onClick={() => setMoveDialogOpen(false)} data-testid="button-cancel-move">Cancelar</button>
+              <button
+                className="move-confirm"
+                disabled={!moveSource || !moveDest || moveLoading}
+                onClick={handleMove}
+                data-testid="button-confirm-move"
+              >
+                {moveLoading ? <Loader2 size={14} className="spin" /> : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {showColumnPicker && (
         <>
