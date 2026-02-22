@@ -2619,6 +2619,17 @@ export async function registerRoutes(
     const orderIds = relevantOrders.map(o => o.id);
     const allItems = await storage.getOrderItemsByOrderIds(orderIds);
 
+    const allSubaccounts = orderIds.length > 0
+      ? await db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, orderIds))
+      : [];
+    const subaccountsByOrder = new Map<number, string[]>();
+    for (const sa of allSubaccounts) {
+      if (sa.label) {
+        if (!subaccountsByOrder.has(sa.orderId)) subaccountsByOrder.set(sa.orderId, []);
+        subaccountsByOrder.get(sa.orderId)!.push(sa.label);
+      }
+    }
+
     const activeItems = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PENDING");
     const allItemIds = allItems.map(i => i.id);
     const activeItemIds = activeItems.map(i => i.id);
@@ -2699,6 +2710,7 @@ export async function registerRoutes(
         totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
         totalTaxes: orderTaxesList.reduce((s, t) => s + Number(t.taxAmount), 0).toFixed(2),
         taxBreakdown: aggregateTaxBreakdown(orderTaxesList),
+        subaccountNames: subaccountsByOrder.get(order.id) || [],
       });
     }
     res.json(result);

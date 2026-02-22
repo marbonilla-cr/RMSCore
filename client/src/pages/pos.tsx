@@ -79,6 +79,7 @@ interface POSTable {
   totalDiscounts?: string;
   totalTaxes?: string;
   taxBreakdown?: TaxBreakdownEntry[];
+  subaccountNames?: string[];
 }
 
 interface SplitAccountData {
@@ -1046,6 +1047,7 @@ export default function POSPage() {
         .pos-table-card.highlighted { border-color: var(--green); box-shadow: 0 0 12px rgba(46,204,113,0.15); }
         .pos-tc-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
         .pos-tc-name { font-family: var(--f-disp); font-size: 20px; font-weight: 800; }
+        .pos-tc-subs { font-size: 12px; color: var(--text3); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .pos-tc-items-badge {
           display: inline-flex; align-items: center; gap: 4px;
           padding: 3px 10px; border-radius: 20px;
@@ -1423,6 +1425,11 @@ export default function POSPage() {
             <span className="pos-detail-title" data-testid="text-detail-table-name">{selectedTable.tableName}</span>
             <span className="pos-tc-items-badge">{selectedTable.itemCount} items</span>
           </div>
+          {selectedTable.subaccountNames && selectedTable.subaccountNames.length > 0 && (
+            <div className="pos-tc-subs" style={{ marginTop: -8, marginBottom: 10, paddingLeft: 40 }} data-testid="text-detail-subnames">
+              {selectedTable.subaccountNames.join(", ")}
+            </div>
+          )}
 
           {splitMode ? (
             <div className="pos-detail-grid">
@@ -1789,6 +1796,11 @@ export default function POSPage() {
                           <span className="pos-tc-name">{t.tableName}</span>
                           <span className="pos-tc-items-badge">{t.itemCount} items</span>
                         </div>
+                        {t.subaccountNames && t.subaccountNames.length > 0 && (
+                          <div className="pos-tc-subs" data-testid={`text-subnames-${t.orderId}`}>
+                            {t.subaccountNames.join(", ")}
+                          </div>
+                        )}
                         <div className="pos-tc-mid">
                           <span className="pos-tc-amount">{formatCurrency(Number(t.totalAmount))}</span>
                           {t.openedAt && (
