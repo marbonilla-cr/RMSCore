@@ -1012,3 +1012,52 @@ export type InsertReservation = z.infer<typeof insertReservationSchema>;
 export type ReservationDurationConfig = typeof reservationDurationConfig.$inferSelect;
 export type InsertReservationDurationConfig = z.infer<typeof insertReservationDurationConfigSchema>;
 export type ReservationSettings = typeof reservationSettings.$inferSelect;
+
+export const qboConfig = pgTable("qbo_config", {
+  id: serial("id").primaryKey(),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  realmId: varchar("realm_id", { length: 100 }),
+  tokenExpiresAt: timestamp("token_expires_at"),
+  depositAccountCash: varchar("deposit_account_cash", { length: 50 }),
+  depositAccountCard: varchar("deposit_account_card", { length: 50 }),
+  depositAccountSinpe: varchar("deposit_account_sinpe", { length: 50 }),
+  taxCodeRef: varchar("tax_code_ref", { length: 50 }),
+  isConnected: boolean("is_connected").notNull().default(false),
+  connectedAt: timestamp("connected_at"),
+  lastTokenRefresh: timestamp("last_token_refresh"),
+  syncFromDate: date("sync_from_date"),
+});
+
+export const qboCategoryMapping = pgTable("qbo_category_mapping", {
+  id: serial("id").primaryKey(),
+  categoryId: integer("category_id").notNull(),
+  qboItemId: varchar("qbo_item_id", { length: 50 }).notNull(),
+  qboItemName: varchar("qbo_item_name", { length: 200 }),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const qboSyncLog = pgTable("qbo_sync_log", {
+  id: serial("id").primaryKey(),
+  paymentId: integer("payment_id").notNull(),
+  orderId: integer("order_id").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  qboReceiptId: varchar("qbo_receipt_id", { length: 100 }),
+  qboReceiptNumber: varchar("qbo_receipt_number", { length: 50 }),
+  errorMessage: text("error_message"),
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  syncedAt: timestamp("synced_at"),
+  nextRetryAt: timestamp("next_retry_at"),
+});
+
+export const insertQboConfigSchema = createInsertSchema(qboConfig).omit({ id: true });
+export const insertQboCategoryMappingSchema = createInsertSchema(qboCategoryMapping).omit({ id: true });
+export const insertQboSyncLogSchema = createInsertSchema(qboSyncLog).omit({ id: true, createdAt: true });
+
+export type QboConfig = typeof qboConfig.$inferSelect;
+export type InsertQboConfig = z.infer<typeof insertQboConfigSchema>;
+export type QboCategoryMapping = typeof qboCategoryMapping.$inferSelect;
+export type InsertQboCategoryMapping = z.infer<typeof insertQboCategoryMappingSchema>;
+export type QboSyncLog = typeof qboSyncLog.$inferSelect;
+export type InsertQboSyncLog = z.infer<typeof insertQboSyncLogSchema>;
