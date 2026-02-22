@@ -650,11 +650,28 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       if (subs.length === 0) return res.status(400).json({ message: "No hay subcuentas para esta orden" });
 
       const allItems = await storage.getOrderItems(orderId);
-      const activeItems = allItems.filter((i: any) => i.status !== "VOIDED");
+      const activeItems = allItems.filter((i: any) => i.status !== "VOIDED" && i.status !== "PAID");
 
       const existingSplits = await storage.getSplitAccountsForOrder(orderId);
-      for (const s of existingSplits) {
-        await storage.deleteSplitAccount(s.id);
+
+      if (existingSplits.length > 0) {
+        const existingWithItems: any[] = [];
+        let existingValid = true;
+        for (const s of existingSplits) {
+          const sItems = await storage.getSplitItemsForSplit(s.id);
+          const validItems = sItems.filter(si => activeItems.some(ai => ai.id === si.orderItemId));
+          if (validItems.length === 0 && sItems.length > 0) {
+            existingValid = false;
+            break;
+          }
+          existingWithItems.push({ ...s, items: validItems });
+        }
+        if (existingValid && existingWithItems.some(s => s.items.length > 0)) {
+          return res.json(existingWithItems);
+        }
+        for (const s of existingSplits) {
+          await storage.deleteSplitAccount(s.id);
+        }
       }
 
       const result: any[] = [];

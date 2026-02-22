@@ -437,8 +437,8 @@ export default function POSPage() {
     mutationFn: async () => {
       return apiRequest("POST", `/api/pos/orders/${selectedTable!.orderId}/splits-from-subaccounts`);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
       setSplitMode(true);
       toast({ title: "Cuenta separada por subcuenta" });
     },
@@ -1554,9 +1554,19 @@ export default function POSPage() {
                         })
                       )}
                       {split.items.length > 0 && (
-                        <div className="psc-total" data-testid={`text-split-total-${split.id}`}>
-                          {formatCurrency(getSplitTotal(split))}
-                        </div>
+                        <>
+                          <div className="psc-total" data-testid={`text-split-total-${split.id}`}>
+                            {formatCurrency(getSplitTotal(split))}
+                          </div>
+                          <button
+                            className="btn-primary"
+                            style={{ width: '100%', marginTop: 6 }}
+                            onClick={(e) => { e.stopPropagation(); handleSplitPaySub(split.id, split.label, getSplitTotal(split)); }}
+                            data-testid={`button-pay-split-${split.id}`}
+                          >
+                            <DollarSign size={14} /> PAGAR {split.label}
+                          </button>
+                        </>
                       )}
                     </div>
                   ))
