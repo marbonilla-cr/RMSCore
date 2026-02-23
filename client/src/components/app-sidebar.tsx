@@ -264,15 +264,6 @@ export function AppSidebar() {
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
-            {showTables && (
-              <NavGroup label="Salón" items={tablesItems} location={location} onNav={close} />
-            )}
-            {showKDS && (
-              <NavGroup label="Cocina / Bar" items={kitchenItems} location={location} onNav={close} />
-            )}
-            {showPOS && (
-              <NavGroup label="Caja" items={cashierItems} location={location} onNav={close} />
-            )}
             {showDashboard && (
               <NavGroup label="Gerencia" items={dashboardItems} location={location} onNav={close} />
             )}
@@ -284,9 +275,6 @@ export function AppSidebar() {
             )}
             {showINV && (
               <NavGroup label="Inventario" labelIcon={Package} items={invItems} location={location} onNav={close} checkPrefix />
-            )}
-            {showShortages && (
-              <NavGroup label="Faltantes" labelIcon={AlertTriangle} items={shortageItems} location={location} onNav={close} checkPrefix />
             )}
             {showHR && (
               <NavGroup

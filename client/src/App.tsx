@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Switch, Route } from "wouter";
+import { Switch, Route, Link, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,7 +9,7 @@ import { useShortageAlerts } from "@/hooks/use-shortage-alerts";
 import { AppSidebar, DrawerProvider, DrawerTrigger } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { usePreventPullRefresh } from "@/hooks/use-prevent-pull-refresh";
-import { Loader2, LogOut, RefreshCw } from "lucide-react";
+import { Loader2, LogOut, RefreshCw, Grid3x3, CreditCard, ChefHat, Wine, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PinLoginPage from "@/pages/pin-login";
 import LoginPage from "@/pages/login";
@@ -159,6 +159,49 @@ function AuthenticatedRouter() {
   );
 }
 
+function QuickNavButtons() {
+  const { hasPermission } = usePermissions();
+  const [location] = useLocation();
+  const showTables = hasPermission("MODULE_TABLES_VIEW");
+  const showPOS = hasPermission("MODULE_POS_VIEW");
+  const showKDS = hasPermission("MODULE_KDS_VIEW");
+  const showShortages = hasPermission("SHORTAGES_VIEW");
+
+  const navItems = [
+    ...(showTables ? [{ url: "/tables", label: "Mesas", icon: Grid3x3 }] : []),
+    ...(showPOS ? [{ url: "/pos", label: "Caja", icon: CreditCard }] : []),
+    ...(showKDS ? [
+      { url: "/kds", label: "Cocina", icon: ChefHat },
+      { url: "/kds-bar", label: "Bar", icon: Wine },
+    ] : []),
+    ...(showShortages ? [{ url: "/shortages/active", label: "Faltantes", icon: AlertTriangle }] : []),
+  ];
+
+  if (navItems.length === 0) return null;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+      {navItems.map(item => {
+        const active = location === item.url || location.startsWith(item.url + "/");
+        const Icon = item.icon;
+        return (
+          <Link key={item.url} href={item.url}>
+            <Button
+              variant={active ? "default" : "ghost"}
+              size="sm"
+              data-testid={`quicknav-${item.url.replace(/\//g, "-").slice(1)}`}
+              className="flex flex-col items-center gap-0 h-auto py-1 px-2 min-w-[44px]"
+            >
+              <Icon size={16} />
+              <span className="text-[10px] leading-tight">{item.label}</span>
+            </Button>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
 function AuthenticatedLayout() {
   const { user, logout } = useAuth();
   useShortageAlerts();
@@ -208,6 +251,7 @@ function AuthenticatedLayout() {
               <RefreshCw className="w-4 h-4" />
             </Button>
           </div>
+          <QuickNavButtons />
           <div className="app-header-right">
             <ThemeToggle />
             {user && (
