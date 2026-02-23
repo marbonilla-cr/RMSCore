@@ -204,12 +204,8 @@ function Sidebar({
         data-sidebar="sidebar"
         data-slot="sidebar"
         data-mobile={isMobile ? "true" : "false"}
-        className="bg-sidebar text-sidebar-foreground w-[var(--sidebar-width)] p-0 [&>button.absolute]:text-white/70 [&>button.absolute]:hover:text-white"
-        style={
-          {
-            "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
-          } as React.CSSProperties
-        }
+        className="bg-sidebar text-sidebar-foreground p-0 [&>button.absolute]:text-white/70 [&>button.absolute]:hover:text-white"
+        style={{ width: "85vw", maxWidth: "420px" }}
         side={side}
       >
         <SheetHeader className="sr-only">
