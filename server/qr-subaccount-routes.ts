@@ -126,6 +126,12 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const existing = await db.select().from(orderSubaccounts)
         .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)));
 
+      if (label && typeof label === "string" && label.trim()) {
+        const normalizedLabel = label.trim().toLowerCase();
+        const matchByName = existing.find(s => s.label && s.label.trim().toLowerCase() === normalizedLabel);
+        if (matchByName) return res.json(matchByName);
+      }
+
       const usedSlots = new Set(existing.map(s => s.slotNumber));
 
       if (requestedSlot) {
