@@ -212,12 +212,11 @@ function AuthenticatedLayout() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 8px;
-          padding: 8px 16px;
+          gap: 4px;
+          padding: 6px 12px;
           background: var(--s0);
           border-bottom: 1px solid var(--border);
-          position: sticky;
-          top: 0;
+          flex-shrink: 0;
           z-index: 9;
         }
         .app-header-left,
@@ -226,16 +225,7 @@ function AuthenticatedLayout() {
           align-items: center;
           gap: 6px;
         }
-        .app-header-user {
-          font-family: var(--f-mono);
-          font-size: 11px;
-          color: var(--text3);
-          letter-spacing: 0.03em;
-        }
-        @media (max-width: 640px) {
-          .app-header-user-name,
-          .app-header-logout-text { display: none; }
-        }
+      
       `}</style>
       <AppSidebar />
       <div className="flex flex-col h-screen w-full">
@@ -254,19 +244,15 @@ function AuthenticatedLayout() {
           <QuickNavButtons />
           <div className="app-header-right">
             <ThemeToggle />
-            {user && (
-              <span className="app-header-user app-header-user-name" data-testid="text-current-user">
-                {user.displayName}
-              </span>
-            )}
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               data-testid="button-switch-user"
               onClick={logout}
+              title="Cambiar usuario"
+              className="h-8 w-8"
             >
               <LogOut className="w-4 h-4" />
-              <span className="app-header-logout-text">Cambiar usuario</span>
             </Button>
           </div>
         </header>
