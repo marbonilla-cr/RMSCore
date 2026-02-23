@@ -2769,6 +2769,8 @@ export async function registerRoutes(
         globalNumber: order.globalNumber,
         ticketNumber,
         totalAmount: order.totalAmount,
+        balanceDue: order.balanceDue,
+        paidAmount: order.paidAmount,
         openedAt: order.openedAt,
         itemCount: orderActiveItems.length,
         items: itemsWithModifiers,

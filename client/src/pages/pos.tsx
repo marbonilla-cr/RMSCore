@@ -73,6 +73,8 @@ interface POSTable {
   globalNumber?: number | null;
   ticketNumber?: string;
   totalAmount: string;
+  balanceDue?: string;
+  paidAmount?: string;
   openedAt?: string | null;
   itemCount: number;
   items: POSItem[];
@@ -297,7 +299,7 @@ export default function POSPage() {
       return apiRequest("POST", "/api/pos/pay", {
         orderId: selectedTable!.orderId,
         paymentMethodId: parseInt(paymentMethodId),
-        amount: selectedTable!.totalAmount,
+        amount: selectedTable!.balanceDue ?? selectedTable!.totalAmount,
         clientName: clientName || null,
         clientEmail: clientEmail || null,
       });
@@ -948,7 +950,7 @@ export default function POSPage() {
     setTimeout(() => setHighlightedOrderIds([]), 2500);
   };
 
-  const payingAmount = Number(selectedTable?.totalAmount || 0);
+  const payingAmount = Number(selectedTable?.balanceDue !== undefined ? selectedTable.balanceDue : (selectedTable?.totalAmount || 0));
   const payingLabel = selectedTable?.tableName || "";
 
   const selectedPm = paymentMethods.find(m => m.id.toString() === paymentMethodId);
@@ -1700,7 +1702,7 @@ export default function POSPage() {
                   <div className="pos-totals-sep" />
                   <div className="pos-totals-total" data-testid="text-detail-total">
                     <span className="pos-totals-total-label">Total a pagar</span>
-                    <span className="pos-totals-total-val">{formatCurrency(Number(selectedTable.totalAmount))}</span>
+                    <span className="pos-totals-total-val">{formatCurrency(Number(selectedTable.balanceDue ?? selectedTable.totalAmount))}</span>
                   </div>
                   <div style={{ marginTop: 10 }}>
                     <button
