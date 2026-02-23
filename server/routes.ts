@@ -1531,7 +1531,7 @@ export async function registerRoutes(
         openedAt: order?.openedAt?.toISOString() || null,
         pendingQrCount,
         itemCount,
-        totalAmount: order?.totalAmount || null,
+        totalAmount: order ? (order.balanceDue || order.totalAmount || null) : null,
         lastSentToKitchenAt,
         upcomingReservation,
         hasActiveReservation,
