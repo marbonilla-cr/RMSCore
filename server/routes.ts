@@ -39,6 +39,14 @@ async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: nu
   return order;
 }
 
+async function cleanupSubaccountsForOrder(orderId: number) {
+  try {
+    await db.delete(orderSubaccounts).where(eq(orderSubaccounts.orderId, orderId));
+  } catch (err) {
+    console.error("[Subaccount Cleanup] Error cleaning subaccounts for order", orderId, err);
+  }
+}
+
 function aggregateTaxBreakdown(taxes: { taxNameSnapshot: string; taxRateSnapshot: string; taxAmount: string; inclusiveSnapshot: boolean }[]) {
   const map = new Map<string, { taxName: string; taxRate: string; inclusive: boolean; totalAmount: number }>();
   for (const t of taxes) {
@@ -2852,6 +2860,8 @@ export async function registerRoutes(
           await storage.deleteSplitAccount(sp.id);
         }
 
+        await cleanupSubaccountsForOrder(orderId);
+
         try {
           const [hrSettings, allProducts] = await Promise.all([
             storage.getHrSettings(),
@@ -2920,6 +2930,7 @@ export async function registerRoutes(
               const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
               if (parentActive.length === 0) {
                 await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() });
+                await cleanupSubaccountsForOrder(paidOrder.parentOrderId);
               }
             }
           }
@@ -3029,6 +3040,8 @@ export async function registerRoutes(
           await storage.deleteSplitAccount(sp.id);
         }
 
+        await cleanupSubaccountsForOrder(orderId);
+
         try {
           const [hrSettings, allProducts] = await Promise.all([
             storage.getHrSettings(),
@@ -3076,6 +3089,7 @@ export async function registerRoutes(
               const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
               if (parentActive.length === 0) {
                 await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() });
+                await cleanupSubaccountsForOrder(paidOrder.parentOrderId);
               }
             }
           }
@@ -3473,6 +3487,7 @@ export async function registerRoutes(
       const allPaid = allItems.filter(i => i.status !== "VOIDED").every(i => i.status === "PAID");
       if (allPaid) {
         await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() });
+        await cleanupSubaccountsForOrder(orderId);
       }
 
       broadcast("payment_completed", { orderId });
@@ -3930,6 +3945,7 @@ export async function registerRoutes(
       }
 
       await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date(), totalAmount: "0" });
+      await cleanupSubaccountsForOrder(orderId);
 
       if (order.parentOrderId) {
         const siblings = await storage.getChildOrders(order.parentOrderId);
@@ -3941,7 +3957,9 @@ export async function registerRoutes(
             const parentItems = await storage.getOrderItems(order.parentOrderId);
             const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
             if (parentActive.length === 0) {
-              await storage.updateOrder(order.parentOrderId, { status: anyPaid ? "PAID" : "VOIDED", closedAt: new Date() });
+              const finalStatus = anyPaid ? "PAID" : "VOIDED";
+              await storage.updateOrder(order.parentOrderId, { status: finalStatus, closedAt: new Date() });
+              await cleanupSubaccountsForOrder(order.parentOrderId);
             }
           }
         }
