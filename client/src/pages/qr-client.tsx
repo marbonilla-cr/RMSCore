@@ -500,6 +500,13 @@ export default function QRClientPage() {
     try {
       let sid = subaccountId;
       if (!sid) {
+        const existingMatch = subaccounts.find(s => s.label && s.label.trim().toLowerCase() === name.trim().toLowerCase());
+        if (existingMatch) {
+          sid = existingMatch.id;
+          setSubaccountId(sid);
+        }
+      }
+      if (!sid) {
         const subRes = await fetch(`/api/qr/${tableCode}/subaccounts`, {
           method: "POST", headers: { "Content-Type": "application/json", ...(qrToken ? { "x-qr-token": qrToken } : {}) },
           body: JSON.stringify({ label: name }),
@@ -735,7 +742,11 @@ export default function QRClientPage() {
           <input
             data-testid="input-qr-name"
             value={name}
-            onChange={e => setName(e.target.value)}
+            onChange={e => {
+              setName(e.target.value);
+              const match = subaccounts.find(s => s.label === e.target.value);
+              setSubaccountId(match ? match.id : null);
+            }}
             placeholder="Tu nombre"
             autoFocus
             style={{
@@ -756,7 +767,11 @@ export default function QRClientPage() {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
                 {existingNames.map(n => (
-                  <button key={n} data-testid={`button-qr-name-${n}`} onClick={() => setName(n)} style={{
+                  <button key={n} data-testid={`button-qr-name-${n}`} onClick={() => {
+                    setName(n);
+                    const match = subaccounts.find(s => s.label === n);
+                    if (match) setSubaccountId(match.id);
+                  }} style={{
                     padding: "8px 18px", borderRadius: 20, border: `1.5px solid ${name === n ? C.acc : C.border}`,
                     background: name === n ? C.accD : C.card, color: name === n ? C.acc : C.text2,
                     fontSize: 14, fontWeight: 500, cursor: "pointer", minHeight: 38,
@@ -1113,7 +1128,8 @@ export default function QRClientPage() {
         <button data-testid="button-qr-order-more" onClick={() => {
           setCart([]);
           setSubaccountId(null);
-          setScreen(0);
+          setName("");
+          setScreen(1);
         }} style={{
           marginTop: 24, padding: "14px 32px", borderRadius: 30, border: `1.5px solid ${C.acc}`,
           background: C.card, color: C.acc, fontSize: 15, fontWeight: 600,
