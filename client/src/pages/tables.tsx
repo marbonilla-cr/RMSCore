@@ -146,16 +146,22 @@ export default function TablesPage() {
 
     const isFirstLoad = prevCounts.size === 0 && tablesWithQr.length > 0;
 
-    if (tablesWithQr.length > 0) {
-      setQrPopupTables(tablesWithQr.map(t => ({ id: t.id, name: t.tableName, count: t.pendingQrCount })));
-      if (hasIncrease || isFirstLoad) {
-        setQrPopupDismissed(false);
-        if (!isFirstLoad) {
-          playAlertSound();
-        }
+    const newKey = tablesWithQr.map(t => `${t.id}:${t.pendingQrCount}`).sort().join(",");
+    const oldKey = qrPopupTables.map(t => `${t.id}:${t.count}`).sort().join(",");
+
+    if (newKey !== oldKey) {
+      if (tablesWithQr.length > 0) {
+        setQrPopupTables(tablesWithQr.map(t => ({ id: t.id, name: t.tableName, count: t.pendingQrCount })));
+      } else {
+        setQrPopupTables([]);
       }
-    } else {
-      setQrPopupTables([]);
+    }
+
+    if (hasIncrease || isFirstLoad) {
+      setQrPopupDismissed(false);
+      if (!isFirstLoad) {
+        playAlertSound();
+      }
     }
 
     prevQrCountsRef.current = newCounts;
@@ -720,7 +726,7 @@ export default function TablesPage() {
         }
         .qr-popup {
           background: var(--s1);
-          border: 2px solid var(--coral);
+          border: 1.5px solid var(--red-m);
           border-radius: var(--r-lg);
           width: min(92vw, 380px);
           overflow: hidden;
@@ -731,8 +737,8 @@ export default function TablesPage() {
           to { transform: scale(1); opacity: 1; }
         }
         .qr-popup-header {
-          background: var(--coral);
-          color: #fff;
+          background: var(--red-d);
+          color: var(--red);
           padding: 14px 18px;
           display: flex;
           align-items: center;
@@ -740,6 +746,7 @@ export default function TablesPage() {
           font-family: var(--f-disp);
           font-size: 16px;
           font-weight: 700;
+          border-bottom: 1px solid var(--red-m);
         }
         .qr-popup-header svg {
           animation: pulse-badge 1.5s ease-in-out infinite;
@@ -773,7 +780,7 @@ export default function TablesPage() {
         .qr-popup-table-count {
           font-family: var(--f-mono);
           font-size: 11px;
-          color: var(--coral);
+          color: var(--red);
           font-weight: 600;
         }
         .qr-popup-go-btn {
