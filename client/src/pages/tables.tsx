@@ -24,6 +24,7 @@ interface TableView {
   totalAmount: string | null;
   lastSentToKitchenAt: string | null;
   hasActiveReservation: boolean;
+  subaccountNames: string[];
   upcomingReservation: {
     id: number;
     guestName: string;
@@ -1081,6 +1082,11 @@ export default function TablesPage() {
                         <div className="tc-meta-row" data-testid={`text-waiter-${table.id}`}>
                           <User size={11} />
                           <span className="val">{table.responsibleWaiterName}</span>
+                        </div>
+                      )}
+                      {table.subaccountNames && table.subaccountNames.length > 0 && (
+                        <div className="tc-meta-row" data-testid={`text-subaccounts-${table.id}`} style={{ fontSize: 12, color: "var(--text-secondary, #888)", fontStyle: "italic" }}>
+                          <span className="val">{table.subaccountNames.join(", ")}</span>
                         </div>
                       )}
                       {visibleColumns.has("items") && (

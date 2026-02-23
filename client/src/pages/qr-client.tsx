@@ -500,13 +500,6 @@ export default function QRClientPage() {
     try {
       let sid = subaccountId;
       if (!sid) {
-        const existingMatch = subaccounts.find(s => s.label && s.label.trim().toLowerCase() === name.trim().toLowerCase());
-        if (existingMatch) {
-          sid = existingMatch.id;
-          setSubaccountId(sid);
-        }
-      }
-      if (!sid) {
         const subRes = await fetch(`/api/qr/${tableCode}/subaccounts`, {
           method: "POST", headers: { "Content-Type": "application/json", ...(qrToken ? { "x-qr-token": qrToken } : {}) },
           body: JSON.stringify({ label: name }),
@@ -515,6 +508,10 @@ export default function QRClientPage() {
           const fresh = await fetch(`/api/qr/${tableCode}/token`).then(r2 => r2.ok ? r2.json() : null);
           if (fresh?.token) setQrToken(fresh.token);
           throw new Error("Token expirado. Intente de nuevo.");
+        }
+        if (subRes.status === 409) {
+          setScreen(1);
+          throw new Error("Ese nombre ya está en uso en esta mesa. Por favor usá un nombre diferente.");
         }
         if (!subRes.ok) {
           const d = await subRes.json().catch(() => ({ message: "Error" }));
@@ -744,21 +741,26 @@ export default function QRClientPage() {
             value={name}
             onChange={e => {
               setName(e.target.value);
-              const match = subaccounts.find(s => s.label === e.target.value);
-              setSubaccountId(match ? match.id : null);
+              setSubaccountId(null);
             }}
             placeholder="Tu nombre"
             autoFocus
             style={{
               width: "100%", maxWidth: 320, padding: 18, fontSize: 22, textAlign: "center",
-              borderRadius: 14, border: `2px solid ${name.trim() ? C.acc : C.border}`,
+              borderRadius: 14, border: `2px solid ${name.trim() ? (existingNames.some(n => n.trim().toLowerCase() === name.trim().toLowerCase()) && !subaccountId ? "#d32f2f" : C.acc) : C.border}`,
               background: C.card, color: C.text, outline: "none",
               transition: "border-color 0.2s ease",
             }}
           />
-          <div style={{ fontSize: 13, color: C.text3, marginTop: 10 }}>
-            Escrib&iacute; tu nombre o escog&eacute; uno
-          </div>
+          {name.trim() && existingNames.some(n => n.trim().toLowerCase() === name.trim().toLowerCase()) && !subaccountId ? (
+            <div style={{ fontSize: 13, color: "#d32f2f", marginTop: 10, fontWeight: 500 }}>
+              Ese nombre ya est&aacute; en uso. Escog&eacute;lo de la lista o us&aacute; un nombre diferente.
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: C.text3, marginTop: 10 }}>
+              Escrib&iacute; tu nombre o escog&eacute; uno
+            </div>
+          )}
 
           {existingNames.length > 0 && (
             <div style={{ marginTop: 20, width: "100%", maxWidth: 320 }}>
@@ -785,12 +787,12 @@ export default function QRClientPage() {
           <button
             data-testid="button-qr-continue-name"
             onClick={() => { if (name.trim()) setScreen(2); }}
-            disabled={!name.trim()}
+            disabled={!name.trim() || (existingNames.some(n => n.trim().toLowerCase() === name.trim().toLowerCase()) && !subaccountId)}
             style={{
               marginTop: 32, padding: "14px 40px", borderRadius: 30, border: "none",
               background: C.acc, color: "#fff", fontSize: 16, fontWeight: 700,
-              cursor: name.trim() ? "pointer" : "default",
-              opacity: name.trim() ? 1 : 0.4, minHeight: 48,
+              cursor: name.trim() && !(existingNames.some(n => n.trim().toLowerCase() === name.trim().toLowerCase()) && !subaccountId) ? "pointer" : "default",
+              opacity: name.trim() && !(existingNames.some(n => n.trim().toLowerCase() === name.trim().toLowerCase()) && !subaccountId) ? 1 : 0.4, minHeight: 48,
               transition: "opacity 0.2s ease",
             }}
           >

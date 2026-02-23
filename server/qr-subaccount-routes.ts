@@ -129,7 +129,9 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       if (label && typeof label === "string" && label.trim()) {
         const normalizedLabel = label.trim().toLowerCase();
         const matchByName = existing.find(s => s.label && s.label.trim().toLowerCase() === normalizedLabel);
-        if (matchByName) return res.json(matchByName);
+        if (matchByName) {
+          return res.status(409).json({ message: "Ese nombre ya está en uso en esta mesa. Por favor usá un nombre diferente.", existingLabel: matchByName.label });
+        }
       }
 
       const usedSlots = new Set(existing.map(s => s.slotNumber));

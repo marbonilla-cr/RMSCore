@@ -1429,7 +1429,7 @@ export async function registerRoutes(
     yesterdayDate.setDate(yesterdayDate.getDate() - 1);
     const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
 
-    const [allItems, allSubs, waiters, upcomingReservations] = await Promise.all([
+    const [allItems, allSubs, waiters, upcomingReservations, allSubaccounts] = await Promise.all([
       storage.getOrderItemsByOrderIds(orderIds),
       storage.getPendingSubmissionsByOrderIds(orderIds),
       storage.getUsersByIds(waiterIds),
@@ -1437,6 +1437,9 @@ export async function registerRoutes(
         inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
         or(eq(reservations.reservedDate, yesterdayStr), eq(reservations.reservedDate, todayStr), eq(reservations.reservedDate, tomorrowStr)),
       )),
+      orderIds.length > 0
+        ? db.select().from(orderSubaccounts).where(and(inArray(orderSubaccounts.orderId, orderIds), eq(orderSubaccounts.isActive, true)))
+        : Promise.resolve([]),
     ]);
 
     const waiterMap = new Map(waiters.map(w => [w.id, w.displayName]));
@@ -1450,6 +1453,14 @@ export async function registerRoutes(
     const subsByOrder = new Map<number, number>();
     for (const s of allSubs) {
       subsByOrder.set(s.orderId, (subsByOrder.get(s.orderId) || 0) + 1);
+    }
+
+    const subaccountNamesByOrder = new Map<number, string[]>();
+    for (const sa of allSubaccounts) {
+      if (sa.label) {
+        if (!subaccountNamesByOrder.has(sa.orderId)) subaccountNamesByOrder.set(sa.orderId, []);
+        subaccountNamesByOrder.get(sa.orderId)!.push(sa.label);
+      }
     }
 
     const currentMinutes = crNow.getHours() * 60 + crNow.getMinutes();
@@ -1544,6 +1555,7 @@ export async function registerRoutes(
         lastSentToKitchenAt,
         upcomingReservation,
         hasActiveReservation,
+        subaccountNames: order ? (subaccountNamesByOrder.get(order.id) || []) : [],
       };
     });
     res.json(result);
