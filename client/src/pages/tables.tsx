@@ -673,7 +673,6 @@ export default function TablesPage() {
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
-
       <div className="screen-header">
         <div style={{ flex: 1 }}>
           <div className="header-title" data-testid="text-page-title">Mesas</div>
@@ -706,9 +705,7 @@ export default function TablesPage() {
           <Settings size={16} />
         </button>
       </div>
-
       <ReservationsSheet open={reservationsOpen} onOpenChange={setReservationsOpen} />
-
       {moveDialogOpen && (
         <>
           <div className="move-overlay" onClick={() => setMoveDialogOpen(false)} />
@@ -820,7 +817,6 @@ export default function TablesPage() {
           </div>
         </>
       )}
-
       {showColumnPicker && (
         <>
           <div className="col-picker-overlay" onClick={() => setShowColumnPicker(false)} />
@@ -839,7 +835,6 @@ export default function TablesPage() {
           </div>
         </>
       )}
-
       <div className="tables-topbar">
         <div className="search-bar">
           <Search size={14} className="search-icon" />
@@ -852,7 +847,6 @@ export default function TablesPage() {
           />
         </div>
       </div>
-
       {!isLoading && activeTables.length > 0 && (
         <div className="host-bar" data-testid="host-availability-bar">
           <div className="host-chip occupied" data-testid="chip-occupied">{occupiedCount} ocupadas</div>
@@ -862,7 +856,6 @@ export default function TablesPage() {
           </div>
         </div>
       )}
-
       {isLoading ? (
         <div style={{ padding: "0 18px" }}>
           <TablesSkeleton />
@@ -873,7 +866,7 @@ export default function TablesPage() {
         </div>
       ) : (
         <div className="tables-scroll">
-          <div className="section-label">
+          <div className="section-label text-center">
             Con cuenta abierta
             <span className="section-count">{withOrder.length}</span>
           </div>
