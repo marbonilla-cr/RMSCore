@@ -1,0 +1,48 @@
+Information Needed to Build Your Restaurant Waiter Mobile App
+Please provide the following information from your existing web-based Restaurant Management System:
+
+1. Database Schema & Models
+What database are you using? (PostgreSQL, MongoDB, etc.)
+Table structures related to waiter functionality, such as:
+Orders table (fields, relationships)
+Menu/Items table
+Tables/Seating table
+Customers table (if applicable)
+Payments table (if applicable)
+Staff/Waiters table
+Any other relevant tables
+2. Waiter Features from Web App
+Please list or describe all features that waiters currently use in the web application:
+
+Can they view table assignments?
+How do they take orders? (UI flow, what data is captured)
+Can they modify orders?
+How are orders sent to the kitchen?
+Do they handle payments/billing?
+Can they split bills?
+Do they track order status?
+Any other waiter-specific features?
+3. Backend/API Information
+What technology is your backend built with? (Node.js/Express, Python/Flask, etc.)
+Do you have any existing API endpoints we can reuse?
+What is the base URL of your RMS web application?
+Authentication method: How do waiters log in? (username/password, PIN, etc.)
+4. Business Logic & Workflows
+What is the typical workflow for a waiter taking an order?
+Are there different order statuses? (pending, confirmed, preparing, ready, served, etc.)
+Do orders need approval before going to kitchen?
+How are table assignments managed?
+Any specific restaurant rules or constraints?
+5. Design Preferences (Optional)
+Do you have brand colors or a design style to match?
+Any specific UI/UX preferences for the mobile app?
+6. Integration Requirements
+Should the mobile app work offline and sync later, or real-time only?
+Do you need push notifications for order updates?
+Any third-party services to integrate? (payment processors, printers, etc.)
+You can provide this as:
+
+Code snippets from your web app
+Database schema/migration files
+Screenshots or descriptions of the waiter workflow
+Links to your existing Replit project (if you'd like me to reference it)
