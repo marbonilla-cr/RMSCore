@@ -6,8 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useShortageAlerts } from "@/hooks/use-shortage-alerts";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/app-sidebar";
+import { AppSidebar, DrawerProvider, DrawerTrigger } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { usePreventPullRefresh } from "@/hooks/use-prevent-pull-refresh";
 import { Loader2, LogOut, RefreshCw } from "lucide-react";
@@ -164,7 +163,7 @@ function AuthenticatedLayout() {
   const { user, logout } = useAuth();
   useShortageAlerts();
   return (
-    <SidebarProvider defaultOpen={false}>
+    <DrawerProvider>
       <style>{`
         .app-header {
           display: flex;
@@ -195,45 +194,43 @@ function AuthenticatedLayout() {
           .app-header-logout-text { display: none; }
         }
       `}</style>
-      <div className="flex h-screen w-full">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 min-w-0">
-          <header className="app-header">
-            <div className="app-header-left">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => window.location.reload()}
-                data-testid="button-refresh"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </Button>
-            </div>
-            <div className="app-header-right">
-              <ThemeToggle />
-              {user && (
-                <span className="app-header-user app-header-user-name" data-testid="text-current-user">
-                  {user.displayName}
-                </span>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                data-testid="button-switch-user"
-                onClick={logout}
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="app-header-logout-text">Cambiar usuario</span>
-              </Button>
-            </div>
-          </header>
-          <main className="flex-1 overflow-auto">
-            <AuthenticatedRouter />
-          </main>
-        </div>
+      <AppSidebar />
+      <div className="flex flex-col h-screen w-full">
+        <header className="app-header">
+          <div className="app-header-left">
+            <DrawerTrigger />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => window.location.reload()}
+              data-testid="button-refresh"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="app-header-right">
+            <ThemeToggle />
+            {user && (
+              <span className="app-header-user app-header-user-name" data-testid="text-current-user">
+                {user.displayName}
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="button-switch-user"
+              onClick={logout}
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="app-header-logout-text">Cambiar usuario</span>
+            </Button>
+          </div>
+        </header>
+        <main className="flex-1 overflow-auto">
+          <AuthenticatedRouter />
+        </main>
       </div>
-    </SidebarProvider>
+    </DrawerProvider>
   );
 }
 

@@ -1,18 +1,14 @@
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  useSidebar,
-} from "@/components/ui/sidebar";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import {
   LayoutDashboard,
   ChefHat,
@@ -45,8 +41,63 @@ import {
   AlertTriangle,
   Link2,
   List,
+  Menu,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
+
+type DrawerContextType = {
+  open: boolean;
+  setOpen: (v: boolean) => void;
+};
+
+const DrawerContext = createContext<DrawerContextType>({ open: false, setOpen: () => {} });
+
+export function useDrawer() {
+  return useContext(DrawerContext);
+}
+
+export function DrawerProvider({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [location] = useLocation();
+  const prevLocationRef = useRef(location);
+
+  useEffect(() => {
+    if (prevLocationRef.current !== location) {
+      prevLocationRef.current = location;
+      setOpen(false);
+    }
+  }, [location]);
+
+  return (
+    <DrawerContext.Provider value={{ open, setOpen }}>
+      {children}
+    </DrawerContext.Provider>
+  );
+}
+
+export function DrawerTrigger({ className }: { className?: string }) {
+  const { setOpen } = useDrawer();
+  return (
+    <button
+      onClick={() => setOpen(true)}
+      className={className}
+      data-testid="button-sidebar-toggle"
+      style={{
+        background: "transparent",
+        border: "none",
+        cursor: "pointer",
+        padding: 6,
+        borderRadius: 6,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "var(--text2)",
+      }}
+    >
+      <Menu size={20} />
+    </button>
+  );
+}
 
 const tablesItems = [
   { title: "Mesas", url: "/tables", icon: Grid3x3 },
@@ -108,13 +159,60 @@ const hrManagerItems = [
   { title: "Config HR", url: "/hr/config", icon: Wrench },
 ];
 
-const ICON_CLASS = "w-5 h-5 shrink-0";
+type NavItem = { title: string; url: string; icon: any };
+
+function NavGroup({ label, labelIcon, items, location, onNav, checkPrefix }: {
+  label: string;
+  labelIcon?: any;
+  items: NavItem[];
+  location: string;
+  onNav: () => void;
+  checkPrefix?: boolean;
+}) {
+  const LabelIcon = labelIcon;
+  return (
+    <div style={{ marginBottom: 4 }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
+        color: "rgba(255,255,255,0.4)", padding: "10px 16px 4px", display: "flex", alignItems: "center", gap: 4,
+      }}>
+        {LabelIcon && <LabelIcon size={13} />}
+        {label}
+      </div>
+      {items.map(item => {
+        const active = checkPrefix
+          ? (location === item.url || location.startsWith(item.url + "/"))
+          : location === item.url;
+        return (
+          <Link
+            key={item.url}
+            href={item.url}
+            onClick={onNav}
+            data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}
+            style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "8px 16px", textDecoration: "none",
+              color: active ? "#fff" : "rgba(255,255,255,0.75)",
+              background: active ? "rgba(255,255,255,0.12)" : "transparent",
+              borderRadius: 6, margin: "1px 8px",
+              fontSize: 14, fontFamily: "var(--f-body)",
+              transition: "background 0.15s",
+            }}
+          >
+            <item.icon size={18} style={{ flexShrink: 0 }} />
+            <span>{item.title}</span>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
 
 export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { hasPermission } = usePermissions();
-  const { isMobile, setOpenMobile, setOpen } = useSidebar();
+  const { open, setOpen } = useDrawer();
 
   const showTables = hasPermission("MODULE_TABLES_VIEW");
   const showKDS = hasPermission("MODULE_KDS_VIEW");
@@ -128,185 +226,116 @@ export function AppSidebar() {
   const showShortages = hasPermission("SHORTAGES_VIEW");
 
   const initials = user?.displayName
-    ? user.displayName
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2)
+    ? user.displayName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : "U";
 
-  const closeSidebar = () => {
-    if (isMobile) {
-      setOpenMobile(false);
-    } else {
-      setOpen(false);
-    }
-  };
+  const close = useCallback(() => setOpen(false), [setOpen]);
 
-  const renderMenuItems = (items: typeof tablesItems, checkPrefix = false) =>
-    items.map((item) => (
-      <SidebarMenuItem key={item.title}>
-        <SidebarMenuButton asChild isActive={checkPrefix ? (location === item.url || location.startsWith(item.url + "/")) : location === item.url} tooltip={item.title}>
-          <Link href={item.url} onClick={closeSidebar} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-            <item.icon className={ICON_CLASS} />
-            <span>{item.title}</span>
-          </Link>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    ));
+  const allAdminItems = [
+    ...(showProducts ? [productsItem] : []),
+    ...adminItems,
+  ];
 
   return (
-    <Sidebar>
-      <SidebarContent>
-        <div style={{ padding: "14px 0 8px", display: "flex", justifyContent: "center" }}>
-          <img src={logoImg} alt="La Antigua Lechería" className="rail-logo-img" data-testid="img-sidebar-logo" />
-        </div>
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetContent
+        side="left"
+        className="p-0 border-r-0 [&>button.absolute]:hidden"
+        style={{
+          width: 280,
+          maxWidth: "85vw",
+          background: "hsl(34, 33%, 5%)",
+          color: "#fff",
+        }}
+      >
+        <SheetHeader className="sr-only">
+          <SheetTitle>Menú</SheetTitle>
+          <SheetDescription>Navegación del sistema</SheetDescription>
+        </SheetHeader>
 
-        {showTables && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Salón</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>{renderMenuItems(tablesItems)}</SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
-        {showKDS && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Cocina / Bar</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>{renderMenuItems(kitchenItems)}</SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
-        {showPOS && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Caja</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>{renderMenuItems(cashierItems)}</SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
-        {showDashboard && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Gerencia</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>{renderMenuItems(dashboardItems)}</SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
-        {showProducts && !showAdmin && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Menú</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location === productsItem.url} tooltip={productsItem.title}>
-                    <Link href={productsItem.url} onClick={closeSidebar} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
-                      <productsItem.icon className={ICON_CLASS} />
-                      <span>{productsItem.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
-        {showAdmin && (
-          <SidebarGroup>
-            <SidebarGroupLabel>
-              <Settings className="w-4 h-4 mr-1 inline" />
-              Admin
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {showProducts && (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location === productsItem.url} tooltip={productsItem.title}>
-                      <Link href={productsItem.url} onClick={closeSidebar} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
-                        <productsItem.icon className={ICON_CLASS} />
-                        <span>{productsItem.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )}
-                {adminItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
-                      <Link href={item.url} onClick={closeSidebar} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className={ICON_CLASS} />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
-        {showINV && (
-          <SidebarGroup>
-            <SidebarGroupLabel>
-              <Package className="w-4 h-4 mr-1 inline" />
-              Inventario
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>{renderMenuItems(invItems, true)}</SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
-        {showShortages && (
-          <SidebarGroup>
-            <SidebarGroupLabel>
-              <AlertTriangle className="w-4 h-4 mr-1 inline" />
-              Faltantes
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>{renderMenuItems(shortageItems, true)}</SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
-        {showHR && (
-          <SidebarGroup>
-            <SidebarGroupLabel>
-              <Clock className="w-4 h-4 mr-1 inline" />
-              Recursos Humanos
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {renderMenuItems(hrSelfItems)}
-                {showHRManage && renderMenuItems(hrManagerItems)}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-      </SidebarContent>
-      <SidebarFooter>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
-          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--f-mono)", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", flexShrink: 0 }} data-testid="text-user-name">
-            {initials}
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          <div style={{ padding: "16px 0 8px", display: "flex", justifyContent: "center" }}>
+            <img
+              src={logoImg}
+              alt="La Antigua Lechería"
+              style={{ height: 48, objectFit: "contain" }}
+              data-testid="img-sidebar-logo"
+            />
           </div>
-          <span style={{ flex: 1, fontSize: 13, color: "rgba(255,255,255,0.7)", fontFamily: "var(--f-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {user?.displayName}
-          </span>
-          <button
-            onClick={() => { closeSidebar(); logout(); }}
-            data-testid="button-logout"
-            style={{ width: 32, height: 32, borderRadius: "var(--r-sm)", background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-            title="Salir"
-          >
-            <LogOut size={16} />
-          </button>
+
+          <div style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
+            {showTables && (
+              <NavGroup label="Salón" items={tablesItems} location={location} onNav={close} />
+            )}
+            {showKDS && (
+              <NavGroup label="Cocina / Bar" items={kitchenItems} location={location} onNav={close} />
+            )}
+            {showPOS && (
+              <NavGroup label="Caja" items={cashierItems} location={location} onNav={close} />
+            )}
+            {showDashboard && (
+              <NavGroup label="Gerencia" items={dashboardItems} location={location} onNav={close} />
+            )}
+            {showProducts && !showAdmin && (
+              <NavGroup label="Menú" items={[productsItem]} location={location} onNav={close} />
+            )}
+            {showAdmin && (
+              <NavGroup label="Admin" labelIcon={Settings} items={allAdminItems} location={location} onNav={close} />
+            )}
+            {showINV && (
+              <NavGroup label="Inventario" labelIcon={Package} items={invItems} location={location} onNav={close} checkPrefix />
+            )}
+            {showShortages && (
+              <NavGroup label="Faltantes" labelIcon={AlertTriangle} items={shortageItems} location={location} onNav={close} checkPrefix />
+            )}
+            {showHR && (
+              <NavGroup
+                label="Recursos Humanos"
+                labelIcon={Clock}
+                items={[...hrSelfItems, ...(showHRManage ? hrManagerItems : [])]}
+                location={location}
+                onNav={close}
+              />
+            )}
+          </div>
+
+          <div style={{
+            borderTop: "1px solid rgba(255,255,255,0.1)",
+            display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
+          }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: "50%",
+              background: "rgba(255,255,255,0.12)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontFamily: "var(--f-mono)", fontSize: 11, fontWeight: 600,
+              color: "rgba(255,255,255,0.7)", flexShrink: 0,
+            }} data-testid="text-user-name">
+              {initials}
+            </div>
+            <span style={{
+              flex: 1, fontSize: 13, color: "rgba(255,255,255,0.7)",
+              fontFamily: "var(--f-body)", overflow: "hidden",
+              textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {user?.displayName}
+            </span>
+            <button
+              onClick={() => { close(); logout(); }}
+              data-testid="button-logout"
+              style={{
+                width: 32, height: 32, borderRadius: 6,
+                background: "transparent", border: "none",
+                color: "rgba(255,255,255,0.4)", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0,
+              }}
+              title="Salir"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
         </div>
-      </SidebarFooter>
-    </Sidebar>
+      </SheetContent>
+    </Sheet>
   );
 }
