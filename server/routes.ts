@@ -1527,6 +1527,7 @@ export async function registerRoutes(
         hasOpenOrder: !!order,
         orderId: order?.id || null,
         orderStatus: order?.status || null,
+        dailyNumber: order?.dailyNumber || null,
         responsibleWaiterName: waiterName,
         openedAt: order?.openedAt?.toISOString() || null,
         pendingQrCount,

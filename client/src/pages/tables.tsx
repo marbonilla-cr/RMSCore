@@ -16,6 +16,7 @@ interface TableView {
   hasOpenOrder: boolean;
   orderId: number | null;
   orderStatus: string | null;
+  dailyNumber: number | null;
   responsibleWaiterName: string | null;
   openedAt: string | null;
   pendingQrCount: number;
@@ -367,6 +368,11 @@ export default function TablesPage() {
           font-size: 20px;
           font-weight: 800;
           margin-bottom: 6px;
+        }
+        .tc-order-num {
+          font-size: 13px;
+          font-weight: 600;
+          opacity: 0.55;
         }
         .tc-meta {
           display: grid;
@@ -1059,7 +1065,10 @@ export default function TablesPage() {
                     {table.pendingQrCount > 0 && (
                       <div className="qr-alert">{table.pendingQrCount}</div>
                     )}
-                    <div className="tc-name" data-testid={`text-table-name-${table.id}`}>{table.tableName}</div>
+                    <div className="tc-name" data-testid={`text-table-name-${table.id}`}>
+                      {table.tableName}
+                      {table.dailyNumber && <span className="tc-order-num"> #{table.dailyNumber}</span>}
+                    </div>
                     <div className={badge.cls} data-testid={`badge-status-${table.id}`}>{badge.label}</div>
                     {table.upcomingReservation && (
                       <div className={`reservation-badge ${table.upcomingReservation.minutesUntil <= 60 ? 'soon' : 'later'}`} data-testid={`badge-reservation-${table.id}`}>

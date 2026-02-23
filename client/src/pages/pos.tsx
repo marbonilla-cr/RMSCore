@@ -1057,6 +1057,7 @@ export default function POSPage() {
         .pos-table-card.highlighted { border-color: var(--green); box-shadow: 0 0 12px rgba(46,204,113,0.15); }
         .pos-tc-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
         .pos-tc-name { font-family: var(--f-disp); font-size: 20px; font-weight: 800; }
+        .pos-tc-order-num { font-size: 13px; font-weight: 600; opacity: 0.55; }
         .pos-tc-subs { font-size: 12px; color: var(--text3); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .pos-tc-items-badge {
           display: inline-flex; align-items: center; gap: 4px;
@@ -1813,7 +1814,10 @@ export default function POSPage() {
                         data-testid={`card-pos-table-${t.id}-order-${t.orderId}`}
                       >
                         <div className="pos-tc-top">
-                          <span className="pos-tc-name">{t.tableName}</span>
+                          <span className="pos-tc-name">
+                            {t.tableName.replace(/ #.*$/, '')}
+                            {t.ticketNumber && <span className="pos-tc-order-num"> #{t.ticketNumber}</span>}
+                          </span>
                           <span className="pos-tc-items-badge">{t.itemCount} items</span>
                         </div>
                         {t.subaccountNames && t.subaccountNames.length > 0 && (
@@ -1822,7 +1826,7 @@ export default function POSPage() {
                           </div>
                         )}
                         <div className="pos-tc-mid">
-                          <span className="pos-tc-amount">{formatCurrency(Number(t.totalAmount))}</span>
+                          <span className="pos-tc-amount">{formatCurrency(Number(t.balanceDue ?? t.totalAmount))}</span>
                           {t.openedAt && (
                             <span className="pos-tc-time">
                               {(() => {
