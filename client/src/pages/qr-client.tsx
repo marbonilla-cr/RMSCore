@@ -368,6 +368,7 @@ export default function QRClientPage() {
   const { toast } = useToast();
 
   const [screen, setScreen] = useState<"gc" | 0 | 1 | 2 | 3 | 4>("gc");
+  const [gcInput, setGcInput] = useState("");
   const [name, setName] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [tab, setTab] = useState<string>("");
@@ -593,16 +594,21 @@ export default function QRClientPage() {
 
   /* ── SGC: Guest Count ── */
   if (screen === "gc") {
-    const gcOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    const handleGuestCount = async (count: number) => {
+    const gcValid = gcInput.trim() !== "" && Number(gcInput) >= 1;
+    const handleGuestCount = async () => {
+      const count = parseInt(gcInput);
+      if (isNaN(count) || count < 1) return;
       try {
-        await fetch(`/api/qr/${tableCode}/guest-count`, {
+        const r = await fetch(`/api/qr/${tableCode}/guest-count`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ guestCount: count }),
         });
-      } catch {}
-      setScreen(0);
+        if (!r.ok) throw new Error("Error");
+        setScreen(0);
+      } catch {
+        toast({ title: "Error", description: "No se pudo guardar. Intentá de nuevo.", variant: "destructive" });
+      }
     };
     return (
       <div className="qr-page" style={{
@@ -624,24 +630,43 @@ export default function QRClientPage() {
           &iquest;Cu&aacute;ntos son en tu grupo?
         </div>
         <div style={{ fontSize: 15, color: C.text2, maxWidth: 320, lineHeight: 1.5, marginBottom: 28 }}>
-          Esto nos ayuda a preparar tu mesa
+          Digit&aacute; la cantidad de personas
         </div>
-        <div style={{
-          display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10,
-          width: "100%", maxWidth: 320,
-        }}>
-          {gcOptions.map(n => (
-            <button key={n} data-testid={`button-gc-${n}`} onClick={() => handleGuestCount(n)} style={{
-              width: "100%", aspectRatio: "1", borderRadius: 14,
-              border: `1.5px solid ${C.border}`, background: C.card,
-              fontSize: 20, fontWeight: 700, color: C.text, cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "all 0.15s",
-            }}>
-              {n === 10 ? "10+" : n}
-            </button>
-          ))}
-        </div>
+        <input
+          data-testid="input-gc"
+          type="number"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          min="1"
+          autoFocus
+          value={gcInput}
+          onChange={e => {
+            const v = e.target.value.replace(/[^0-9]/g, "");
+            setGcInput(v);
+          }}
+          onKeyDown={e => { if (e.key === "Enter" && gcValid) handleGuestCount(); }}
+          placeholder="Ej: 4"
+          style={{
+            width: "100%", maxWidth: 200, padding: "16px 20px", borderRadius: 14,
+            border: `1.5px solid ${gcValid ? C.acc : C.border}`, background: C.card,
+            fontSize: 32, fontWeight: 700, color: C.text, textAlign: "center",
+            outline: "none", transition: "border-color 0.2s",
+            fontFamily: body,
+          }}
+        />
+        <button
+          data-testid="button-gc-confirm"
+          disabled={!gcValid}
+          onClick={handleGuestCount}
+          style={{
+            marginTop: 20, padding: "14px 48px", borderRadius: 30, border: "none",
+            background: gcValid ? C.acc : C.border, color: gcValid ? "#fff" : C.text3,
+            fontSize: 16, fontWeight: 700, cursor: gcValid ? "pointer" : "default",
+            minHeight: 48, transition: "all 0.2s",
+          }}
+        >
+          Continuar
+        </button>
       </div>
     );
   }
