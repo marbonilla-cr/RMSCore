@@ -268,8 +268,8 @@ export async function registerRoutes(
     proxy: true,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" as const : "lax" as const,
+      secure: true,
+      sameSite: "none" as const,
     },
   });
   app.use(sessionMiddleware);

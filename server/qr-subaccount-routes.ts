@@ -64,10 +64,7 @@ async function getOrCreateOrderForTable(tableId: number) {
   return order;
 }
 
-async function getMaxSubaccounts(): Promise<number> {
-  const config = await storage.getBusinessConfig();
-  return (config as any)?.maxSubaccounts ?? 15;
-}
+
 
 interface QrSecurityUtils {
   qrSubmitRateCheck: (req: Request, res: Response) => boolean;
@@ -125,7 +122,6 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const order = await getOrCreateOrderForTable(table.id);
-      const maxSubs = await getMaxSubaccounts();
 
       const existing = await db.select().from(orderSubaccounts)
         .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)));
@@ -134,8 +130,8 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       if (requestedSlot) {
         const slot = Number(requestedSlot);
-        if (slot < 1 || slot > maxSubs) {
-          return res.status(400).json({ message: `Subcuenta ${slot} no es válida. Máximo: ${maxSubs}` });
+        if (slot < 1) {
+          return res.status(400).json({ message: `Número de subcuenta no válido` });
         }
         if (usedSlots.has(slot)) {
           const found = existing.find(s => s.slotNumber === slot);
@@ -143,13 +139,9 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         }
       }
 
-      if (existing.length >= maxSubs) {
-        return res.status(400).json({ message: `Máximo ${maxSubs} subcuentas permitidas` });
-      }
-
       let slotNumber = requestedSlot ? Number(requestedSlot) : 1;
       if (!requestedSlot) {
-        while (usedSlots.has(slotNumber) && slotNumber <= maxSubs) slotNumber++;
+        while (usedSlots.has(slotNumber)) slotNumber++;
       }
 
       const tableNumber = extractTableNumber(table.tableName);
@@ -180,8 +172,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const order = await getOrCreateOrderForTable(table.id);
-      const maxSubs = await getMaxSubaccounts();
-      const wanted = Math.min(Math.max(Number(count) || 2, 1), maxSubs);
+      const wanted = Math.max(Number(count) || 2, 1);
 
       const existing = await db.select().from(orderSubaccounts)
         .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)));
@@ -190,10 +181,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         return res.json(existing.sort((a: any, b: any) => a.slotNumber - b.slotNumber).slice(0, wanted));
       }
 
-      const toCreate = Math.min(wanted - existing.length, maxSubs - existing.length);
-      if (toCreate <= 0) {
-        return res.json(existing);
-      }
+      const toCreate = wanted - existing.length;
 
       const usedSlots = new Set(existing.map(s => s.slotNumber));
       const tableNumber = extractTableNumber(table.tableName);
@@ -201,7 +189,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       for (let i = 0; i < toCreate; i++) {
         let slotNumber = 1;
-        while (usedSlots.has(slotNumber) && slotNumber <= maxSubs) slotNumber++;
+        while (usedSlots.has(slotNumber)) slotNumber++;
         usedSlots.add(slotNumber);
         const code = `${tableNumber}-${slotNumber}`;
         const [sub] = await db.insert(orderSubaccounts).values({

@@ -116,6 +116,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLocation("/");
   };
 
+  useEffect(() => {
+    const isPWA = window.matchMedia("(display-mode: standalone)").matches
+      || (window.navigator as any).standalone === true;
+    if (!isPWA) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden" && user) {
+        navigator.sendBeacon("/api/auth/logout");
+        setUser(null);
+        queryClient.clear();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [user]);
+
   return (
     <AuthContext.Provider value={{ user, loading, login, pinLogin, logout, setUser }}>
       {children}
