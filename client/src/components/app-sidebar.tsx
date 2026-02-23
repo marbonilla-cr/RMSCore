@@ -201,7 +201,7 @@ export function AppSidebar() {
 
         {showDashboard && (
           <SidebarGroup>
-            <SidebarGroupLabel className="pl-[10px] pr-[10px]">Gerencia</SidebarGroupLabel>
+            <SidebarGroupLabel className="pl-[1px] pr-[1px] pt-[1px] pb-[1px] mt-[1px] mb-[1px] ml-[1px] mr-[1px]">Gerencia</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {dashboardItems.map((item) => (
