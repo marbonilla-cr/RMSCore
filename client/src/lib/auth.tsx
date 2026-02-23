@@ -50,7 +50,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!mounted) return;
         if (res.ok) {
           const data = await res.json();
-          if (mounted) setUser(data);
+          if (mounted) {
+            if (data.permissions) {
+              seedPermissions(data.permissions, data.role);
+            }
+            setUser(data);
+          }
         } else {
           if (mounted) setUser(null);
         }
@@ -77,6 +82,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [, setLocation] = useLocation();
 
+  const seedPermissions = (permissions: string[], role: string) => {
+    queryClient.setQueryData(["/api/auth/my-permissions"], { permissions, role });
+  };
+
   const login = async (username: string, password: string): Promise<AuthUser> => {
     const res = await fetch("/api/auth/login", {
       method: "POST",
@@ -89,6 +98,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(data.message || "Login failed");
     }
     const data = await res.json();
+    if (data.permissions) {
+      seedPermissions(data.permissions, data.user.role);
+    }
     setUser(data.user);
     return data.user;
   };
@@ -105,6 +117,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(data.message || "PIN incorrecto");
     }
     const data = await res.json();
+    if (data.permissions) {
+      seedPermissions(data.permissions, data.user.role);
+    }
     setUser(data.user);
     return data.user;
   };

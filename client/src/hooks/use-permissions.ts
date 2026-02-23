@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { getQueryFn } from "@/lib/queryClient";
 
 interface PermissionsData {
   permissions: string[];
@@ -8,7 +9,8 @@ interface PermissionsData {
 export function usePermissions() {
   const { data, isLoading } = useQuery<PermissionsData>({
     queryKey: ["/api/auth/my-permissions"],
-    staleTime: 60000,
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 5 * 60 * 1000,
   });
 
   const hasPermission = (key: string): boolean => {

@@ -268,8 +268,9 @@ export async function registerRoutes(
     proxy: true,
     cookie: {
       httpOnly: true,
-      secure: true,
-      sameSite: "none" as const,
+      secure: isProduction,
+      sameSite: isProduction ? "none" as const : false as any,
+      maxAge: 24 * 60 * 60 * 1000,
     },
   });
   app.use(sessionMiddleware);
@@ -292,9 +293,10 @@ export async function registerRoutes(
       req.session.userId = user.id;
       await storage.createAuditEvent({ actorType: "USER", actorUserId: user.id, action: "LOGIN_PASSWORD", entityType: "USER", entityId: user.id, metadata: {} });
       const { password: _, pin: _p, ...safeUser } = user;
-      req.session.save((err) => {
+      req.session.save(async (err) => {
         if (err) return res.status(500).json({ message: "Error de sesión" });
-        res.json({ user: { ...safeUser, hasPin: !!user.pin } });
+        const perms = await storage.getPermissionKeysForRole(user.role);
+        res.json({ user: { ...safeUser, hasPin: !!user.pin }, permissions: perms });
       });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -310,11 +312,14 @@ export async function registerRoutes(
   });
 
   app.get("/api/auth/me", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
     const user = await storage.getUser(req.session.userId);
     if (!user) return res.status(401).json({ message: "No autenticado" });
     const { password: _, pin: _p, ...safeUser } = user;
-    res.json({ ...safeUser, hasPin: !!user.pin });
+    const perms = await storage.getPermissionKeysForRole(user.role);
+    res.json({ ...safeUser, hasPin: !!user.pin, permissions: perms });
   });
 
   // PIN Login
@@ -338,9 +343,13 @@ export async function registerRoutes(
           const fullUser = await storage.getUser(u.id);
           if (!fullUser) return res.status(500).json({ message: "Error interno" });
           const { password: _, pin: _p, ...safeUser } = fullUser;
-          return req.session.save((err) => {
-            if (err) return res.status(500).json({ message: "Error de sesión" });
-            res.json({ user: { ...safeUser, hasPin: true } });
+          return req.session.save(async (err) => {
+            if (err) {
+              console.log("[AUTH-DEBUG] pin-login session save error:", err);
+              return res.status(500).json({ message: "Error de sesión" });
+            }
+            const perms = await storage.getPermissionKeysForRole(fullUser.role);
+            res.json({ user: { ...safeUser, hasPin: true }, permissions: perms });
           });
         }
       }
