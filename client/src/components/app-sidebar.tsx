@@ -11,6 +11,7 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarFooter,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   LayoutDashboard,
@@ -107,10 +108,13 @@ const hrManagerItems = [
   { title: "Config HR", url: "/hr/config", icon: Wrench },
 ];
 
+const ICON_CLASS = "w-6 h-6 shrink-0";
+
 export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { hasPermission } = usePermissions();
+  const { isMobile, setOpenMobile } = useSidebar();
 
   const showTables = hasPermission("MODULE_TABLES_VIEW");
   const showKDS = hasPermission("MODULE_KDS_VIEW");
@@ -132,6 +136,24 @@ export function AppSidebar() {
         .slice(0, 2)
     : "U";
 
+  const closeSidebar = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
+
+  const renderMenuItems = (items: typeof tablesItems, checkPrefix = false) =>
+    items.map((item) => (
+      <SidebarMenuItem key={item.title}>
+        <SidebarMenuButton asChild isActive={checkPrefix ? (location === item.url || location.startsWith(item.url + "/")) : location === item.url} tooltip={item.title}>
+          <Link href={item.url} onClick={closeSidebar} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+            <item.icon className={ICON_CLASS} />
+            <span>{item.title}</span>
+          </Link>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    ));
+
   return (
     <Sidebar>
       <SidebarContent>
@@ -143,18 +165,7 @@ export function AppSidebar() {
           <SidebarGroup>
             <SidebarGroupLabel>Salón</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
-                {tablesItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
+              <SidebarMenu>{renderMenuItems(tablesItems)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
@@ -163,18 +174,7 @@ export function AppSidebar() {
           <SidebarGroup>
             <SidebarGroupLabel>Cocina / Bar</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
-                {kitchenItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
+              <SidebarMenu>{renderMenuItems(kitchenItems)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
@@ -183,38 +183,16 @@ export function AppSidebar() {
           <SidebarGroup>
             <SidebarGroupLabel>Caja</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
-                {cashierItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
+              <SidebarMenu>{renderMenuItems(cashierItems)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
 
         {showDashboard && (
           <SidebarGroup>
-            <SidebarGroupLabel className="pl-[0px] pr-[0px] ml-[0px] mr-[0px] pt-[0px] pb-[0px] mt-[0px] mb-[0px] text-center">Gerencia</SidebarGroupLabel>
+            <SidebarGroupLabel>Gerencia</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
-                {dashboardItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
+              <SidebarMenu>{renderMenuItems(dashboardItems)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
@@ -226,8 +204,8 @@ export function AppSidebar() {
               <SidebarMenu>
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location === productsItem.url} tooltip={productsItem.title}>
-                    <Link href={productsItem.url} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
-                      <productsItem.icon className="w-5 h-5" />
+                    <Link href={productsItem.url} onClick={closeSidebar} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
+                      <productsItem.icon className={ICON_CLASS} />
                       <span>{productsItem.title}</span>
                     </Link>
                   </SidebarMenuButton>
@@ -239,8 +217,8 @@ export function AppSidebar() {
 
         {showAdmin && (
           <SidebarGroup>
-            <SidebarGroupLabel className="pl-[0px] pr-[0px] mt-[0px] mb-[0px] ml-[0px] mr-[0px]">
-              <Settings className="w-3 h-3 mr-1 inline" />
+            <SidebarGroupLabel>
+              <Settings className="w-4 h-4 mr-1 inline" />
               Admin
             </SidebarGroupLabel>
             <SidebarGroupContent>
@@ -248,8 +226,8 @@ export function AppSidebar() {
                 {showProducts && (
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location === productsItem.url} tooltip={productsItem.title}>
-                      <Link href={productsItem.url} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
-                        <productsItem.icon className="w-5 h-5" />
+                      <Link href={productsItem.url} onClick={closeSidebar} data-testid={`link-${productsItem.url.replace(/\//g, "-").slice(1)}`}>
+                        <productsItem.icon className={ICON_CLASS} />
                         <span>{productsItem.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -258,8 +236,8 @@ export function AppSidebar() {
                 {adminItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
+                      <Link href={item.url} onClick={closeSidebar} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
+                        <item.icon className={ICON_CLASS} />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -273,22 +251,11 @@ export function AppSidebar() {
         {showINV && (
           <SidebarGroup>
             <SidebarGroupLabel>
-              <Package className="w-3 h-3 mr-1 inline" />
+              <Package className="w-4 h-4 mr-1 inline" />
               Inventario
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
-                {invItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url || location.startsWith(item.url + "/")} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
+              <SidebarMenu>{renderMenuItems(invItems, true)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
@@ -296,22 +263,11 @@ export function AppSidebar() {
         {showShortages && (
           <SidebarGroup>
             <SidebarGroupLabel>
-              <AlertTriangle className="w-3 h-3 mr-1 inline" />
+              <AlertTriangle className="w-4 h-4 mr-1 inline" />
               Faltantes
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
-                {shortageItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url || location.startsWith(item.url + "/")} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
+              <SidebarMenu>{renderMenuItems(shortageItems, true)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
@@ -319,31 +275,13 @@ export function AppSidebar() {
         {showHR && (
           <SidebarGroup>
             <SidebarGroupLabel>
-              <Clock className="w-3 h-3 mr-1 inline" />
+              <Clock className="w-4 h-4 mr-1 inline" />
               Recursos Humanos
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {hrSelfItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-                {showHRManage && hrManagerItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url} tooltip={item.title}>
-                      <Link href={item.url} data-testid={`link-${item.url.replace(/\//g, "-").slice(1)}`}>
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
+                {renderMenuItems(hrSelfItems)}
+                {showHRManage && renderMenuItems(hrManagerItems)}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
