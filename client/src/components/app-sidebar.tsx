@@ -201,7 +201,7 @@ export function AppSidebar() {
 
         {showDashboard && (
           <SidebarGroup>
-            <SidebarGroupLabel className="pl-[1px] pr-[1px] pt-[1px] pb-[1px] mt-[1px] mb-[1px] ml-[1px] mr-[1px]">Gerencia</SidebarGroupLabel>
+            <SidebarGroupLabel className="pl-[0px] pr-[0px] ml-[0px] mr-[0px] pt-[0px] pb-[0px] mt-[0px] mb-[0px]">Intel</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {dashboardItems.map((item) => (
@@ -349,7 +349,6 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
       </SidebarContent>
-
       <SidebarFooter>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "8px 0" }}>
           <div style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--f-mono)", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.6)" }} data-testid="text-user-name" title={user?.displayName}>
