@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell, ArrowRightLeft } from "lucide-react";
+import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell, ArrowRightLeft, AlertTriangle } from "lucide-react";
 import { wsManager } from "@/lib/ws";
 import { formatCurrency, timeAgo } from "@/lib/utils";
 import { ReservationsSheet } from "@/components/reservations/ReservationsSheet";
@@ -81,8 +81,25 @@ function TablesSkeleton() {
   );
 }
 
+function playAlertSound() {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.5);
+  } catch {}
+}
+
 export default function TablesPage() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [showColumnPicker, setShowColumnPicker] = useState(false);
   const [reservationsOpen, setReservationsOpen] = useState(false);
@@ -94,6 +111,9 @@ export default function TablesPage() {
   const [subaccounts, setSubaccounts] = useState<any[]>([]);
   const [selectedSubaccount, setSelectedSubaccount] = useState<number | null>(null);
   const [loadingSubaccounts, setLoadingSubaccounts] = useState(false);
+  const [qrPopupTables, setQrPopupTables] = useState<{ id: number; name: string; count: number }[]>([]);
+  const [qrPopupDismissed, setQrPopupDismissed] = useState(false);
+  const prevQrCountsRef = useRef<Map<number, number>>(new Map());
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     try {
       const saved = localStorage.getItem("tables_visible_columns");
@@ -111,6 +131,37 @@ export default function TablesPage() {
   });
 
   useEffect(() => {
+    const tablesWithQr = tables.filter(t => t.pendingQrCount > 0);
+    const prevCounts = prevQrCountsRef.current;
+    const newCounts = new Map<number, number>();
+    let hasIncrease = false;
+
+    for (const t of tablesWithQr) {
+      newCounts.set(t.id, t.pendingQrCount);
+      const prev = prevCounts.get(t.id) || 0;
+      if (t.pendingQrCount > prev) {
+        hasIncrease = true;
+      }
+    }
+
+    const isFirstLoad = prevCounts.size === 0 && tablesWithQr.length > 0;
+
+    if (tablesWithQr.length > 0) {
+      setQrPopupTables(tablesWithQr.map(t => ({ id: t.id, name: t.tableName, count: t.pendingQrCount })));
+      if (hasIncrease || isFirstLoad) {
+        setQrPopupDismissed(false);
+        if (!isFirstLoad) {
+          playAlertSound();
+        }
+      }
+    } else {
+      setQrPopupTables([]);
+    }
+
+    prevQrCountsRef.current = newCounts;
+  }, [tables]);
+
+  useEffect(() => {
     wsManager.connect();
     const invalidate = () => {
       queryClient.refetchQueries({ queryKey: ["/api/waiter/tables"] });
@@ -119,23 +170,7 @@ export default function TablesPage() {
       wsManager.on("table_status_changed", invalidate),
       wsManager.on("qr_submission_created", (p: any) => {
         invalidate();
-        toast({
-          title: "Nueva orden QR",
-          description: p?.tableName ? `Nueva orden QR en ${p.tableName}` : "Un cliente ha enviado un pedido QR",
-        });
-        try {
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.type = "sine";
-          osc.frequency.value = 880;
-          gain.gain.setValueAtTime(0.3, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-          osc.start(ctx.currentTime);
-          osc.stop(ctx.currentTime + 0.5);
-        } catch {}
+        playAlertSound();
       }),
       wsManager.on("order_updated", invalidate),
       wsManager.on("payment_completed", invalidate),
@@ -144,7 +179,7 @@ export default function TablesPage() {
       wsManager.on("reservation_updated", invalidate),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [toast]);
+  }, []);
 
   const toggleColumn = (key: ColumnKey) => {
     setVisibleColumns((prev) => {
@@ -161,7 +196,7 @@ export default function TablesPage() {
     ? activeTables.filter(t => t.tableName.toLowerCase().includes(search.toLowerCase()) || t.tableCode.toLowerCase().includes(search.toLowerCase()))
     : activeTables;
   const isEffectivelyOpen = (t: TableView) =>
-    t.hasOpenOrder && (t.itemCount > 0 || Number(t.totalAmount || 0) > 0);
+    t.hasOpenOrder && (t.itemCount > 0 || Number(t.totalAmount || 0) > 0 || t.pendingQrCount > 0);
   const withOrder = filtered.filter(t => isEffectivelyOpen(t));
   const withoutOrder = filtered.filter(t => !isEffectivelyOpen(t));
   const occupiedCount = activeTables.filter(t => isEffectivelyOpen(t)).length;
@@ -672,7 +707,140 @@ export default function TablesPage() {
         }
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        .qr-popup-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.6);
+          z-index: 300;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+        }
+        .qr-popup {
+          background: var(--s1);
+          border: 2px solid var(--coral);
+          border-radius: var(--r-lg);
+          width: min(92vw, 380px);
+          overflow: hidden;
+          animation: qr-popup-enter 0.3s ease-out;
+        }
+        @keyframes qr-popup-enter {
+          from { transform: scale(0.9); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+        .qr-popup-header {
+          background: var(--coral);
+          color: #fff;
+          padding: 14px 18px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-family: var(--f-disp);
+          font-size: 16px;
+          font-weight: 700;
+        }
+        .qr-popup-header svg {
+          animation: pulse-badge 1.5s ease-in-out infinite;
+        }
+        .qr-popup-body {
+          padding: 14px 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .qr-popup-table-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 14px;
+          background: var(--s2);
+          border-radius: var(--r-sm);
+          border: 1px solid var(--border-ds);
+        }
+        .qr-popup-table-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .qr-popup-table-name {
+          font-family: var(--f-disp);
+          font-size: 15px;
+          font-weight: 700;
+          color: var(--text);
+        }
+        .qr-popup-table-count {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          color: var(--coral);
+          font-weight: 600;
+        }
+        .qr-popup-go-btn {
+          background: var(--green);
+          color: #050f08;
+          border: none;
+          border-radius: var(--r-sm);
+          padding: 8px 16px;
+          font-family: var(--f-mono);
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: opacity var(--t-fast);
+        }
+        .qr-popup-go-btn:active { opacity: 0.7; }
+        .qr-popup-dismiss {
+          background: none;
+          border: 1px solid var(--border2);
+          border-radius: var(--r-sm);
+          padding: 10px;
+          font-family: var(--f-mono);
+          font-size: 12px;
+          color: var(--text3);
+          cursor: pointer;
+          width: 100%;
+          text-align: center;
+          margin-top: 4px;
+          transition: background var(--t-fast);
+        }
+        .qr-popup-dismiss:active { background: var(--s2); }
       `}</style>
+
+      {qrPopupTables.length > 0 && !qrPopupDismissed && (
+        <div className="qr-popup-overlay" data-testid="qr-popup-overlay">
+          <div className="qr-popup" data-testid="qr-popup">
+            <div className="qr-popup-header">
+              <AlertTriangle size={20} />
+              Nueva orden QR
+            </div>
+            <div className="qr-popup-body">
+              {qrPopupTables.map(t => (
+                <div key={t.id} className="qr-popup-table-row" data-testid={`qr-popup-table-${t.id}`}>
+                  <div className="qr-popup-table-info">
+                    <div className="qr-popup-table-name">{t.name}</div>
+                    <div className="qr-popup-table-count">{t.count} {t.count === 1 ? "orden pendiente" : "ordenes pendientes"}</div>
+                  </div>
+                  <button
+                    className="qr-popup-go-btn"
+                    onClick={() => { setQrPopupDismissed(true); navigate(`/tables/${t.id}`); }}
+                    data-testid={`qr-popup-go-${t.id}`}
+                  >
+                    Ir a mesa
+                  </button>
+                </div>
+              ))}
+              <button
+                className="qr-popup-dismiss"
+                onClick={() => setQrPopupDismissed(true)}
+                data-testid="qr-popup-dismiss"
+              >
+                Cerrar (las ordenes siguen pendientes)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="screen-header">
         <div style={{ flex: 1 }}>
           <div className="header-title" data-testid="text-page-title">Mesas</div>
@@ -936,6 +1104,9 @@ export default function TablesPage() {
               {withoutOrder.map(table => (
                 <Link key={table.id} href={`/tables/${table.id}`} className={`table-card-free${table.upcomingReservation && table.upcomingReservation.minutesUntil <= 60 ? ' has-reservation-soon' : ''}`} style={{ position: 'relative' }} data-testid={`card-table-${table.id}`}>
                   {table.hasActiveReservation && <div className="res-tag" data-testid={`tag-res-${table.id}`}>RES</div>}
+                  {table.pendingQrCount > 0 && (
+                    <div className="qr-alert">{table.pendingQrCount}</div>
+                  )}
                   <div className="tcf-name" data-testid={`text-table-name-${table.id}`}>{table.tableName}</div>
                   {table.upcomingReservation ? (
                     <div className={`reservation-badge ${table.upcomingReservation.minutesUntil <= 60 ? 'soon' : 'later'}`} style={{ fontSize: 9, marginTop: 2 }} data-testid={`badge-reservation-${table.id}`}>

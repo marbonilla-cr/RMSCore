@@ -112,6 +112,9 @@ export default function TableDetailPage() {
   const [noteDialogItem, setNoteDialogItem] = useState<CartItem | null>(null);
   const [noteText, setNoteText] = useState("");
   const [rondaSheetOpen, setRondaSheetOpen] = useState(false);
+  const [guestCountDialogOpen, setGuestCountDialogOpen] = useState(false);
+  const [guestCountInput, setGuestCountInput] = useState("2");
+  const guestCountCheckedRef = useRef(false);
 
   useEffect(() => {
     if (!tableId) return;
@@ -140,6 +143,24 @@ export default function TableDetailPage() {
     enabled: !!tableId,
     refetchInterval: 2000,
   });
+
+  const prevOrderIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!currentView?.activeOrder) {
+      prevOrderIdRef.current = null;
+      guestCountCheckedRef.current = false;
+      return;
+    }
+    if (currentView.activeOrder.id !== prevOrderIdRef.current) {
+      prevOrderIdRef.current = currentView.activeOrder.id;
+      guestCountCheckedRef.current = false;
+    }
+    if (guestCountCheckedRef.current) return;
+    guestCountCheckedRef.current = true;
+    if (currentView.activeOrder.guestCount == null) {
+      setGuestCountDialogOpen(true);
+    }
+  }, [currentView]);
 
   const { data: products = [] } = useQuery<Product[]>({
     queryKey: ["/api/waiter/menu"],
@@ -726,6 +747,60 @@ export default function TableDetailPage() {
   return (
     <div className="td-screen">
       <style>{tdStyles}</style>
+
+      {guestCountDialogOpen && activeOrder && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} data-testid="dialog-guest-count">
+          <div style={{ background: "var(--s1)", border: "1px solid var(--border-ds)", borderRadius: "var(--r-lg)", width: "min(90vw, 340px)", overflow: "hidden" }}>
+            <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--border-ds)", fontFamily: "var(--f-disp)", fontSize: 16, fontWeight: 700 }}>
+              {tableData?.tableName || `Mesa ${tableId}`}
+            </div>
+            <div style={{ padding: "18px" }}>
+              <div style={{ fontFamily: "var(--f-body)", fontSize: 14, color: "var(--text2)", marginBottom: 14 }}>
+                Cuantas personas hay en la mesa?
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "center", marginBottom: 18 }}>
+                <button
+                  style={{ width: 40, height: 40, borderRadius: "var(--r-sm)", border: "1px solid var(--border2)", background: "var(--s2)", color: "var(--text)", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  onClick={() => { const v = Math.max(1, parseInt(guestCountInput) - 1); setGuestCountInput(String(v)); }}
+                  data-testid="button-guest-minus"
+                >
+                  <Minus size={16} />
+                </button>
+                <input
+                  type="number"
+                  min="1"
+                  value={guestCountInput}
+                  onChange={(e) => setGuestCountInput(e.target.value)}
+                  style={{ width: 60, textAlign: "center", fontFamily: "var(--f-disp)", fontSize: 28, fontWeight: 700, background: "none", border: "none", color: "var(--text)", outline: "none" }}
+                  data-testid="input-guest-count"
+                />
+                <button
+                  style={{ width: 40, height: 40, borderRadius: "var(--r-sm)", border: "1px solid var(--border2)", background: "var(--s2)", color: "var(--text)", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  onClick={() => { const v = parseInt(guestCountInput) + 1; setGuestCountInput(String(isNaN(v) ? 2 : v)); }}
+                  data-testid="button-guest-plus"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+              <button
+                style={{ width: "100%", padding: "12px", background: "var(--green)", color: "#050f08", border: "none", borderRadius: "var(--r-sm)", fontFamily: "var(--f-mono)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                onClick={async () => {
+                  const count = parseInt(guestCountInput);
+                  if (isNaN(count) || count < 1) return;
+                  try {
+                    await apiRequest("PATCH", `/api/orders/${activeOrder.id}/guest-count`, { guestCount: count });
+                    queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+                  } catch {}
+                  setGuestCountDialogOpen(false);
+                }}
+                data-testid="button-guest-confirm"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="td-header">
         <button className="back-btn" onClick={() => navigate("/tables")} data-testid="button-back">

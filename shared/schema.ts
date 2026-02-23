@@ -92,6 +92,7 @@ export const orders = pgTable("orders", {
   globalNumber: integer("global_number"),
   parentOrderId: integer("parent_order_id"),
   splitIndex: integer("split_index"),
+  guestCount: integer("guest_count"),
 });
 
 export const orderItems = pgTable("order_items", {

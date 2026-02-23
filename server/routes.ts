@@ -1597,6 +1597,22 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/orders/:id/guest-count", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.id as string);
+      const guestCount = parseInt(req.body.guestCount);
+      if (isNaN(orderId) || isNaN(guestCount) || guestCount < 1) {
+        return res.status(400).json({ message: "Datos inválidos" });
+      }
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+      await storage.updateOrder(orderId, { guestCount });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/tables/move", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const srcId = parseInt(req.body.sourceTableId);
