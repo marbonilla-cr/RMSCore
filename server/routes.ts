@@ -2304,7 +2304,31 @@ export async function registerRoutes(
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
     const config = await storage.getBusinessConfig();
     const maxSubaccounts = (config as any)?.maxSubaccounts ?? 15;
-    res.json({ tableName: table.tableName, tableCode: table.tableCode, maxSubaccounts });
+    const openOrder = await storage.getOpenOrderForTable(table.id);
+    const hasGuestCount = !!(openOrder && openOrder.guestCount && openOrder.guestCount > 0);
+    res.json({ tableName: table.tableName, tableCode: table.tableCode, maxSubaccounts, hasGuestCount, orderId: openOrder?.id || null });
+  });
+
+  app.patch("/api/qr/:tableCode/guest-count", async (req, res) => {
+    try {
+      const table = await storage.getTableByCode(req.params.tableCode);
+      if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
+      const guestCount = parseInt(req.body.guestCount);
+      if (isNaN(guestCount) || guestCount < 1) return res.status(400).json({ message: "Cantidad inválida" });
+      let order = await storage.getOpenOrderForTable(table.id);
+      if (!order) {
+        order = await storage.createOrder({
+          tableId: table.id,
+          status: "OPEN",
+          responsibleWaiterId: null,
+          businessDate: getBusinessDate(),
+        });
+      }
+      await storage.updateOrder(order.id, { guestCount });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.get("/api/qr/:tableCode/menu", async (req, res) => {

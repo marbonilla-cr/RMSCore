@@ -5,7 +5,7 @@ import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
   Loader2, UtensilsCrossed, Coffee, ShoppingCart, User, Check,
-  Plus, Minus, ChevronLeft, Pencil, X,
+  Plus, Minus, ChevronLeft, Pencil, X, Users,
 } from "lucide-react";
 
 /* ═══════════════════ Types ═══════════════════ */
@@ -367,7 +367,7 @@ export default function QRClientPage() {
   const tableCode = params?.tableCode || "";
   const { toast } = useToast();
 
-  const [screen, setScreen] = useState<0 | 1 | 2 | 3 | 4>(0);
+  const [screen, setScreen] = useState<"gc" | 0 | 1 | 2 | 3 | 4>("gc");
   const [name, setName] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [tab, setTab] = useState<string>("");
@@ -387,7 +387,7 @@ export default function QRClientPage() {
 
   /* ─── Data fetching ─── */
 
-  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number }>({
+  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number; hasGuestCount: boolean; orderId: number | null }>({
     queryKey: ["/api/qr", tableCode, "info"],
     queryFn: async () => {
       const r = await fetch(`/api/qr/${tableCode}/info`);
@@ -397,6 +397,12 @@ export default function QRClientPage() {
     enabled: !!tableCode,
   });
 
+  useEffect(() => {
+    if (info && screen === "gc" && info.hasGuestCount) {
+      setScreen(0);
+    }
+  }, [info, screen]);
+
   const { data: menuData, isLoading: menuLoading } = useQuery<QRMenuResponse>({
     queryKey: ["/api/qr", tableCode, "menu"],
     queryFn: async () => {
@@ -404,7 +410,7 @@ export default function QRClientPage() {
       if (!r.ok) throw new Error("Error cargando menú");
       return r.json();
     },
-    enabled: !!tableCode && screen >= 2,
+    enabled: !!tableCode && typeof screen === "number" && screen >= 2,
   });
 
   const menu = menuData?.products || [];
@@ -584,6 +590,61 @@ export default function QRClientPage() {
   }
 
   const tableName = info.tableName || tableCode;
+
+  /* ── SGC: Guest Count ── */
+  if (screen === "gc") {
+    const gcOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const handleGuestCount = async (count: number) => {
+      try {
+        await fetch(`/api/qr/${tableCode}/guest-count`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ guestCount: count }),
+        });
+      } catch {}
+      setScreen(0);
+    };
+    return (
+      <div className="qr-page" style={{
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        minHeight: "100dvh", padding: "32px 24px", textAlign: "center",
+      }}>
+        <style>{PAGE_CSS}</style>
+        <div style={{
+          width: 88, height: 88, borderRadius: 24, background: C.accD,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          marginBottom: 20,
+        }}><Users size={40} style={{ color: C.acc }} /></div>
+        <div style={{
+          fontFamily: mono, fontSize: 11, padding: "4px 12px", borderRadius: 20,
+          background: C.bg, color: C.text3, textTransform: "uppercase",
+          letterSpacing: "0.08em", border: `1px solid ${C.border}`, marginBottom: 16,
+        }}>{tableName}</div>
+        <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+          &iquest;Cu&aacute;ntos son en tu grupo?
+        </div>
+        <div style={{ fontSize: 15, color: C.text2, maxWidth: 320, lineHeight: 1.5, marginBottom: 28 }}>
+          Esto nos ayuda a preparar tu mesa
+        </div>
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10,
+          width: "100%", maxWidth: 320,
+        }}>
+          {gcOptions.map(n => (
+            <button key={n} data-testid={`button-gc-${n}`} onClick={() => handleGuestCount(n)} style={{
+              width: "100%", aspectRatio: "1", borderRadius: 14,
+              border: `1.5px solid ${C.border}`, background: C.card,
+              fontSize: 20, fontWeight: 700, color: C.text, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "all 0.15s",
+            }}>
+              {n === 10 ? "10+" : n}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   /* ── S0: Welcome ── */
   if (screen === 0) {
