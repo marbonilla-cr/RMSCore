@@ -239,7 +239,7 @@ export function AppSidebar() {
 
         {showAdmin && (
           <SidebarGroup>
-            <SidebarGroupLabel>
+            <SidebarGroupLabel className="pl-[0px] pr-[0px] mt-[0px] mb-[0px] ml-[0px] mr-[0px]">
               <Settings className="w-3 h-3 mr-1 inline" />
               Admin
             </SidebarGroupLabel>
