@@ -20,7 +20,7 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 -   **Framework:** Express.js with TypeScript.
 -   **Database:** PostgreSQL managed with Drizzle ORM.
 -   **Real-time Communication:** WebSocket (`ws` library) for live updates.
--   **Authentication:** Session-based with `express-session` and `connect-pg-simple`, featuring PIN-based login and Role-Based Access Control (RBAC) with configurable permissions. Security measures include Helmet for HTTP headers, login rate limiting, secure session handling, and body limits.
+-   **Authentication:** Dual-mode session auth: cookie-based (primary, for PWA/direct browser) + token-based fallback (for iframe/embedded contexts like Replit preview where cookies are blocked). Login endpoints return `sessionToken` + `permissions` in the response. Frontend stores token in memory and injects `X-Session-Token` header via global fetch override (`main.tsx`). Server middleware (`routes.ts`) checks header and loads session from PostgreSQL store when cookies are absent. PIN-based login, RBAC with configurable permissions, Helmet for HTTP headers, login rate limiting, secure session handling, and body limits.
 -   **Core Business Logic:**
     -   **Timezone Management:** All business date calculations use `America/Costa_Rica` (UTC-6).
     -   **Payment Integrity:** Robust payment validation, voiding, cash session management, and tax snapshotting for accuracy.
