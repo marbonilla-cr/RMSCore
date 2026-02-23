@@ -1,9 +1,25 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 let onUnauthorized: (() => void) | null = null;
+let sessionToken: string | null = null;
 
 export function setOnUnauthorized(handler: () => void) {
   onUnauthorized = handler;
+}
+
+export function setSessionToken(token: string | null) {
+  sessionToken = token;
+}
+
+export function getSessionToken(): string | null {
+  return sessionToken;
+}
+
+function addSessionHeaders(headers: Record<string, string> = {}): Record<string, string> {
+  if (sessionToken) {
+    headers["X-Session-Token"] = sessionToken;
+  }
+  return headers;
 }
 
 async function throwIfResNotOk(res: Response) {
@@ -21,9 +37,13 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (data) headers["Content-Type"] = "application/json";
+  addSessionHeaders(headers);
+
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -40,6 +60,7 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      headers: addSessionHeaders({}),
     });
 
     if (res.status === 401) {

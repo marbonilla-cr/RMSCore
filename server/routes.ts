@@ -255,16 +255,19 @@ export async function registerRoutes(
   app.set("trust proxy", 1);
 
   const isProduction = process.env.NODE_ENV === "production";
+
+  const sessionStore = new pgSession({
+    conString: process.env.DATABASE_URL,
+    tableName: "session",
+    pruneSessionInterval: 60 * 15,
+    createTableIfMissing: true,
+  });
+
   const sessionMiddleware = session({
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
-    store: new pgSession({
-      conString: process.env.DATABASE_URL,
-      tableName: "session",
-      pruneSessionInterval: 60 * 15,
-      createTableIfMissing: true,
-    }),
+    store: sessionStore,
     proxy: true,
     cookie: {
       httpOnly: true,
@@ -275,6 +278,18 @@ export async function registerRoutes(
   });
   app.use(sessionMiddleware);
   app.set("sessionMiddleware", sessionMiddleware);
+
+  app.use((req, _res, next) => {
+    if (req.session.userId) return next();
+    const token = req.headers["x-session-token"] as string | undefined;
+    if (!token) return next();
+    sessionStore.get(token, (err: any, sess: any) => {
+      if (!err && sess && sess.userId) {
+        req.session.userId = sess.userId;
+      }
+      next();
+    });
+  });
 
   // ==================== AUTH ====================
   app.post("/api/auth/login", async (req, res) => {
@@ -296,7 +311,7 @@ export async function registerRoutes(
       req.session.save(async (err) => {
         if (err) return res.status(500).json({ message: "Error de sesión" });
         const perms = await storage.getPermissionKeysForRole(user.role);
-        res.json({ user: { ...safeUser, hasPin: !!user.pin }, permissions: perms });
+        res.json({ user: { ...safeUser, hasPin: !!user.pin }, permissions: perms, sessionToken: req.sessionID });
       });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -345,11 +360,10 @@ export async function registerRoutes(
           const { password: _, pin: _p, ...safeUser } = fullUser;
           return req.session.save(async (err) => {
             if (err) {
-              console.log("[AUTH-DEBUG] pin-login session save error:", err);
               return res.status(500).json({ message: "Error de sesión" });
             }
             const perms = await storage.getPermissionKeysForRole(fullUser.role);
-            res.json({ user: { ...safeUser, hasPin: true }, permissions: perms });
+            res.json({ user: { ...safeUser, hasPin: true }, permissions: perms, sessionToken: req.sessionID });
           });
         }
       }

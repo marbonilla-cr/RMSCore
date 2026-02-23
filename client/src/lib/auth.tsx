@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
-import { setOnUnauthorized, queryClient } from "./queryClient";
+import { setOnUnauthorized, queryClient, setSessionToken } from "./queryClient";
 
 interface AuthUser {
   id: number;
@@ -33,6 +33,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (loggingOut.current) return;
     loggingOut.current = true;
     setUser(null);
+    setSessionToken(null);
     queryClient.clear();
     setTimeout(() => { loggingOut.current = false; }, 1000);
   }, []);
@@ -52,7 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const data = await res.json();
           if (mounted) {
             if (data.permissions) {
-              seedPermissions(data.permissions, data.role);
+              queryClient.setQueryData(["/api/auth/my-permissions"], { permissions: data.permissions, role: data.role });
             }
             setUser(data);
           }
@@ -82,8 +83,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [, setLocation] = useLocation();
 
-  const seedPermissions = (permissions: string[], role: string) => {
-    queryClient.setQueryData(["/api/auth/my-permissions"], { permissions, role });
+  const handleLoginResponse = (data: any) => {
+    if (data.sessionToken) {
+      setSessionToken(data.sessionToken);
+    }
+    if (data.permissions) {
+      queryClient.setQueryData(["/api/auth/my-permissions"], { permissions: data.permissions, role: data.user.role });
+    }
+    setUser(data.user);
   };
 
   const login = async (username: string, password: string): Promise<AuthUser> => {
@@ -98,10 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(data.message || "Login failed");
     }
     const data = await res.json();
-    if (data.permissions) {
-      seedPermissions(data.permissions, data.user.role);
-    }
-    setUser(data.user);
+    handleLoginResponse(data);
     return data.user;
   };
 
@@ -117,16 +121,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(data.message || "PIN incorrecto");
     }
     const data = await res.json();
-    if (data.permissions) {
-      seedPermissions(data.permissions, data.user.role);
-    }
-    setUser(data.user);
+    handleLoginResponse(data);
     return data.user;
   };
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setUser(null);
+    setSessionToken(null);
     queryClient.clear();
     setLocation("/");
   };
@@ -140,6 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (document.visibilityState === "hidden" && user) {
         navigator.sendBeacon("/api/auth/logout");
         setUser(null);
+        setSessionToken(null);
         queryClient.clear();
       }
     };
