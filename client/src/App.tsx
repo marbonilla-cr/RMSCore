@@ -163,13 +163,8 @@ function AuthenticatedRouter() {
 function AuthenticatedLayout() {
   const { user, logout } = useAuth();
   useShortageAlerts();
-  const style = {
-    "--sidebar-width": "64px",
-    "--sidebar-width-icon": "64px",
-  };
-
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
+    <SidebarProvider defaultOpen={false}>
       <style>{`
         .app-header {
           display: flex;

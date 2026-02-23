@@ -108,13 +108,13 @@ const hrManagerItems = [
   { title: "Config HR", url: "/hr/config", icon: Wrench },
 ];
 
-const ICON_CLASS = "w-6 h-6 shrink-0";
+const ICON_CLASS = "w-5 h-5 shrink-0";
 
 export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { hasPermission } = usePermissions();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpenMobile, setOpen } = useSidebar();
 
   const showTables = hasPermission("MODULE_TABLES_VIEW");
   const showKDS = hasPermission("MODULE_KDS_VIEW");
@@ -139,6 +139,8 @@ export function AppSidebar() {
   const closeSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
+    } else {
+      setOpen(false);
     }
   };
 
@@ -288,17 +290,20 @@ export function AppSidebar() {
         )}
       </SidebarContent>
       <SidebarFooter>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "8px 0" }}>
-          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--f-mono)", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.6)" }} data-testid="text-user-name" title={user?.displayName}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--f-mono)", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", flexShrink: 0 }} data-testid="text-user-name">
             {initials}
           </div>
+          <span style={{ flex: 1, fontSize: 13, color: "rgba(255,255,255,0.7)", fontFamily: "var(--f-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {user?.displayName}
+          </span>
           <button
-            onClick={logout}
+            onClick={() => { closeSidebar(); logout(); }}
             data-testid="button-logout"
-            style={{ width: 30, height: 30, borderRadius: "var(--r-sm)", background: "transparent", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            style={{ width: 32, height: 32, borderRadius: "var(--r-sm)", background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
             title="Salir"
           >
-            <LogOut size={14} />
+            <LogOut size={16} />
           </button>
         </div>
       </SidebarFooter>

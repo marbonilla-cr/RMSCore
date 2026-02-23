@@ -926,7 +926,7 @@ export default function TablesPage() {
             <div className="empty-state">Ninguna mesa con cuenta</div>
           )}
 
-          <div className="section-label">
+          <div className="section-label text-center">
             Libres
             <span className="section-count">{withoutOrder.length}</span>
           </div>
