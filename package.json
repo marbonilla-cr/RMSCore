@@ -1,0 +1,39 @@
+{
+  "name": "rms-mobile-wrapper",
+  "version": "1.0.0",
+  "description": "Capacitor mobile wrapper for RMS web application",
+  "main": "dist/capacitor.config.js",
+  "scripts": {
+    "build:config": "npx ts-node scripts/generate-config.ts",
+    "cap:android:dev": "cross-env APP_ENV=development npm run build:config && npx cap sync android",
+    "cap:android:prod": "cross-env APP_ENV=production npm run build:config && npx cap sync android",
+    "cap:ios:dev": "cross-env APP_ENV=development npm run build:config && npx cap sync ios",
+    "cap:ios:prod": "cross-env APP_ENV=production npm run build:config && npx cap sync ios",
+    "cap:add:android": "npx cap add android",
+    "cap:add:ios": "npx cap add ios",
+    "preview": "npx serve www -l 5000 --no-clipboard"
+  },
+  "keywords": [
+    "capacitor",
+    "rms",
+    "mobile",
+    "wrapper"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/app": "^8.0.1",
+    "@capacitor/cli": "^7.5.0",
+    "@capacitor/core": "^8.1.0",
+    "@capacitor/ios": "^8.1.0",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.1",
+    "cross-env": "^10.1.0",
+    "dotenv": "^17.3.1",
+    "serve": "^14.2.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
