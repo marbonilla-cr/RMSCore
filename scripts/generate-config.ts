@@ -5,6 +5,13 @@ import * as dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 const env = process.env.APP_ENV || 'development';
+const validEnvs = ['development', 'production'];
+if (!validEnvs.includes(env)) {
+  console.error(`\n=== ERROR ===`);
+  console.error(`APP_ENV inválido: "${env}"`);
+  console.error(`Valores válidos: ${validEnvs.join(', ')}\n`);
+  process.exit(1);
+}
 const isDev = env === 'development';
 const isProd = env === 'production';
 
