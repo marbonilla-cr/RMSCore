@@ -17,6 +17,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Table,
   TableHeader,
   TableRow,
@@ -113,6 +123,7 @@ export default function ItemDetail() {
   const id = params?.id;
   const [editOpen, setEditOpen] = useState(false);
   const [convOpen, setConvOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const { data: item, isLoading } = useQuery<InvItem>({
     queryKey: ["/api/inv/items", id],
@@ -218,6 +229,28 @@ export default function ItemDetail() {
     },
   });
 
+  const deleteItemMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", `/api/inv/items/${id}`);
+      return res.json();
+    },
+    onSuccess: (data: { hardDeleted: boolean }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+      toast({
+        title: data.hardDeleted
+          ? "Insumo eliminado permanentemente"
+          : "Insumo desactivado",
+        description: data.hardDeleted
+          ? "El insumo fue eliminado de la base de datos."
+          : "El insumo tiene registros relacionados y fue desactivado.",
+      });
+      navigate("/inventory/items");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error al eliminar", description: err.message, variant: "destructive" });
+    },
+  });
+
   if (!matched) return null;
 
   if (isLoading) {
@@ -249,6 +282,10 @@ export default function ItemDetail() {
         <Button variant="outline" onClick={openEdit} data-testid="button-edit-item">
           <Pencil className="h-4 w-4 mr-2" />
           Editar
+        </Button>
+        <Button variant="ghost" onClick={() => setDeleteOpen(true)} data-testid="button-delete-item">
+          <Trash2 className="h-4 w-4 mr-2" />
+          Eliminar
         </Button>
       </div>
 
@@ -545,6 +582,30 @@ export default function ItemDetail() {
           </Form>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle data-testid="text-delete-dialog-title">
+              Eliminar {item.name}
+            </AlertDialogTitle>
+            <AlertDialogDescription data-testid="text-delete-dialog-description">
+              Si el insumo tiene registros relacionados (movimientos, conversiones, recetas, etc.) se desactivará en lugar de eliminarse permanentemente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteItemMutation.mutate()}
+              disabled={deleteItemMutation.isPending}
+              data-testid="button-confirm-delete"
+            >
+              {deleteItemMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={convOpen} onOpenChange={setConvOpen}>
         <DialogContent className="max-w-sm">

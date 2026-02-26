@@ -43,6 +43,7 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
     -   **Purchase Orders:** Reorder suggestions for AP items below reorder point, PO receipt updates `inv_stock_ap` via transactional stock increment + RECEIVE_AP movement with refType='PO_RECEIPT'.
 -   **Shortages Module:** Manages item shortages with lifecycle tracking, severity levels, and real-time alerts.
 -   **Reservations Module:** Complete table reservation system with public booking, staff management, conflict detection, duration configuration, email confirmations, and capacity-based availability. Supports multi-table assignment.
+-   **Smart Delete System:** Both inventory items (inv_items) and products support smart deletion: if no related records exist → hard delete (removed from DB); if related records exist (orders, movements, conversions, etc.) → soft delete (marked inactive, hidden from UI). Inventory items: `DELETE /api/inv/items/:id` with `smartDeleteInvItem()`. Products: `DELETE /api/admin/products/:id` with `smartDeleteProduct()`. Both return `{ item/product, hardDeleted }` for appropriate UI feedback.
 -   **Item Voiding System:** Soft-voids for waiters, hard-deletes for managers, with audit trails.
 -   **QuickBooks Online Integration:** OAuth flow for connection, encrypted token storage, asynchronous fire-and-forget sync strategy for payments, and a retry queue for failed syncs. Mapping of RMS categories to QBO items and deposit accounts per payment method.
 

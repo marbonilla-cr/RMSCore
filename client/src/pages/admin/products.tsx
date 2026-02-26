@@ -10,7 +10,8 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, ShoppingBag, Loader2, Search, X, Zap, Filter } from "lucide-react";
+import { Plus, Pencil, ShoppingBag, Loader2, Search, X, Zap, Filter, Trash2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Product, Category, TaxCategory } from "@shared/schema";
 
@@ -29,6 +30,7 @@ export default function AdminProductsPage() {
   const [filterSubcat, setFilterSubcat] = useState<string>("all");
 
   const [selectedTaxIds, setSelectedTaxIds] = useState<number[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
 
   const { data: products = [], isLoading } = useQuery<Product[]>({ queryKey: ["/api/admin/products"] });
   const { data: categories = [] } = useQuery<Category[]>({ queryKey: ["/api/admin/categories"] });
@@ -69,6 +71,26 @@ export default function AdminProductsPage() {
       setOpen(false);
       setEditing(null);
       toast({ title: editing ? "Producto actualizado" : "Producto creado" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/admin/products/${id}`);
+      return res.json();
+    },
+    onSuccess: (data: { hardDeleted: boolean }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/products"] });
+      setDeleteTarget(null);
+      toast({
+        title: data.hardDeleted ? "Producto eliminado" : "Producto desactivado",
+        description: data.hardDeleted
+          ? "El producto fue eliminado permanentemente."
+          : "El producto tiene órdenes asociadas y fue desactivado.",
+      });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -244,7 +266,7 @@ export default function AdminProductsPage() {
         </div>
       ) : (
         <div className="rounded-md border overflow-visible">
-          <div className="hidden md:grid grid-cols-[1fr_120px_140px_80px_80px_80px_50px] gap-2 px-3 py-2 border-b bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          <div className="hidden md:grid grid-cols-[1fr_120px_140px_80px_80px_80px_90px] gap-2 px-3 py-2 border-b bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wide">
             <span>Producto</span>
             <span>Categoría</span>
             <span>Precio</span>
@@ -258,7 +280,7 @@ export default function AdminProductsPage() {
             <div
               key={p.id}
               data-testid={`card-product-${p.id}`}
-              className={`grid grid-cols-[1fr_auto] md:grid-cols-[1fr_120px_140px_80px_80px_80px_50px] gap-2 items-center px-3 min-h-[52px] border-b last:border-b-0 ${!p.active ? "opacity-50" : ""}`}
+              className={`grid grid-cols-[1fr_auto] md:grid-cols-[1fr_120px_140px_80px_80px_80px_90px] gap-2 items-center px-3 min-h-[52px] border-b last:border-b-0 ${!p.active ? "opacity-50" : ""}`}
             >
               <div className="min-w-0 py-2">
                 <p className="font-medium text-sm truncate">{p.name}</p>
@@ -309,6 +331,9 @@ export default function AdminProductsPage() {
                 </div>
                 <Button size="icon" variant="ghost" onClick={() => openEdit(p)} data-testid={`button-edit-product-${p.id}`}>
                   <Pencil className="w-4 h-4" />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(p)} data-testid={`button-delete-product-${p.id}`}>
+                  <Trash2 className="w-4 h-4" />
                 </Button>
               </div>
             </div>
@@ -389,6 +414,28 @@ export default function AdminProductsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle data-testid="text-delete-dialog-title">Eliminar producto</AlertDialogTitle>
+            <AlertDialogDescription data-testid="text-delete-dialog-description">
+              {deleteTarget ? `¿Eliminar "${deleteTarget.name}"? Si tiene órdenes asociadas se desactivará en lugar de eliminarse.` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="button-confirm-delete"
+              onClick={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

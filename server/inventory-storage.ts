@@ -59,6 +59,40 @@ export async function deleteInvItem(id: number) {
   return item;
 }
 
+export async function hasInvItemRelations(id: number): Promise<boolean> {
+  const checks = await Promise.all([
+    db.select({ id: invMovements.id }).from(invMovements).where(eq(invMovements.invItemId, id)).limit(1),
+    db.select({ id: invConversions.id }).from(invConversions).where(eq(invConversions.apItemId, id)).limit(1),
+    db.select({ id: invConversionOutputs.id }).from(invConversionOutputs).where(eq(invConversionOutputs.epItemId, id)).limit(1),
+    db.select({ id: invRecipeLines.id }).from(invRecipeLines).where(eq(invRecipeLines.invItemId, id)).limit(1),
+    db.select({ id: invPurchaseOrderLines.id }).from(invPurchaseOrderLines).where(eq(invPurchaseOrderLines.invItemId, id)).limit(1),
+    db.select({ id: invPhysicalCountLines.id }).from(invPhysicalCountLines).where(eq(invPhysicalCountLines.invItemId, id)).limit(1),
+    db.select({ id: productionBatches.id }).from(productionBatches).where(eq(productionBatches.apItemId, id)).limit(1),
+    db.select({ id: productionBatchOutputs.id }).from(productionBatchOutputs).where(eq(productionBatchOutputs.epItemId, id)).limit(1),
+  ]);
+  return checks.some(rows => rows.length > 0);
+}
+
+export async function hardDeleteInvItem(id: number) {
+  await db.delete(invStockAp).where(eq(invStockAp.invItemId, id));
+  await db.delete(invStockEp).where(eq(invStockEp.invItemId, id));
+  await db.delete(invUomConversions).where(eq(invUomConversions.invItemId, id));
+  await db.delete(invSupplierItems).where(eq(invSupplierItems.invItemId, id));
+  const [item] = await db.delete(invItems).where(eq(invItems.id, id)).returning();
+  return item;
+}
+
+export async function smartDeleteInvItem(id: number): Promise<{ item: InvItem; hardDeleted: boolean }> {
+  const hasRelations = await hasInvItemRelations(id);
+  if (hasRelations) {
+    const item = await deleteInvItem(id);
+    return { item, hardDeleted: false };
+  } else {
+    const item = await hardDeleteInvItem(id);
+    return { item, hardDeleted: true };
+  }
+}
+
 // ==================== UOM CONVERSIONS ====================
 
 export async function getUomConversions(invItemId: number) {

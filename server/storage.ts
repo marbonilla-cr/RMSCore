@@ -10,6 +10,7 @@ import {
   discounts, orderDiscounts,
   taxCategories, productTaxCategories, orderItemTaxes, orderItemDiscounts,
   portionReservations, qrRateLimits,
+  invRecipes, invShortages,
   hrSettings, hrWeeklySchedules, hrScheduleDays, hrTimePunches, serviceChargeLedger, serviceChargePayouts,
   type InsertUser, type User,
   type InsertTable, type Table,
@@ -1973,6 +1974,35 @@ export async function deleteServiceChargePayoutsByPeriod(periodStart: string, pe
       eq(serviceChargePayouts.periodEnd, periodEnd),
       eq(serviceChargePayouts.status, status)
     ));
+}
+
+export async function hasProductRelations(id: number): Promise<boolean> {
+  const checks = await Promise.all([
+    db.select({ c: sql<number>`count(*)` }).from(orderItems).where(eq(orderItems.productId, id)),
+    db.select({ c: sql<number>`count(*)` }).from(salesLedgerItems).where(eq(salesLedgerItems.productId, id)),
+    db.select({ c: sql<number>`count(*)` }).from(voidedItems).where(eq(voidedItems.productId, id)),
+    db.select({ c: sql<number>`count(*)` }).from(invRecipes).where(eq(invRecipes.menuProductId, id)),
+    db.select({ c: sql<number>`count(*)` }).from(invShortages).where(eq(invShortages.menuProductId, id)),
+  ]);
+  return checks.some(r => Number(r[0].c) > 0);
+}
+
+export async function hardDeleteProduct(id: number) {
+  await db.delete(itemModifierGroups).where(eq(itemModifierGroups.productId, id));
+  await db.delete(productTaxCategories).where(eq(productTaxCategories.productId, id));
+  await db.delete(portionReservations).where(eq(portionReservations.productId, id));
+  const [product] = await db.delete(products).where(eq(products.id, id)).returning();
+  return product;
+}
+
+export async function smartDeleteProduct(id: number): Promise<{ product: any; hardDeleted: boolean }> {
+  const hasRelations = await hasProductRelations(id);
+  if (hasRelations) {
+    const [product] = await db.update(products).set({ active: false }).where(eq(products.id, id)).returning();
+    return { product, hardDeleted: false };
+  }
+  const product = await hardDeleteProduct(id);
+  return { product, hardDeleted: true };
 }
 
 export { getBusinessDate };

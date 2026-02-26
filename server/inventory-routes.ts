@@ -119,10 +119,10 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/items/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      const item = await invStorage.deleteInvItem(parseInt(req.params.id));
-      if (!item) return res.status(404).json({ message: "Item no encontrado" });
-      broadcast(wss, "INV_ITEM_DELETED", item);
-      res.json(item);
+      const result = await invStorage.smartDeleteInvItem(parseInt(req.params.id));
+      if (!result.item) return res.status(404).json({ message: "Item no encontrado" });
+      broadcast(wss, "INV_ITEM_DELETED", result.item);
+      res.json({ item: result.item, hardDeleted: result.hardDeleted });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

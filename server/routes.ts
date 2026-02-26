@@ -882,6 +882,18 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/admin/products/:id", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id as string);
+      const existing = await storage.getProduct(id);
+      if (!existing) return res.status(404).json({ message: "Producto no encontrado" });
+      const result = await storage.smartDeleteProduct(id);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   // ==================== ADMIN: PAYMENT METHODS ====================
   app.get("/api/admin/payment-methods", requireRole("MANAGER"), async (_req, res) => {
     res.json(await storage.getAllPaymentMethods());

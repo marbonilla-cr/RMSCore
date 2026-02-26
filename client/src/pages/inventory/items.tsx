@@ -40,7 +40,17 @@ import {
 } from "@/components/ui/form";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, Plus, Search, Upload } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Loader2, Plus, Search, Trash2, Upload } from "lucide-react";
 
 interface InvItem {
   id: number;
@@ -142,6 +152,7 @@ export default function InventoryItems() {
   const [importText, setImportText] = useState("");
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importResults, setImportResults] = useState<{created: number; skipped: number; errors: string[]} | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<InvItem | null>(null);
 
   const { data: items, isLoading } = useQuery<InvItem[]>({
     queryKey: ["/api/inv/items"],
@@ -206,15 +217,37 @@ export default function InventoryItems() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: async (itemId: number) => {
+      const res = await apiRequest("DELETE", `/api/inv/items/${itemId}`);
+      return res.json();
+    },
+    onSuccess: (data: { hardDeleted: boolean }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+      toast({
+        title: data.hardDeleted
+          ? "Insumo eliminado permanentemente"
+          : "Insumo desactivado",
+        description: data.hardDeleted
+          ? "El insumo fue eliminado de la base de datos."
+          : "El insumo tiene registros relacionados y fue desactivado.",
+      });
+      setDeleteTarget(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error al eliminar", description: err.message, variant: "destructive" });
+    },
+  });
+
   const categories = useMemo(() => {
     if (!items) return [];
-    const set = new Set(items.map((i) => i.category));
+    const set = new Set(items.filter((i) => i.isActive).map((i) => i.category));
     return Array.from(set).sort();
   }, [items]);
 
   const filtered = useMemo(() => {
     if (!items) return [];
-    let list = items;
+    let list = items.filter((i) => i.isActive);
     if (typeFilter !== "__all__") {
       list = list.filter((i) => i.itemType === typeFilter);
     }
@@ -300,6 +333,7 @@ export default function InventoryItems() {
                   <TableHead>UOM</TableHead>
                   <TableHead className="text-right">En Mano</TableHead>
                   <TableHead className="text-center">Estado</TableHead>
+                  <TableHead className="text-center">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -326,11 +360,21 @@ export default function InventoryItems() {
                     <TableCell className="text-center">
                       {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
                     </TableCell>
+                    <TableCell className="text-center">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
+                        data-testid={`button-delete-item-${item.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                       No se encontraron insumos
                     </TableCell>
                   </TableRow>
@@ -358,7 +402,17 @@ export default function InventoryItems() {
                         {item.itemType || "AP"}
                       </Badge>
                     </div>
-                    {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
+                    <div className="flex items-center gap-1">
+                      {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
+                        data-testid={`button-delete-item-mobile-${item.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                   <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span>{item.sku} · {item.category}</span>
@@ -599,6 +653,30 @@ export default function InventoryItems() {
           </Form>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle data-testid="text-delete-dialog-title">
+              Eliminar {deleteTarget?.name}
+            </AlertDialogTitle>
+            <AlertDialogDescription data-testid="text-delete-dialog-description">
+              Si el insumo tiene registros relacionados (movimientos, conversiones, recetas, etc.) se desactivará en lugar de eliminarse permanentemente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={deleteMutation.isPending}
+              data-testid="button-confirm-delete"
+            >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
