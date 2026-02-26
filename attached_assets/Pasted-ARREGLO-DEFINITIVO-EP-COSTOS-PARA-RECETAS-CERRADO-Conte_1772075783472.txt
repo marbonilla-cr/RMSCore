@@ -1,0 +1,53 @@
+ARREGLO DEFINITIVO EP + COSTOS PARA RECETAS (CERRADO)
+
+Contexto:
+EP será usado como ingrediente en recetas (200+). Por lo tanto EP DEBE existir como entidad reutilizable. 
+El problema actual es que el dropdown de EP está vacío al crear la primera conversión, y además falta mostrar el costo derivado del EP.
+
+REGLAS OBLIGATORIAS:
+1) EP es un item real (entidad) reutilizable para recetas.
+2) No se puede bloquear la creación de la primera conversión por no existir EP: debe poder crearse EP inline desde la misma fila/salida.
+3) El módulo Conversiones NO puede ser modal/popup: debe ser inline, en pantalla (tabla).
+4) Mostrar costo derivado del EP (unitario y por porción) en la misma tabla y en tooltip.
+
+CAMBIOS:
+
+A) Modelo
+- Mantener EP en inv_items (o items existente) usando itemType='EP' (reutilizable en recetas).
+- inv_conversion_outputs debe referenciar epItemId (FK a inv_items EP).
+- Asegurar que AP tenga purchasePrice + purchaseUom (si no existe, agregar).
+
+B) Flujo “huevo y gallina”
+- En la fila de salida EP, el dropdown debe incluir opción:
+  “+ Crear EP nuevo”
+- Al seleccionar esa opción, se muestra inline (sin modal) un mini-form:
+  - Nombre EP
+  - UOM base EP (g/ml/unit/portion)
+  - Guardar
+- Al guardar:
+  - crear inv_item itemType='EP'
+  - refrescar lista y seleccionar ese EP en la salida
+
+C) Costos (faltante actual)
+Implementar cálculo server-side (no persistir por ahora):
+- Para cada conversion + output:
+  - calcular usable_qty (merma/cocción/pérdida extra)
+  - aplicar outputPct
+  - calcular epUnitCost (₡/g o ₡/ml o ₡/unit)
+  - si portionSize existe, calcular portionCost
+Exponerlo en GET conversions para que UI lo muestre.
+
+D) UI (inline)
+- Reemplazar modal “Nueva Conversión” por tabla inline:
+  - fila conversión editable
+  - subfilas outputs EP
+- En outputs EP mostrar columnas calculadas:
+  - costo unitario EP
+  - costo por porción (si aplica)
+- Tooltip al lado del selector EP que muestre: rendimiento + costo unitario + costo por porción.
+
+E) Aceptación
+- Puedo crear una conversión desde cero sin EP pre-existentes (creo EP inline).
+- EP queda guardado como entidad y aparece luego en dropdown y en Recetas.
+- La tabla muestra costos derivados.
+- No hay modal/popup para conversiones.
