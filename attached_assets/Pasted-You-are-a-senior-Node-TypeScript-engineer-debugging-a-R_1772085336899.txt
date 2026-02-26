@@ -1,0 +1,35 @@
+You are a senior Node/TypeScript engineer debugging a Replit deployment.
+
+Problem:
+Replit deploy promotion fails: “deployment is failing health checks”. Health checks hit the “/” endpoint by default and the app is not responding fast enough (timeout, error, or missing 200). Logs also show a background scheduler/job starting at boot (e.g., “Background jobs started … auto clock-out every 5min”), which may block startup.
+
+Goal:
+Make the deployment pass health checks reliably with minimal changes:
+1) Ensure the web server listens on the correct deployment port: use process.env.PORT (with a local fallback).
+2) Ensure GET "/" returns HTTP 200 immediately with a tiny response (“ok”), with NO DB calls, NO auth/session, NO heavy middleware, and NO long-running work.
+3) Ensure any heavy initialization (DB connect, migrations, loading configs/caches, cron/schedulers/background jobs) starts ONLY AFTER the server is listening, and is deferred (e.g., setTimeout 1000ms).
+4) Do NOT change business logic, data models, or route behaviors besides:
+   - adding or adjusting simple health endpoints
+   - moving startup timing so heavy work happens after listen
+5) Keep TypeScript valid and consistent with the project’s style.
+
+Steps:
+A) Locate the actual entrypoint used in deploy (check package.json scripts, replit config, or server start file).
+B) Identify where the Express/Fastify/etc app is created and where listen() is called.
+C) Implement a fast health response:
+   - GET "/" -> status 200, body "ok"
+   - Optionally add GET "/health" -> status 200, JSON { ok: true }
+   Place these routes before any expensive middleware.
+D) Fix port binding:
+   - const port = Number(process.env.PORT) || <existing_local_port_fallback>;
+   - listen(port)
+E) Refactor startup:
+   - Start listening first.
+   - After listen callback, defer warmup: setTimeout(() => void warmup(), 1000)
+   - warmup() runs DB connect + starts background jobs/schedulers.
+F) Verify that no code path blocks the event loop before the first request can be served.
+
+Deliverables:
+- Show the exact file(s) changed and the exact diff/code blocks.
+- Explain in 3-6 bullets why it fixes Replit health checks.
+- Confirm GET "/" returns 200 immediately and background jobs start after listen().
