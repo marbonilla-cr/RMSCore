@@ -497,6 +497,7 @@ export const invItems = pgTable("inv_items", {
   notes: text("notes"),
   avgCostPerBaseUom: numeric("avg_cost_per_base_uom", { precision: 12, scale: 6 }).notNull().default("0"),
   lastCostPerBaseUom: numeric("last_cost_per_base_uom", { precision: 12, scale: 6 }).notNull().default("0"),
+  unitWeightG: numeric("unit_weight_g", { precision: 12, scale: 4 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

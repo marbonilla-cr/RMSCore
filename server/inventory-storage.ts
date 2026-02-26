@@ -1,5 +1,6 @@
 import { db } from "./db";
 import { eq, and, desc, asc, sql, ne, inArray, gte, lte } from "drizzle-orm";
+import { normalizeUom, toSmallUnit, getCalcBasisLabel, type AllowedUom } from "./uom-helpers";
 import {
   invItems, invUomConversions, invMovements, invSuppliers, invSupplierItems,
   invPurchaseOrders, invPurchaseOrderLines, invPoReceipts, invPoReceiptLines,
@@ -753,6 +754,128 @@ export async function deleteRecipeLine(id: number) {
 
 // ==================== CONVERSIONS (AP→EP) ====================
 
+function enrichConversionWithCosts(
+  conv: any,
+  apItem: { name: string; sku: string; baseUom: string; lastCostPerBaseUom: string; unitWeightG: string | null },
+  rawOutputs: any[],
+) {
+  const mermaPct = Number(conv.mermaPct) || 0;
+  const cookFactor = Number(conv.cookFactor) || 1;
+  const extraLossPct = Number(conv.extraLossPct) || 0;
+  const apCostPerBaseUom = Number(apItem.lastCostPerBaseUom) || 0;
+
+  let apNormUom: AllowedUom | null = null;
+  let apUomValid = true;
+  try {
+    apNormUom = normalizeUom(apItem.baseUom);
+  } catch {
+    apUomValid = false;
+  }
+
+  const usableQtyBase = 1 * (1 - mermaPct / 100) * cookFactor * (1 - extraLossPct / 100);
+  const apCalcBasisLabel = apUomValid && apNormUom ? getCalcBasisLabel(apNormUom) : `por 1 ${apItem.baseUom}`;
+
+  let defaultUsableQtySmall = usableQtyBase;
+  let defaultSmallUom = apNormUom || apItem.baseUom;
+  if (apUomValid && apNormUom) {
+    const converted = toSmallUnit(usableQtyBase, apNormUom);
+    defaultUsableQtySmall = converted.qty;
+    defaultSmallUom = converted.smallUom;
+  }
+
+  const hasNullPctInMultiOutput = rawOutputs.length > 1 && rawOutputs.some(o => o.outputPct == null || o.outputPct === "");
+  let convCostWarning: string | null = null;
+  if (hasNullPctInMultiOutput) {
+    convCostWarning = "Falta % de salida en una o más salidas";
+  }
+
+  const enrichedOutputs = rawOutputs.map((out) => {
+    const portionSize = out.portionSize != null ? Number(out.portionSize) : null;
+
+    let epNormUom: AllowedUom | null = null;
+    let epUomValid = true;
+    try {
+      epNormUom = normalizeUom(out.epBaseUom || "");
+    } catch {
+      epUomValid = false;
+    }
+
+    if (!apUomValid) {
+      return { ...out, epUnitCost: null, portionCost: null, epBaseUom: out.epBaseUom, epQtySmall: null, smallUom: defaultSmallUom, costWarning: "UOM inválida (AP)" };
+    }
+    if (!epUomValid) {
+      return { ...out, epUnitCost: null, portionCost: null, epBaseUom: out.epBaseUom, epQtySmall: null, smallUom: defaultSmallUom, costWarning: "UOM inválida (EP)" };
+    }
+    if (convCostWarning) {
+      return { ...out, epUnitCost: null, portionCost: null, epBaseUom: out.epBaseUom, epQtySmall: null, smallUom: defaultSmallUom, costWarning: convCostWarning };
+    }
+
+    let effectiveOutputPct: number;
+    if (rawOutputs.length === 1 && (out.outputPct == null || out.outputPct === "")) {
+      effectiveOutputPct = 100;
+    } else {
+      effectiveOutputPct = Number(out.outputPct) || 0;
+    }
+
+    let usableQtySmall = defaultUsableQtySmall;
+    let smallUom = defaultSmallUom;
+    let costWarning: string | null = null;
+
+    if (apNormUom === 'UNIT' && epNormUom && ['G', 'KG'].includes(epNormUom)) {
+      const unitWeight = Number(apItem.unitWeightG) || 0;
+      if (unitWeight > 0) {
+        usableQtySmall = usableQtyBase * unitWeight;
+        smallUom = 'G';
+      } else {
+        return { ...out, epUnitCost: null, portionCost: null, epBaseUom: out.epBaseUom, epQtySmall: null, smallUom: 'G', costWarning: "Falta peso promedio por unidad" };
+      }
+    } else if (apNormUom === 'UNIT' && epNormUom && ['ML', 'L'].includes(epNormUom)) {
+      return { ...out, epUnitCost: null, portionCost: null, epBaseUom: out.epBaseUom, epQtySmall: null, smallUom: 'ML', costWarning: "Falta equivalencia por unidad" };
+    }
+
+    const epQtySmall = usableQtySmall * (effectiveOutputPct / 100);
+    if (epQtySmall <= 0) {
+      return { ...out, epUnitCost: null, portionCost: null, epBaseUom: out.epBaseUom, epQtySmall: 0, smallUom, costWarning: costWarning || "Rendimiento cero" };
+    }
+    if (apCostPerBaseUom <= 0) {
+      return { ...out, epUnitCost: null, portionCost: null, epBaseUom: out.epBaseUom, epQtySmall, smallUom, costWarning: "Falta costo AP" };
+    }
+
+    const epUnitCost = apCostPerBaseUom / epQtySmall;
+
+    let portionCost: number | null = null;
+    if (epNormUom === 'PORTION') {
+      portionCost = null;
+    } else if (epNormUom && ['G', 'ML', 'UNIT'].includes(epNormUom) && portionSize && portionSize > 0) {
+      portionCost = epUnitCost * portionSize;
+    }
+
+    return {
+      ...out,
+      epUnitCost: Math.round(epUnitCost * 100) / 100,
+      portionCost: portionCost != null ? Math.round(portionCost * 100) / 100 : null,
+      epBaseUom: out.epBaseUom,
+      epQtySmall: Math.round(epQtySmall * 100) / 100,
+      smallUom,
+      costWarning,
+    };
+  });
+
+  return {
+    ...conv,
+    apItemName: apItem.name,
+    apItemSku: apItem.sku,
+    apBaseUom: apItem.baseUom,
+    apCostPerBaseUom: apCostPerBaseUom || null,
+    usableQtyBase: Math.round(usableQtyBase * 10000) / 10000,
+    usableQtySmall: Math.round(defaultUsableQtySmall * 100) / 100,
+    smallUom: defaultSmallUom,
+    apCalcBasisLabel,
+    convCostWarning,
+    outputs: enrichedOutputs,
+  };
+}
+
 export async function getAllConversions() {
   const convs = await db.select().from(invConversions).orderBy(desc(invConversions.createdAt));
   const results = [];
@@ -767,17 +890,22 @@ export async function getAllConversions() {
       createdAt: invConversionOutputs.createdAt,
       epItemName: invItems.name,
       epItemSku: invItems.sku,
+      epBaseUom: invItems.baseUom,
     }).from(invConversionOutputs)
       .innerJoin(invItems, eq(invConversionOutputs.epItemId, invItems.id))
       .where(eq(invConversionOutputs.conversionId, conv.id));
-    const [apItem] = await db.select({ name: invItems.name, sku: invItems.sku })
-      .from(invItems).where(eq(invItems.id, conv.apItemId));
-    results.push({
-      ...conv,
-      apItemName: apItem?.name || "",
-      apItemSku: apItem?.sku || "",
-      outputs,
-    });
+    const [apItem] = await db.select({
+      name: invItems.name,
+      sku: invItems.sku,
+      baseUom: invItems.baseUom,
+      lastCostPerBaseUom: invItems.lastCostPerBaseUom,
+      unitWeightG: invItems.unitWeightG,
+    }).from(invItems).where(eq(invItems.id, conv.apItemId));
+    if (!apItem) {
+      results.push({ ...conv, apItemName: "", apItemSku: "", outputs });
+      continue;
+    }
+    results.push(enrichConversionWithCosts(conv, apItem, outputs));
   }
   return results;
 }
@@ -794,11 +922,19 @@ export async function getConversion(id: number) {
     label: invConversionOutputs.label,
     createdAt: invConversionOutputs.createdAt,
     epItemName: invItems.name,
+    epBaseUom: invItems.baseUom,
   }).from(invConversionOutputs)
     .innerJoin(invItems, eq(invConversionOutputs.epItemId, invItems.id))
     .where(eq(invConversionOutputs.conversionId, conv.id));
-  const [apItem] = await db.select({ name: invItems.name }).from(invItems).where(eq(invItems.id, conv.apItemId));
-  return { ...conv, apItemName: apItem?.name || "", outputs };
+  const [apItem] = await db.select({
+    name: invItems.name,
+    sku: invItems.sku,
+    baseUom: invItems.baseUom,
+    lastCostPerBaseUom: invItems.lastCostPerBaseUom,
+    unitWeightG: invItems.unitWeightG,
+  }).from(invItems).where(eq(invItems.id, conv.apItemId));
+  if (!apItem) return { ...conv, apItemName: "", outputs };
+  return enrichConversionWithCosts(conv, { ...apItem, sku: apItem.sku || "" }, outputs);
 }
 
 export async function createConversion(data: {

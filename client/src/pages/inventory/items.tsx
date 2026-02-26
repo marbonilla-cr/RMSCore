@@ -46,6 +46,7 @@ interface InvItem {
   id: number;
   sku: string;
   name: string;
+  itemType: string;
   category: string;
   baseUom: string;
   onHandQtyBase: string;
@@ -59,26 +60,23 @@ interface InvItem {
 }
 
 const UOM_OPTIONS = [
-  { value: "UNIT", label: "UNIT - Unidad" },
   { value: "KG", label: "KG - Kilogramo" },
   { value: "G", label: "G - Gramo" },
-  { value: "LB", label: "LB - Libra" },
-  { value: "OZ", label: "OZ - Onza" },
-  { value: "LT", label: "LT - Litro" },
+  { value: "L", label: "L - Litro" },
   { value: "ML", label: "ML - Mililitro" },
-  { value: "GAL", label: "GAL - Galón" },
-  { value: "M", label: "M - Metro" },
-  { value: "CM", label: "CM - Centímetro" },
-  { value: "BOLSA", label: "BOLSA - Bolsa" },
-  { value: "CAJA", label: "CAJA - Caja" },
-  { value: "PAQUETE", label: "PAQUETE - Paquete" },
-  { value: "BOTELLA", label: "BOTELLA - Botella" },
-  { value: "LATA", label: "LATA - Lata" },
+  { value: "UNIT", label: "UNIT - Unidad" },
+  { value: "PORTION", label: "PORTION - Porción" },
+];
+
+const ITEM_TYPE_OPTIONS = [
+  { value: "AP", label: "AP (Materia Prima)" },
+  { value: "EP", label: "EP (Elaborado)" },
 ];
 
 const formSchema = z.object({
   sku: z.string().min(1, "SKU requerido"),
   name: z.string().min(1, "Nombre requerido"),
+  itemType: z.string().min(1, "Tipo requerido"),
   category: z.string().min(1, "Categoría requerida"),
   baseUom: z.string().min(1, "UOM requerida"),
   onHandQtyBase: z.string().min(1, "Stock inicial requerido"),
@@ -126,6 +124,7 @@ export default function InventoryItems() {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("__all__");
+  const [typeFilter, setTypeFilter] = useState("__all__");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
@@ -141,6 +140,7 @@ export default function InventoryItems() {
     defaultValues: {
       sku: "",
       name: "",
+      itemType: "AP",
       category: "General",
       baseUom: "UNIT",
       onHandQtyBase: "",
@@ -190,6 +190,9 @@ export default function InventoryItems() {
   const filtered = useMemo(() => {
     if (!items) return [];
     let list = items;
+    if (typeFilter !== "__all__") {
+      list = list.filter((i) => i.itemType === typeFilter);
+    }
     if (categoryFilter !== "__all__") {
       list = list.filter((i) => i.category === categoryFilter);
     }
@@ -200,7 +203,7 @@ export default function InventoryItems() {
       );
     }
     return list;
-  }, [items, search, categoryFilter]);
+  }, [items, search, categoryFilter, typeFilter]);
 
   if (isLoading) {
     return (
@@ -238,6 +241,16 @@ export default function InventoryItems() {
                 data-testid="input-search"
               />
             </div>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="w-[140px]" data-testid="select-type-filter">
+                <SelectValue placeholder="Tipo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todos</SelectItem>
+                <SelectItem value="AP">AP (Materia Prima)</SelectItem>
+                <SelectItem value="EP">EP (Elaborado)</SelectItem>
+              </SelectContent>
+            </Select>
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
               <SelectTrigger className="w-[180px]" data-testid="select-category-filter">
                 <SelectValue placeholder="Categoría" />
@@ -257,6 +270,7 @@ export default function InventoryItems() {
                 <TableRow>
                   <TableHead>SKU</TableHead>
                   <TableHead>Nombre</TableHead>
+                  <TableHead>Tipo</TableHead>
                   <TableHead>Categoría</TableHead>
                   <TableHead>UOM</TableHead>
                   <TableHead className="text-right">En Mano</TableHead>
@@ -273,6 +287,14 @@ export default function InventoryItems() {
                   >
                     <TableCell className="font-mono text-sm">{item.sku}</TableCell>
                     <TableCell className="font-medium">{item.name}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={item.itemType === "EP" ? "default" : "secondary"}
+                        data-testid={`badge-item-type-${item.id}`}
+                      >
+                        {item.itemType || "AP"}
+                      </Badge>
+                    </TableCell>
                     <TableCell>{item.category}</TableCell>
                     <TableCell>{item.baseUom}</TableCell>
                     <TableCell className="text-right">{parseFloat(item.onHandQtyBase).toFixed(2)}</TableCell>
@@ -283,7 +305,7 @@ export default function InventoryItems() {
                 ))}
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                       No se encontraron insumos
                     </TableCell>
                   </TableRow>
@@ -302,7 +324,15 @@ export default function InventoryItems() {
               >
                 <CardContent className="p-3 space-y-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm">{item.name}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm">{item.name}</span>
+                      <Badge
+                        variant={item.itemType === "EP" ? "default" : "secondary"}
+                        data-testid={`badge-item-type-mobile-${item.id}`}
+                      >
+                        {item.itemType || "AP"}
+                      </Badge>
+                    </div>
                     {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
                   </div>
                   <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -350,6 +380,30 @@ export default function InventoryItems() {
                     <FormControl>
                       <Input {...field} placeholder="Ej: Arroz Horizonte 5kg" data-testid="input-name" />
                     </FormControl>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="itemType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Tipo</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-item-type">
+                          <SelectValue placeholder="Seleccionar tipo" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {ITEM_TYPE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">AP = Materia Prima, EP = Producto Elaborado (resultado de conversión)</p>
                   </FormItem>
                 )}
               />
