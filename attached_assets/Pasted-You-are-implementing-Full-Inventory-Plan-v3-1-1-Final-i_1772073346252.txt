@@ -1,0 +1,86 @@
+You are implementing “Full Inventory — Plan v3.1.1 (Final)” in an existing Replit codebase.
+
+NON-NEGOTIABLE RULES
+- Follow the plan exactly (T001–T007). Do not add scope, new modules, or alternate architectures.
+- All stock mutations must be inside DB transactions with row locks.
+- All stock row locks must use the full unique key: WHERE organizationId=1 AND locationId=1 AND invItemId=? FOR UPDATE
+- For any multi-row stock lock, lock ordering MUST be deterministic: sort by (itemType ASC, invItemId ASC).
+- Ensure stock rows exist before locking: INSERT ... ON CONFLICT DO NOTHING, then SELECT ... FOR UPDATE.
+- Idempotency: inventory_deductions has unique orderItemId. Items without recipes must still insert an empty-payload deduction row to protect BASIC idempotency.
+- FULL-first then BASIC: if FULL fails, block SENT and do not run BASIC.
+- REVERSED rows are never re-processed. Policy: orderItemId must NEVER be reused for a re-sent item; re-send must create a new orderItemId.
+- Canonical movementType values: CONSUME_AP, CONSUME_EP, PRODUCE_EP, ADJUST_AP, ADJUST_EP, RECEIVE_AP, REVERSE_CONSUME_AP, REVERSE_CONSUME_EP.
+- inv_movements must store standardized refType/refId (refId stored as string).
+
+IMPLEMENTATION PLAN (DO IN 7 COMMITS)
+T001 Schema
+- Update shared/schema.ts:
+  - Add inv_items.itemType default 'AP'
+  - Add inv_movements.itemType default 'AP', refType, refId
+  - Add inv_recipe_lines.itemType default 'AP'
+  - Create tables: inv_conversions, inv_conversion_outputs, inv_stock_ap, inv_stock_ep, production_batches, production_batch_outputs, inventory_deductions
+  - inventory_deductions.consumptionPayload jsonb default '[]' with format: { invItemId:number, itemType:'AP'|'EP', qty:numeric-as-string }
+- Apply SQL for CHECK constraints and UNIQUE constraints:
+  - itemType IN ('AP','EP') for inv_items/inv_movements/inv_recipe_lines
+  - inv_stock_ap UNIQUE (organizationId, locationId, invItemId)
+  - inv_stock_ep UNIQUE (organizationId, locationId, invItemId)
+- Add indexes:
+  - inv_items (organizationId, itemType)
+  - inv_stock_ap (organizationId, locationId, invItemId)
+  - inv_stock_ep (organizationId, locationId, invItemId)
+  - inventory_deductions (orderId)
+- Run migrations/db push as required.
+
+T002 Conversions Builder (API + UI)
+- Add endpoints and storage per plan:
+  - GET /api/inv/items?type=AP|EP
+  - CRUD conversions with outputs; validate sum(outputPct)<=100
+- Build UI page /inventory/conversions with preview and validations.
+
+T003 Production + Stock (API + UI)
+- Stock endpoints + adjust endpoints creating ADJUST_AP/ADJUST_EP movements with refType='MANUAL'
+- Production batch endpoint:
+  - Ensure AP stock row exists, lock it FOR UPDATE using full key
+  - Validate qty, compute usable_qty, compute outputs
+  - Decrement AP, ensure EP stock rows exist, lock EP rows (ordered by invItemId), increment EP
+  - Insert movements CONSUME_AP and PRODUCE_EP with refType='BATCH', refId=String(batchId)
+- Build UI pages /inventory/production and /inventory/stock.
+
+T004 Recipes (EP/AP references)
+- Update recipes API and UI to support recipe lines with itemType + invItemId, prefer EP, allow AP fallback.
+
+T005 Auto-deduction on SENT + idempotency + reversal
+- Create server/inventory-deduction.ts:
+  - onOrderItemsConfirmedSent(orderId, orderItemIds, userId) per plan:
+    - Start tx
+    - SELECT inventory_deductions WHERE orderItemId FOR UPDATE (idempotency gate)
+    - SELECT order_items row FOR UPDATE for snapshot (productId + orderItemQty)
+    - If no recipe: insert deduction row with empty payload, run BASIC, set basicDeductedAt
+    - If recipe: build aggregated consumption, sort keys (itemType, invItemId), ensure stock row exists, lock stock rows, validate, decrement, insert movements (CONSUME_AP/CONSUME_EP with refType='ORDER_ITEM', refId=String(orderItemId)), insert deduction row, run BASIC, set basicDeductedAt
+    - If insufficient stock: throw error; do not insert deduction row; do not run BASIC; block SENT
+  - onOrderItemsVoided(orderItemIds, userId):
+    - Start tx
+    - SELECT inventory_deductions WHERE orderItemId FOR UPDATE
+    - If not found or REVERSED: skip
+    - Restore stock from payload (lock rows sorted by itemType, invItemId using full key)
+    - Insert REVERSE_CONSUME_AP/REVERSE_CONSUME_EP movements with refType='ORDER_ITEM', refId=String(orderItemId)
+    - Mark REVERSED + reversedAt
+    - If basicDeductedAt: incrementPortions using snapshot productId + orderItemQty
+- Wire calls into server/routes.ts and server/qr-subaccount-routes.ts at the exact trigger points described in the plan, preserving rollback behavior on error.
+
+T006 Physical Counts (AP/EP)
+- Add scope AP/EP/ALL
+- Use expected qty from stock tables; finalize writes ADJUST_AP/ADJUST_EP movements with refType='PHYSICAL_COUNT', refId=String(countId) and updates stock using full key.
+
+T007 Purchase Orders
+- Suggestions endpoint for AP items below reorder point
+- On receive: increment AP stock using full key; write RECEIVE_AP movement with refType='PO_RECEIPT', refId=String(receiptId)
+- Update UI purchase-orders page with Suggestions flow.
+
+DELIVERABLES
+- Each commit must compile and run.
+- Add minimal tests or scripted checks for:
+  - Retry between FULL and BASIC runs BASIC only
+  - No-recipe items are idempotent
+  - Concurrent SENT does not deadlock (deterministic locks)
+  - VOID reverses FULL then BASIC using snapshot

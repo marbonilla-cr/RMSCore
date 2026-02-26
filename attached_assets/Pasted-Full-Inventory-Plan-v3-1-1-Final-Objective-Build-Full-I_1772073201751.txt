@@ -1,0 +1,247 @@
+Full Inventory — Plan v3.1.1 (Final)
+Objective
+Build Full Inventory module with AP→EP conversions, production batches, recipes referencing EP/AP, auto-deduction on SENT (FULL-first then BASIC), physical counts, and purchase orders. All with DB transactions, row locks, and idempotency.
+
+Key Design Decisions
+No separate inv_ep_items table — reuse inv_items with itemType column ('AP'|'EP')
+Single movements table — extend existing inv_movements with itemType, standardized reference fields (refType, refId), and canonical movementType values
+Canonical movementType values (text enum used across the module):
+CONSUME_AP — AP stock consumed (production batch or direct recipe consumption)
+CONSUME_EP — EP stock consumed (recipe deduction on SENT)
+PRODUCE_EP — EP stock produced (production batch output)
+ADJUST_AP — Manual AP stock adjustment (physical count or manual)
+ADJUST_EP — Manual EP stock adjustment (physical count or manual)
+RECEIVE_AP — AP stock received (purchase order receipt)
+REVERSE_CONSUME_AP — Reversal of CONSUME_AP (void/cancel)
+REVERSE_CONSUME_EP — Reversal of CONSUME_EP (void/cancel)
+(Future, not implemented in this plan): TRANSFER_AP, TRANSFER_EP — inter-location transfers
+FULL-then-BASIC deduction — on SENT: run FULL recipe deduction first, only if OK then run BASIC (decrementPortions). If FULL fails, block SENT entirely.
+Transactions + FOR UPDATE locks — production batches and deduction use DB transactions with row-level locks, lock ordering by (itemType, invItemId) to avoid deadlocks, ensure stock rows exist with INSERT ON CONFLICT DO NOTHING before SELECT FOR UPDATE
+Idempotency — inventory_deductions table with unique orderItemId, basicDeductedAt column, productId + orderItemQty snapshot for deterministic reversals. Items without recipes still create a deduction row (empty payload) to protect BASIC idempotency.
+Backward compatible — products without recipes just run BASIC deduction as before
+Existing Infrastructure (reuse)
+inv_items table (will add itemType column)
+inv_movements table (will add itemType column + new movement types + refType/refId)
+inv_suppliers, inv_supplier_items (reuse as-is)
+inv_purchase_orders/lines, inv_po_receipts/lines (reuse, enhance with stock updates)
+inv_physical_counts/lines (reuse, enhance for EP items)
+inv_recipes, inv_recipe_lines (enhance: add itemType to lines)
+inv_order_item_consumptions (replace with new inventory_deductions table)
+Existing UI pages in client/src/pages/inventory/ (enhance)
+Existing routes in server/inventory-routes.ts + server/inventory-storage.ts
+Tasks (7 Commits)
+T001: Schema — Add columns + new tables + constraints + indexes + migration
+Blocked By: []
+Details:
+Modify inv_items: add itemType text column default 'AP'
+Modify inv_movements: add itemType text column default 'AP'; add refType text nullable; add refId text nullable (standardized reference fields for BATCH, ORDER_ITEM, PO_RECEIPT, PHYSICAL_COUNT, MANUAL)
+Modify inv_recipe_lines: add itemType text column default 'AP'
+Create inv_conversions: id, apItemId (→inv_items), name, mermaPct numeric(5,2), cookFactor numeric(5,3), extraLossPct numeric(5,2), notes, isActive, organizationId int default 1, createdAt
+Create inv_conversion_outputs: id, conversionId (→inv_conversions), epItemId (→inv_items where itemType='EP'), outputPct numeric(5,2) default 100, portionSize numeric(10,2) nullable, label text, createdAt
+Create inv_stock_ap: id, invItemId (→inv_items), locationId int default 1, organizationId int default 1, qtyOnHand numeric(12,4) default 0, updatedAt
+Create inv_stock_ep: id, invItemId (→inv_items where itemType='EP'), locationId int default 1, organizationId int default 1, qtyOnHand numeric(12,4) default 0, updatedAt
+Create production_batches: id, conversionId, apItemId, apQtyUsed numeric(12,4), locationId int default 1, organizationId int default 1, status text default 'COMPLETED', createdByUserId int, createdAt
+Create production_batch_outputs: id, batchId, epItemId, qtyEpGenerated numeric(12,4), createdAt
+Create inventory_deductions: id, orderItemId int NOT NULL (unique), orderId int NOT NULL, recipeId int nullable, productId int NOT NULL, orderItemQty numeric(12,4) NOT NULL, status text ('CONSUMED'|'REVERSED') NOT NULL default 'CONSUMED', consumptionPayload jsonb NOT NULL default '[]', basicDeductedAt timestamp nullable, error text nullable, createdAt, reversedAt. consumptionPayload is a JSON array of objects: { invItemId: number, itemType: 'AP'|'EP', qty: numeric-as-string }.
+CHECK constraints (via SQL after push):
+inv_items.itemType IN ('AP','EP')
+inv_movements.itemType IN ('AP','EP')
+inv_recipe_lines.itemType IN ('AP','EP')
+UNIQUE constraints:
+inv_stock_ap UNIQUE (organizationId, locationId, invItemId)
+inv_stock_ep UNIQUE (organizationId, locationId, invItemId)
+Indexes:
+inv_items (organizationId, itemType) — for filtered queries per tenant
+inv_stock_ap (organizationId, locationId, invItemId) — stock lookups and lock targets
+inv_stock_ep (organizationId, locationId, invItemId) — stock lookups and lock targets
+inventory_deductions (orderId) — for order-level lookups
+inventory_deductions (orderItemId) — already unique
+Add insert schemas + types for all new tables
+Run SQL ALTER TABLE for new columns + db:push for new tables + SQL for CHECK/UNIQUE/indexes
+Files: shared/schema.ts
+Acceptance: All tables/columns/constraints/indexes exist in DB, TypeScript types exported
+T002: Conversions Builder — API + UI
+Blocked By: [T001]
+Details:
+API in server/inventory-routes.ts:
+GET /api/inv/items?type=AP|EP — filter inv_items by itemType (update existing endpoint)
+GET /api/inv/conversions — list all conversions with their outputs (join inv_conversion_outputs + inv_items)
+POST /api/inv/conversions — create conversion + outputs atomically. Validate: sum(outputPct) <= 100. If single output and outputPct null/undefined → default 100%
+PATCH /api/inv/conversions/:id — update conversion header + outputs
+DELETE /api/inv/conversions/:id — soft-deactivate (isActive=false)
+Storage functions in server/inventory-storage.ts
+UI page client/src/pages/inventory/conversions.tsx:
+Table listing conversions: AP item name, merma%, cook factor, extra loss%, # outputs, active status
+Create/edit dialog: select AP item, set merma/cook/loss percentages, add EP outputs (select EP item, outputPct, optional portionSize, label)
+Preview calculator: given 1kg AP → shows usable_qty and per-output EP amounts
+Validation: outputPct sum shown live, error if > 100%
+Register route /inventory/conversions in App.tsx
+Add "Conversiones AP→EP" to sidebar under Inventario
+Files: server/inventory-routes.ts, server/inventory-storage.ts, client/src/pages/inventory/conversions.tsx, client/src/App.tsx, client/src/components/app-sidebar.tsx
+Acceptance: Can create EP items (itemType='EP'), create conversions AP→EP with validated outputs, preview yield
+T003: Production (Batch) + Stock — API + UI
+Blocked By: [T001, T002]
+Details:
+API routes:
+GET /api/inv/stock/ap — AP stock by location (join inv_items + inv_stock_ap)
+GET /api/inv/stock/ep — EP stock by location (join inv_items + inv_stock_ep)
+POST /api/inv/stock/ap/adjust — manual AP stock adjustment + ADJUST_AP movement (refType='MANUAL', refId=null)
+POST /api/inv/stock/ep/adjust — manual EP stock adjustment + ADJUST_EP movement (refType='MANUAL', refId=null)
+GET /api/inv/production-batches — list batches with outputs
+POST /api/inv/production-batches — IN DB TRANSACTION WITH FOR UPDATE:
+Ensure AP stock row exists: INSERT INTO inv_stock_ap(...) ON CONFLICT DO NOTHING
+Lock AP stock row: SELECT ... FROM inv_stock_ap WHERE organizationId=1 AND locationId=1 AND invItemId=? FOR UPDATE
+Validate AP stock sufficient
+Calculate: usable_qty = ap_qty * (1 - merma/100) * cookFactor * (1 - extraLoss/100)
+Per output: qty_ep = usable_qty * (outputPct / 100)
+Decrement inv_stock_ap.qtyOnHand
+Ensure EP stock rows exist: INSERT INTO inv_stock_ep(...) ON CONFLICT DO NOTHING for each output
+Lock EP stock rows in order (by invItemId): SELECT ... FROM inv_stock_ep WHERE organizationId=1 AND locationId=1 AND invItemId=? FOR UPDATE + increment qtyOnHand
+Insert movements: CONSUME_AP (negative delta, refType='BATCH', refId=batchId) + PRODUCE_EP (positive delta, refType='BATCH', refId=batchId) per output
+Insert production_batches + production_batch_outputs rows
+Commit transaction
+UI page client/src/pages/inventory/production.tsx:
+List of past batches: date, conversion name, AP qty, EP outputs
+"Nueva Producción" dialog: select conversion → shows AP item, enter AP qty, preview EP outputs with calculated amounts, confirm
+UI page client/src/pages/inventory/stock.tsx:
+Tabs: "Stock AP" | "Stock EP"
+Table: item name, SKU, UOM, qty on hand, last movement
+Manual adjustment dialog (qty delta + reason)
+Register routes /inventory/production, /inventory/stock in App.tsx + sidebar
+Files: server/inventory-routes.ts, server/inventory-storage.ts, client/src/pages/inventory/production.tsx, client/src/pages/inventory/stock.tsx, client/src/App.tsx, client/src/components/app-sidebar.tsx
+Acceptance: Batch production decrements AP, increments EP, movements logged with CONSUME_AP/PRODUCE_EP and refType='BATCH', all in transaction with row locks, no negative stock
+T004: Recipes — API + UI (EP/AP references)
+Blocked By: [T001]
+Details:
+Recipe lines now have itemType ('AP'|'EP') + invItemId referencing the appropriate item in inv_items
+API updates in server/inventory-routes.ts:
+GET /api/inv/recipes — list all recipes with product name, line count, active status
+GET /api/inv/recipes/product/:productId — get active recipe + lines for a menu product
+POST /api/inv/recipes — create/replace recipe: deactivate old version, create new with lines. Each line has invItemId + itemType + qtyBasePerMenuUnit + wastePct
+DELETE /api/inv/recipes/:id — deactivate
+Refactor client/src/pages/inventory/recipes.tsx:
+List of menu products showing recipe status (has recipe / no recipe)
+Recipe editor dialog: add lines selecting from EP items (preferred) or AP items (fallback), set qty per menu unit, waste %
+Show estimated cost per portion based on item costs
+Files: server/inventory-routes.ts, server/inventory-storage.ts, client/src/pages/inventory/recipes.tsx
+Acceptance: Can assign recipe with EP/AP lines to menu products, view cost breakdown
+T005: Auto-deduction on SENT + idempotency + reversal
+Blocked By: [T003, T004]
+Details:
+Create server/inventory-deduction.ts with two main functions:
+
+onOrderItemsConfirmedSent(orderId, orderItemIds[], userId): For each orderItemId, IN DB TRANSACTION:
+
+a) Idempotency gate (SELECT inventory_deductions WHERE orderItemId=? FOR UPDATE):
+
+If exists AND status='CONSUMED' AND basicDeductedAt IS NOT NULL → COMMIT, skip (fully done)
+If exists AND status='CONSUMED' AND basicDeductedAt IS NULL → skip FULL, run BASIC only, set basicDeductedAt, COMMIT (crash recovery)
+If exists AND status='REVERSED' → skip. Policy: orderItemId must NEVER be reused for a re-sent item. Any re-send must create a new order item row (new orderItemId).
+If not exists → proceed to step b
+b) Snapshot: SELECT order_items row FOR UPDATE to lock it, then read productId + qty (orderItemQty). This lock happens before recipe resolution and before stock locks to ensure consistent snapshot.
+
+c) Resolve recipe:
+
+Find active recipe for the menu product
+If no recipe exists → create inventory_deductions row with empty consumptionPayload=[], then run BASIC and set basicDeductedAt. COMMIT. (No-recipe items still idempotent for BASIC)
+If recipe exists → proceed to step d
+d) Build consumption list from recipe lines:
+
+For each line: consumption = orderItemQty * qtyBasePerMenuUnit * (1 + wastePct/100)
+Aggregate by (itemType, invItemId) — combine duplicate items
+e) Lock ordering to avoid deadlocks:
+
+Sort aggregated consumption keys by (itemType ASC, invItemId ASC)
+For each key:
+Ensure stock row exists: INSERT INTO inv_stock_ap/ep(...) ON CONFLICT DO NOTHING
+SELECT qtyOnHand FROM inv_stock_ap/ep WHERE organizationId=1 AND locationId=1 AND invItemId=? FOR UPDATE
+Validate sufficient qty (qtyOnHand >= consumption). If insufficient → throw error, block SENT, do NOT run BASIC
+f) Apply stock updates in same locked order:
+
+Decrement stock (EP or AP based on line itemType)
+Insert movements (CONSUME_EP or CONSUME_AP, refType='ORDER_ITEM', refId=orderItemId)
+g) Insert inventory_deductions row:
+
+consumptionPayload = array of {invItemId, itemType, qty} (qty as numeric-as-string)
+productId = snapshot productId
+orderItemQty = snapshot qty
+status = 'CONSUMED'
+h) Run BASIC deduction:
+
+decrementPortions(productId, orderItemQty, orderItemId, userId)
+Set basicDeductedAt = now() on the deduction row
+COMMIT
+i) If FULL fails (insufficient stock):
+
+Throw error with message listing insufficient items
+Do NOT create deduction row, do NOT run BASIC, do NOT allow SENT
+onOrderItemsVoided(orderItemIds[], userId): For each orderItemId, IN DB TRANSACTION:
+
+SELECT inventory_deductions WHERE orderItemId=? FOR UPDATE
+If not found OR status='REVERSED' → skip (idempotent)
+If status='CONSUMED': a. Restore FULL: iterate consumptionPayload, lock stock rows in sorted order (itemType ASC, invItemId ASC) using WHERE organizationId=1 AND locationId=1 AND invItemId=?, increment stock rows, insert REVERSE_CONSUME_EP/REVERSE_CONSUME_AP movements (refType='ORDER_ITEM', refId=orderItemId) b. Set status='REVERSED', reversedAt=now() c. If basicDeductedAt IS NOT NULL:
+incrementPortions(productId from row, orderItemQty from row, orderItemId, userId) — BASIC reversal using snapshot values d. COMMIT
+Wire into SENT triggers (server/routes.ts + qr-subaccount-routes.ts):
+
+POS add-items (~line 1354): inside if (sendToKds), call onOrderItemsConfirmedSent BEFORE creating kitchen ticket. If throws → return 400 error, don't create ticket, don't mark SENT
+Waiter send-round (~line 2000): after creating items as SENT, call deduction. If throws → rollback items to previous state
+QR accept (~line 2095): after marking SENT, call deduction
+QR subaccount accept (qr-subaccount-routes.ts ~line 457): same
+Wire into void triggers:
+
+Waiter void (~line 2213): call onOrderItemsVoided([itemId]) — replaces standalone incrementPortions call
+Hard delete (~line 2269): call onOrderItemsVoided([itemId]) before delete
+Order void (~line 3954): call onOrderItemsVoided(allItemIds) — replaces per-item incrementPortions
+Files: server/inventory-deduction.ts, server/routes.ts, server/qr-subaccount-routes.ts
+
+Acceptance:
+
+FULL deducts EP/AP via recipe, then BASIC fires
+Insufficient stock blocks SENT with clear error
+No double-deduction on retry
+Retry after crash between FULL and BASIC only runs BASIC
+No-recipe items still idempotent for BASIC (deduction row with empty payload)
+Concurrent SENT does not deadlock (locks ordered by itemType, invItemId)
+Void reverses FULL (from consumptionPayload) then BASIC (from snapshot productId + orderItemQty)
+REVERSED deductions are never re-processed; re-sends require new orderItemId
+T006: Physical Counts — updated for AP/EP
+Blocked By: [T003]
+Details:
+Update count creation to allow scope: 'AP', 'EP', or 'ALL'
+Count lines reference inv_items (with itemType filter based on scope)
+System qty populated from inv_stock_ap or inv_stock_ep based on item type (query using WHERE organizationId=1 AND locationId=1 AND invItemId=?)
+Finalize: create ADJUST_AP/ADJUST_EP movements (refType='PHYSICAL_COUNT', refId=countId) for differences, update stock tables using WHERE organizationId=1 AND locationId=1 AND invItemId=?
+Refactor client/src/pages/inventory/physical-counts.tsx:
+Scope selector (AP items / EP items / All)
+Count entry table: item name, expected qty, counted qty, delta
+Finalize button with confirmation
+Files: server/inventory-routes.ts, server/inventory-storage.ts, client/src/pages/inventory/physical-counts.tsx
+Acceptance: Can count AP and EP items separately, finalize adjusts stock via ADJUST_AP/ADJUST_EP movements with refType='PHYSICAL_COUNT'
+T007: Purchase Orders — reorder suggestions + stock updates on receive
+Blocked By: [T003]
+Details:
+GET /api/inv/purchase-orders/suggestions — AP items where inv_stock_ap.qtyOnHand < inv_items.reorderPointQtyBase (join using WHERE organizationId=1 AND locationId=1), grouped by preferred supplier
+On PO receive: update inv_stock_ap.qtyOnHand (increment, using WHERE organizationId=1 AND locationId=1 AND invItemId=?) + create RECEIVE_AP movement (refType='PO_RECEIPT', refId=receiptId)
+Refactor client/src/pages/inventory/purchase-orders.tsx:
+"Sugeridos" tab/button showing items below reorder point with supplier info
+Quick-create PO from suggestions (auto-populate lines)
+Existing flow: create PO, add lines, send, receive
+Receive dialog: enter received qty per line → updates AP stock
+Files: server/inventory-routes.ts, server/inventory-storage.ts, client/src/pages/inventory/purchase-orders.tsx
+Acceptance: Suggestions generated, PO receive increments AP stock, movements logged with RECEIVE_AP and refType='PO_RECEIPT'
+Execution Order
+T001 → T002 + T004 (parallel) → T003 → T005 → T006 + T007 (parallel)
+
+Critical Rules
+No inv_ep_items table — EP items live in inv_items with itemType='EP'
+Single movements table (inv_movements) with canonical movementType values (CONSUME_AP, CONSUME_EP, PRODUCE_EP, ADJUST_AP, ADJUST_EP, RECEIVE_AP, REVERSE_CONSUME_AP, REVERSE_CONSUME_EP) and standardized refType/refId fields
+FULL deduction runs first; BASIC only after FULL succeeds
+All stock mutations in DB transactions with FOR UPDATE locks, lock ordering by (itemType, invItemId)
+Ensure stock rows with INSERT ON CONFLICT DO NOTHING before SELECT FOR UPDATE
+All new tables have organizationId/locationId DEFAULT 1
+No WAC/FIFO — simple last-cost pricing
+Backward compatible: products without recipes create deduction row with empty payload, then run BASIC only
+Reversals use snapshot (productId + orderItemQty) from inventory_deductions row
+Movements reference fields: refType (BATCH, ORDER_ITEM, PO_RECEIPT, PHYSICAL_COUNT, MANUAL) + refId
+orderItemId reuse policy: a REVERSED orderItemId must NEVER be reused for a re-sent item. Any re-send must create a new order item row with a new orderItemId.
+All stock queries must use the full UNIQUE key: WHERE organizationId=1 AND locationId=1 AND invItemId=?

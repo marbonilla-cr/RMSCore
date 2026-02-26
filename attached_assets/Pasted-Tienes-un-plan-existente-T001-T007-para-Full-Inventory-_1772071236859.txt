@@ -1,0 +1,115 @@
+Tienes un plan existente (T001–T007) para Full Inventory. Debes MODIFICARLO e IMPLEMENTARLO con estas reglas y cambios. No inventes más módulos.
+
+DECISIÓN PRINCIPAL (OBLIGATORIA):
+MODE FULL + Recetas:
+1) Al confirmar OrderItem a status='SENT', ejecutar primero FULL deduction (receta).
+2) SOLO si FULL deduction finaliza OK (stock validado y consumos registrados), entonces ejecutar BASIC deduction (decrementPortions del producto).
+3) Si FULL deduction falla por stock insuficiente, BLOQUEAR la confirmación a SENT y NO ejecutar BASIC. Debe devolver error claro al usuario.
+
+Esto elimina la inconsistencia de “additive a ciegas”. FULL manda y BASIC se aplica después como reflejo operativo.
+
+CAMBIOS ESTRUCTURALES AL PLAN:
+
+A) NO CREAR inv_ep_items
+- Reusar inv_items para AP y EP usando itemType:
+  - inv_items.itemType = 'AP'|'EP'
+  - EP items viven en inv_items con itemType='EP'
+- Ajustar inv_conversion_outputs para referenciar EP itemId a inv_items (no inv_ep_items).
+- Eliminar endpoints /api/inv/ep-items; en su lugar:
+  - GET /api/inv/items?type=EP
+  - POST /api/inv/items (itemType='EP') si hace falta crear EPs
+- Beneficio: menos tablas, menos joins, menos bugs.
+
+B) STOCK: Mantener 2 stocks separados por tipo (AP y EP) por local
+- Puedes mantener inv_stock_ap e inv_stock_ep como tablas separadas (ok).
+- Pero movements deben ser UNA sola tabla (no duplicar inv_movements vs inv_stock_movements_full).
+  - Si ya existe inv_movements, extiéndela con:
+    movementType (IN/OUT/ADJUST/PRODUCE_EP/CONSUME_AP/CONSUME_EP/REVERSE_EP)
+    itemType ('AP'|'EP')
+    itemId
+    qtyDelta
+    referenceType/referenceId
+    businessDate
+  - Si decides crear nueva tabla de movements, entonces MIGRAR y dejar una sola fuente. No mantener dos tablas paralelas.
+
+C) CONVERSIONS: Validaciones obligatorias
+- En inv_conversion_outputs.outputPct:
+  - Validar sum(outputPct) <= 100 por conversion.
+  - Si la conversion tiene 1 solo output y outputPct es null, asumir 100%.
+- portionSize opcional: si existe, calcular “porciones” además de qty EP.
+- Mostrar preview claro en UI.
+
+D) TRANSACCIONES Y LOCKS (OBLIGATORIO)
+En:
+- POST /api/inv/production-batches
+- onOrderItemsConfirmedSent()
+
+Debe ejecutarse en DB transaction y con row lock:
+- leer stock row con FOR UPDATE
+- validar stock
+- actualizar stock
+- insertar movements
+- insertar inventory_deductions
+Todo atómico. Sin esto tendrás stock negativo y dobles consumos en concurrencia.
+
+E) IDempotencia y orden de ejecución (B)
+Implementar en onOrderItemsConfirmedSent(orderId, orderItemIds[], userId):
+1) Por cada orderItemId:
+   - Si ya existe inventory_deductions row => saltar (idempotente) y NO tocar BASIC.
+2) Si no existe:
+   - Resolver recipe lines
+   - Validar stock EP/AP suficiente
+   - Consumir stock y registrar movements
+   - Insertar inventory_deductions con payload consumos
+3) SOLO después de confirmar consumos FULL exitosos para ese item:
+   - Ejecutar BASIC decrementPortions(productId, qty) exactamente una vez (idempotente) para ese orderItemId
+   - Para idempotencia de BASIC en modo FULL:
+     - agregar marca en inventory_deductions payload o una columna basicDeductedAt para no repetir BASIC si reintenta.
+4) Si FULL falla -> throw error y NO descontar BASIC y NO permitir SENT.
+
+REVERSA:
+Implementar onOrderItemsVoided(orderItemIds[], userId):
+- Por cada orderItemId:
+  - si inventory_deductions.status=CONSUMED:
+    - revertir EP/AP según payload + movements REVERSE
+    - marcar status=REVERSED
+  - si además basic deduction ocurrió (basicDeductedAt no null):
+    - ejecutar incrementPortions(productId, qty) una vez (idempotente)
+- Importante: la reversa debe ejecutar primero FULL reverse y luego BASIC reverse.
+
+F) WIRING EXACTO (PUNTOS DE CÓDIGO EXISTENTES)
+Conectar onOrderItemsConfirmedSent() donde items pasan a SENT:
+- POS add-items: server/routes.ts (≈ línea 1351 en tu análisis) SOLO cuando sendToKds=true y el item queda SENT
+- Waiter send-round: server/routes.ts (≈ líneas 1996–1998) después de crear items como SENT
+- QR accept: server/routes.ts (≈ línea 2089) después de marcar SENT
+- QR subaccount accept: server/qr-subaccount-routes.ts (~457)
+Conectar onOrderItemsVoided() en paths de void:
+- waiter void: (~2213) y delete (~2269)
+- pos void order: (~3954)
+Asegurar que si falla deduction FULL se bloquee la transición a SENT y no se cree kitchen ticket.
+
+G) UI: Mantener páginas existentes y solo agregar faltantes
+Ya existen páginas en client/src/pages/inventory.
+- Agregar “Conversiones” si no existe, pero respeta el estilo actual.
+- Agregar Producción, Stock tabs AP/EP, Conteo AP/EP, Sugeridos PO.
+- Asegurar que los botones y rutas se registren en App.tsx y sidebar.
+- No dejar “a medias”: incluir checklist manual + capturas.
+
+H) Multi-tenant futuro (sin activarlo)
+- Todas tablas nuevas con organization_id/location_id DEFAULT 1.
+- No modificar tablas existentes para org/location ahora.
+
+ACTUALIZA TU PLAN T001–T007:
+- T001: eliminar inv_ep_items; usar inv_items itemType='EP'
+- T002: endpoints EP items pasan a inv_items?type=EP
+- T003: producción genera EP en inv_stock_ep con ep itemId referenciando inv_items(itemType='EP')
+- T004: recipe_lines referencian epItemId -> inv_items (EP)
+- T005: change additive rule to “FULL then BASIC”
+- T006/T007: ok, pero counts default AP, EP opcional.
+
+ACEPTACIÓN OBLIGATORIA:
+1) En modo FULL, si falta stock EP/AP, el item NO puede quedar SENT.
+2) Si FULL ok, se descuenta FULL y luego BASIC.
+3) No doble descuento: reintentos no consumen dos veces.
+4) Void revierte FULL y luego BASIC.
+5) Producción y conversions funcionan con transacciones, sin stock negativo.

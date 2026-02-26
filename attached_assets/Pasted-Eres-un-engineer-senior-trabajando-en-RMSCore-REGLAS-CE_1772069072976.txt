@@ -1,0 +1,134 @@
+Eres un engineer senior trabajando en RMSCore.
+
+REGLAS (CERRADAS):
+- NO tocar arquitectura global, auth, POS/caja, pagos, mesas, KDS, websocket (solo integrar el descuento en el punto confirmado SENT).
+- NO modificar el Inventario BASIC (porciones por producto) salvo para conectarlo a FULL si se habilita el modo FULL.
+- NO implementar promedio ponderado por factura (WAC/FIFO). Mantener costeo simple (purchase_price actual y costo por porción).
+- Multi-tenant NO se activa aún; en tablas nuevas incluir organization_id/location_id DEFAULT 1 para futuro.
+
+OBJETIVO FULL (OBLIGATORIO):
+1) Convertidor AP→EP (merma + factor cocción + pérdida extra) con múltiples outputs por insumo.
+2) Insumos (AP), Proveedores, Stock por local, Movimientos.
+3) Recetas (BOM) por producto del menú existente.
+4) PRODUCCIÓN / TRANSFORMACIONES (Batch cooking) usando conversiones:
+   - Consume AP y genera EP outputs en stock.
+5) Descuento automático por producto vendido:
+   - Al confirmar Order Item (status = 'SENT') se descuenta inventario según receta.
+   - Idempotente por order_item_id (no doble descuento).
+   - Si el item/orden se anula y ya estaba descontado, revertir (idempotente).
+6) Conteo expected vs counted + ajustes (ADJUST).
+7) Órdenes de compra por proveedor (listas rápidas por faltantes/minimos).
+8) UI completa (botones visibles, rutas en menú, no “a medias”).
+
+NO IMPLEMENTAR:
+- Promedio ponderado por factura, integración OCR, lectura automática de facturas.
+- Transferencias entre locales (fase posterior).
+- Overrides de recetas por local (por ahora receta a nivel organización).
+
+========================================================
+INTEGRACIÓN CON FLUJO DE VENTA (CRÍTICO)
+========================================================
+Punto único: Order Item cuando pasa a status='SENT'.
+- POS: cuando sendToKds=true, queda SENT.
+- Waiter: send-round crea SENT.
+- QR: accept marca SENT.
+
+Implementar un servicio backend:
+- onOrderItemsConfirmedSent(orderId, orderItemIds[])
+que:
+1) Valida stock suficiente.
+2) Descuenta inventario según receta del producto.
+3) Marca idempotencia por order_item_id.
+4) Si falla stock, bloquear confirmación SENT con error claro.
+
+Reversas:
+- Cuando se void/anula item u orden:
+  - si ya se descontó por receta, revertir exactamente lo descontado una vez.
+
+========================================================
+MODELO DE DATOS (TABLAS NUEVAS FULL)
+========================================================
+(Agregar organization_id/location_id DEFAULT 1 donde aplique)
+
+A) suppliers
+B) inv_ap_items
+C) inv_conversions + inv_conversion_outputs (AP->EP)
+D) inv_ep_items (opcional pero recomendado para stock EP)
+   - para poder almacenar stock de EP outputs como entidades (ej “arroz cocido”, “chicharrón cocido”)
+E) inv_stock_ap_by_location
+F) inv_stock_ep_by_location
+G) inv_stock_movements (registrar IN/OUT/ADJUST/PRODUCE/CONSUME con referencia)
+H) recipes + recipe_lines
+   - recipe_lines consumen EP (o AP si no hay conversión)
+I) production_batches
+   - batch header: ap_item_id, conversion_id, ap_qty, created_at, status
+J) production_batch_outputs
+   - outputs EP generados (ep_item_id/output_id, qty_ep)
+K) inv_counts + inv_count_lines
+L) purchase_orders + purchase_order_lines
+
+========================================================
+PRODUCCIÓN (BATCH) - REGLA
+========================================================
+- Un batch consume AP y genera EP según conversion:
+usable_qty = ap_qty * (1-merma) * cook_factor * (1-extra_loss)
+Por cada output:
+- qty_ep_generated = usable_qty (si output es “producto EP base”)
+- o porciones = usable_qty / portion_size (si output es “porción”)
+
+Stock:
+- restar AP del local
+- sumar EP al local
+- registrar movimientos CONSUME_AP y PRODUCE_EP
+
+========================================================
+RECETAS Y DESCUENTO AUTOMÁTICO
+========================================================
+- Cada producto del menú puede tener receta (BOM).
+- Al confirmar SENT:
+  - por cada order item: buscar receta
+  - calcular consumos EP = qtyOrden * qtyPorReceta
+  - descontar EP stock
+  - si EP no existe suficiente:
+    - opcional (fase posterior): producir EP automáticamente desde AP
+    - en esta entrega: bloquear y exigir producción manual previa O permitir “consumo directo AP” si receta está en AP.
+- Idempotencia:
+  - tabla/registro inventory_deductions:
+    - order_item_id unique
+    - payload de consumos (para reversa exacta)
+
+Reversa:
+- void item => si existe deduction row, revertir consumos.
+
+========================================================
+UI (DEBE QUEDAR COMPLETA)
+========================================================
+Menú: Inventario FULL
+Pantallas:
+1) Conversion Builder (tabla única)
+2) Insumos + proveedores
+3) Stock por local (AP y EP)
+4) Producción (Batches): crear batch, consumir AP, generar EP
+5) Recetas: asignar receta a producto del menú y líneas EP/AP
+6) Conteo: expected vs counted, aplicar ajustes
+7) Órdenes de compra: sugeridos por mínimos/faltantes, agrupar por proveedor
+
+Criterio anti “a medias”:
+- Si no hay ruta/menú/botón visible, el trabajo NO se considera terminado.
+- Incluir checklist manual + capturas.
+
+ENTREGA POR COMMITS:
+1) Tablas + migraciones + seeds
+2) Conversion Builder UI + API
+3) Producción UI + API + movimientos
+4) Recetas UI + API
+5) Auto-deducción al confirmar SENT + idempotencia + reversa
+6) Conteo UI + API
+7) Compras UI + API
+
+CHECKLIST MANUAL:
+- Definir conversión arroz y producir batch; ver stock EP subir y AP bajar.
+- Crear receta de “olla de carne” que consume arroz cocido 150g; confirmar SENT descuenta EP.
+- Reintento no descuenta doble.
+- Void revierte.
+- Reorder list y PO se generan.

@@ -1,0 +1,43 @@
+You are working on the “Full Inventory” plan (v3). Apply the final adjustments below and output the updated plan as a single clean document (same structure), without extra commentary.
+
+GOAL
+Produce “Plan v3.1 (Final)” with the minimal changes required for production-grade correctness: indexes on stock tables, explicit policy for REVERSED deductions, row lock on order items for consistent snapshots, and an explicit movementType list.
+
+REQUIRED CHANGES (apply all)
+
+1) T001 (Schema): add missing stock indexes
+- Under T001 > Indexes, add:
+  - inv_stock_ap (organizationId, locationId, invItemId)
+  - inv_stock_ep (organizationId, locationId, invItemId)
+
+2) T005 (Idempotency policy for REVERSED): make policy explicit and consistent
+- Replace the current rule:
+  “If exists AND status='REVERSED' → skip (treat as processed, don't re-deduct)”
+  with:
+  “If exists AND status='REVERSED' → skip. Policy: orderItemId must NEVER be reused for a re-sent item. Any re-send must create a new order item row (new orderItemId).”
+- Add this policy also under “Critical Rules” as a dedicated bullet so it is impossible to miss.
+
+3) T005 (Snapshot consistency): lock the order item row
+- In T005 step (b) Snapshot, update to:
+  “Snapshot: SELECT order item row FOR UPDATE to lock it, then read productId + orderItemQty.”
+- Ensure the snapshot lock happens before recipe resolution and before stock locks.
+
+4) Movement types: define the canonical list
+- In “Key Design Decisions” or in T001 (choose one place), add a canonical movementType list (text enum values) used across the module:
+  - CONSUME_AP
+  - CONSUME_EP
+  - PRODUCE_EP
+  - ADJUST_AP
+  - ADJUST_EP
+  - RECEIVE_AP
+  - REVERSE_CONSUME_AP
+  - REVERSE_CONSUME_EP
+  - (Optional but allowed) TRANSFER_AP / TRANSFER_EP for future, marked “not implemented in this plan”
+- Ensure the plan uses these values consistently in T003/T005/T006/T007.
+
+OUTPUT RULES
+- Output only the updated plan document.
+- Keep the same sections and task numbering (T001–T007).
+- Do NOT change scope or add new tasks beyond the adjustments above.
+- Do NOT remove any existing requirements from v3.
+- Keep the plan concise and implementation-oriented.

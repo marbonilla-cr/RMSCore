@@ -1,0 +1,149 @@
+Qué NO modificar del plan (se queda igual)
+	•	Objective completo: AP→EP, batches, recipes EP/AP, auto-deduction en SENT, counts, POs, transacciones, locks, idempotencia.
+	•	Decisión “No inv_ep_items”: EP vive en inv_items con itemType.
+	•	Single inv_movements (solo extenderlo).
+	•	FULL-then-BASIC en SENT y “si FULL falla, bloquea SENT”.
+	•	Orden de ejecución T001→…→T007.
+	•	Backward compatible: sin receta = solo BASIC como hoy.
+
+⸻
+
+Qué SÍ modificar del plan anterior (son ajustes, no un rediseño)
+
+1) Idempotencia (T005) — ajustar, no cambiar el concepto
+
+Antes: unique orderItemId + basicDeductedAt.
+Ahora debes agregar:
+	•	En reintento, si ya existe fila y basicDeductedAt IS NULL → ejecutar BASIC y setear.
+	•	Si el ítem no tiene receta (FULL skip), igual crear fila en inventory_deductions (payload vacío) para que BASIC quede protegido por idempotencia.
+	•	Guardar snapshot mínimo en inventory_deductions: productId y orderItemQty para reversals determinísticos.
+
+👉 Esto es una corrección del plan anterior, no algo nuevo.
+
+2) Locks para evitar deadlocks (T003 y T005)
+
+Antes: “FOR UPDATE locks”.
+Ahora debes especificar:
+	•	Lock de stock rows en orden determinístico (ordenar por itemType, invItemId).
+	•	Asegurar fila de stock con INSERT ON CONFLICT DO NOTHING antes del SELECT … FOR UPDATE.
+
+👉 Esto es completar una regla que el plan no decía, pero era necesaria.
+
+3) Constraints e índices (T001)
+
+Antes: solo “crear tablas/columnas”.
+Ahora debes agregar:
+	•	CHECK constraints (itemType, etc.).
+	•	Unique (orgId, locationId, invItemId) en stock.
+	•	Índices en inventory_deductions(orderId) y inv_items(itemType).
+
+👉 Esto es parte del schema (debía estar).
+
+4) Movements estructura mínima (T001/T003/T005/T006/T007)
+
+Antes: “extender movementType”.
+Ahora debes estandarizar campos de referencia:
+	•	refType, refId (ORDER_ITEM, BATCH, PO_RECEIPT, PHYSICAL_COUNT)
+	•	deltaQty, movementType, createdByUserId, (opcional businessDate)
+
+👉 No cambia la idea “single movements”, solo la vuelve usable/reportable.
+
+5) Reversal (T005)
+
+Antes: “incrementPortions(productId, qty…)”.
+Ahora: qty y productId salen del snapshot guardado en inventory_deductions.
+
+👉 Ajuste necesario.
+
+⸻
+
+Diff listo para pegar (cambio al plan)
+
+PATCH 1 — T001 (Schema)
+
+Agregar a T001 Details (al final):
+	•	Add CHECK constraints:
+	•	inv_items.itemType IN (‘AP’,‘EP’)
+	•	inv_movements.itemType IN (‘AP’,‘EP’)
+	•	inv_recipe_lines.itemType IN (‘AP’,‘EP’)
+	•	Add UNIQUE constraints:
+	•	inv_stock_ap UNIQUE (organizationId, locationId, invItemId)
+	•	inv_stock_ep UNIQUE (organizationId, locationId, invItemId)
+	•	Add indexes:
+	•	inv_items (organizationId, itemType)
+	•	inventory_deductions (orderId)
+	•	inventory_deductions (orderItemId) already unique
+	•	Extend inventory_deductions columns:
+	•	productId (int, not null)
+	•	orderItemQty numeric(12,4) not null
+	•	error text nullable (optional)
+
+Modificar inventory_deductions schema:
+	•	consumptionPayload jsonb (array) can be empty
+	•	Keep basicDeductedAt
+
+⸻
+
+PATCH 2 — T003 (Production) Locks
+
+En POST /api/inv/production-batches, antes de lock:
+	•	Ensure AP stock row exists:
+	•	INSERT inv_stock_ap(…) ON CONFLICT DO NOTHING
+	•	Then SELECT … FOR UPDATE
+
+⸻
+
+PATCH 3 — T005 (Auto-deduction + idempotency + reversal)
+
+Modificar la lógica de onOrderItemsConfirmedSent:
+
+a) Idempotency gate por orderItemId
+	•	Start transaction
+	•	Read inventory_deductions WHERE orderItemId = ? FOR UPDATE
+	•	If exists AND status=‘CONSUMED’ AND basicDeductedAt IS NOT NULL → COMMIT and continue (skip all)
+	•	If exists AND status=‘CONSUMED’ AND basicDeductedAt IS NULL → skip FULL, run BASIC only, set basicDeductedAt, COMMIT, continue
+	•	If exists AND status=‘REVERSED’ → treat as new? (recommended: block or require new orderItemId; keep as skip unless you explicitly support re-sent)
+
+b) Snapshot always
+	•	Fetch orderItem → get productId + orderItemQty
+	•	When creating inventory_deductions row, store productId + orderItemQty.
+
+c) If no recipe
+	•	Create inventory_deductions row with empty consumptionPayload = []
+	•	Then run BASIC and set basicDeductedAt.
+(So retries cannot double-BASIC.)
+
+d) Lock ordering to avoid deadlocks
+	•	Before locking stocks, build consumption list, aggregate by (itemType, invItemId)
+	•	Sort keys by itemType then invItemId
+	•	For each key:
+	•	Ensure stock row exists (INSERT ON CONFLICT DO NOTHING)
+	•	SELECT … FOR UPDATE
+	•	validate sufficient qty
+	•	Apply updates in same order
+
+e) Reversal uses snapshot
+	•	In onOrderItemsVoided:
+	•	Read inventory_deductions row FOR UPDATE
+	•	Restore FULL using consumptionPayload
+	•	If basicDeductedAt set:
+	•	incrementPortions(productId from deduction row, orderItemQty from deduction row, orderItemId, userId)
+
+Acceptance update
+	•	Add acceptance cases:
+	•	Retry after crash between FULL and BASIC only runs BASIC
+	•	No-recipe items still idempotent for BASIC
+	•	Concurrent SENT does not deadlock (locks ordered)
+
+⸻
+
+PATCH 4 — Movements reference fields (si aplica)
+
+Si tu inv_movements no tiene refType/refId:
+	•	Add columns:
+	•	refType text, refId text/int
+	•	Populate:
+	•	BATCH: refType=‘BATCH’, refId=batchId
+	•	ORDER_ITEM: refType=‘ORDER_ITEM’, refId=orderItemId
+	•	PO_RECEIPT: refType=‘PO_RECEIPT’, refId=receiptId
+	•	PHYSICAL_COUNT: refType=‘PHYSICAL_COUNT’, refId=countId
