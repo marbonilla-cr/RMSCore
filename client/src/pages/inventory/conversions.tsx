@@ -101,6 +101,11 @@ export default function ConversionsPage() {
 
   const [formName, setFormName] = useState("");
   const [formApItemId, setFormApItemId] = useState("");
+  const [isCreatingAp, setIsCreatingAp] = useState(false);
+  const [newApName, setNewApName] = useState("");
+  const [newApUom, setNewApUom] = useState("KG");
+  const [newApCost, setNewApCost] = useState("0");
+  const [isCreatingApLoading, setIsCreatingApLoading] = useState(false);
   const [formMerma, setFormMerma] = useState("0");
   const [formCook, setFormCook] = useState("1");
   const [formExtraLoss, setFormExtraLoss] = useState("0");
@@ -172,6 +177,10 @@ export default function ConversionsPage() {
     setEditingId(null);
     setFormName("");
     setFormApItemId("");
+    setIsCreatingAp(false);
+    setNewApName("");
+    setNewApUom("KG");
+    setNewApCost("0");
     setFormMerma("0");
     setFormCook("1");
     setFormExtraLoss("0");
@@ -254,6 +263,30 @@ export default function ConversionsPage() {
     const updated = [...formOutputs];
     (updated[idx] as any)[field] = value;
     setFormOutputs(updated);
+  }
+
+  async function handleCreateQuickAp() {
+    if (!newApName.trim()) { toast({ title: "Nombre requerido", variant: "destructive" }); return; }
+    setIsCreatingApLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/inv/items/quick-ap", {
+        name: newApName.trim(),
+        baseUom: newApUom,
+        lastCostPerBaseUom: parseFloat(newApCost) || 0,
+      });
+      const newItem = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/items?type=AP"] });
+      setFormApItemId(String(newItem.id));
+      setIsCreatingAp(false);
+      setNewApName("");
+      setNewApUom("KG");
+      setNewApCost("0");
+      toast({ title: `AP "${newItem.name}" creado` });
+    } catch (err: any) {
+      toast({ title: "Error creando AP", description: err.message, variant: "destructive" });
+    } finally {
+      setIsCreatingApLoading(false);
+    }
   }
 
   async function handleCreateQuickEp(idx: number) {
@@ -340,18 +373,56 @@ export default function ConversionsPage() {
                 </div>
                 <div>
                   <Label>Insumo AP (materia prima)</Label>
-                  <Select value={formApItemId} onValueChange={setFormApItemId}>
-                    <SelectTrigger data-testid="select-ap-item">
-                      <SelectValue placeholder="Seleccionar insumo AP" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeApItems.map(item => (
-                        <SelectItem key={item.id} value={String(item.id)}>
-                          {item.name} ({item.baseUom})
+                  {isCreatingAp ? (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-primary">Crear nuevo AP</p>
+                      <div className="flex items-end gap-2 flex-wrap">
+                        <div className="flex-1 min-w-[120px]">
+                          <Label className="text-xs">Nombre</Label>
+                          <Input value={newApName} onChange={e => setNewApName(e.target.value)} placeholder="Ej: Arroz Crudo" data-testid="input-new-ap-name" />
+                        </div>
+                        <div className="w-[100px]">
+                          <Label className="text-xs">UOM</Label>
+                          <Select value={newApUom} onValueChange={setNewApUom}>
+                            <SelectTrigger data-testid="select-new-ap-uom">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {["KG", "G", "L", "ML", "UNIT"].map(u => (
+                                <SelectItem key={u} value={u}>{u}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="w-[110px]">
+                          <Label className="text-xs">Costo (₡)</Label>
+                          <Input type="number" step="0.01" min="0" value={newApCost} onChange={e => setNewApCost(e.target.value)} placeholder="0" data-testid="input-new-ap-cost" />
+                        </div>
+                        <Button size="sm" onClick={handleCreateQuickAp} disabled={isCreatingApLoading} data-testid="button-create-ap">
+                          {isCreatingApLoading ? "Creando..." : "Crear"}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setIsCreatingAp(false); setNewApName(""); setNewApUom("KG"); setNewApCost("0"); }} data-testid="button-cancel-ap">
+                          Cancelar
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Select value={formApItemId} onValueChange={v => { if (v === "__create_new__") { setIsCreatingAp(true); setFormApItemId(""); } else { setFormApItemId(v); } }}>
+                      <SelectTrigger data-testid="select-ap-item">
+                        <SelectValue placeholder="Seleccionar insumo AP" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__create_new__">
+                          <span className="text-primary font-semibold">+ Nuevo insumo AP</span>
                         </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                        {activeApItems.map(item => (
+                          <SelectItem key={item.id} value={String(item.id)}>
+                            {item.name} ({item.baseUom})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
               </div>
 

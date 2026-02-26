@@ -214,6 +214,44 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     }
   });
 
+  app.post("/api/inv/items/quick-ap", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
+    try {
+      const { name, baseUom, lastCostPerBaseUom } = req.body;
+      if (!name || typeof name !== "string" || !name.trim()) {
+        return res.status(400).json({ message: "Nombre es requerido" });
+      }
+      if (!baseUom || typeof baseUom !== "string" || !baseUom.trim()) {
+        return res.status(400).json({ message: "UOM es requerida" });
+      }
+      let normalizedUom: string;
+      try {
+        normalizedUom = normalizeUom(baseUom);
+      } catch (e: any) {
+        return res.status(400).json({ message: e.message });
+      }
+      const cost = lastCostPerBaseUom != null ? String(lastCostPerBaseUom) : "0";
+      const sku = `AP-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const item = await invStorage.createInvItem({
+        sku,
+        name: name.trim(),
+        itemType: "AP",
+        category: "AP",
+        baseUom: normalizedUom,
+        isActive: true,
+        onHandQtyBase: "0",
+        reorderPointQtyBase: "0",
+        parLevelQtyBase: "0",
+        lastCostPerBaseUom: cost,
+        avgCostPerBaseUom: "0",
+        isPerishable: false,
+      });
+      broadcast(wss, "INV_ITEM_CREATED", item);
+      res.json(item);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   app.get("/api/inv/items/:id/uom-conversions", requirePermission("INV_VIEW"), async (req, res) => {
     try {
       res.json(await invStorage.getUomConversions(parseInt(req.params.id)));
