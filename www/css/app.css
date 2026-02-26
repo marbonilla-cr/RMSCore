@@ -202,3 +202,69 @@ input, textarea, select {
 .env-badge-prod {
   color: #4ecca3;
 }
+
+.preview-info {
+  margin-top: 2rem;
+  text-align: center;
+}
+
+.preview-badge {
+  display: inline-block;
+  background: rgba(233, 69, 96, 0.15);
+  color: #e94560;
+  padding: 0.3rem 1rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 2px;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(233, 69, 96, 0.3);
+}
+
+.preview-detail {
+  color: #aaa;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
+  max-width: 300px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.preview-config {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 0.8rem 1.2rem;
+  max-width: 280px;
+  margin: 0 auto 1.5rem;
+}
+
+.preview-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.35rem 0;
+  font-size: 0.8rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.preview-row:last-child {
+  border-bottom: none;
+}
+
+.preview-row span:first-child {
+  color: #888;
+}
+
+.preview-row span:last-child {
+  color: #ccc;
+  font-family: 'Courier New', monospace;
+}
+
+.preview-hint {
+  color: #666;
+  font-size: 0.75rem;
+  font-style: italic;
+  max-width: 280px;
+  margin-left: auto;
+  margin-right: auto;
+}

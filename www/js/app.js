@@ -210,6 +210,29 @@
     }
   }
 
+  function injectSafeAreaCSS() {
+    if (!isCapacitor) return;
+
+    var style = document.createElement('style');
+    style.id = 'rms-safe-area-fix';
+    style.textContent =
+      'html { ' +
+        'padding-top: env(safe-area-inset-top) !important; ' +
+        'padding-bottom: env(safe-area-inset-bottom) !important; ' +
+        'padding-left: env(safe-area-inset-left) !important; ' +
+        'padding-right: env(safe-area-inset-right) !important; ' +
+      '} ' +
+      'body { ' +
+        'min-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important; ' +
+      '}';
+
+    if (!document.getElementById('rms-safe-area-fix')) {
+      document.head.appendChild(style);
+    }
+
+    console.log('[RMS Wrapper] Safe area CSS injected');
+  }
+
   var tapCount = 0;
   var lastTapTime = 0;
 
@@ -272,18 +295,50 @@
 
     if (statusEl) {
       var online = navigator.onLine;
-      statusEl.textContent = online ? '● Online' : '○ Offline';
+      statusEl.textContent = online ? 'Online' : 'Offline';
       statusEl.style.color = online ? '#4ecca3' : '#e94560';
     }
 
     if (cookiesEl) {
       var hasCookies = document.cookie.length > 0;
-      cookiesEl.textContent = hasCookies ? '● Activas (' + document.cookie.split(';').length + ')' : '○ Sin cookies';
+      cookiesEl.textContent = hasCookies ? 'Activas (' + document.cookie.split(';').length + ')' : 'Sin cookies';
       cookiesEl.style.color = hasCookies ? '#4ecca3' : '#ffd93d';
     }
   }
 
+  function showPreviewMode() {
+    if (isCapacitor) return;
+
+    var loadingContent = loadingScreen ? loadingScreen.querySelector('.loading-content') : null;
+    if (!loadingContent) return;
+
+    var previewInfo = document.createElement('div');
+    previewInfo.className = 'preview-info';
+    previewInfo.innerHTML =
+      '<div class="preview-badge">VISTA PREVIA</div>' +
+      '<p class="preview-detail">Este es el wrapper RMS. En el dispositivo real, aqu\u00ed se cargar\u00e1 tu aplicaci\u00f3n RMS.</p>' +
+      '<div class="preview-config">' +
+        '<div class="preview-row"><span>Versi\u00f3n:</span><span>v' + WRAPPER_VERSION + '</span></div>' +
+        '<div class="preview-row"><span>Entorno:</span><span class="env-badge-dev">DEV</span></div>' +
+        '<div class="preview-row"><span>Estado:</span><span style="color:#4ecca3">' + (navigator.onLine ? 'Online' : 'Offline') + '</span></div>' +
+        '<div class="preview-row"><span>Capacitor:</span><span style="color:#ffd93d">No (navegador)</span></div>' +
+      '</div>' +
+      '<p class="preview-hint">Compila con Android Studio o Xcode para ver tu RMS dentro de la app.</p>';
+
+    loadingContent.appendChild(previewInfo);
+
+    if (loadingScreen) {
+      loadingScreen.classList.remove('hidden');
+      loadingScreen.style.opacity = '1';
+    }
+  }
+
   function hideLoadingScreen() {
+    if (!isCapacitor) {
+      showPreviewMode();
+      return;
+    }
+
     if (loadingScreen) {
       setTimeout(function () {
         loadingScreen.style.opacity = '0';
@@ -320,6 +375,7 @@
     setupBackButton();
     setupStatusBar();
     setupSplashScreen();
+    injectSafeAreaCSS();
     setupDebugPanel();
     preventUnwantedZoom();
     hideLoadingScreen();
