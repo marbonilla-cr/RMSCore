@@ -63,6 +63,7 @@ export const products = pgTable("products", {
   visibleQr: boolean("visible_qr").notNull().default(true),
   easyMode: boolean("easy_mode").notNull().default(false),
   availablePortions: integer("available_portions"),
+  reorderPoint: integer("reorder_point"),
   serviceTaxApplicable: boolean("service_tax_applicable").notNull().default(true),
   inventoryControlEnabled: boolean("inventory_control_enabled").notNull().default(false),
   recipeYield: numeric("recipe_yield", { precision: 10, scale: 2 }),

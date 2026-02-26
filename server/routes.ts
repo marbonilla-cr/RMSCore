@@ -1348,9 +1348,11 @@ export async function registerRoutes(
           }
         }
 
-        const posDecrResult = await storage.decrementPortions(product.id, item.qty, orderItem.id, userId);
-        if (posDecrResult?.autoDisabled) {
-          broadcast("product_availability_changed", { productId: product.id, active: false, availablePortions: 0 });
+        if (sendToKds) {
+          const posDecrResult = await storage.decrementPortions(product.id, item.qty, orderItem.id, userId);
+          if (posDecrResult?.autoDisabled) {
+            broadcast("product_availability_changed", { productId: product.id, active: false, availablePortions: 0 });
+          }
         }
 
         const posModDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDelta || 0) * (m.qty || 1), 0);
@@ -5988,6 +5990,7 @@ export async function registerRoutes(
         } else {
           status = "AGOTADO";
         }
+        const reorderAlert = p.availablePortions !== null && p.reorderPoint !== null && p.availablePortions <= p.reorderPoint;
         return {
           id: p.id,
           name: p.name,
@@ -5996,6 +5999,8 @@ export async function registerRoutes(
           categoryName: cat?.name || null,
           parentCategoryCode: cat?.parentCategoryCode || null,
           availablePortions: p.availablePortions,
+          reorderPoint: p.reorderPoint ?? null,
+          reorderAlert,
           active: p.active,
           price: p.price,
           status,
@@ -6059,6 +6064,22 @@ export async function registerRoutes(
           newActive = false;
           auditAction = "BASIC_MANUAL_DISABLE";
           break;
+        }
+        case "SET_REORDER": {
+          const rp = value === null || value === undefined || value === "" ? null : parseInt(value);
+          if (rp !== null && (isNaN(rp) || rp < 0)) return res.status(400).json({ message: "Punto de reorden inválido" });
+          await storage.updateProduct(productId, { reorderPoint: rp });
+          await storage.createAuditEvent({
+            actorType: "USER",
+            actorUserId: userId,
+            action: "BASIC_REORDER_SET",
+            entityType: "product",
+            entityId: productId,
+            metadata: { productName: product.name, previousReorderPoint: product.reorderPoint, newReorderPoint: rp },
+          });
+          const reorderAlert = product.availablePortions !== null && rp !== null && product.availablePortions <= rp;
+          broadcast("product_availability_changed", { productId, reorderPoint: rp, reorderAlert });
+          return res.json({ ok: true, reorderPoint: rp, reorderAlert });
         }
         default:
           return res.status(400).json({ message: "Acción no válida" });

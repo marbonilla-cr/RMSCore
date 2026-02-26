@@ -36,6 +36,8 @@ import {
   HelpCircle,
   Package,
   Hash,
+  AlertTriangle,
+  Bell,
 } from "lucide-react";
 
 type BasicItem = {
@@ -46,18 +48,23 @@ type BasicItem = {
   categoryName: string | null;
   parentCategoryCode: string | null;
   availablePortions: number | null;
+  reorderPoint: number | null;
+  reorderAlert: boolean;
   active: boolean;
   price: string;
   status: "ILIMITADO" | "DISPONIBLE" | "AGOTADO";
 };
+
+type DialogMode = "qty" | "reorder";
 
 export default function InventoryBasicPage() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
-  const [setQtyDialog, setSetQtyDialog] = useState<BasicItem | null>(null);
-  const [qtyInput, setQtyInput] = useState("");
+  const [dialogItem, setDialogItem] = useState<BasicItem | null>(null);
+  const [dialogMode, setDialogMode] = useState<DialogMode>("qty");
+  const [dialogInput, setDialogInput] = useState("");
 
   useEffect(() => {
     const unsub = wsManager.on("product_availability_changed", () => {
@@ -71,7 +78,7 @@ export default function InventoryBasicPage() {
   });
 
   const mutation = useMutation({
-    mutationFn: async (body: { productId: number; action: string; value?: number }) => {
+    mutationFn: async (body: { productId: number; action: string; value?: number | null }) => {
       const res = await apiRequest("POST", "/api/inventory/basic/update", body);
       return res.json();
     },
@@ -89,6 +96,8 @@ export default function InventoryBasicPage() {
     return Array.from(cats).sort();
   }, [items]);
 
+  const reorderCount = useMemo(() => items.filter(i => i.reorderAlert).length, [items]);
+
   const filtered = useMemo(() => {
     return items.filter(item => {
       if (search) {
@@ -100,24 +109,50 @@ export default function InventoryBasicPage() {
       if (statusFilter === "DISPONIBLE" && item.status !== "DISPONIBLE") return false;
       if (statusFilter === "AGOTADO" && item.status !== "AGOTADO") return false;
       if (statusFilter === "INACTIVO" && item.active) return false;
+      if (statusFilter === "REPONER" && !item.reorderAlert) return false;
       return true;
     });
   }, [items, search, categoryFilter, statusFilter]);
 
-  const handleAction = (productId: number, action: string, value?: number) => {
+  const handleAction = (productId: number, action: string, value?: number | null) => {
     mutation.mutate({ productId, action, value });
   };
 
-  const handleSetQty = () => {
-    if (!setQtyDialog) return;
-    const qty = parseInt(qtyInput);
-    if (isNaN(qty) || qty < 0) {
-      toast({ title: "Error", description: "Ingrese un número válido", variant: "destructive" });
-      return;
+  const handleDialogConfirm = () => {
+    if (!dialogItem) return;
+    if (dialogMode === "qty") {
+      const qty = parseInt(dialogInput);
+      if (isNaN(qty) || qty < 0) {
+        toast({ title: "Error", description: "Ingrese un número válido", variant: "destructive" });
+        return;
+      }
+      handleAction(dialogItem.id, "SET", qty);
+    } else {
+      if (dialogInput.trim() === "") {
+        handleAction(dialogItem.id, "SET_REORDER", null);
+      } else {
+        const rp = parseInt(dialogInput);
+        if (isNaN(rp) || rp < 0) {
+          toast({ title: "Error", description: "Ingrese un número válido", variant: "destructive" });
+          return;
+        }
+        handleAction(dialogItem.id, "SET_REORDER", rp);
+      }
     }
-    handleAction(setQtyDialog.id, "SET", qty);
-    setSetQtyDialog(null);
-    setQtyInput("");
+    setDialogItem(null);
+    setDialogInput("");
+  };
+
+  const openQtyDialog = (item: BasicItem) => {
+    setDialogItem(item);
+    setDialogMode("qty");
+    setDialogInput(item.availablePortions?.toString() || "");
+  };
+
+  const openReorderDialog = (item: BasicItem) => {
+    setDialogItem(item);
+    setDialogMode("reorder");
+    setDialogInput(item.reorderPoint?.toString() || "");
   };
 
   if (isLoading) {
@@ -129,33 +164,54 @@ export default function InventoryBasicPage() {
   }
 
   const statusBadge = (item: BasicItem) => {
+    const badges = [];
     if (item.status === "ILIMITADO") {
-      return <Badge data-testid={`badge-status-${item.id}`} className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-0 text-xs"><Infinity size={12} className="mr-1" />Ilimitado</Badge>;
+      badges.push(<Badge key="s" data-testid={`badge-status-${item.id}`} className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-0 text-xs"><Infinity size={12} className="mr-1" />Ilimitado</Badge>);
+    } else if (item.status === "AGOTADO") {
+      badges.push(<Badge key="s" data-testid={`badge-status-${item.id}`} variant="destructive" className="text-xs">Agotado</Badge>);
+    } else {
+      badges.push(<Badge key="s" data-testid={`badge-status-${item.id}`} className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0 text-xs">{item.availablePortions}</Badge>);
     }
-    if (item.status === "AGOTADO") {
-      return <Badge data-testid={`badge-status-${item.id}`} variant="destructive" className="text-xs">Agotado</Badge>;
+    if (item.reorderAlert && item.status !== "AGOTADO") {
+      badges.push(<Badge key="r" data-testid={`badge-reorder-${item.id}`} className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 text-xs ml-1"><AlertTriangle size={10} className="mr-1" />Reponer</Badge>);
     }
-    return <Badge data-testid={`badge-status-${item.id}`} className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0 text-xs">{item.availablePortions}</Badge>;
+    if (!item.active && item.status !== "AGOTADO") {
+      badges.push(<Badge key="i" variant="outline" className="text-xs ml-1">Inactivo</Badge>);
+    }
+    return <>{badges}</>;
   };
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 12px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "16px 12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         <Package size={22} style={{ color: "var(--acc)" }} />
-        <h1 style={{ fontFamily: "var(--f-disp)", fontSize: 20, fontWeight: 800, color: "var(--text)" }}>
+        <h1 data-testid="text-page-title" style={{ fontFamily: "var(--f-disp)", fontSize: 20, fontWeight: 800, color: "var(--text)" }}>
           Inventario Básico
         </h1>
         <Tooltip>
           <TooltipTrigger asChild>
             <HelpCircle size={16} className="text-muted-foreground cursor-help" />
           </TooltipTrigger>
-          <TooltipContent side="right" className="max-w-[260px] text-sm">
+          <TooltipContent side="right" className="max-w-[280px] text-sm">
             <p className="font-semibold mb-1">Control de porciones</p>
             <p>• <strong>Vacío</strong> = Ilimitado (nunca se agota)</p>
-            <p>• Cantidad se descuenta automáticamente al enviar a cocina</p>
-            <p>• Cuando llega a 0, el producto se desactiva y desaparece del menú QR</p>
+            <p>• Se descuenta al enviar a cocina (status SENT)</p>
+            <p>• Cuando llega a 0, se desactiva y desaparece del menú QR</p>
+            <p>• <strong>Punto de reorden</strong>: alerta cuando las porciones bajan del mínimo</p>
           </TooltipContent>
         </Tooltip>
+        {reorderCount > 0 && (
+          <Button
+            data-testid="button-filter-reorder"
+            variant={statusFilter === "REPONER" ? "default" : "outline"}
+            size="sm"
+            className="ml-auto h-8 gap-1"
+            onClick={() => setStatusFilter(statusFilter === "REPONER" ? "ALL" : "REPONER")}
+          >
+            <AlertTriangle size={14} />
+            Reponer ({reorderCount})
+          </Button>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
@@ -181,7 +237,7 @@ export default function InventoryBasicPage() {
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger data-testid="select-status" className="w-[140px]">
+          <SelectTrigger data-testid="select-status" className="w-[150px]">
             <SelectValue placeholder="Estado" />
           </SelectTrigger>
           <SelectContent>
@@ -189,6 +245,7 @@ export default function InventoryBasicPage() {
             <SelectItem value="ILIMITADO">Ilimitados</SelectItem>
             <SelectItem value="DISPONIBLE">Disponibles</SelectItem>
             <SelectItem value="AGOTADO">Agotados</SelectItem>
+            <SelectItem value="REPONER">Reponer</SelectItem>
             <SelectItem value="INACTIVO">Inactivos</SelectItem>
           </SelectContent>
         </Select>
@@ -200,7 +257,7 @@ export default function InventoryBasicPage() {
 
       <div className="rounded-lg border overflow-hidden" style={{ background: "var(--card)" }}>
         <div className="hidden sm:grid" style={{
-          gridTemplateColumns: "1fr 120px 100px 200px",
+          gridTemplateColumns: "1fr 90px 80px 120px 220px",
           padding: "10px 16px",
           borderBottom: "1px solid var(--border)",
           fontSize: 11,
@@ -211,6 +268,12 @@ export default function InventoryBasicPage() {
         }}>
           <span>Producto</span>
           <span style={{ textAlign: "center" }}>Cantidad</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span style={{ textAlign: "center", cursor: "help" }}>Reorden</span>
+            </TooltipTrigger>
+            <TooltipContent>Punto mínimo para alerta de reposición</TooltipContent>
+          </Tooltip>
           <span style={{ textAlign: "center" }}>Estado</span>
           <span style={{ textAlign: "center" }}>Acciones</span>
         </div>
@@ -227,11 +290,12 @@ export default function InventoryBasicPage() {
             data-testid={`row-product-${item.id}`}
             className="sm:grid"
             style={{
-              gridTemplateColumns: "1fr 120px 100px 200px",
+              gridTemplateColumns: "1fr 90px 80px 120px 220px",
               padding: "12px 16px",
               borderBottom: "1px solid var(--border)",
               alignItems: "center",
               opacity: item.active ? 1 : 0.5,
+              background: item.reorderAlert ? "var(--destructive-bg, rgba(245,158,11,0.04))" : undefined,
             }}
           >
             <div style={{ marginBottom: 8 }} className="sm:mb-0">
@@ -250,10 +314,22 @@ export default function InventoryBasicPage() {
             </div>
 
             <div style={{ textAlign: "center", marginBottom: 8 }} className="sm:mb-0">
+              <span
+                data-testid={`text-reorder-${item.id}`}
+                style={{
+                  fontSize: 13,
+                  fontFamily: "var(--f-mono)",
+                  color: item.reorderPoint !== null ? "var(--text2)" : "var(--text3)",
+                  cursor: "pointer",
+                }}
+                onClick={() => openReorderDialog(item)}
+              >
+                {item.reorderPoint !== null ? item.reorderPoint : "—"}
+              </span>
+            </div>
+
+            <div style={{ textAlign: "center", marginBottom: 8 }} className="sm:mb-0">
               {statusBadge(item)}
-              {!item.active && item.status !== "AGOTADO" && (
-                <Badge variant="outline" className="text-xs ml-1">Inactivo</Badge>
-              )}
             </div>
 
             <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>
@@ -264,7 +340,7 @@ export default function InventoryBasicPage() {
                     variant="outline"
                     size="icon"
                     className="h-8 w-8"
-                    onClick={() => { setSetQtyDialog(item); setQtyInput(item.availablePortions?.toString() || ""); }}
+                    onClick={() => openQtyDialog(item)}
                   >
                     <Hash size={14} />
                   </Button>
@@ -332,6 +408,21 @@ export default function InventoryBasicPage() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
+                    data-testid={`button-reorder-${item.id}`}
+                    variant={item.reorderPoint !== null ? "outline" : "ghost"}
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => openReorderDialog(item)}
+                  >
+                    <Bell size={14} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Punto de reorden</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
                     data-testid={`button-toggle-${item.id}`}
                     variant={item.active ? "outline" : "default"}
                     size="icon"
@@ -348,30 +439,35 @@ export default function InventoryBasicPage() {
         ))}
       </div>
 
-      <Dialog open={!!setQtyDialog} onOpenChange={v => { if (!v) setSetQtyDialog(null); }}>
+      <Dialog open={!!dialogItem} onOpenChange={v => { if (!v) setDialogItem(null); }}>
         <DialogContent className="max-w-[340px]">
           <DialogHeader>
-            <DialogTitle>Establecer cantidad</DialogTitle>
+            <DialogTitle>
+              {dialogMode === "qty" ? "Establecer cantidad" : "Punto de reorden"}
+            </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground mb-2">
-            {setQtyDialog?.name}
+            {dialogItem?.name}
           </p>
           <Input
-            data-testid="input-set-qty"
+            data-testid="input-dialog-value"
             type="number"
             min={0}
-            value={qtyInput}
-            onChange={e => setQtyInput(e.target.value)}
-            placeholder="Cantidad de porciones"
+            value={dialogInput}
+            onChange={e => setDialogInput(e.target.value)}
+            placeholder={dialogMode === "qty" ? "Cantidad de porciones" : "Mínimo para alerta (vacío = sin alerta)"}
             autoFocus
-            onKeyDown={e => { if (e.key === "Enter") handleSetQty(); }}
+            onKeyDown={e => { if (e.key === "Enter") handleDialogConfirm(); }}
           />
           <p className="text-xs text-muted-foreground">
-            Ingrese 0 para marcar como agotado. Deje vacío y use "Limpiar" para volver a ilimitado.
+            {dialogMode === "qty"
+              ? "Ingrese 0 para marcar como agotado. Use \"Limpiar\" para volver a ilimitado."
+              : "Cuando las porciones disponibles bajen de este número, se mostrará alerta \"Reponer\". Dejar vacío para quitar la alerta."
+            }
           </p>
           <DialogFooter>
-            <Button data-testid="button-cancel-qty" variant="outline" onClick={() => setSetQtyDialog(null)}>Cancelar</Button>
-            <Button data-testid="button-confirm-qty" onClick={handleSetQty} disabled={mutation.isPending}>
+            <Button data-testid="button-cancel-dialog" variant="outline" onClick={() => setDialogItem(null)}>Cancelar</Button>
+            <Button data-testid="button-confirm-dialog" onClick={handleDialogConfirm} disabled={mutation.isPending}>
               {mutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar"}
             </Button>
           </DialogFooter>
