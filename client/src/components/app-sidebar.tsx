@@ -39,6 +39,7 @@ import {
   BookOpen,
   TrendingUp,
   AlertTriangle,
+  Boxes,
   Link2,
   List,
   Menu,
@@ -138,6 +139,7 @@ const hrSelfItems = [
 ];
 
 const invItems = [
+  { title: "Inventario Básico", url: "/inventory/basic", icon: Boxes },
   { title: "Insumos", url: "/inventory/items", icon: Package },
   { title: "Proveedores", url: "/inventory/suppliers", icon: Truck },
   { title: "Órdenes de Compra", url: "/inventory/purchase-orders", icon: FileText },

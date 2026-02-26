@@ -35,6 +35,7 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 -   **Point of Sale (POS):** Cash register with payment processing, order splitting, voiding, cash session management, item-level discounts, and receipt generation.
 -   **Manager Dashboard & Admin Panel:** Comprehensive overview, user/role/product management, 2-level category system (TOP → Subcategory), and business configuration.
 -   **Inventory Module:** Tracks items, suppliers, purchase orders, physical counts, recipes, and consumption with Weighted Average Cost (WAC) calculation.
+    -   **Basic Inventory Control Panel** (`/inventory/basic`): Admin panel to manage product portion availability. Supports Set, +/- Adjust, Clear (→Ilimitado), and Enable/Disable actions. Idempotent deduction system prevents double-counting via `audit_events` guards. Auto-disable broadcasts `product_availability_changed` WebSocket event. Audit actions: `BASIC_STOCK_SET`, `BASIC_STOCK_CLEAR`, `BASIC_STOCK_ADJUST`, `BASIC_STOCK_DEDUCT`, `BASIC_STOCK_RESTORE`, `BASIC_AUTO_DISABLE`, `BASIC_MANUAL_ENABLE`, `BASIC_MANUAL_DISABLE`.
 -   **Shortages Module:** Manages item shortages with lifecycle tracking, severity levels, and real-time alerts.
 -   **Reservations Module:** Complete table reservation system with public booking, staff management, conflict detection, duration configuration, email confirmations, and capacity-based availability. Supports multi-table assignment.
 -   **Item Voiding System:** Soft-voids for waiters, hard-deletes for managers, with audit trails.

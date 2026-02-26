@@ -358,12 +358,48 @@ export async function updateProduct(id: number, data: Partial<InsertProduct>) {
   return product;
 }
 
-export async function decrementPortions(productId: number, qty: number) {
+export async function decrementPortions(productId: number, qty: number, orderItemId?: number, actorUserId?: number) {
+  if (orderItemId) {
+    const [existing] = await db.select({ id: auditEvents.id }).from(auditEvents)
+      .where(and(
+        eq(auditEvents.action, "BASIC_STOCK_DEDUCT"),
+        eq(auditEvents.entityType, "order_item"),
+        eq(auditEvents.entityId, orderItemId),
+      ))
+      .limit(1);
+    if (existing) return;
+  }
+
   const product = await getProduct(productId);
   if (!product || product.availablePortions === null) return;
   const newPortions = Math.max(0, product.availablePortions - qty);
+  const wasActive = product.active;
   const active = newPortions > 0;
   await db.update(products).set({ availablePortions: newPortions, active }).where(eq(products.id, productId));
+
+  if (orderItemId) {
+    await db.insert(auditEvents).values({
+      actorType: actorUserId ? "USER" : "SYSTEM",
+      actorUserId: actorUserId || null,
+      action: "BASIC_STOCK_DEDUCT",
+      entityType: "order_item",
+      entityId: orderItemId,
+      metadata: { productId, productName: product.name, qty, previousPortions: product.availablePortions, newPortions },
+    });
+  }
+
+  if (wasActive && !active) {
+    await db.insert(auditEvents).values({
+      actorType: "SYSTEM",
+      actorUserId: actorUserId || null,
+      action: "BASIC_AUTO_DISABLE",
+      entityType: "product",
+      entityId: productId,
+      metadata: { productName: product.name, lastQtyDeducted: qty, orderItemId: orderItemId || null },
+    });
+  }
+
+  return { productId, newPortions, autoDisabled: wasActive && !active };
 }
 
 // Payment Methods
@@ -899,11 +935,33 @@ export async function getOrderItem(id: number) {
   return item;
 }
 
-export async function incrementPortions(productId: number, qty: number) {
+export async function incrementPortions(productId: number, qty: number, orderItemId?: number, actorUserId?: number) {
+  if (orderItemId) {
+    const [existing] = await db.select({ id: auditEvents.id }).from(auditEvents)
+      .where(and(
+        eq(auditEvents.action, "BASIC_STOCK_RESTORE"),
+        eq(auditEvents.entityType, "order_item"),
+        eq(auditEvents.entityId, orderItemId),
+      ))
+      .limit(1);
+    if (existing) return;
+  }
+
   const product = await getProduct(productId);
   if (!product || product.availablePortions === null) return;
   const newPortions = product.availablePortions + qty;
   await db.update(products).set({ availablePortions: newPortions, active: true }).where(eq(products.id, productId));
+
+  if (orderItemId) {
+    await db.insert(auditEvents).values({
+      actorType: actorUserId ? "USER" : "SYSTEM",
+      actorUserId: actorUserId || null,
+      action: "BASIC_STOCK_RESTORE",
+      entityType: "order_item",
+      entityId: orderItemId,
+      metadata: { productId, productName: product.name, qty, previousPortions: product.availablePortions, newPortions },
+    });
+  }
 }
 
 // QBO Export Jobs

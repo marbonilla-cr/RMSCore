@@ -454,7 +454,10 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           });
 
           try { await invStorage.consumeForOrderItem(createdItem.id, createdItem.productId, createdItem.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
-          await storage.decrementPortions(createdItem.productId, createdItem.qty);
+          const subDecrResult = await storage.decrementPortions(createdItem.productId, createdItem.qty, createdItem.id, userId);
+          if (subDecrResult?.autoDisabled) {
+            broadcast("product_availability_changed", { productId: createdItem.productId, active: false, availablePortions: 0 });
+          }
 
           await storage.updateSalesLedgerItems(createdItem.id, {
             sentToKitchenAt: new Date(),

@@ -1348,7 +1348,10 @@ export async function registerRoutes(
           }
         }
 
-        await storage.decrementPortions(product.id, item.qty);
+        const posDecrResult = await storage.decrementPortions(product.id, item.qty, orderItem.id, userId);
+        if (posDecrResult?.autoDisabled) {
+          broadcast("product_availability_changed", { productId: product.id, active: false, availablePortions: 0 });
+        }
 
         const posModDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDelta || 0) * (m.qty || 1), 0);
         const posUnitWithMods = Number(product.price) + posModDelta;
@@ -1991,10 +1994,11 @@ export async function registerRoutes(
         }
 
         await Promise.all(parallelOps);
-      }
 
-      for (const entry of Array.from(qtyByProduct.entries())) {
-        await storage.decrementPortions(entry[0], entry[1]);
+        const waiterDecrResult = await storage.decrementPortions(product.id, item.qty, orderItem.id, userId);
+        if (waiterDecrResult?.autoDisabled) {
+          broadcast("product_availability_changed", { productId: product.id, active: false, availablePortions: 0 });
+        }
       }
 
       await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
@@ -2086,7 +2090,10 @@ export async function registerRoutes(
 
           try { await invStorage.consumeForOrderItem(item.id, item.productId, item.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
 
-          await storage.decrementPortions(item.productId, item.qty);
+          const qrDecrResult = await storage.decrementPortions(item.productId, item.qty, item.id, userId);
+          if (qrDecrResult?.autoDisabled) {
+            broadcast("product_availability_changed", { productId: item.productId, active: false, availablePortions: 0 });
+          }
 
           await storage.updateSalesLedgerItems(item.id, {
             sentToKitchenAt: new Date(),
@@ -2210,7 +2217,7 @@ export async function registerRoutes(
       });
 
       if (item.sentToKitchenAt) {
-        await storage.incrementPortions(item.productId, effectiveQty);
+        await storage.incrementPortions(item.productId, effectiveQty, itemId, userId);
         await storage.voidKitchenTicketItemsByOrderItem(itemId, effectiveQty, isFullVoid);
       }
       if (isFullVoid) {
@@ -2266,7 +2273,7 @@ export async function registerRoutes(
       }
 
       if (item.sentToKitchenAt && item.status !== "VOIDED") {
-        await storage.incrementPortions(item.productId, item.qty);
+        await storage.incrementPortions(item.productId, item.qty, itemId, userId);
       }
 
       await storage.deleteOrderItem(itemId);
@@ -3951,7 +3958,7 @@ export async function registerRoutes(
         });
 
         if (item.sentToKitchenAt) {
-          await storage.incrementPortions(item.productId, item.qty);
+          await storage.incrementPortions(item.productId, item.qty, item.id, userId);
           await storage.voidKitchenTicketItemsByOrderItem(item.id, item.qty, true);
         }
       }
@@ -5959,6 +5966,132 @@ export async function registerRoutes(
       if (!fromDate) return res.status(400).json({ message: "fromDate requerido" });
       const queued = await qbo.initialSync(fromDate);
       res.json({ ok: true, queued });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== BASIC INVENTORY CONTROL PANEL ====================
+  app.get("/api/inventory/basic", requirePermission("MODULE_INV_VIEW"), async (_req, res) => {
+    try {
+      const allProducts = await storage.getAllProducts();
+      const allCategories = await storage.getAllCategories();
+      const categoryMap = new Map(allCategories.map(c => [c.id, c]));
+
+      const items = allProducts.map(p => {
+        const cat = categoryMap.get(p.categoryId);
+        let status: string;
+        if (p.availablePortions === null) {
+          status = "ILIMITADO";
+        } else if (p.availablePortions > 0) {
+          status = "DISPONIBLE";
+        } else {
+          status = "AGOTADO";
+        }
+        return {
+          id: p.id,
+          name: p.name,
+          productCode: p.productCode,
+          categoryId: p.categoryId,
+          categoryName: cat?.name || null,
+          parentCategoryCode: cat?.parentCategoryCode || null,
+          availablePortions: p.availablePortions,
+          active: p.active,
+          price: p.price,
+          status,
+        };
+      });
+
+      res.json(items);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/inventory/basic/update", requirePermission("MODULE_INV_VIEW"), async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const { productId, action, value } = req.body;
+
+      if (!productId || !action) {
+        return res.status(400).json({ message: "productId y action son requeridos" });
+      }
+
+      const product = await storage.getProduct(productId);
+      if (!product) return res.status(404).json({ message: "Producto no encontrado" });
+
+      let newPortions: number | null = product.availablePortions;
+      let newActive = product.active;
+      let auditAction = "";
+
+      switch (action) {
+        case "SET": {
+          const qty = parseInt(value);
+          if (isNaN(qty) || qty < 0) return res.status(400).json({ message: "Cantidad inválida" });
+          newPortions = qty;
+          newActive = qty > 0 ? true : false;
+          auditAction = "BASIC_STOCK_SET";
+          break;
+        }
+        case "ADJUST": {
+          const delta = parseInt(value);
+          if (isNaN(delta)) return res.status(400).json({ message: "Ajuste inválido" });
+          if (product.availablePortions === null) {
+            return res.status(400).json({ message: "No se puede ajustar un producto ilimitado. Primero establezca una cantidad." });
+          }
+          newPortions = Math.max(0, product.availablePortions + delta);
+          newActive = newPortions > 0 ? true : product.active;
+          auditAction = "BASIC_STOCK_ADJUST";
+          break;
+        }
+        case "CLEAR": {
+          newPortions = null;
+          newActive = true;
+          auditAction = "BASIC_STOCK_CLEAR";
+          break;
+        }
+        case "ENABLE": {
+          newActive = true;
+          auditAction = "BASIC_MANUAL_ENABLE";
+          break;
+        }
+        case "DISABLE": {
+          newActive = false;
+          auditAction = "BASIC_MANUAL_DISABLE";
+          break;
+        }
+        default:
+          return res.status(400).json({ message: "Acción no válida" });
+      }
+
+      await storage.updateProduct(productId, {
+        availablePortions: newPortions,
+        active: newActive,
+      });
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: userId,
+        action: auditAction,
+        entityType: "product",
+        entityId: productId,
+        metadata: {
+          productName: product.name,
+          previousPortions: product.availablePortions,
+          newPortions,
+          previousActive: product.active,
+          newActive,
+          value: value ?? null,
+        },
+      });
+
+      broadcast("product_availability_changed", {
+        productId,
+        active: newActive,
+        availablePortions: newPortions,
+      });
+
+      res.json({ ok: true, availablePortions: newPortions, active: newActive });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
