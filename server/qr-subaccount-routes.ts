@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import * as storage from "./storage";
 import * as invStorage from "./inventory-storage";
+import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import {
   orderSubaccounts, orderItems, qrSubmissions, orders, tables,
   businessConfig, products, categories, orderItemModifiers,
@@ -453,10 +454,10 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
             status: "NEW",
           });
 
-          try { await invStorage.consumeForOrderItem(createdItem.id, createdItem.productId, createdItem.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
-          const subDecrResult = await storage.decrementPortions(createdItem.productId, createdItem.qty, createdItem.id, userId);
-          if (subDecrResult?.autoDisabled) {
-            broadcast("product_availability_changed", { productId: createdItem.productId, active: false, availablePortions: 0 });
+          try {
+            await onOrderItemsConfirmedSent(order.id, [createdItem.id], userId);
+          } catch (deductionErr: any) {
+            console.error("[inv] deduction error:", deductionErr);
           }
 
           await storage.updateSalesLedgerItems(createdItem.id, {

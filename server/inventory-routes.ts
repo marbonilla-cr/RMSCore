@@ -53,8 +53,15 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     }
   });
 
-  app.get("/api/inv/items", requirePermission("INV_VIEW"), async (_req, res) => {
+  app.get("/api/inv/items", requirePermission("INV_VIEW"), async (req, res) => {
     try {
+      const typeFilter = req.query.type as string | undefined;
+      if (typeFilter && (typeFilter === "AP" || typeFilter === "EP")) {
+        const items = await db.select().from(invItems)
+          .where(eq(invItems.itemType, typeFilter))
+          .orderBy(asc(invItems.name));
+        return res.json(items);
+      }
       res.json(await invStorage.getAllInvItems());
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -311,6 +318,14 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     }
   });
 
+  app.get("/api/inv/purchase-orders/suggestions", requirePermission("INV_MANAGE_PO"), async (_req, res) => {
+    try {
+      res.json(await invStorage.getReorderSuggestions());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/inv/purchase-orders", requirePermission("INV_MANAGE_PO"), async (_req, res) => {
     try {
       res.json(await invStorage.getAllPurchaseOrders());
@@ -535,9 +550,18 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     }
   });
 
+  app.get("/api/inv/recipes", requirePermission("INV_MANAGE_RECIPES"), async (_req, res) => {
+    try {
+      res.json(await invStorage.getAllRecipesWithDetails());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/inv/recipes/product/:productId", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      res.json(await invStorage.getRecipesForProduct(parseInt(req.params.productId)));
+      const recipe = await invStorage.getActiveRecipeWithLines(parseInt(req.params.productId));
+      res.json(recipe);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -556,10 +580,18 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.post("/api/inv/recipes", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      const parsed = insertInvRecipeSchema.parse(req.body);
-      const recipe = await invStorage.createRecipe(parsed);
-      broadcast(wss, "INV_RECIPE_CREATED", recipe);
-      res.json(recipe);
+      const { lines, ...recipeData } = req.body;
+      if (lines && Array.isArray(lines) && lines.length > 0) {
+        const parsed = insertInvRecipeSchema.parse(recipeData);
+        const recipe = await invStorage.createRecipeWithLines(parsed, lines);
+        broadcast(wss, "INV_RECIPE_CREATED", recipe);
+        res.json(recipe);
+      } else {
+        const parsed = insertInvRecipeSchema.parse(recipeData);
+        const recipe = await invStorage.createRecipe(parsed);
+        broadcast(wss, "INV_RECIPE_CREATED", recipe);
+        res.json(recipe);
+      }
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
@@ -570,6 +602,17 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       const recipe = await invStorage.updateRecipe(parseInt(req.params.id), req.body);
       if (!recipe) return res.status(404).json({ message: "Receta no encontrada" });
       broadcast(wss, "INV_RECIPE_UPDATED", recipe);
+      res.json(recipe);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/inv/recipes/:id", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
+    try {
+      const recipe = await invStorage.deactivateRecipe(parseInt(req.params.id));
+      if (!recipe) return res.status(404).json({ message: "Receta no encontrada" });
+      broadcast(wss, "INV_RECIPE_DEACTIVATED", recipe);
       res.json(recipe);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -647,6 +690,325 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         ))
         .orderBy(asc(invItems.name));
       res.json(items);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== STOCK AP/EP ====================
+
+  app.get("/api/inv/stock/ap", requirePermission("INV_VIEW"), async (_req, res) => {
+    try {
+      res.json(await invStorage.getStockAp());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/inv/stock/ep", requirePermission("INV_VIEW"), async (_req, res) => {
+    try {
+      res.json(await invStorage.getStockEp());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/inv/stock/ap/adjust", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { invItemId, qtyDelta, reason } = req.body;
+      if (!invItemId || qtyDelta === undefined || qtyDelta === null) {
+        return res.status(400).json({ message: "Se requiere invItemId y qtyDelta" });
+      }
+      const delta = Number(qtyDelta);
+      if (isNaN(delta) || delta === 0) {
+        return res.status(400).json({ message: "qtyDelta debe ser un número diferente de 0" });
+      }
+
+      const { pool } = await import("./db");
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `INSERT INTO inv_stock_ap (inv_item_id, location_id, organization_id, qty_on_hand) 
+           VALUES ($1, 1, 1, 0) ON CONFLICT DO NOTHING`,
+          [invItemId]
+        );
+        const lockRes = await client.query(
+          `SELECT qty_on_hand FROM inv_stock_ap WHERE organization_id=1 AND location_id=1 AND inv_item_id=$1 FOR UPDATE`,
+          [invItemId]
+        );
+        const currentQty = Number(lockRes.rows[0].qty_on_hand);
+        const newQty = currentQty + delta;
+        if (newQty < 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ message: `Stock insuficiente. Actual: ${currentQty}, ajuste: ${delta}` });
+        }
+        await client.query(
+          `UPDATE inv_stock_ap SET qty_on_hand = $1, updated_at = NOW() WHERE organization_id=1 AND location_id=1 AND inv_item_id=$2`,
+          [newQty.toFixed(4), invItemId]
+        );
+        const businessDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        await client.query(
+          `INSERT INTO inv_movements (business_date, movement_type, inv_item_id, item_type, qty_delta_base, reference_type, note, created_by_employee_id)
+           VALUES ($1, 'ADJUST_AP', $2, 'AP', $3, 'MANUAL', $4, $5)`,
+          [businessDate, invItemId, delta.toFixed(4), reason || null, user.id]
+        );
+        await client.query("COMMIT");
+        res.json({ ok: true, newQty: newQty.toFixed(4) });
+      } catch (txErr) {
+        await client.query("ROLLBACK");
+        throw txErr;
+      } finally {
+        client.release();
+      }
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/inv/stock/ep/adjust", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { invItemId, qtyDelta, reason } = req.body;
+      if (!invItemId || qtyDelta === undefined || qtyDelta === null) {
+        return res.status(400).json({ message: "Se requiere invItemId y qtyDelta" });
+      }
+      const delta = Number(qtyDelta);
+      if (isNaN(delta) || delta === 0) {
+        return res.status(400).json({ message: "qtyDelta debe ser un número diferente de 0" });
+      }
+
+      const { pool } = await import("./db");
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `INSERT INTO inv_stock_ep (inv_item_id, location_id, organization_id, qty_on_hand) 
+           VALUES ($1, 1, 1, 0) ON CONFLICT DO NOTHING`,
+          [invItemId]
+        );
+        const lockRes = await client.query(
+          `SELECT qty_on_hand FROM inv_stock_ep WHERE organization_id=1 AND location_id=1 AND inv_item_id=$1 FOR UPDATE`,
+          [invItemId]
+        );
+        const currentQty = Number(lockRes.rows[0].qty_on_hand);
+        const newQty = currentQty + delta;
+        if (newQty < 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ message: `Stock insuficiente. Actual: ${currentQty}, ajuste: ${delta}` });
+        }
+        await client.query(
+          `UPDATE inv_stock_ep SET qty_on_hand = $1, updated_at = NOW() WHERE organization_id=1 AND location_id=1 AND inv_item_id=$2`,
+          [newQty.toFixed(4), invItemId]
+        );
+        const businessDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        await client.query(
+          `INSERT INTO inv_movements (business_date, movement_type, inv_item_id, item_type, qty_delta_base, reference_type, note, created_by_employee_id)
+           VALUES ($1, 'ADJUST_EP', $2, 'EP', $3, 'MANUAL', $4, $5)`,
+          [businessDate, invItemId, delta.toFixed(4), reason || null, user.id]
+        );
+        await client.query("COMMIT");
+        res.json({ ok: true, newQty: newQty.toFixed(4) });
+      } catch (txErr) {
+        await client.query("ROLLBACK");
+        throw txErr;
+      } finally {
+        client.release();
+      }
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== PRODUCTION BATCHES ====================
+
+  app.get("/api/inv/production-batches", requirePermission("INV_VIEW"), async (_req, res) => {
+    try {
+      res.json(await invStorage.getAllProductionBatches());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/inv/production-batches", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { conversionId, apQtyUsed } = req.body;
+      if (!conversionId || !apQtyUsed) {
+        return res.status(400).json({ message: "Se requiere conversionId y apQtyUsed" });
+      }
+      const apQty = Number(apQtyUsed);
+      if (isNaN(apQty) || apQty <= 0) {
+        return res.status(400).json({ message: "apQtyUsed debe ser un número mayor a 0" });
+      }
+
+      const conversion = await invStorage.getConversion(conversionId);
+      if (!conversion) {
+        return res.status(404).json({ message: "Conversión no encontrada" });
+      }
+
+      const mermaPct = Number(conversion.mermaPct);
+      const cookFactor = Number(conversion.cookFactor);
+      const extraLossPct = Number(conversion.extraLossPct);
+      const usableQty = apQty * (1 - mermaPct / 100) * cookFactor * (1 - extraLossPct / 100);
+
+      const { pool } = await import("./db");
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        await client.query(
+          `INSERT INTO inv_stock_ap (inv_item_id, location_id, organization_id, qty_on_hand) 
+           VALUES ($1, 1, 1, 0) ON CONFLICT DO NOTHING`,
+          [conversion.apItemId]
+        );
+
+        const apLock = await client.query(
+          `SELECT qty_on_hand FROM inv_stock_ap WHERE organization_id=1 AND location_id=1 AND inv_item_id=$1 FOR UPDATE`,
+          [conversion.apItemId]
+        );
+        const apStock = Number(apLock.rows[0].qty_on_hand);
+        if (apStock < apQty) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ message: `Stock AP insuficiente. Disponible: ${apStock.toFixed(4)}, requerido: ${apQty.toFixed(4)}` });
+        }
+
+        await client.query(
+          `UPDATE inv_stock_ap SET qty_on_hand = qty_on_hand - $1, updated_at = NOW() WHERE organization_id=1 AND location_id=1 AND inv_item_id=$2`,
+          [apQty.toFixed(4), conversion.apItemId]
+        );
+
+        const batchRes = await client.query(
+          `INSERT INTO production_batches (conversion_id, ap_item_id, ap_qty_used, location_id, organization_id, status, created_by_user_id)
+           VALUES ($1, $2, $3, 1, 1, 'COMPLETED', $4) RETURNING id`,
+          [conversionId, conversion.apItemId, apQty.toFixed(4), user.id]
+        );
+        const batchId = batchRes.rows[0].id;
+
+        const businessDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        await client.query(
+          `INSERT INTO inv_movements (business_date, movement_type, inv_item_id, item_type, qty_delta_base, reference_type, reference_id, created_by_employee_id)
+           VALUES ($1, 'CONSUME_AP', $2, 'AP', $3, 'BATCH', $4, $5)`,
+          [businessDate, conversion.apItemId, (-apQty).toFixed(4), String(batchId), user.id]
+        );
+
+        const epOutputs = conversion.outputs.sort((a: any, b: any) => a.epItemId - b.epItemId);
+
+        for (const output of epOutputs) {
+          const qtyEp = usableQty * (Number(output.outputPct) / 100);
+
+          await client.query(
+            `INSERT INTO inv_stock_ep (inv_item_id, location_id, organization_id, qty_on_hand) 
+             VALUES ($1, 1, 1, 0) ON CONFLICT DO NOTHING`,
+            [output.epItemId]
+          );
+
+          await client.query(
+            `SELECT qty_on_hand FROM inv_stock_ep WHERE organization_id=1 AND location_id=1 AND inv_item_id=$1 FOR UPDATE`,
+            [output.epItemId]
+          );
+
+          await client.query(
+            `UPDATE inv_stock_ep SET qty_on_hand = qty_on_hand + $1, updated_at = NOW() WHERE organization_id=1 AND location_id=1 AND inv_item_id=$2`,
+            [qtyEp.toFixed(4), output.epItemId]
+          );
+
+          await client.query(
+            `INSERT INTO production_batch_outputs (batch_id, ep_item_id, qty_ep_generated)
+             VALUES ($1, $2, $3)`,
+            [batchId, output.epItemId, qtyEp.toFixed(4)]
+          );
+
+          await client.query(
+            `INSERT INTO inv_movements (business_date, movement_type, inv_item_id, item_type, qty_delta_base, reference_type, reference_id, created_by_employee_id)
+             VALUES ($1, 'PRODUCE_EP', $2, 'EP', $3, 'BATCH', $4, $5)`,
+            [businessDate, output.epItemId, qtyEp.toFixed(4), String(batchId), user.id]
+          );
+        }
+
+        await client.query("COMMIT");
+        res.json({ ok: true, batchId });
+      } catch (txErr) {
+        await client.query("ROLLBACK");
+        throw txErr;
+      } finally {
+        client.release();
+      }
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // ==================== CONVERSIONS ====================
+
+  app.get("/api/inv/conversions", requirePermission("INV_VIEW"), async (_req, res) => {
+    try {
+      res.json(await invStorage.getAllConversions());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/inv/conversions", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
+    try {
+      const { apItemId, name, mermaPct, cookFactor, extraLossPct, notes, outputs } = req.body;
+      if (!apItemId || !name) {
+        return res.status(400).json({ message: "Se requiere apItemId y nombre" });
+      }
+      if (!Array.isArray(outputs) || outputs.length === 0) {
+        return res.status(400).json({ message: "Se requiere al menos una salida EP" });
+      }
+      const totalPct = outputs.reduce((sum: number, o: any) => sum + Number(o.outputPct || 100), 0);
+      if (totalPct > 100) {
+        return res.status(400).json({ message: `La suma de outputPct (${totalPct}%) excede 100%` });
+      }
+      if (outputs.length === 1 && (outputs[0].outputPct === undefined || outputs[0].outputPct === null)) {
+        outputs[0].outputPct = "100";
+      }
+      const conv = await invStorage.createConversion({
+        apItemId,
+        name,
+        mermaPct: mermaPct || "0",
+        cookFactor: cookFactor || "1",
+        extraLossPct: extraLossPct || "0",
+        notes: notes || null,
+        outputs,
+      });
+      broadcast(wss, "INV_CONVERSION_CREATED", conv);
+      res.json(conv);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/inv/conversions/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
+    try {
+      const { outputs, ...header } = req.body;
+      if (outputs !== undefined) {
+        if (!Array.isArray(outputs) || outputs.length === 0) {
+          return res.status(400).json({ message: "Se requiere al menos una salida EP" });
+        }
+        const totalPct = outputs.reduce((sum: number, o: any) => sum + Number(o.outputPct || 100), 0);
+        if (totalPct > 100) {
+          return res.status(400).json({ message: `La suma de outputPct (${totalPct}%) excede 100%` });
+        }
+      }
+      const conv = await invStorage.updateConversion(parseInt(req.params.id), { ...header, outputs });
+      if (!conv) return res.status(404).json({ message: "Conversión no encontrada" });
+      broadcast(wss, "INV_CONVERSION_UPDATED", conv);
+      res.json(conv);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/inv/conversions/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
+    try {
+      const conv = await invStorage.deactivateConversion(parseInt(req.params.id));
+      if (!conv) return res.status(404).json({ message: "Conversión no encontrada" });
+      broadcast(wss, "INV_CONVERSION_DEACTIVATED", conv);
+      res.json(conv);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

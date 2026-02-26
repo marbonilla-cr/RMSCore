@@ -486,6 +486,7 @@ export const invItems = pgTable("inv_items", {
   id: serial("id").primaryKey(),
   sku: text("sku").notNull().unique(),
   name: text("name").notNull(),
+  itemType: text("item_type").notNull().default("AP"),
   category: text("category").notNull().default("General"),
   baseUom: text("base_uom").notNull().default("UNIT"),
   onHandQtyBase: numeric("on_hand_qty_base", { precision: 12, scale: 4 }).notNull().default("0"),
@@ -514,6 +515,7 @@ export const invMovements = pgTable("inv_movements", {
   businessDate: text("business_date").notNull(),
   movementType: text("movement_type").notNull(),
   invItemId: integer("inv_item_id").notNull(),
+  itemType: text("item_type").notNull().default("AP"),
   qtyDeltaBase: numeric("qty_delta_base", { precision: 12, scale: 4 }).notNull(),
   unitCostPerBaseUom: numeric("unit_cost_per_base_uom", { precision: 12, scale: 6 }),
   valueDelta: numeric("value_delta", { precision: 12, scale: 2 }),
@@ -628,6 +630,7 @@ export const invRecipeLines = pgTable("inv_recipe_lines", {
   id: serial("id").primaryKey(),
   recipeId: integer("recipe_id").notNull(),
   invItemId: integer("inv_item_id").notNull(),
+  itemType: text("item_type").notNull().default("AP"),
   qtyBasePerMenuUnit: numeric("qty_base_per_menu_unit", { precision: 12, scale: 4 }).notNull(),
   wastePct: numeric("waste_pct", { precision: 5, scale: 2 }).notNull().default("0"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -638,6 +641,82 @@ export const invOrderItemConsumptions = pgTable("inv_order_item_consumptions", {
   orderItemId: integer("order_item_id").notNull(),
   recipeId: integer("recipe_id").notNull(),
   status: text("status").notNull().default("CONSUMED"),
+  createdAt: timestamp("created_at").defaultNow(),
+  reversedAt: timestamp("reversed_at"),
+});
+
+export const invConversions = pgTable("inv_conversions", {
+  id: serial("id").primaryKey(),
+  apItemId: integer("ap_item_id").notNull(),
+  name: text("name").notNull(),
+  mermaPct: numeric("merma_pct", { precision: 5, scale: 2 }).notNull().default("0"),
+  cookFactor: numeric("cook_factor", { precision: 5, scale: 3 }).notNull().default("1"),
+  extraLossPct: numeric("extra_loss_pct", { precision: 5, scale: 2 }).notNull().default("0"),
+  notes: text("notes"),
+  isActive: boolean("is_active").notNull().default(true),
+  organizationId: integer("organization_id").notNull().default(1),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invConversionOutputs = pgTable("inv_conversion_outputs", {
+  id: serial("id").primaryKey(),
+  conversionId: integer("conversion_id").notNull(),
+  epItemId: integer("ep_item_id").notNull(),
+  outputPct: numeric("output_pct", { precision: 5, scale: 2 }).notNull().default("100"),
+  portionSize: numeric("portion_size", { precision: 10, scale: 2 }),
+  label: text("label"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invStockAp = pgTable("inv_stock_ap", {
+  id: serial("id").primaryKey(),
+  invItemId: integer("inv_item_id").notNull(),
+  locationId: integer("location_id").notNull().default(1),
+  organizationId: integer("organization_id").notNull().default(1),
+  qtyOnHand: numeric("qty_on_hand", { precision: 12, scale: 4 }).notNull().default("0"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const invStockEp = pgTable("inv_stock_ep", {
+  id: serial("id").primaryKey(),
+  invItemId: integer("inv_item_id").notNull(),
+  locationId: integer("location_id").notNull().default(1),
+  organizationId: integer("organization_id").notNull().default(1),
+  qtyOnHand: numeric("qty_on_hand", { precision: 12, scale: 4 }).notNull().default("0"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const productionBatches = pgTable("production_batches", {
+  id: serial("id").primaryKey(),
+  conversionId: integer("conversion_id").notNull(),
+  apItemId: integer("ap_item_id").notNull(),
+  apQtyUsed: numeric("ap_qty_used", { precision: 12, scale: 4 }).notNull(),
+  locationId: integer("location_id").notNull().default(1),
+  organizationId: integer("organization_id").notNull().default(1),
+  status: text("status").notNull().default("COMPLETED"),
+  createdByUserId: integer("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const productionBatchOutputs = pgTable("production_batch_outputs", {
+  id: serial("id").primaryKey(),
+  batchId: integer("batch_id").notNull(),
+  epItemId: integer("ep_item_id").notNull(),
+  qtyEpGenerated: numeric("qty_ep_generated", { precision: 12, scale: 4 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const inventoryDeductions = pgTable("inventory_deductions", {
+  id: serial("id").primaryKey(),
+  orderItemId: integer("order_item_id").notNull().unique(),
+  orderId: integer("order_id").notNull(),
+  recipeId: integer("recipe_id"),
+  productId: integer("product_id").notNull(),
+  orderItemQty: numeric("order_item_qty", { precision: 12, scale: 4 }).notNull(),
+  status: text("status").notNull().default("CONSUMED"),
+  consumptionPayload: jsonb("consumption_payload").notNull().default([]),
+  basicDeductedAt: timestamp("basic_deducted_at"),
+  error: text("error"),
   createdAt: timestamp("created_at").defaultNow(),
   reversedAt: timestamp("reversed_at"),
 });
@@ -949,6 +1028,29 @@ export type InvRecipeLine = typeof invRecipeLines.$inferSelect;
 export type InsertInvRecipeLine = z.infer<typeof insertInvRecipeLineSchema>;
 export type InvOrderItemConsumption = typeof invOrderItemConsumptions.$inferSelect;
 export type InsertInvOrderItemConsumption = z.infer<typeof insertInvOrderItemConsumptionSchema>;
+
+export const insertInvConversionSchema = createInsertSchema(invConversions).omit({ id: true, createdAt: true });
+export const insertInvConversionOutputSchema = createInsertSchema(invConversionOutputs).omit({ id: true, createdAt: true });
+export const insertInvStockApSchema = createInsertSchema(invStockAp).omit({ id: true, updatedAt: true });
+export const insertInvStockEpSchema = createInsertSchema(invStockEp).omit({ id: true, updatedAt: true });
+export const insertProductionBatchSchema = createInsertSchema(productionBatches).omit({ id: true, createdAt: true });
+export const insertProductionBatchOutputSchema = createInsertSchema(productionBatchOutputs).omit({ id: true, createdAt: true });
+export const insertInventoryDeductionSchema = createInsertSchema(inventoryDeductions).omit({ id: true, createdAt: true, reversedAt: true });
+
+export type InvConversion = typeof invConversions.$inferSelect;
+export type InsertInvConversion = z.infer<typeof insertInvConversionSchema>;
+export type InvConversionOutput = typeof invConversionOutputs.$inferSelect;
+export type InsertInvConversionOutput = z.infer<typeof insertInvConversionOutputSchema>;
+export type InvStockAp = typeof invStockAp.$inferSelect;
+export type InsertInvStockAp = z.infer<typeof insertInvStockApSchema>;
+export type InvStockEp = typeof invStockEp.$inferSelect;
+export type InsertInvStockEp = z.infer<typeof insertInvStockEpSchema>;
+export type ProductionBatch = typeof productionBatches.$inferSelect;
+export type InsertProductionBatch = z.infer<typeof insertProductionBatchSchema>;
+export type ProductionBatchOutput = typeof productionBatchOutputs.$inferSelect;
+export type InsertProductionBatchOutput = z.infer<typeof insertProductionBatchOutputSchema>;
+export type InventoryDeduction = typeof inventoryDeductions.$inferSelect;
+export type InsertInventoryDeduction = z.infer<typeof insertInventoryDeductionSchema>;
 
 // Shortages Module types
 export const insertInvShortageSchema = createInsertSchema(invShortages).omit({ id: true, createdAt: true, updatedAt: true, reportedAt: true, lastReportedAt: true, acknowledgedAt: true, resolvedAt: true, closedAt: true });

@@ -62,8 +62,11 @@ interface CountLine {
   countedQtyBase: string | null;
   deltaQtyBase: string | null;
   adjustmentReason: string | null;
+  invItemName?: string;
   itemName?: string;
+  baseUom?: string;
   itemBaseUom?: string;
+  itemType?: string;
 }
 
 interface InvItem {
@@ -71,7 +74,15 @@ interface InvItem {
   name: string;
   category: string;
   baseUom: string;
+  itemType?: string;
 }
+
+const SCOPE_LABELS: Record<string, string> = {
+  ALL: "Todos",
+  AP: "Artículos AP",
+  EP: "Artículos EP",
+  CATEGORY: "Por categoría",
+};
 
 export default function PhysicalCountsPage() {
   const { toast } = useToast();
@@ -117,6 +128,8 @@ export default function PhysicalCountsPage() {
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["/api/inv/physical-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/inv/physical-counts", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/stock/ap"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/stock/ep"] });
       toast({ title: "Conteo finalizado" });
       setFinalizeId(null);
     },
@@ -125,6 +138,11 @@ export default function PhysicalCountsPage() {
       setFinalizeId(null);
     },
   });
+
+  function getScopeLabel(c: PhysicalCount) {
+    if (c.scope === "CATEGORY") return `Categoría: ${c.categoryFilter}`;
+    return SCOPE_LABELS[c.scope] || c.scope;
+  }
 
   return (
     <div className="admin-page">
@@ -170,9 +188,9 @@ export default function PhysicalCountsPage() {
                   >
                     {c.status}
                   </Badge>
-                  <span className="text-sm text-muted-foreground">
-                    {c.scope === "CATEGORY" ? `Categoría: ${c.categoryFilter}` : "Todos"}
-                  </span>
+                  <Badge variant="outline" data-testid={`badge-count-scope-${c.id}`}>
+                    {getScopeLabel(c)}
+                  </Badge>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm text-muted-foreground" data-testid={`text-count-date-${c.id}`}>
@@ -223,6 +241,8 @@ export default function PhysicalCountsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL" data-testid="select-scope-all">Todos los ítems</SelectItem>
+                  <SelectItem value="AP" data-testid="select-scope-ap">Solo AP (Artículos de Provisión)</SelectItem>
+                  <SelectItem value="EP" data-testid="select-scope-ep">Solo EP (Elaborados/Procesados)</SelectItem>
                   <SelectItem value="CATEGORY" data-testid="select-scope-category">Por categoría</SelectItem>
                 </SelectContent>
               </Select>
@@ -337,6 +357,7 @@ function CountDetail({ countId, isFinalized }: { countId: number; isFinalized: b
         <TableHeader>
           <TableRow>
             <TableHead>Ítem</TableHead>
+            <TableHead>Tipo</TableHead>
             <TableHead>UOM</TableHead>
             <TableHead className="text-right">Qty Sistema</TableHead>
             <TableHead className="text-right">Qty Contada</TableHead>
@@ -349,14 +370,22 @@ function CountDetail({ countId, isFinalized }: { countId: number; isFinalized: b
             const systemQty = parseFloat(line.systemQtyBase);
             const countedQty = line.countedQtyBase != null ? parseFloat(line.countedQtyBase) : null;
             const delta = countedQty != null ? countedQty - systemQty : null;
+            const itemName = line.invItemName || line.itemName || `Ítem #${line.invItemId}`;
+            const uom = line.baseUom || line.itemBaseUom || "-";
+            const itemType = line.itemType || "AP";
 
             return (
               <TableRow key={line.id} data-testid={`row-count-line-${line.id}`}>
                 <TableCell data-testid={`text-line-item-${line.id}`}>
-                  {line.itemName || `Ítem #${line.invItemId}`}
+                  {itemName}
+                </TableCell>
+                <TableCell data-testid={`text-line-type-${line.id}`}>
+                  <Badge variant="outline" className="text-xs">
+                    {itemType}
+                  </Badge>
                 </TableCell>
                 <TableCell data-testid={`text-line-uom-${line.id}`}>
-                  {line.itemBaseUom || "-"}
+                  {uom}
                 </TableCell>
                 <TableCell className="text-right" data-testid={`text-line-system-qty-${line.id}`}>
                   {systemQty.toFixed(2)}

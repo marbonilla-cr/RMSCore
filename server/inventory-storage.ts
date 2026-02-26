@@ -4,7 +4,9 @@ import {
   invItems, invUomConversions, invMovements, invSuppliers, invSupplierItems,
   invPurchaseOrders, invPurchaseOrderLines, invPoReceipts, invPoReceiptLines,
   invPhysicalCounts, invPhysicalCountLines, invRecipes, invRecipeLines,
-  invOrderItemConsumptions, products, auditEvents,
+  invOrderItemConsumptions, invConversions, invConversionOutputs,
+  invStockAp, invStockEp, productionBatches, productionBatchOutputs,
+  products, auditEvents,
   type InsertInvItem, type InvItem,
   type InsertInvUomConversion, type InvUomConversion,
   type InsertInvMovement, type InvMovement,
@@ -295,6 +297,65 @@ export async function createPoReceiptLine(data: InsertInvPoReceiptLine) {
   return line;
 }
 
+// ==================== REORDER SUGGESTIONS ====================
+
+export async function getReorderSuggestions() {
+  const rows = await db.select({
+    invItemId: invItems.id,
+    itemName: invItems.name,
+    itemSku: invItems.sku,
+    baseUom: invItems.baseUom,
+    reorderPointQtyBase: invItems.reorderPointQtyBase,
+    stockQtyOnHand: invStockAp.qtyOnHand,
+  }).from(invItems)
+    .leftJoin(invStockAp, and(
+      eq(invStockAp.invItemId, invItems.id),
+      eq(invStockAp.organizationId, 1),
+      eq(invStockAp.locationId, 1),
+    ))
+    .where(and(
+      eq(invItems.isActive, true),
+      eq(invItems.itemType, "AP"),
+    ))
+    .orderBy(asc(invItems.name));
+
+  const suggestions = rows.filter(r => {
+    const reorderPoint = Number(r.reorderPointQtyBase || "0");
+    if (reorderPoint <= 0) return false;
+    const onHand = Number(r.stockQtyOnHand || "0");
+    return onHand < reorderPoint;
+  });
+
+  const result = [];
+  for (const s of suggestions) {
+    const supplierItems = await db.select({
+      supplierId: invSupplierItems.supplierId,
+      supplierName: invSuppliers.name,
+      purchaseUom: invSupplierItems.purchaseUom,
+      lastPrice: invSupplierItems.lastPricePerPurchaseUom,
+      isPreferred: invSupplierItems.isPreferred,
+    }).from(invSupplierItems)
+      .innerJoin(invSuppliers, eq(invSupplierItems.supplierId, invSuppliers.id))
+      .where(eq(invSupplierItems.invItemId, s.invItemId));
+
+    const preferred = supplierItems.find(si => si.isPreferred) || supplierItems[0] || null;
+
+    result.push({
+      ...s,
+      stockQtyOnHand: s.stockQtyOnHand || "0",
+      deficit: (Number(s.reorderPointQtyBase) - Number(s.stockQtyOnHand || "0")).toFixed(4),
+      preferredSupplier: preferred ? {
+        supplierId: preferred.supplierId,
+        supplierName: preferred.supplierName,
+        purchaseUom: preferred.purchaseUom,
+        lastPrice: preferred.lastPrice,
+      } : null,
+    });
+  }
+
+  return result;
+}
+
 // ==================== RECEIVE PO ====================
 
 export async function receivePurchaseOrder(
@@ -303,54 +364,102 @@ export async function receivePurchaseOrder(
   lines: Array<{ poLineId: number; qtyPurchaseUomReceived: string; unitPricePerPurchaseUom: string }>,
   note?: string
 ) {
-  const receipt = await createPoReceipt({ purchaseOrderId, receivedByEmployeeId, note: note || null });
+  const { pool } = await import("./db");
+  const client = await pool.connect();
 
-  for (const line of lines) {
-    const [poLine] = await db.select().from(invPurchaseOrderLines).where(eq(invPurchaseOrderLines.id, line.poLineId));
-    if (!poLine) continue;
+  try {
+    await client.query("BEGIN");
 
-    const qtyBaseReceived = Number(line.qtyPurchaseUomReceived) * Number(poLine.toBaseMultiplierSnapshot);
-    const unitCostPerBaseUom = Number(line.unitPricePerPurchaseUom) / Number(poLine.toBaseMultiplierSnapshot);
+    const receiptRes = await client.query(
+      `INSERT INTO inv_po_receipts (purchase_order_id, received_by_employee_id, note)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [purchaseOrderId, receivedByEmployeeId, note || null]
+    );
+    const receiptId = receiptRes.rows[0].id;
+    const businessDate = getBusinessDate();
 
-    await createPoReceiptLine({
-      receiptId: receipt.id,
-      poLineId: line.poLineId,
-      qtyPurchaseUomReceived: line.qtyPurchaseUomReceived,
-      qtyBaseReceived: qtyBaseReceived.toFixed(4),
-      unitPricePerPurchaseUom: line.unitPricePerPurchaseUom,
-      unitCostPerBaseUom: unitCostPerBaseUom.toFixed(6),
-    });
+    for (const line of lines) {
+      const poLineRes = await client.query(
+        `SELECT id, inv_item_id, to_base_multiplier_snapshot, qty_base_expected, qty_base_received FROM inv_purchase_order_lines WHERE id = $1`,
+        [line.poLineId]
+      );
+      if (poLineRes.rows.length === 0) continue;
+      const poLine = poLineRes.rows[0];
 
-    await createInvMovement({
-      businessDate: getBusinessDate(),
-      movementType: "RECEIPT",
-      invItemId: poLine.invItemId,
-      qtyDeltaBase: qtyBaseReceived.toFixed(4),
-      unitCostPerBaseUom: unitCostPerBaseUom.toFixed(6),
-      referenceType: "PO_RECEIPT",
-      referenceId: receipt.id.toString(),
-      createdByEmployeeId: receivedByEmployeeId,
-    });
+      const qtyBaseReceived = Number(line.qtyPurchaseUomReceived) * Number(poLine.to_base_multiplier_snapshot);
+      const unitCostPerBaseUom = Number(line.unitPricePerPurchaseUom) / Number(poLine.to_base_multiplier_snapshot);
 
-    await updateWACOnReceipt(poLine.invItemId, qtyBaseReceived.toFixed(4), unitCostPerBaseUom.toFixed(6));
+      await client.query(
+        `INSERT INTO inv_po_receipt_lines (receipt_id, po_line_id, qty_purchase_uom_received, qty_base_received, unit_price_per_purchase_uom, unit_cost_per_base_uom)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [receiptId, line.poLineId, line.qtyPurchaseUomReceived, qtyBaseReceived.toFixed(4), line.unitPricePerPurchaseUom, unitCostPerBaseUom.toFixed(6)]
+      );
 
-    const [updatedPoLine] = await db.select().from(invPurchaseOrderLines).where(eq(invPurchaseOrderLines.id, line.poLineId));
-    if (Number(updatedPoLine.qtyBaseReceived) >= Number(updatedPoLine.qtyBaseExpected)) {
-      await db.update(invPurchaseOrderLines).set({ lineStatus: "RECEIVED" }).where(eq(invPurchaseOrderLines.id, line.poLineId));
-    } else {
-      await db.update(invPurchaseOrderLines).set({ lineStatus: "PARTIAL" }).where(eq(invPurchaseOrderLines.id, line.poLineId));
+      await client.query(
+        `UPDATE inv_purchase_order_lines SET qty_base_received = qty_base_received + $1 WHERE id = $2`,
+        [qtyBaseReceived.toFixed(4), line.poLineId]
+      );
+
+      await client.query(
+        `INSERT INTO inv_stock_ap (inv_item_id, location_id, organization_id, qty_on_hand)
+         VALUES ($1, 1, 1, 0) ON CONFLICT DO NOTHING`,
+        [poLine.inv_item_id]
+      );
+
+      await client.query(
+        `SELECT qty_on_hand FROM inv_stock_ap WHERE organization_id=1 AND location_id=1 AND inv_item_id=$1 FOR UPDATE`,
+        [poLine.inv_item_id]
+      );
+
+      await client.query(
+        `UPDATE inv_stock_ap SET qty_on_hand = qty_on_hand + $1, updated_at = NOW() WHERE organization_id=1 AND location_id=1 AND inv_item_id=$2`,
+        [qtyBaseReceived.toFixed(4), poLine.inv_item_id]
+      );
+
+      await client.query(
+        `INSERT INTO inv_movements (business_date, movement_type, inv_item_id, item_type, qty_delta_base, unit_cost_per_base_uom, reference_type, reference_id, created_by_employee_id)
+         VALUES ($1, 'RECEIVE_AP', $2, 'AP', $3, $4, 'PO_RECEIPT', $5, $6)`,
+        [businessDate, poLine.inv_item_id, qtyBaseReceived.toFixed(4), unitCostPerBaseUom.toFixed(6), String(receiptId), receivedByEmployeeId]
+      );
+
+      await db.update(invItems).set({
+        onHandQtyBase: sql`${invItems.onHandQtyBase} + ${qtyBaseReceived.toFixed(4)}`,
+        updatedAt: new Date(),
+      }).where(eq(invItems.id, poLine.inv_item_id));
+
+      await updateWACOnReceipt(poLine.inv_item_id, qtyBaseReceived.toFixed(4), unitCostPerBaseUom.toFixed(6));
+
+      const updatedLineRes = await client.query(
+        `SELECT qty_base_received, qty_base_expected FROM inv_purchase_order_lines WHERE id = $1`,
+        [line.poLineId]
+      );
+      const updatedLine = updatedLineRes.rows[0];
+      if (Number(updatedLine.qty_base_received) >= Number(updatedLine.qty_base_expected)) {
+        await client.query(`UPDATE inv_purchase_order_lines SET line_status = 'RECEIVED' WHERE id = $1`, [line.poLineId]);
+      } else {
+        await client.query(`UPDATE inv_purchase_order_lines SET line_status = 'PARTIAL' WHERE id = $1`, [line.poLineId]);
+      }
     }
-  }
 
-  const allLines = await db.select().from(invPurchaseOrderLines).where(eq(invPurchaseOrderLines.purchaseOrderId, purchaseOrderId));
-  const allReceived = allLines.every(l => l.lineStatus === "RECEIVED");
-  if (allReceived) {
-    await db.update(invPurchaseOrders).set({ status: "RECEIVED", updatedAt: new Date() }).where(eq(invPurchaseOrders.id, purchaseOrderId));
-  } else {
-    await db.update(invPurchaseOrders).set({ status: "PARTIAL", updatedAt: new Date() }).where(eq(invPurchaseOrders.id, purchaseOrderId));
-  }
+    const allLinesRes = await client.query(
+      `SELECT line_status FROM inv_purchase_order_lines WHERE purchase_order_id = $1`,
+      [purchaseOrderId]
+    );
+    const allReceived = allLinesRes.rows.every((l: any) => l.line_status === "RECEIVED");
+    if (allReceived) {
+      await client.query(`UPDATE inv_purchase_orders SET status = 'RECEIVED', updated_at = NOW() WHERE id = $1`, [purchaseOrderId]);
+    } else {
+      await client.query(`UPDATE inv_purchase_orders SET status = 'PARTIAL', updated_at = NOW() WHERE id = $1`, [purchaseOrderId]);
+    }
 
-  return receipt;
+    await client.query("COMMIT");
+    return { id: receiptId, purchaseOrderId, receivedByEmployeeId, note: note || null };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ==================== PHYSICAL COUNTS ====================
@@ -368,17 +477,32 @@ export async function createPhysicalCount(data: InsertInvPhysicalCount) {
   const [count] = await db.insert(invPhysicalCounts).values(data).returning();
 
   let activeItems: InvItem[];
-  if (data.scope === "CATEGORY" && data.categoryFilter) {
+  const scope = data.scope || "ALL";
+  if (scope === "CATEGORY" && data.categoryFilter) {
     activeItems = await db.select().from(invItems).where(and(eq(invItems.isActive, true), eq(invItems.category, data.categoryFilter)));
+  } else if (scope === "AP") {
+    activeItems = await db.select().from(invItems).where(and(eq(invItems.isActive, true), eq(invItems.itemType, "AP")));
+  } else if (scope === "EP") {
+    activeItems = await db.select().from(invItems).where(and(eq(invItems.isActive, true), eq(invItems.itemType, "EP")));
   } else {
     activeItems = await db.select().from(invItems).where(eq(invItems.isActive, true));
   }
 
   for (const item of activeItems) {
+    let systemQty = item.onHandQtyBase;
+    if (item.itemType === "AP") {
+      const [stockRow] = await db.select().from(invStockAp)
+        .where(and(eq(invStockAp.organizationId, 1), eq(invStockAp.locationId, 1), eq(invStockAp.invItemId, item.id)));
+      if (stockRow) systemQty = stockRow.qtyOnHand;
+    } else if (item.itemType === "EP") {
+      const [stockRow] = await db.select().from(invStockEp)
+        .where(and(eq(invStockEp.organizationId, 1), eq(invStockEp.locationId, 1), eq(invStockEp.invItemId, item.id)));
+      if (stockRow) systemQty = stockRow.qtyOnHand;
+    }
     await db.insert(invPhysicalCountLines).values({
       physicalCountId: count.id,
       invItemId: item.id,
-      systemQtyBase: item.onHandQtyBase,
+      systemQtyBase: systemQty,
     });
   }
 
@@ -397,6 +521,7 @@ export async function getPhysicalCountLines(physicalCountId: number) {
     createdAt: invPhysicalCountLines.createdAt,
     invItemName: invItems.name,
     baseUom: invItems.baseUom,
+    itemType: invItems.itemType,
   }).from(invPhysicalCountLines)
     .innerJoin(invItems, eq(invPhysicalCountLines.invItemId, invItems.id))
     .where(eq(invPhysicalCountLines.physicalCountId, physicalCountId));
@@ -421,19 +546,57 @@ export async function finalizePhysicalCount(id: number, finalizedByEmployeeId: n
     finalizedByEmployeeId,
   }).where(eq(invPhysicalCounts.id, id)).returning();
 
-  const lines = await db.select().from(invPhysicalCountLines).where(eq(invPhysicalCountLines.physicalCountId, id));
-  for (const line of lines) {
+  const linesWithType = await db.select({
+    id: invPhysicalCountLines.id,
+    invItemId: invPhysicalCountLines.invItemId,
+    deltaQtyBase: invPhysicalCountLines.deltaQtyBase,
+    countedQtyBase: invPhysicalCountLines.countedQtyBase,
+    adjustmentReason: invPhysicalCountLines.adjustmentReason,
+    itemType: invItems.itemType,
+  }).from(invPhysicalCountLines)
+    .innerJoin(invItems, eq(invPhysicalCountLines.invItemId, invItems.id))
+    .where(eq(invPhysicalCountLines.physicalCountId, id));
+
+  for (const line of linesWithType) {
     if (line.deltaQtyBase && Number(line.deltaQtyBase) !== 0) {
+      const movementType = line.itemType === "EP" ? "ADJUST_EP" : "ADJUST_AP";
       await createInvMovement({
         businessDate: getBusinessDate(),
-        movementType: "ADJUSTMENT",
+        movementType,
         invItemId: line.invItemId,
+        itemType: line.itemType,
         qtyDeltaBase: line.deltaQtyBase,
         referenceType: "PHYSICAL_COUNT",
         referenceId: count.id.toString(),
         note: line.adjustmentReason,
         createdByEmployeeId: finalizedByEmployeeId,
       });
+
+      if (line.itemType === "EP") {
+        await db.execute(sql`INSERT INTO inv_stock_ep (inv_item_id, location_id, organization_id, qty_on_hand, updated_at)
+          VALUES (${line.invItemId}, 1, 1, 0, NOW())
+          ON CONFLICT DO NOTHING`);
+        await db.update(invStockEp).set({
+          qtyOnHand: sql`${invStockEp.qtyOnHand} + ${line.deltaQtyBase}`,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(invStockEp.organizationId, 1),
+          eq(invStockEp.locationId, 1),
+          eq(invStockEp.invItemId, line.invItemId),
+        ));
+      } else {
+        await db.execute(sql`INSERT INTO inv_stock_ap (inv_item_id, location_id, organization_id, qty_on_hand, updated_at)
+          VALUES (${line.invItemId}, 1, 1, 0, NOW())
+          ON CONFLICT DO NOTHING`);
+        await db.update(invStockAp).set({
+          qtyOnHand: sql`${invStockAp.qtyOnHand} + ${line.deltaQtyBase}`,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(invStockAp.organizationId, 1),
+          eq(invStockAp.locationId, 1),
+          eq(invStockAp.invItemId, line.invItemId),
+        ));
+      }
     }
   }
 
@@ -441,6 +604,41 @@ export async function finalizePhysicalCount(id: number, finalizedByEmployeeId: n
 }
 
 // ==================== RECIPES ====================
+
+export async function getAllRecipesWithDetails() {
+  const allRecipes = await db.select({
+    id: invRecipes.id,
+    menuProductId: invRecipes.menuProductId,
+    version: invRecipes.version,
+    isActive: invRecipes.isActive,
+    yieldQty: invRecipes.yieldQty,
+    note: invRecipes.note,
+    createdAt: invRecipes.createdAt,
+    productName: products.name,
+    productCode: products.productCode,
+  }).from(invRecipes)
+    .innerJoin(products, eq(invRecipes.menuProductId, products.id))
+    .orderBy(desc(invRecipes.createdAt));
+
+  const recipeIds = allRecipes.map(r => r.id);
+  let lineCounts: Record<number, number> = {};
+  if (recipeIds.length > 0) {
+    const counts = await db.select({
+      recipeId: invRecipeLines.recipeId,
+      count: sql<number>`count(*)::int`,
+    }).from(invRecipeLines)
+      .where(inArray(invRecipeLines.recipeId, recipeIds))
+      .groupBy(invRecipeLines.recipeId);
+    for (const c of counts) {
+      lineCounts[c.recipeId] = c.count;
+    }
+  }
+
+  return allRecipes.map(r => ({
+    ...r,
+    lineCount: lineCounts[r.id] || 0,
+  }));
+}
 
 export async function getRecipesForProduct(menuProductId: number) {
   return db.select().from(invRecipes).where(eq(invRecipes.menuProductId, menuProductId));
@@ -454,9 +652,57 @@ export async function getActiveRecipe(menuProductId: number) {
   return recipe;
 }
 
+export async function getActiveRecipeWithLines(menuProductId: number) {
+  const recipe = await getActiveRecipe(menuProductId);
+  if (!recipe) return null;
+  const lines = await getRecipeLines(recipe.id);
+  return { ...recipe, lines };
+}
+
 export async function getRecipe(id: number) {
   const [recipe] = await db.select().from(invRecipes).where(eq(invRecipes.id, id));
   return recipe;
+}
+
+export async function createRecipeWithLines(
+  data: InsertInvRecipe,
+  lines: Array<{ invItemId: number; itemType: string; qtyBasePerMenuUnit: string; wastePct: string }>
+) {
+  const existingActive = await db.select().from(invRecipes)
+    .where(and(eq(invRecipes.menuProductId, data.menuProductId), eq(invRecipes.isActive, true)));
+  
+  let nextVersion = 1;
+  if (existingActive.length > 0) {
+    for (const old of existingActive) {
+      await db.update(invRecipes).set({ isActive: false }).where(eq(invRecipes.id, old.id));
+      nextVersion = Math.max(nextVersion, old.version + 1);
+    }
+  } else {
+    const [latest] = await db.select().from(invRecipes)
+      .where(eq(invRecipes.menuProductId, data.menuProductId))
+      .orderBy(desc(invRecipes.version))
+      .limit(1);
+    if (latest) nextVersion = latest.version + 1;
+  }
+
+  const [recipe] = await db.insert(invRecipes).values({
+    ...data,
+    version: nextVersion,
+    isActive: true,
+  }).returning();
+
+  for (const line of lines) {
+    await db.insert(invRecipeLines).values({
+      recipeId: recipe.id,
+      invItemId: line.invItemId,
+      itemType: line.itemType || "AP",
+      qtyBasePerMenuUnit: line.qtyBasePerMenuUnit,
+      wastePct: line.wastePct || "0",
+    });
+  }
+
+  const recipeLines = await getRecipeLines(recipe.id);
+  return { ...recipe, lines: recipeLines };
 }
 
 export async function createRecipe(data: InsertInvRecipe) {
@@ -469,16 +715,23 @@ export async function updateRecipe(id: number, data: Partial<InsertInvRecipe>) {
   return recipe;
 }
 
+export async function deactivateRecipe(id: number) {
+  const [recipe] = await db.update(invRecipes).set({ isActive: false }).where(eq(invRecipes.id, id)).returning();
+  return recipe;
+}
+
 export async function getRecipeLines(recipeId: number) {
   return db.select({
     id: invRecipeLines.id,
     recipeId: invRecipeLines.recipeId,
     invItemId: invRecipeLines.invItemId,
+    itemType: invRecipeLines.itemType,
     qtyBasePerMenuUnit: invRecipeLines.qtyBasePerMenuUnit,
     wastePct: invRecipeLines.wastePct,
     createdAt: invRecipeLines.createdAt,
     invItemName: invItems.name,
     baseUom: invItems.baseUom,
+    itemCost: invItems.lastCostPerBaseUom,
   }).from(invRecipeLines)
     .innerJoin(invItems, eq(invRecipeLines.invItemId, invItems.id))
     .where(eq(invRecipeLines.recipeId, recipeId));
@@ -496,6 +749,188 @@ export async function updateRecipeLine(id: number, data: Partial<InsertInvRecipe
 
 export async function deleteRecipeLine(id: number) {
   await db.delete(invRecipeLines).where(eq(invRecipeLines.id, id));
+}
+
+// ==================== CONVERSIONS (AP→EP) ====================
+
+export async function getAllConversions() {
+  const convs = await db.select().from(invConversions).orderBy(desc(invConversions.createdAt));
+  const results = [];
+  for (const conv of convs) {
+    const outputs = await db.select({
+      id: invConversionOutputs.id,
+      conversionId: invConversionOutputs.conversionId,
+      epItemId: invConversionOutputs.epItemId,
+      outputPct: invConversionOutputs.outputPct,
+      portionSize: invConversionOutputs.portionSize,
+      label: invConversionOutputs.label,
+      createdAt: invConversionOutputs.createdAt,
+      epItemName: invItems.name,
+      epItemSku: invItems.sku,
+    }).from(invConversionOutputs)
+      .innerJoin(invItems, eq(invConversionOutputs.epItemId, invItems.id))
+      .where(eq(invConversionOutputs.conversionId, conv.id));
+    const [apItem] = await db.select({ name: invItems.name, sku: invItems.sku })
+      .from(invItems).where(eq(invItems.id, conv.apItemId));
+    results.push({
+      ...conv,
+      apItemName: apItem?.name || "",
+      apItemSku: apItem?.sku || "",
+      outputs,
+    });
+  }
+  return results;
+}
+
+export async function getConversion(id: number) {
+  const [conv] = await db.select().from(invConversions).where(eq(invConversions.id, id));
+  if (!conv) return null;
+  const outputs = await db.select({
+    id: invConversionOutputs.id,
+    conversionId: invConversionOutputs.conversionId,
+    epItemId: invConversionOutputs.epItemId,
+    outputPct: invConversionOutputs.outputPct,
+    portionSize: invConversionOutputs.portionSize,
+    label: invConversionOutputs.label,
+    createdAt: invConversionOutputs.createdAt,
+    epItemName: invItems.name,
+  }).from(invConversionOutputs)
+    .innerJoin(invItems, eq(invConversionOutputs.epItemId, invItems.id))
+    .where(eq(invConversionOutputs.conversionId, conv.id));
+  const [apItem] = await db.select({ name: invItems.name }).from(invItems).where(eq(invItems.id, conv.apItemId));
+  return { ...conv, apItemName: apItem?.name || "", outputs };
+}
+
+export async function createConversion(data: {
+  apItemId: number;
+  name: string;
+  mermaPct: string;
+  cookFactor: string;
+  extraLossPct: string;
+  notes?: string | null;
+  outputs: Array<{ epItemId: number; outputPct: string; portionSize?: string | null; label?: string | null }>;
+}) {
+  const { outputs, ...header } = data;
+  const [conv] = await db.insert(invConversions).values({
+    ...header,
+    organizationId: 1,
+  }).returning();
+
+  for (const out of outputs) {
+    await db.insert(invConversionOutputs).values({
+      conversionId: conv.id,
+      epItemId: out.epItemId,
+      outputPct: out.outputPct || "100",
+      portionSize: out.portionSize || null,
+      label: out.label || null,
+    });
+  }
+
+  return getConversion(conv.id);
+}
+
+export async function updateConversion(id: number, data: {
+  name?: string;
+  mermaPct?: string;
+  cookFactor?: string;
+  extraLossPct?: string;
+  notes?: string | null;
+  outputs?: Array<{ epItemId: number; outputPct: string; portionSize?: string | null; label?: string | null }>;
+}) {
+  const { outputs, ...header } = data;
+  const [conv] = await db.update(invConversions).set(header).where(eq(invConversions.id, id)).returning();
+  if (!conv) return null;
+
+  if (outputs !== undefined) {
+    await db.delete(invConversionOutputs).where(eq(invConversionOutputs.conversionId, id));
+    for (const out of outputs) {
+      await db.insert(invConversionOutputs).values({
+        conversionId: id,
+        epItemId: out.epItemId,
+        outputPct: out.outputPct || "100",
+        portionSize: out.portionSize || null,
+        label: out.label || null,
+      });
+    }
+  }
+
+  return getConversion(id);
+}
+
+export async function deactivateConversion(id: number) {
+  const [conv] = await db.update(invConversions).set({ isActive: false }).where(eq(invConversions.id, id)).returning();
+  return conv;
+}
+
+// ==================== STOCK AP/EP ====================
+
+export async function getStockAp() {
+  return db.select({
+    id: invStockAp.id,
+    invItemId: invStockAp.invItemId,
+    locationId: invStockAp.locationId,
+    organizationId: invStockAp.organizationId,
+    qtyOnHand: invStockAp.qtyOnHand,
+    updatedAt: invStockAp.updatedAt,
+    itemName: invItems.name,
+    itemSku: invItems.sku,
+    baseUom: invItems.baseUom,
+  }).from(invStockAp)
+    .innerJoin(invItems, eq(invStockAp.invItemId, invItems.id))
+    .where(and(eq(invStockAp.organizationId, 1), eq(invStockAp.locationId, 1)))
+    .orderBy(asc(invItems.name));
+}
+
+export async function getStockEp() {
+  return db.select({
+    id: invStockEp.id,
+    invItemId: invStockEp.invItemId,
+    locationId: invStockEp.locationId,
+    organizationId: invStockEp.organizationId,
+    qtyOnHand: invStockEp.qtyOnHand,
+    updatedAt: invStockEp.updatedAt,
+    itemName: invItems.name,
+    itemSku: invItems.sku,
+    baseUom: invItems.baseUom,
+  }).from(invStockEp)
+    .innerJoin(invItems, eq(invStockEp.invItemId, invItems.id))
+    .where(and(eq(invStockEp.organizationId, 1), eq(invStockEp.locationId, 1)))
+    .orderBy(asc(invItems.name));
+}
+
+export async function getAllProductionBatches() {
+  const batches = await db.select({
+    id: productionBatches.id,
+    conversionId: productionBatches.conversionId,
+    apItemId: productionBatches.apItemId,
+    apQtyUsed: productionBatches.apQtyUsed,
+    locationId: productionBatches.locationId,
+    organizationId: productionBatches.organizationId,
+    status: productionBatches.status,
+    createdByUserId: productionBatches.createdByUserId,
+    createdAt: productionBatches.createdAt,
+    conversionName: invConversions.name,
+    apItemName: invItems.name,
+  }).from(productionBatches)
+    .innerJoin(invConversions, eq(productionBatches.conversionId, invConversions.id))
+    .innerJoin(invItems, eq(productionBatches.apItemId, invItems.id))
+    .orderBy(desc(productionBatches.createdAt));
+
+  const results = [];
+  for (const batch of batches) {
+    const outputs = await db.select({
+      id: productionBatchOutputs.id,
+      batchId: productionBatchOutputs.batchId,
+      epItemId: productionBatchOutputs.epItemId,
+      qtyEpGenerated: productionBatchOutputs.qtyEpGenerated,
+      createdAt: productionBatchOutputs.createdAt,
+      epItemName: invItems.name,
+    }).from(productionBatchOutputs)
+      .innerJoin(invItems, eq(productionBatchOutputs.epItemId, invItems.id))
+      .where(eq(productionBatchOutputs.batchId, batch.id));
+    results.push({ ...batch, outputs });
+  }
+  return results;
 }
 
 // ==================== CONSUMPTION & REVERSAL ====================

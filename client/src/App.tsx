@@ -44,6 +44,9 @@ import InvPurchaseOrdersPage from "@/pages/inventory/purchase-orders";
 import InvPhysicalCountsPage from "@/pages/inventory/physical-counts";
 import InvRecipesPage from "@/pages/inventory/recipes";
 import InvReportsPage from "@/pages/inventory/reports";
+import InvConversionsPage from "@/pages/inventory/conversions";
+import InvProductionPage from "@/pages/inventory/production";
+import InvStockPage from "@/pages/inventory/stock";
 import InventoryBasicPage from "@/pages/inventory-basic";
 import ShortagesReportPage from "@/pages/shortages/report";
 import ShortagesActivePage from "@/pages/shortages/active";
@@ -151,6 +154,9 @@ function AuthenticatedRouter() {
       <Route path="/inventory/purchase-orders" component={InvPurchaseOrdersPage} />
       <Route path="/inventory/physical-counts" component={InvPhysicalCountsPage} />
       <Route path="/inventory/recipes" component={InvRecipesPage} />
+      <Route path="/inventory/conversions" component={InvConversionsPage} />
+      <Route path="/inventory/production" component={InvProductionPage} />
+      <Route path="/inventory/stock" component={InvStockPage} />
       <Route path="/inventory/reports" component={InvReportsPage} />
       <Route path="/shortages/report" component={ShortagesReportPage} />
       <Route path="/shortages/active" component={ShortagesActivePage} />

@@ -12,6 +12,7 @@ import { registerShortageRoutes } from "./shortage-routes";
 import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
+import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import * as qbo from "./quickbooks";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems } from "@shared/schema";
 
@@ -1316,6 +1317,13 @@ export async function registerRoutes(
         }
 
         if (sendToKds) {
+          try {
+            await onOrderItemsConfirmedSent(order.id, [orderItem.id], userId);
+          } catch (deductionErr: any) {
+            await storage.updateOrderItem(orderItem.id, { status: "OPEN" });
+            return res.status(400).json({ message: deductionErr.message || "Error de inventario al enviar" });
+          }
+
           await storage.updateOrderItem(orderItem.id, { sentToKitchenAt: new Date() });
 
           const ticketId = kdsTickets.get(kdsDestination)!;
@@ -1332,8 +1340,6 @@ export async function registerRoutes(
             notes: fullNotes || null,
             status: "NEW",
           });
-
-          try { await invStorage.consumeForOrderItem(orderItem.id, product.id, item.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
         }
 
         if (item.modifiers && Array.isArray(item.modifiers)) {
@@ -1345,13 +1351,6 @@ export async function registerRoutes(
               priceDeltaSnapshot: mod.priceDelta || "0",
               qty: mod.qty || 1,
             });
-          }
-        }
-
-        if (sendToKds) {
-          const posDecrResult = await storage.decrementPortions(product.id, item.qty, orderItem.id, userId);
-          if (posDecrResult?.autoDisabled) {
-            broadcast("product_availability_changed", { productId: product.id, active: false, availablePortions: 0 });
           }
         }
 
@@ -1980,7 +1979,6 @@ export async function registerRoutes(
             tableId,
             metadata: { productName: product.name, qty: item.qty },
           }),
-          invStorage.consumeForOrderItem(orderItem.id, product.id, item.qty, userId).catch(e => console.error("[inv] consumption error:", e)),
         ];
 
         if (item.modifiers && Array.isArray(item.modifiers) && item.modifiers.length > 0) {
@@ -1997,9 +1995,10 @@ export async function registerRoutes(
 
         await Promise.all(parallelOps);
 
-        const waiterDecrResult = await storage.decrementPortions(product.id, item.qty, orderItem.id, userId);
-        if (waiterDecrResult?.autoDisabled) {
-          broadcast("product_availability_changed", { productId: product.id, active: false, availablePortions: 0 });
+        try {
+          await onOrderItemsConfirmedSent(order.id, [orderItem.id], userId);
+        } catch (deductionErr: any) {
+          console.error("[inv] deduction error:", deductionErr);
         }
       }
 
@@ -2090,11 +2089,10 @@ export async function registerRoutes(
             status: "NEW",
           });
 
-          try { await invStorage.consumeForOrderItem(item.id, item.productId, item.qty, userId); } catch (e) { console.error("[inv] consumption error:", e); }
-
-          const qrDecrResult = await storage.decrementPortions(item.productId, item.qty, item.id, userId);
-          if (qrDecrResult?.autoDisabled) {
-            broadcast("product_availability_changed", { productId: item.productId, active: false, availablePortions: 0 });
+          try {
+            await onOrderItemsConfirmedSent(order.id, [item.id], userId);
+          } catch (deductionErr: any) {
+            console.error("[inv] deduction error:", deductionErr);
           }
 
           await storage.updateSalesLedgerItems(item.id, {
@@ -2219,12 +2217,11 @@ export async function registerRoutes(
       });
 
       if (item.sentToKitchenAt) {
-        await storage.incrementPortions(item.productId, effectiveQty, itemId, userId);
         await storage.voidKitchenTicketItemsByOrderItem(itemId, effectiveQty, isFullVoid);
       }
       if (isFullVoid) {
         await storage.cancelPortionReservation(itemId);
-        try { await invStorage.reverseConsumptionForOrderItem(itemId, userId); } catch (e) { console.error("[inv] reversal error:", e); }
+        try { await onOrderItemsVoided([itemId], userId); } catch (e) { console.error("[inv] reversal error:", e); }
       }
 
       await storage.recalcOrderTotal(orderId);
@@ -2275,7 +2272,7 @@ export async function registerRoutes(
       }
 
       if (item.sentToKitchenAt && item.status !== "VOIDED") {
-        await storage.incrementPortions(item.productId, item.qty, itemId, userId);
+        try { await onOrderItemsVoided([itemId], userId); } catch (e) { console.error("[inv] reversal error:", e); }
       }
 
       await storage.deleteOrderItem(itemId);
@@ -3960,9 +3957,15 @@ export async function registerRoutes(
         });
 
         if (item.sentToKitchenAt) {
-          await storage.incrementPortions(item.productId, item.qty, item.id, userId);
           await storage.voidKitchenTicketItemsByOrderItem(item.id, item.qty, true);
         }
+      }
+
+      const sentItemIds = items
+        .filter(i => i.status !== "VOIDED" && i.sentToKitchenAt)
+        .map(i => i.id);
+      if (sentItemIds.length > 0) {
+        try { await onOrderItemsVoided(sentItemIds, userId); } catch (e) { console.error("[inv] order void reversal error:", e); }
       }
 
       await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date(), totalAmount: "0" });

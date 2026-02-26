@@ -43,6 +43,9 @@ import {
   Link2,
   List,
   Menu,
+  ArrowRightLeft,
+  Factory,
+  Database,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
 
@@ -141,6 +144,9 @@ const hrSelfItems = [
 const invItems = [
   { title: "Inventario Básico", url: "/inventory/basic", icon: Boxes },
   { title: "Insumos", url: "/inventory/items", icon: Package },
+  { title: "Conversiones AP→EP", url: "/inventory/conversions", icon: ArrowRightLeft },
+  { title: "Producción", url: "/inventory/production", icon: Factory },
+  { title: "Stock", url: "/inventory/stock", icon: Database },
   { title: "Proveedores", url: "/inventory/suppliers", icon: Truck },
   { title: "Órdenes de Compra", url: "/inventory/purchase-orders", icon: FileText },
   { title: "Conteo Físico", url: "/inventory/physical-counts", icon: ClipboardCheck },

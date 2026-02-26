@@ -28,7 +28,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2, Plus, ArrowLeft, Send, PackageCheck, Trash2 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Loader2, Plus, ArrowLeft, Send, PackageCheck, Trash2, AlertTriangle, ShoppingCart } from "lucide-react";
 
 interface Supplier {
   id: number;
@@ -68,12 +70,29 @@ interface POLine {
   lineStatus: string;
   itemName?: string;
   itemSku?: string;
+  invItemName?: string;
 }
 
 interface ReceiveLine {
   poLineId: number;
   qtyPurchaseUomReceived: number;
   unitPricePerPurchaseUom: number;
+}
+
+interface Suggestion {
+  invItemId: number;
+  itemName: string;
+  itemSku: string;
+  baseUom: string;
+  reorderPointQtyBase: string;
+  stockQtyOnHand: string;
+  deficit: string;
+  preferredSupplier: {
+    supplierId: number;
+    supplierName: string;
+    purchaseUom: string;
+    lastPrice: string;
+  } | null;
 }
 
 const statusConfig: Record<string, { label: string; variant: "secondary" | "default" | "outline" | "destructive" }> = {
@@ -110,6 +129,8 @@ export default function PurchaseOrdersPage() {
   const [newLine, setNewLine] = useState({ invItemId: "", qtyPurchaseUom: "", purchaseUom: "", unitPricePerPurchaseUom: "" });
   const [receiveLines, setReceiveLines] = useState<ReceiveLine[]>([]);
   const [receiveNote, setReceiveNote] = useState("");
+  const [activeTab, setActiveTab] = useState("orders");
+  const [selectedSuggestions, setSelectedSuggestions] = useState<Set<number>>(new Set());
 
   const { data: orders, isLoading: ordersLoading } = useQuery<PurchaseOrder[]>({
     queryKey: ["/api/inv/purchase-orders"],
@@ -133,6 +154,10 @@ export default function PurchaseOrdersPage() {
     enabled: selectedPoId !== null,
   });
 
+  const { data: suggestions, isLoading: suggestionsLoading } = useQuery<Suggestion[]>({
+    queryKey: ["/api/inv/purchase-orders/suggestions"],
+  });
+
   const supplierMap = new Map<number, string>();
   if (suppliers) {
     for (const s of suppliers) supplierMap.set(s.id, s.name);
@@ -154,6 +179,28 @@ export default function PurchaseOrdersPage() {
       setCreateOpen(false);
       setNewPo({ supplierId: "", notes: "", expectedDeliveryDate: "" });
       setSelectedPoId(data.id);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error al crear OC", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const createPoFromSuggestionsMutation = useMutation({
+    mutationFn: async (data: { supplierId: number; lines: Array<{ invItemId: number; qtyPurchaseUom: number; purchaseUom: string; unitPricePerPurchaseUom: number }> }) => {
+      const res = await apiRequest("POST", "/api/inv/purchase-orders", { supplierId: data.supplierId, notes: "Creada desde sugerencias de reorden" });
+      const po = await res.json();
+      for (const line of data.lines) {
+        await apiRequest("POST", `/api/inv/purchase-orders/${po.id}/lines`, line);
+      }
+      return po;
+    },
+    onSuccess: (data: PurchaseOrder) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/purchase-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/purchase-orders/suggestions"] });
+      toast({ title: "OC creada desde sugerencias" });
+      setSelectedSuggestions(new Set());
+      setSelectedPoId(data.id);
+      setActiveTab("orders");
     },
     onError: (err: Error) => {
       toast({ title: "Error al crear OC", description: err.message, variant: "destructive" });
@@ -211,6 +258,8 @@ export default function PurchaseOrdersPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/inv/purchase-orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/inv/purchase-orders", selectedPoId] });
       queryClient.invalidateQueries({ queryKey: ["/api/inv/purchase-orders", selectedPoId, "lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/purchase-orders/suggestions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/stock/ap"] });
       toast({ title: "Recepción registrada" });
       setReceiveOpen(false);
       setReceiveLines([]);
@@ -271,6 +320,59 @@ export default function PurchaseOrdersPage() {
     setReceiveLines((prev) =>
       prev.map((l) => (l.poLineId === poLineId ? { ...l, [field]: value } : l))
     );
+  }
+
+  function toggleSuggestion(invItemId: number) {
+    setSelectedSuggestions(prev => {
+      const next = new Set(prev);
+      if (next.has(invItemId)) {
+        next.delete(invItemId);
+      } else {
+        next.add(invItemId);
+      }
+      return next;
+    });
+  }
+
+  function handleCreatePoFromSuggestions() {
+    if (!suggestions) return;
+    const selected = suggestions.filter(s => selectedSuggestions.has(s.invItemId));
+    if (selected.length === 0) {
+      toast({ title: "Seleccione al menos un artículo", variant: "destructive" });
+      return;
+    }
+
+    const bySupplier = new Map<number, { supplierName: string; lines: Array<{ invItemId: number; qtyPurchaseUom: number; purchaseUom: string; unitPricePerPurchaseUom: number }> }>();
+
+    for (const s of selected) {
+      const supplierId = s.preferredSupplier?.supplierId || 0;
+      if (supplierId === 0) {
+        toast({ title: `${s.itemName} no tiene proveedor asignado`, variant: "destructive" });
+        return;
+      }
+      if (!bySupplier.has(supplierId)) {
+        bySupplier.set(supplierId, {
+          supplierName: s.preferredSupplier!.supplierName,
+          lines: [],
+        });
+      }
+      bySupplier.get(supplierId)!.lines.push({
+        invItemId: s.invItemId,
+        qtyPurchaseUom: Math.ceil(Number(s.deficit)),
+        purchaseUom: s.preferredSupplier?.purchaseUom || s.baseUom,
+        unitPricePerPurchaseUom: Number(s.preferredSupplier?.lastPrice || "0"),
+      });
+    }
+
+    const entries = Array.from(bySupplier.entries());
+    if (entries.length === 1) {
+      const [supplierId, data] = entries[0];
+      createPoFromSuggestionsMutation.mutate({ supplierId, lines: data.lines });
+    } else {
+      for (const [supplierId, data] of entries) {
+        createPoFromSuggestionsMutation.mutate({ supplierId, lines: data.lines });
+      }
+    }
   }
 
   const poStatus = selectedPo?.status || "";
@@ -370,7 +472,7 @@ export default function PurchaseOrdersPage() {
                       return (
                         <TableRow key={line.id} data-testid={`row-po-line-${line.id}`}>
                           <TableCell data-testid={`text-line-item-${line.id}`}>
-                            {line.itemName || line.itemSku || itemMap.get(line.invItemId)?.name || `Item #${line.invItemId}`}
+                            {line.invItemName || line.itemName || line.itemSku || itemMap.get(line.invItemId)?.name || `Item #${line.invItemId}`}
                           </TableCell>
                           <TableCell data-testid={`text-line-qty-${line.id}`}>{qty.toFixed(2)}</TableCell>
                           <TableCell data-testid={`text-line-uom-${line.id}`}>{line.purchaseUom}</TableCell>
@@ -492,7 +594,7 @@ export default function PurchaseOrdersPage() {
                       return (
                         <TableRow key={rl.poLineId} data-testid={`row-receive-${rl.poLineId}`}>
                           <TableCell data-testid={`text-receive-item-${rl.poLineId}`}>
-                            {line?.itemName || line?.itemSku || (line ? itemMap.get(line.invItemId)?.name : "") || `Línea #${rl.poLineId}`}
+                            {line?.invItemName || line?.itemName || line?.itemSku || (line ? itemMap.get(line.invItemId)?.name : "") || `Línea #${rl.poLineId}`}
                           </TableCell>
                           <TableCell>
                             <Input
@@ -549,6 +651,8 @@ export default function PurchaseOrdersPage() {
     );
   }
 
+  const suggestionsCount = suggestions?.length || 0;
+
   return (
     <div className="admin-page">
       <div className="admin-page-header">
@@ -559,62 +663,161 @@ export default function PurchaseOrdersPage() {
         </Button>
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Lista de Órdenes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {ordersLoading ? (
-            <div className="flex justify-center p-4" data-testid="loading-pos">
-              <Loader2 className="h-6 w-6 animate-spin" />
-            </div>
-          ) : !orders || orders.length === 0 ? (
-            <p className="text-sm text-muted-foreground" data-testid="text-no-pos">
-              No hay órdenes de compra.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table data-testid="table-pos">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>#</TableHead>
-                    <TableHead>Proveedor</TableHead>
-                    <TableHead>Estado</TableHead>
-                    <TableHead>Fecha</TableHead>
-                    <TableHead>Entrega Esperada</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {orders.map((po) => (
-                    <TableRow
-                      key={po.id}
-                      className="cursor-pointer hover-elevate"
-                      data-testid={`row-po-${po.id}`}
-                      onClick={() => setSelectedPoId(po.id)}
-                    >
-                      <TableCell data-testid={`text-po-id-${po.id}`}>{po.id}</TableCell>
-                      <TableCell data-testid={`text-po-supplier-${po.id}`}>
-                        {po.supplierName || supplierMap.get(po.supplierId) || `ID ${po.supplierId}`}
-                      </TableCell>
-                      <TableCell data-testid={`badge-po-status-${po.id}`}>
-                        <Badge className={statusBadgeClass(po.status)} style={statusBadgeStyle(po.status)}>
-                          {statusConfig[po.status]?.label || po.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell data-testid={`text-po-date-${po.id}`}>
-                        {new Date(po.createdAt).toLocaleDateString("es-CR")}
-                      </TableCell>
-                      <TableCell data-testid={`text-po-expected-${po.id}`}>
-                        {po.expectedDeliveryDate || "-"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList data-testid="tabs-po">
+          <TabsTrigger value="orders" data-testid="tab-orders">Órdenes</TabsTrigger>
+          <TabsTrigger value="suggestions" data-testid="tab-suggestions" className="gap-1">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Sugeridos
+            {suggestionsCount > 0 && (
+              <Badge variant="destructive" className="ml-1" data-testid="badge-suggestions-count">
+                {suggestionsCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="orders">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Lista de Órdenes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {ordersLoading ? (
+                <div className="flex justify-center p-4" data-testid="loading-pos">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+              ) : !orders || orders.length === 0 ? (
+                <p className="text-sm text-muted-foreground" data-testid="text-no-pos">
+                  No hay órdenes de compra.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table data-testid="table-pos">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>#</TableHead>
+                        <TableHead>Proveedor</TableHead>
+                        <TableHead>Estado</TableHead>
+                        <TableHead>Fecha</TableHead>
+                        <TableHead>Entrega Esperada</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {orders.map((po) => (
+                        <TableRow
+                          key={po.id}
+                          className="cursor-pointer hover-elevate"
+                          data-testid={`row-po-${po.id}`}
+                          onClick={() => setSelectedPoId(po.id)}
+                        >
+                          <TableCell data-testid={`text-po-id-${po.id}`}>{po.id}</TableCell>
+                          <TableCell data-testid={`text-po-supplier-${po.id}`}>
+                            {po.supplierName || supplierMap.get(po.supplierId) || `ID ${po.supplierId}`}
+                          </TableCell>
+                          <TableCell data-testid={`badge-po-status-${po.id}`}>
+                            <Badge className={statusBadgeClass(po.status)} style={statusBadgeStyle(po.status)}>
+                              {statusConfig[po.status]?.label || po.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell data-testid={`text-po-date-${po.id}`}>
+                            {new Date(po.createdAt).toLocaleDateString("es-CR")}
+                          </TableCell>
+                          <TableCell data-testid={`text-po-expected-${po.id}`}>
+                            {po.expectedDeliveryDate || "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="suggestions">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+              <CardTitle className="text-lg">Artículos bajo punto de reorden</CardTitle>
+              {selectedSuggestions.size > 0 && (
+                <Button
+                  data-testid="button-create-po-from-suggestions"
+                  onClick={handleCreatePoFromSuggestions}
+                  disabled={createPoFromSuggestionsMutation.isPending}
+                >
+                  {createPoFromSuggestionsMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  <ShoppingCart className="mr-2 h-4 w-4" />
+                  Crear OC ({selectedSuggestions.size})
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent>
+              {suggestionsLoading ? (
+                <div className="flex justify-center p-4" data-testid="loading-suggestions">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+              ) : !suggestions || suggestions.length === 0 ? (
+                <p className="text-sm text-muted-foreground" data-testid="text-no-suggestions">
+                  Todos los artículos están por encima del punto de reorden.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table data-testid="table-suggestions">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-10"></TableHead>
+                        <TableHead>Artículo</TableHead>
+                        <TableHead>SKU</TableHead>
+                        <TableHead>UOM</TableHead>
+                        <TableHead>Stock</TableHead>
+                        <TableHead>Punto Reorden</TableHead>
+                        <TableHead>Déficit</TableHead>
+                        <TableHead>Proveedor</TableHead>
+                        <TableHead>Últ. Precio</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {suggestions.map((s) => (
+                        <TableRow key={s.invItemId} data-testid={`row-suggestion-${s.invItemId}`}>
+                          <TableCell>
+                            <Checkbox
+                              data-testid={`checkbox-suggestion-${s.invItemId}`}
+                              checked={selectedSuggestions.has(s.invItemId)}
+                              onCheckedChange={() => toggleSuggestion(s.invItemId)}
+                              disabled={!s.preferredSupplier}
+                            />
+                          </TableCell>
+                          <TableCell data-testid={`text-suggestion-name-${s.invItemId}`}>{s.itemName}</TableCell>
+                          <TableCell data-testid={`text-suggestion-sku-${s.invItemId}`}>{s.itemSku}</TableCell>
+                          <TableCell data-testid={`text-suggestion-uom-${s.invItemId}`}>{s.baseUom}</TableCell>
+                          <TableCell data-testid={`text-suggestion-stock-${s.invItemId}`}>
+                            <span className="text-destructive font-medium">{Number(s.stockQtyOnHand).toFixed(2)}</span>
+                          </TableCell>
+                          <TableCell data-testid={`text-suggestion-reorder-${s.invItemId}`}>
+                            {Number(s.reorderPointQtyBase).toFixed(2)}
+                          </TableCell>
+                          <TableCell data-testid={`text-suggestion-deficit-${s.invItemId}`}>
+                            <span className="font-medium">{Number(s.deficit).toFixed(2)}</span>
+                          </TableCell>
+                          <TableCell data-testid={`text-suggestion-supplier-${s.invItemId}`}>
+                            {s.preferredSupplier?.supplierName || (
+                              <span className="text-muted-foreground text-xs">Sin proveedor</span>
+                            )}
+                          </TableCell>
+                          <TableCell data-testid={`text-suggestion-price-${s.invItemId}`}>
+                            {s.preferredSupplier ? Number(s.preferredSupplier.lastPrice).toFixed(2) : "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={createOpen} onOpenChange={(open) => { if (!open) setCreateOpen(false); }}>
         <DialogContent data-testid="dialog-create-po">
