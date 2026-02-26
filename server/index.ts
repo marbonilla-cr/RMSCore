@@ -40,6 +40,15 @@ if (isProduction) {
   }));
 }
 
+let appReady = false;
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+app.use((req, res, next) => {
+  if (!appReady && req.path === "/" && req.method === "GET") {
+    return res.status(200).send("ok");
+  }
+  next();
+});
+
 app.use(compression());
 
 declare module "http" {
@@ -152,6 +161,7 @@ app.use((req, res, next) => {
     const { serveStatic } = await import("./static");
     serveStatic(app);
   }
+  appReady = true;
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.
