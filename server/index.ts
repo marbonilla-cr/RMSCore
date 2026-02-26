@@ -6,15 +6,27 @@ import { createServer } from "http";
 const app = express();
 
 /**
- * Health checks MUST be fast and always return 200.
- * Replit checks "/" by default.
- * Keep these before any middleware (helmet, compression, body parsers, auth, etc).
+ * ✅ Health checks MUST be instant and ALWAYS return 200.
+ * Replit Autoscale may call HEAD / (not only GET /).
+ * Use app.all to cover GET/HEAD/others and keep it BEFORE any middleware.
  */
-app.get("/", (_req, res) => res.status(200).send("ok"));
-app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
+app.all("/", (_req, res) => res.status(200).send("ok"));
+app.all("/healthz", (_req, res) => res.status(200).send("ok"));
+app.all("/health", (_req, res) => res.status(200).json({ ok: true }));
 
 const httpServer = createServer(app);
+
+// Log server bind errors clearly
+httpServer.on("error", (err) => {
+  console.error("[BOOT] httpServer error:", err);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[BOOT] uncaughtException:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[BOOT] unhandledRejection:", reason);
+});
 
 app.disable("x-powered-by");
 const isProduction = process.env.NODE_ENV === "production";
@@ -199,16 +211,28 @@ async function warmup() {
     }, 5 * 60 * 1000);
   } catch (err: any) {
     console.error("Warmup failed:", err);
-    // NO process.exit(1) -> if warmup fails, keep server alive so Replit health checks can pass
-    // Then you can read logs to fix the underlying warmup error.
+    // IMPORTANT: do NOT exit; keep server alive so health checks can pass.
   }
 }
 
-const port = Number(process.env.PORT) || 5000;
+/**
+ * ✅ Port selection for Replit Autoscale:
+ * - Prefer process.env.PORT if provided
+ * - If not provided in production, use 80
+ * - In development fallback to 5000
+ */
+const port =
+  Number(process.env.PORT) ||
+  (process.env.NODE_ENV === "production" ? 80 : 5000);
 
-// Use the simplest listen signature for maximum compatibility in deploy environments
+console.log(
+  `[BOOT] NODE_ENV=${process.env.NODE_ENV} PORT=${process.env.PORT} -> using ${port}`,
+);
+
 httpServer.listen(port, "0.0.0.0", () => {
+  console.log(`[BOOT] listening on 0.0.0.0:${port}`);
   log(`serving on port ${port}`);
-  // Give Replit time to complete health checks before doing warmup work
+
+  // Give health checks time first, then warmup.
   setTimeout(() => void warmup(), 5000);
 });
