@@ -1094,10 +1094,10 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/conversions/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      const conv = await invStorage.deactivateConversion(parseInt(req.params.id));
-      if (!conv) return res.status(404).json({ message: "Conversión no encontrada" });
-      broadcast(wss, "INV_CONVERSION_DEACTIVATED", conv);
-      res.json(conv);
+      const result = await invStorage.smartDeleteConversion(parseInt(req.params.id));
+      if (!result) return res.status(404).json({ message: "Conversión no encontrada" });
+      broadcast(wss, result.hardDeleted ? "INV_CONVERSION_DELETED" : "INV_CONVERSION_DEACTIVATED", result.conversion);
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

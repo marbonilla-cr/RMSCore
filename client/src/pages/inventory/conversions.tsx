@@ -22,7 +22,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Trash2, Calculator, X, Info, Pencil } from "lucide-react";
+import { Plus, Trash2, Calculator, X, Info, Pencil, Loader2 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const EP_UOM_OPTIONS = [
   { value: "G", label: "G - Gramo" },
@@ -150,13 +154,17 @@ export default function ConversionsPage() {
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
-  const deactivateMut = useMutation({
+  const [deleteConvTarget, setDeleteConvTarget] = useState<{ id: number; name: string } | null>(null);
+
+  const deleteMut = useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/inv/conversions/${id}`);
+      const res = await apiRequest("DELETE", `/api/inv/conversions/${id}`);
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/inv/conversions"] });
-      toast({ title: "Conversión desactivada" });
+      toast({ title: data.hardDeleted ? "Conversión eliminada permanentemente" : "Conversión desactivada" });
+      setDeleteConvTarget(null);
     },
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
@@ -344,6 +352,7 @@ export default function ConversionsPage() {
   const activeEpItems = (epItems || []).filter(i => i.isActive);
 
   return (
+    <>
     <TooltipProvider>
       <div className="p-4 max-w-5xl mx-auto space-y-4">
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -623,17 +632,15 @@ export default function ConversionsPage() {
                       >
                         <Pencil className="w-3 h-3 mr-1" /> Editar
                       </Button>
-                      {conv.isActive && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive"
-                          onClick={() => deactivateMut.mutate(conv.id)}
-                          data-testid={`button-deactivate-${conv.id}`}
-                        >
-                          Desactivar
-                        </Button>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        onClick={() => setDeleteConvTarget({ id: conv.id, name: conv.name })}
+                        data-testid={`button-delete-${conv.id}`}
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" /> Eliminar
+                      </Button>
                     </div>
                   </div>
 
@@ -788,5 +795,28 @@ export default function ConversionsPage() {
         )}
       </div>
     </TooltipProvider>
+
+      <AlertDialog open={!!deleteConvTarget} onOpenChange={open => { if (!open) setDeleteConvTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar conversión?</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Eliminar "{deleteConvTarget?.name}"? Si tiene lotes de producción asociados se desactivará en lugar de eliminarse.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete-conv">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deleteConvTarget && deleteMut.mutate(deleteConvTarget.id)}
+              disabled={deleteMut.isPending}
+              data-testid="button-confirm-delete-conv"
+            >
+              {deleteMut.isPending ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Eliminando...</> : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

@@ -1032,6 +1032,30 @@ export async function deactivateConversion(id: number) {
   return conv;
 }
 
+export async function hasConversionRelations(id: number): Promise<boolean> {
+  const [batch] = await db.select({ id: productionBatches.id }).from(productionBatches).where(eq(productionBatches.conversionId, id)).limit(1);
+  return !!batch;
+}
+
+export async function hardDeleteConversion(id: number) {
+  await db.delete(invConversionOutputs).where(eq(invConversionOutputs.conversionId, id));
+  const [conv] = await db.delete(invConversions).where(eq(invConversions.id, id)).returning();
+  return conv;
+}
+
+export async function smartDeleteConversion(id: number) {
+  const conv = await getConversion(id);
+  if (!conv) return null;
+  const hasRelations = await hasConversionRelations(id);
+  if (hasRelations) {
+    const deactivated = await deactivateConversion(id);
+    return { conversion: deactivated, hardDeleted: false };
+  } else {
+    const deleted = await hardDeleteConversion(id);
+    return { conversion: deleted, hardDeleted: true };
+  }
+}
+
 // ==================== STOCK AP/EP ====================
 
 export async function getStockAp() {
