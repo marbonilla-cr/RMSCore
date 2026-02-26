@@ -1,0 +1,66 @@
+Crear Insumo AP inline desde dropdown en Conversiones (CERRADO)
+
+Objetivo:
+En conversions.tsx, permitir crear un insumo AP inline desde el dropdown “Insumo AP”, sin salir de la pantalla.
+Patrón idéntico a quick-EP: opción "__create_new__", mini-form inline, crear, invalidar cache, auto-seleccionar.
+
+Reglas:
+- NO tocar quick-ep.
+- NO tocar Basic Inventory, Shortages, inventory-deduction.ts.
+- Endpoint nuevo: POST /api/inv/items/quick-ap.
+- Campos mínimos: name, baseUom, lastCostPerBaseUom (default 0).
+- baseUom debe validarse/normalizarse con normalizeUom (400 si inválida).
+- Requiere permiso INV_MANAGE_ITEMS (igual que quick-ep).
+- En frontend, al crear: invalidar ["/api/inv/items?type=AP"], seleccionar el nuevo item, salir de modo creación.
+
+T001 Backend (server/inventory-routes.ts):
+- Agregar POST /api/inv/items/quick-ap
+  Body: { name: string, baseUom: string, lastCostPerBaseUom?: number }
+  Validar:
+   - name requerido
+   - baseUom requerido y normalizeUom(baseUom)
+  lastCostPerBaseUom:
+   - si viene undefined/null -> 0
+   - si viene number -> coerción en storage layer si Drizzle numeric requiere string
+  Crear item con:
+   - itemType="AP"
+   - category="AP"
+   - isActive=true
+   - stock/otros defaults en 0
+   - sku "AP-{timestamp}-{random}"
+  Usar insertInvItemSchema.parse() + invStorage.createInvItem()
+  Retornar item completo
+  (Broadcast opcional solo si ya existe helper estándar)
+
+Aceptación:
+- POST /api/inv/items/quick-ap con {name:"Test", baseUom:"kg", lastCostPerBaseUom:700} crea item AP con baseUom "KG" y retorna id.
+
+T002 Frontend (client/src/pages/inventory/conversions.tsx):
+- En el Select de AP items:
+  - agregar SelectItem value="__create_new__" como primera opción: "+ Nuevo insumo AP"
+- Al seleccionar "__create_new__":
+  - isCreatingAp=true
+  - limpiar formApItemId
+- Mostrar mini-form inline en lugar del Select:
+  - Input nombre (requerido)
+  - Select UOM (KG/G/L/ML/UNIT) — mismo set permitido
+  - Input costo (₡) (opcional, default 0)
+  - Botones: Crear / Cancelar
+- handleCreateQuickAp:
+  - POST /api/inv/items/quick-ap {name, baseUom, lastCostPerBaseUom}
+  - on success:
+    - invalidate query ["/api/inv/items?type=AP"]
+    - set formApItemId = String(newItem.id)
+    - isCreatingAp=false
+    - toast success
+- Cancelar:
+  - isCreatingAp=false
+  - volver al dropdown normal
+
+Checklist:
+- "+ Nuevo insumo AP" aparece primero
+- mini-form inline se ve
+- Crear -> item queda seleccionado
+- aparece en lista de AP items
+- costos de conversiones funcionan con ese lastCostPerBaseUom
+- quick-ep no cambia
