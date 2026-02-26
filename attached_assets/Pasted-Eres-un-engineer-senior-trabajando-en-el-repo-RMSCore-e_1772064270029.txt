@@ -1,0 +1,62 @@
+Eres un engineer senior trabajando en el repo RMSCore existente.
+
+REGLAS (CERRADAS):
+- NO crear nuevas tablas de inventario BASIC.
+- NO cambiar el modelo actual de Products/Portions y su lógica base:
+  - Si la cantidad está vacía/null => ILIMITADO (nunca se auto-desactiva).
+  - Si hay cantidad y llega a 0 => auto-desactiva / no visible en QR.
+  - Solo reactivar manualmente o al cargar cantidad nuevamente.
+- NO tocar arquitectura, auth, multi-tenant, POS, pagos, KDS, websockets salvo lo estrictamente necesario para idempotencia.
+- NO agregar recetas, insumos, conversiones, conteos o compras (eso es FULL).
+
+OBJETIVO EXACTO:
+1) Auditar el flujo actual de “porciones disponibles” y auto-desactivación:
+   - Identificar el punto donde se descuenta (accept / send to kitchen / pay).
+   - Definir 1 único punto de descuento (single source of truth) y documentarlo.
+2) Hacer la deducción IDÉMPOTENTE:
+   - Evitar doble descuento por reintentos, reconexión, refresh, doble click.
+   - Evitar que descuentos parciales de una misma orden se ejecuten 2 veces.
+3) Asegurar consistencia UI:
+   - POS/salonero/KDS deben ver “Agotado” cuando quantity=0.
+   - Cliente QR no debe ver productos agotados.
+4) Crear un “Control Panel” de Inventario Básico:
+   - Una pantalla simple: tabla de productos/porciones con cantidad, estado (Ilimitado/Disponible/Agotado), y acciones rápidas:
+     - Set cantidad
+     - + / - ajuste
+     - Limpiar cantidad (volver ILIMITADO)
+     - Activar/Desactivar manual (si ya existe)
+   - Filtros: buscar, mostrar agotados, mostrar ilimitados, por categoría.
+   - Tooltips simples explicando “vacío = ilimitado”.
+5) Auditoría mínima (sin nuevas tablas si ya hay audit):
+   - Registrar eventos: BASIC_STOCK_SET, BASIC_STOCK_CLEAR, BASIC_STOCK_ADJUST, BASIC_AUTO_DISABLE, BASIC_MANUAL_DISABLE/ENABLE
+   - Si existe audit_events o action logs, usarlo. NO crear tabla nueva.
+
+IMPLEMENTACIÓN PASO A PASO:
+A) Localizar dónde se guarda:
+   - campo de porciones disponibles (por product o por portion).
+B) Localizar dónde se descuenta hoy:
+   - buscar decrement en server y en client.
+C) Seleccionar un solo punto de descuento:
+   - preferido: en backend al “accept/send to kitchen” (no en frontend).
+D) Idempotencia:
+   - Implementar idempotency guard usando datos existentes:
+     - Si ya existe sales_ledger_items/audit_events: usar como “marca” (order_item_id + action).
+     - Si no existe nada, crear una marca mínima dentro del mismo registro de order_item si existe un campo meta/json.
+   - El objetivo: “si ya se descontó este item, no volver a descontar”.
+E) UI Control Panel:
+   - Agregar route/menu “Inventario Básico” (solo admin).
+   - Reusar endpoints existentes de products/portions para leer y actualizar cantidades.
+   - No inventar endpoints si ya existen; si faltan, crear solo 2 endpoints:
+     - GET /api/inventory/basic (read table)
+     - POST /api/inventory/basic/update (set/adjust/clear)
+F) Pruebas mínimas:
+   - Caso ilimitado: no descuenta y nunca desactiva.
+   - Caso stock=1 y se vende 1: queda 0 y desaparece del QR.
+   - Reintento de envío: no descuenta dos veces.
+   - Ajuste manual: de 0 a 5 vuelve disponible.
+
+ENTREGABLES:
+- Commit 1: análisis + selección punto único + fix idempotencia
+- Commit 2: UI “Inventario Básico” panel
+- Commit 3: pruebas mínimas / logs
+No tocar nada más.

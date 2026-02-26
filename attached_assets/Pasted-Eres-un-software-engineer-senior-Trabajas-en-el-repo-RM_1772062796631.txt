@@ -1,0 +1,231 @@
+Eres un software engineer senior. Trabajas en el repo RMSCore (ya existente). 
+
+REGLA DE ORO (OBLIGATORIO):
+- NO cambies nada fuera del alcance indicado.
+- NO refactorices otros módulos.
+- NO cambies UI/UX fuera de lo descrito.
+- NO agregues nuevas funcionalidades no pedidas.
+- NO cambies naming existente salvo donde sea estrictamente necesario para multi-tenant y el nuevo inventario.
+- Entrega cambios en commits separados y con checklist de pruebas.
+
+OBJETIVO CERRADO:
+Implementar únicamente:
+A) Multi-tenant real: varios restaurantes (Organizations) con varios locales (Locations), con un solo URL de frontend/backend y app móvil.
+B) Activación por módulo/feature (entitlements) por Organization, con base incluida: POS + Mesas + KDS (1 estación cocina). 
+C) Inventario BASIC: crear el “corazón del inventario” como UNA SOLA TABLA de conversiones AP→EP con costo por porción (Conversion Builder), con diseño tipo spreadsheet y tooltips.
+D) Inventario por local (location) que alimenta una VISTA global por organización (sumatoria). NO crear bodegas globales separadas.
+
+NO IMPLEMENTAR:
+- recetas/BOM, deducción automática por venta, producción, órdenes de compra, sugerencias por faltantes (eso es INVENTORY FULL futuro).
+- overrides por local de menú/recetario (no ahora).
+
+================================================================================
+A) MULTI-TENANT (ORGANIZATIONS + LOCATIONS)
+================================================================================
+
+1) DATA MODEL / DB
+Crear tablas nuevas:
+- organizations: id (uuid pk), name, status, created_at
+- locations: id (uuid pk), organization_id (fk), name, address (nullable), timezone (nullable), status, created_at
+- user_organizations: user_id, organization_id, role, created_at (unique user_id+organization_id)
+- user_locations: user_id, location_id, role, created_at (unique user_id+location_id) [IMPLEMENTAR]
+
+Agregar columnas:
+- Agregar organization_id (uuid NOT NULL) a TODAS las tablas operativas.
+- Agregar location_id (uuid NOT NULL) a TODAS las tablas operativas que son por local (la mayoría: mesas, órdenes, pagos, caja, KDS, auditoría, inventario).
+- Menú/productos/categorías: por ahora por organization_id (shared). NO location overrides.
+
+Backfill:
+- Crear 1 organization DEFAULT + 1 location DEFAULT.
+- Asignar organization_id/location_id a todos los registros existentes.
+- Garantizar que no quede NULL.
+
+Unicos:
+- Cambiar uniques globales a scope por tenant:
+  - sku: unique(organization_id, sku)
+  - mesas: unique(organization_id, location_id, table_name/table_code)
+
+2) BACKEND CONTEXTO
+Implementar middleware `requireContext()`:
+- Headers obligatorios:
+  - x-organization-id
+  - x-location-id
+- Validaciones:
+  - UUID válidos
+  - Usuario pertenece a org (user_organizations)
+  - Location pertenece a org
+  - Usuario pertenece a location (user_locations)
+- Inyecta: req.context = { organizationId, locationId, entitlements }
+- Si falta header: 400
+- Si no autorizado: 403
+
+Aislamiento:
+- En TODOS los endpoints/queries:
+  - SELECT/UPDATE/DELETE filtran por organization_id y location_id donde aplique.
+  - INSERT setea organization_id/location_id desde req.context.
+- Crear helper `withContext`/`ctxWhere` para no olvidar filtros.
+
+WebSockets:
+- Prohibido broadcast global.
+- Aislar por org+location (rooms o filtros).
+- Autenticación WS con org/location (headers o primer mensaje).
+
+Frontend:
+- Selector Organization + Location:
+  - si único -> auto
+  - si múltiple -> selector
+- Guardar selección (localStorage) y enviar headers x-organization-id/x-location-id en todas las llamadas.
+- Un solo dominio/URL.
+
+================================================================================
+B) ENTITLEMENTS POR MODULO (VENTA POR MODULO, NO POR PAQUETE)
+================================================================================
+
+Tabla entitlements por Organization:
+- org_entitlements:
+  - organization_id
+  - key (string)
+  - value_type ('bool'|'int'|'string'|'json')
+  - value_json (jsonb)
+  - status ('ACTIVE'|'TRIAL'|'DISABLED')
+  - starts_at, ends_at, updated_at
+  - unique(organization_id, key)
+
+Defaults al crear organization (SEED):
+BASE INCLUIDA:
+- POS_ENABLED = true
+- TABLES_ENABLED = true
+- KDS_ENABLED = true
+- KDS_STATIONS_LIMIT = 1
+INVENTARIO PARA CREAR NECESIDAD:
+- INV_ENABLED = true
+- INV_MODE = "BASIC"
+ADD-ONS OFF:
+- RESERVATIONS_ENABLED = false
+- LOYALTY_ENABLED = false
+
+Middleware backend:
+- requireFlag(KEY)
+- requireMinInt(KEY, MIN)
+- requireValue(KEY, EXPECTED)
+
+Enforcement:
+- POS endpoints -> POS_ENABLED
+- Mesas/Órdenes -> TABLES_ENABLED
+- KDS -> KDS_ENABLED
+- estación extra -> requireMinInt(KDS_STATIONS_LIMIT, 2) (solo gating)
+- Inventario básico -> INV_ENABLED
+- Inventario FULL futuro -> requireValue(INV_MODE,"FULL") (no implementar)
+- Reservas/Loyalty -> gating si existen rutas
+
+Frontend gating:
+- Ocultar módulos OFF.
+- Si navegan a ruta OFF -> pantalla Upgrade.
+
+================================================================================
+C) INVENTARIO BASIC - CONVERSION BUILDER (TABLA UNICA) + INVENTARIO POR LOCAL
+================================================================================
+
+INVENTARIO POR LOCAL:
+- Todo stock/movimiento es por location_id.
+- Inventario global por organización es SOLO una vista agregada (sumatoria) para reportar, NO una bodega separada.
+
+MODELO MINIMO (BASIC):
+- inv_items_ap (insumos comprados):
+  - id, organization_id, location_id, name, sku (unique org+sku), purchase_uom, purchase_price, unit_weight_g (nullable), created_at
+- inv_conversions:
+  - id, organization_id, location_id, ap_item_id
+  - trim_waste_pct (0-100)
+  - cook_factor (decimal>0 default 1)
+  - extra_loss_pct (0-100 default 0)
+  - created_at
+- inv_conversion_outputs:
+  - id, conversion_id
+  - ep_name
+  - ep_uom (g|ml|unit|portion)
+  - portion_size (numeric>0)
+  - created_at
+- inv_stock_by_location (opcional si no existe ya):
+  - ap_item_id, location_id, on_hand_base (numeric), updated_at
+- inv_stock_movements:
+  - id, organization_id, location_id, ap_item_id, type(IN/OUT/ADJUST), qty_base, reason, created_at
+
+IMPORTANTE:
+- Por ahora los stocks se manejan en AP base (g/ml/unit) y el Conversion Builder calcula EP porciones para costeo.
+- NO deducción automática por venta (FULL futuro).
+
+CALCULOS:
+Usar unidades base:
+- peso => gramos
+- volumen => ml
+- unidad => unit
+
+Para 1 unidad AP:
+usable_qty = ap_qty_base * (1 - trim_waste_pct/100) * cook_factor * (1 - extra_loss_pct/100)
+
+Por output:
+portions_generated = usable_qty / portion_size (si g/ml)
+Para unit/portion:
+- permitir portion_size como 1.0 o 0.33 etc.
+- si compra por unit y requiere g -> exigir unit_weight_g para conversion a g.
+
+Costo:
+cost_per_portion = purchase_cost_for_ap_qty / portions_generated
+Mostrar también cost_per_base_unit (por g/ml/unit).
+
+UI (UNA TABLA COMPLETA EN UNA SOLA PANTALLA):
+- Tabla principal con filas AP. Cada fila puede expandirse para múltiples outputs EP (subfilas dentro de la misma tabla).
+Columnas:
+1) Insumo (AP) [dropdown/search o texto]
+2) Unidad compra [kg/g/L/ml/unit]
+3) Precio compra (₡)
+4) Peso por unidad (g) [solo si unit]
+5) Merma (%) [0-100]
+6) Cocción factor [>0, default 1.00 + toggle crece/reduce/igual]
+7) Pérdida extra (%) [0-100]
+8) Cantidad usable (auto) [g/ml/unit]
+Subfilas output:
+9) Output (EP) nombre
+10) Unidad EP [g/ml/unit/portion]
+11) Tamaño porción
+12) Porciones generadas (auto)
+13) Costo por porción (auto)
+14) Costo por g/ml/unit (auto)
+
+Tooltips (simple + abreviación):
+- Unidad compra (AP): “Así lo factura el proveedor (AP).”
+- Merma (%): “Lo que se pierde al pelar/limpiar (Yield).”
+- Cocción factor: “Cambia al cocinar: arroz crece, carne reduce (Factor cocción).”
+- Output EP: “Así lo usás o servís (EP).”
+- Tamaño porción: “Lo que servís por plato.”
+
+COMPORTAMIENTO:
+- Botón + Output por fila (ej chicharrón 100g/200g/800g/1000g).
+- Validaciones inline.
+- Warnings suaves si portions_generated < 1 o falta unit_weight_g cuando aplica.
+
+VISTA GLOBAL (ORGANIZATION):
+- Crear un reporte/vista simple (read-only) que sume stock por location y muestre totales por organization:
+  - total_on_hand por ap_item_id = SUM(location stocks)
+- No agregar nuevas pantallas complejas: puede ser una sección “Global summary” arriba o un toggle “Ver global”.
+
+================================================================================
+ENTREGA
+================================================================================
+
+Commits separados:
+1) Multi-tenant schema + backfill
+2) Context middleware + WS isolation
+3) Entitlements + enforcement base + defaults
+4) Inventory BASIC schema + API (por local)
+5) Conversion Builder UI (tabla única) + tooltips + vista global agregada
+
+Checklist pruebas:
+- 2 orgs y 2 locations sin mezcla.
+- headers obligatorios.
+- POS/Mesas/KDS funcionando con base.
+- Inventario: tabla calcula porciones y costo por porción.
+- Vista global suma por local correctamente.
+
+INICIO:
+Antes de codificar, producir lista exacta de tablas y endpoints afectados y luego implementar.
