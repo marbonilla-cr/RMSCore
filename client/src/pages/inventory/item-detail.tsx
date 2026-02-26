@@ -55,6 +55,7 @@ interface InvItem {
   notes: string | null;
   avgCostPerBaseUom: string;
   lastCostPerBaseUom: string;
+  unitWeightG: string | null;
 }
 
 interface UomConversion {
@@ -92,6 +93,9 @@ const editSchema = z.object({
   baseUom: z.string().min(1),
   reorderPointQtyBase: z.string(),
   parLevelQtyBase: z.string(),
+  lastCostPerBaseUom: z.coerce.number().min(0),
+  avgCostPerBaseUom: z.coerce.number().min(0),
+  unitWeightG: z.coerce.number().min(0).optional(),
   isPerishable: z.boolean(),
   notes: z.string().optional(),
 });
@@ -133,6 +137,9 @@ export default function ItemDetail() {
       baseUom: "",
       reorderPointQtyBase: "0",
       parLevelQtyBase: "0",
+      lastCostPerBaseUom: 0,
+      avgCostPerBaseUom: 0,
+      unitWeightG: undefined as number | undefined,
       isPerishable: false,
       notes: "",
     },
@@ -155,12 +162,18 @@ export default function ItemDetail() {
         baseUom: item.baseUom,
         reorderPointQtyBase: item.reorderPointQtyBase,
         parLevelQtyBase: item.parLevelQtyBase,
+        lastCostPerBaseUom: parseFloat(item.lastCostPerBaseUom) || 0,
+        avgCostPerBaseUom: parseFloat(item.avgCostPerBaseUom) || 0,
+        unitWeightG: item.unitWeightG ? parseFloat(item.unitWeightG) : undefined,
         isPerishable: item.isPerishable,
         notes: item.notes || "",
       });
     }
     setEditOpen(true);
   }
+
+  const editWatchBaseUom = editForm.watch("baseUom");
+  const editWatchUnitWeightG = editForm.watch("unitWeightG");
 
   const updateMutation = useMutation({
     mutationFn: async (data: z.infer<typeof editSchema>) => {
@@ -283,6 +296,12 @@ export default function ItemDetail() {
               <span className="text-muted-foreground">Último Costo</span>
               <p data-testid="text-last-cost">{parseFloat(item.lastCostPerBaseUom).toFixed(4)}</p>
             </div>
+            {item.baseUom === "UNIT" && (
+              <div>
+                <span className="text-muted-foreground">Peso/unidad (g)</span>
+                <p data-testid="text-unit-weight">{item.unitWeightG ? parseFloat(item.unitWeightG).toFixed(2) : "—"}</p>
+              </div>
+            )}
           </div>
           {item.notes && (
             <div className="mt-3 text-sm">
@@ -461,6 +480,44 @@ export default function ItemDetail() {
                   </FormItem>
                 )} />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <FormField control={editForm.control} name="lastCostPerBaseUom" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Último Costo (₡/base)</FormLabel>
+                    <FormControl>
+                      <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))} data-testid="input-edit-last-cost" />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">Se usa en conversiones AP→EP</p>
+                  </FormItem>
+                )} />
+                <FormField control={editForm.control} name="avgCostPerBaseUom" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Costo Promedio (₡/base)</FormLabel>
+                    <FormControl>
+                      <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))} data-testid="input-edit-avg-cost" />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">Promedio ponderado (WAC)</p>
+                  </FormItem>
+                )} />
+              </div>
+              {editWatchBaseUom === "UNIT" && (
+                <>
+                  <FormField control={editForm.control} name="unitWeightG" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Peso por unidad (g)</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))} data-testid="input-edit-unit-weight" />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">Necesario para conversiones UNIT→G</p>
+                    </FormItem>
+                  )} />
+                  {(!editWatchUnitWeightG || editWatchUnitWeightG <= 0) && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-edit-unit-weight-warning">
+                      ⚠ Sin peso por unidad, las conversiones UNIT→G no podrán calcular costos
+                    </p>
+                  )}
+                </>
+              )}
               <FormField control={editForm.control} name="isPerishable" render={({ field }) => (
                 <FormItem className="flex items-center gap-2">
                   <FormControl>

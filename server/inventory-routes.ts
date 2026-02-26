@@ -80,9 +80,23 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     }
   });
 
+  function coerceNumericFields(body: any) {
+    const numericKeys = [
+      "onHandQtyBase", "reorderPointQtyBase", "parLevelQtyBase",
+      "avgCostPerBaseUom", "lastCostPerBaseUom", "unitWeightG",
+    ];
+    const out = { ...body };
+    for (const k of numericKeys) {
+      if (k in out && out[k] != null) {
+        out[k] = String(out[k]);
+      }
+    }
+    return out;
+  }
+
   app.post("/api/inv/items", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      const parsed = insertInvItemSchema.parse(req.body);
+      const parsed = insertInvItemSchema.parse(coerceNumericFields(req.body));
       const item = await invStorage.createInvItem(parsed);
       broadcast(wss, "INV_ITEM_CREATED", item);
       res.json(item);
@@ -93,7 +107,8 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.patch("/api/inv/items/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      const item = await invStorage.updateInvItem(parseInt(req.params.id), req.body);
+      const coerced = coerceNumericFields(req.body);
+      const item = await invStorage.updateInvItem(parseInt(req.params.id), coerced);
       if (!item) return res.status(404).json({ message: "Item no encontrado" });
       broadcast(wss, "INV_ITEM_UPDATED", item);
       res.json(item);

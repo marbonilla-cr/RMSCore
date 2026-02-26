@@ -73,6 +73,15 @@ const ITEM_TYPE_OPTIONS = [
   { value: "EP", label: "EP (Elaborado)" },
 ];
 
+const COST_HELPERS: Record<string, string> = {
+  KG: "₡ por 1 KG (Ej: ₡700 si 1 KG cuesta ₡700)",
+  L: "₡ por 1 L (Ej: ₡1200 si 1 L cuesta ₡1200)",
+  UNIT: "₡ por 1 unidad (Ej: ₡250 si 1 unidad cuesta ₡250)",
+  G: "₡ por 1 g (normalmente un número pequeño)",
+  ML: "₡ por 1 ml (normalmente un número pequeño)",
+  PORTION: "₡ por 1 porción",
+};
+
 const formSchema = z.object({
   sku: z.string().min(1, "SKU requerido"),
   name: z.string().min(1, "Nombre requerido"),
@@ -82,6 +91,9 @@ const formSchema = z.object({
   onHandQtyBase: z.string().min(1, "Stock inicial requerido"),
   reorderPointQtyBase: z.string().default("0"),
   parLevelQtyBase: z.string().default("0"),
+  lastCostPerBaseUom: z.coerce.number().min(0).default(0),
+  avgCostPerBaseUom: z.coerce.number().min(0).optional(),
+  unitWeightG: z.coerce.number().min(0).optional(),
   isPerishable: z.boolean().default(false),
   notes: z.string().optional(),
 });
@@ -146,14 +158,27 @@ export default function InventoryItems() {
       onHandQtyBase: "",
       reorderPointQtyBase: "0",
       parLevelQtyBase: "0",
+      lastCostPerBaseUom: 0,
+      avgCostPerBaseUom: undefined,
+      unitWeightG: undefined,
       isPerishable: false,
       notes: "",
     },
   });
 
+  const watchBaseUom = form.watch("baseUom");
+  const watchUnitWeightG = form.watch("unitWeightG");
+
   const createMutation = useMutation({
     mutationFn: async (data: FormValues) => {
-      await apiRequest("POST", "/api/inv/items", data);
+      const payload: any = { ...data };
+      if (data.avgCostPerBaseUom == null || isNaN(data.avgCostPerBaseUom)) {
+        delete payload.avgCostPerBaseUom;
+      }
+      if (data.unitWeightG == null || isNaN(data.unitWeightG)) {
+        delete payload.unitWeightG;
+      }
+      await apiRequest("POST", "/api/inv/items", payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
@@ -502,6 +527,41 @@ export default function InventoryItems() {
                   )}
                 />
               </div>
+              <FormField
+                control={form.control}
+                name="lastCostPerBaseUom"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Costo por unidad base (₡)</FormLabel>
+                    <FormControl>
+                      <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))} placeholder="Ej: 700" data-testid="input-last-cost" />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">{COST_HELPERS[watchBaseUom] || `₡ por 1 ${watchBaseUom}`}</p>
+                  </FormItem>
+                )}
+              />
+              {watchBaseUom === "UNIT" && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="unitWeightG"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Peso por unidad (g)</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))} placeholder="Ej: 250" data-testid="input-unit-weight" />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">Necesario para conversiones UNIT→G</p>
+                      </FormItem>
+                    )}
+                  />
+                  {(!watchUnitWeightG || watchUnitWeightG <= 0) && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-unit-weight-warning">
+                      ⚠ Sin peso por unidad, las conversiones UNIT→G no podrán calcular costos
+                    </p>
+                  )}
+                </>
+              )}
               <FormField
                 control={form.control}
                 name="isPerishable"
