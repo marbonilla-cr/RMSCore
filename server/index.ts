@@ -4,46 +4,55 @@ import helmet from "helmet";
 import { createServer } from "http";
 
 const app = express();
+
+/**
+ * Health checks MUST be fast and always return 200.
+ * Replit checks "/" by default.
+ * Keep these before any middleware (helmet, compression, body parsers, auth, etc).
+ */
+app.get("/", (_req, res) => res.status(200).send("ok"));
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
+
 const httpServer = createServer(app);
 
 app.disable("x-powered-by");
 const isProduction = process.env.NODE_ENV === "production";
 
-app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-
 let appReady = false;
-app.use((req, res, next) => {
-  if (!appReady && req.path === "/" && req.method === "GET") {
-    return res.status(200).send("ok");
-  }
-  next();
-});
 
 if (isProduction) {
-  app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'", "ws:", "wss:"],
-        frameSrc: ["'none'"],
-        objectSrc: ["'none'"],
-        baseUri: ["'self'"],
-        formAction: ["'self'"],
-        frameAncestors: ["'self'", "https://*.replit.app", "https://*.replit.dev", "https://*.repl.co"],
-        upgradeInsecureRequests: [],
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          imgSrc: ["'self'", "data:", "blob:"],
+          connectSrc: ["'self'", "ws:", "wss:"],
+          frameSrc: ["'none'"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+          frameAncestors: [
+            "'self'",
+            "https://*.replit.app",
+            "https://*.replit.dev",
+            "https://*.repl.co",
+          ],
+          upgradeInsecureRequests: [],
+        },
       },
-    },
-    crossOriginEmbedderPolicy: false,
-    crossOriginOpenerPolicy: { policy: "same-origin" },
-    crossOriginResourcePolicy: { policy: "same-origin" },
-    hsts: { maxAge: 31536000, includeSubDomains: true },
-    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-    xFrameOptions: false,
-  }));
+      crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: { policy: "same-origin" },
+      crossOriginResourcePolicy: { policy: "same-origin" },
+      hsts: { maxAge: 31536000, includeSubDomains: true },
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+      xFrameOptions: false,
+    }),
+  );
 }
 
 app.use(compression());
@@ -66,13 +75,13 @@ app.use(
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
 function stripHtmlTags(value: string): string {
-  return value.replace(/<[^>]*>/g, '');
+  return value.replace(/<[^>]*>/g, "");
 }
 
 function sanitizeObject(obj: any): any {
-  if (typeof obj === 'string') return stripHtmlTags(obj);
+  if (typeof obj === "string") return stripHtmlTags(obj);
   if (Array.isArray(obj)) return obj.map(sanitizeObject);
-  if (obj && typeof obj === 'object') {
+  if (obj && typeof obj === "object") {
     const result: any = {};
     for (const key of Object.keys(obj)) {
       result[key] = sanitizeObject(obj[key]);
@@ -83,7 +92,11 @@ function sanitizeObject(obj: any): any {
 }
 
 app.use((req, _res, next) => {
-  if (req.body && typeof req.body === 'object' && ['POST', 'PUT', 'PATCH'].includes(req.method)) {
+  if (
+    req.body &&
+    typeof req.body === "object" &&
+    ["POST", "PUT", "PATCH"].includes(req.method)
+  ) {
     req.body = sanitizeObject(req.body);
   }
   next();
@@ -117,9 +130,18 @@ app.use((req, res, next) => {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse && duration > 200) {
         const sanitized = { ...capturedJsonResponse };
-        const sensitiveKeys = ['password', 'pin', 'guestPhone', 'guestEmail', 'customerPhone', 'customerEmail', 'phone', 'email'];
+        const sensitiveKeys = [
+          "password",
+          "pin",
+          "guestPhone",
+          "guestEmail",
+          "customerPhone",
+          "customerEmail",
+          "phone",
+          "email",
+        ];
         for (const key of sensitiveKeys) {
-          if (key in sanitized) sanitized[key] = '[REDACTED]';
+          if (key in sanitized) sanitized[key] = "[REDACTED]";
         }
         logLine += ` :: ${JSON.stringify(sanitized).slice(0, 200)}`;
       }
@@ -150,7 +172,7 @@ async function warmup() {
       }
 
       return res.status(status).json({
-        message: status >= 500 ? "Error interno del servidor" : (err.message || "Error"),
+        message: status >= 500 ? "Error interno del servidor" : err.message || "Error",
       });
     });
 
@@ -171,7 +193,9 @@ async function warmup() {
 
     const { retryPendingSync } = await import("./quickbooks");
     setInterval(() => {
-      retryPendingSync().catch(err => console.error("[QBO] Retry queue error:", err.message));
+      retryPendingSync().catch((err) =>
+        console.error("[QBO] Retry queue error:", err.message),
+      );
     }, 5 * 60 * 1000);
   } catch (err: any) {
     console.error("Warmup failed:", err);
@@ -180,6 +204,7 @@ async function warmup() {
 }
 
 const port = Number(process.env.PORT) || 5000;
+
 httpServer.listen(
   {
     port,
@@ -188,6 +213,7 @@ httpServer.listen(
   },
   () => {
     log(`serving on port ${port}`);
+    // Defer warmup so health checks can pass immediately
     setTimeout(() => void warmup(), 500);
   },
 );
