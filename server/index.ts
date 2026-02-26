@@ -2,6 +2,10 @@ import express, { type Request, Response, NextFunction } from "express";
 import compression from "compression";
 import helmet from "helmet";
 import { createServer } from "http";
+import { registerRoutes } from "./routes";
+import { ensureSystemPermissions } from "./storage";
+import { startHrBackgroundJobs } from "./hr-jobs";
+import { retryPendingSync } from "./quickbooks";
 
 const app = express();
 const httpServer = createServer(app);
@@ -10,15 +14,6 @@ app.disable("x-powered-by");
 const isProduction = process.env.NODE_ENV === "production";
 
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
-
-let appReady = false;
-app.use((req, res, next) => {
-  if (!appReady && req.path === "/" && (req.method === "GET" || req.method === "HEAD")) {
-    return res.status(200).send("ok");
-  }
-  next();
-});
 
 if (isProduction) {
   app.use(helmet({
@@ -132,56 +127,42 @@ app.use((req, res, next) => {
   next();
 });
 
-async function warmup() {
-  try {
-    const { ensureSystemPermissions } = await import("./storage");
-    await ensureSystemPermissions();
+(async () => {
+  await ensureSystemPermissions();
+  await registerRoutes(httpServer, app);
 
-    const { registerRoutes } = await import("./routes");
-    await registerRoutes(httpServer, app);
-
-    app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-      const status = err.status || err.statusCode || 500;
-      const isDev = process.env.NODE_ENV === "development";
-
-      console.error("Internal Server Error:", err.message, isDev ? err.stack : "");
-
-      if (res.headersSent) {
-        return next(err);
-      }
-
-      return res.status(status).json({
-        message: status >= 500 ? "Error interno del servidor" : (err.message || "Error"),
-      });
-    });
-
+  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
     const isDev = process.env.NODE_ENV === "development";
-    if (isDev) {
-      const { setupVite } = await import("./vite");
-      await setupVite(httpServer, app);
-    } else {
-      const { serveStatic } = await import("./static");
-      serveStatic(app);
+
+    console.error("Internal Server Error:", err.message, isDev ? err.stack : "");
+
+    if (res.headersSent) {
+      return next(err);
     }
 
-    appReady = true;
-    log("Application fully initialized");
+    return res.status(status).json({
+      message: status >= 500 ? "Error interno del servidor" : (err.message || "Error"),
+    });
+  });
 
-    const { startHrBackgroundJobs } = await import("./hr-jobs");
+  const devMode = process.env.NODE_ENV === "development";
+  if (devMode) {
+    const { setupVite } = await import("./vite");
+    await setupVite(httpServer, app);
+  } else {
+    const { serveStatic } = await import("./static");
+    serveStatic(app);
+  }
+
+  const port = Number(process.env.PORT) || 5000;
+  httpServer.listen(port, "0.0.0.0", () => {
+    log(`serving on port ${port}`);
+
     startHrBackgroundJobs();
 
-    const { retryPendingSync } = await import("./quickbooks");
     setInterval(() => {
       retryPendingSync().catch(err => console.error("[QBO] Retry queue error:", err.message));
     }, 5 * 60 * 1000);
-  } catch (err: any) {
-    console.error("Warmup failed:", err);
-    process.exit(1);
-  }
-}
-
-const port = Number(process.env.PORT) || 5000;
-httpServer.listen(port, "0.0.0.0", () => {
-  log(`serving on port ${port}`);
-  setTimeout(() => void warmup(), 500);
-});
+  });
+})();

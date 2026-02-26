@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, ShoppingBag, Loader2, Search, X, Zap, Filter, Trash2 } from "lucide-react";
+import { Plus, Pencil, ShoppingBag, Loader2, Search, X, Zap, Filter, Trash2, Upload, ImageOff } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Product, Category, TaxCategory } from "@shared/schema";
@@ -96,6 +96,64 @@ export default function AdminProductsPage() {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  const uploadImageMutation = useMutation({
+    mutationFn: async ({ id, file }: { id: number; file: File }) => {
+      return new Promise<{ imageUrl: string }>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          try {
+            const base64 = (reader.result as string).split(",")[1];
+            const res = await apiRequest("POST", `/api/admin/products/${id}/image`, {
+              imageData: base64,
+              mimeType: file.type,
+            });
+            const data = await res.json();
+            resolve(data);
+          } catch (err: any) {
+            reject(err);
+          }
+        };
+        reader.onerror = () => reject(new Error("Error leyendo archivo"));
+        reader.readAsDataURL(file);
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/products"] });
+      toast({ title: "Imagen actualizada" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteImageMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/admin/products/${id}/image`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/products"] });
+      toast({ title: "Imagen eliminada" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editing) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast({ title: "Error", description: "La imagen no debe exceder 2MB", variant: "destructive" });
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      toast({ title: "Error", description: "Use JPG, PNG o WebP", variant: "destructive" });
+      return;
+    }
+    uploadImageMutation.mutate({ id: editing.id, file });
+    e.target.value = "";
+  };
 
   const toggleMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: number; field: string; value: boolean }) => {
@@ -407,6 +465,47 @@ export default function AdminProductsPage() {
               <Switch checked={form.visibleQr} onCheckedChange={(c) => setForm({ ...form, visibleQr: c })} />
               <Label>Visible QR</Label>
             </div>
+            {editing && (
+              <div className="space-y-2">
+                <Label>Imagen del Producto</Label>
+                <div className="flex items-start gap-3">
+                  <div
+                    className="w-24 h-24 rounded-lg overflow-hidden border flex items-center justify-center flex-shrink-0"
+                    style={{ background: "var(--muted)", borderColor: "var(--border)" }}
+                  >
+                    {editing.imageUrl ? (
+                      <img src={editing.imageUrl} alt={editing.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <ImageOff className="w-8 h-8 text-muted-foreground opacity-40" />
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="cursor-pointer" data-testid="button-upload-image">
+                      <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleImageSelect} />
+                      <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-sm font-medium border hover:bg-muted transition-colors" style={{ borderColor: "var(--border)" }}>
+                        {uploadImageMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                        {editing.imageUrl ? "Cambiar" : "Subir"}
+                      </span>
+                    </label>
+                    {editing.imageUrl && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs justify-start px-3"
+                        onClick={() => deleteImageMutation.mutate(editing.id)}
+                        disabled={deleteImageMutation.isPending}
+                        data-testid="button-delete-image"
+                      >
+                        {deleteImageMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Trash2 className="w-3 h-3 mr-1" />}
+                        Eliminar imagen
+                      </Button>
+                    )}
+                    <p className="text-xs text-muted-foreground">JPG, PNG o WebP · Máx 2MB</p>
+                  </div>
+                </div>
+              </div>
+            )}
             <Button type="submit" className="w-full" disabled={saveMutation.isPending} data-testid="button-save-product">
               {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
               {editing ? "Guardar Cambios" : "Crear Producto"}

@@ -14,7 +14,7 @@ import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import * as qbo from "./quickbooks";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
@@ -5570,6 +5570,144 @@ export async function registerRoutes(
         .where(eq(reservationSettings.id, rows[0].id))
         .returning();
       res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== PUBLIC MENU ====================
+
+  app.get("/api/public/menu", async (_req, res) => {
+    try {
+      const allCategories = await db
+        .select()
+        .from(categories)
+        .where(eq(categories.active, true))
+        .orderBy(categories.sortOrder, categories.name);
+
+      const topCategories = allCategories.filter(c => c.categoryCode.startsWith("TOP-"));
+      const subcategories = allCategories.filter(c => c.parentCategoryCode && !c.categoryCode.startsWith("TOP-"));
+
+      const allProducts = await db
+        .select({
+          id: products.id,
+          name: products.name,
+          description: products.description,
+          price: products.price,
+          categoryId: products.categoryId,
+          imageUrl: products.imageUrl,
+          availablePortions: products.availablePortions,
+        })
+        .from(products)
+        .where(
+          and(
+            eq(products.active, true),
+            eq(products.visibleQr, true),
+          )
+        )
+        .orderBy(products.name);
+
+      res.json({
+        topCategories: topCategories.map(c => ({
+          id: c.id,
+          categoryCode: c.categoryCode,
+          name: c.name,
+          sortOrder: c.sortOrder,
+          foodType: c.foodType,
+        })),
+        subcategories: subcategories.map(c => ({
+          id: c.id,
+          categoryCode: c.categoryCode,
+          name: c.name,
+          parentCategoryCode: c.parentCategoryCode,
+          sortOrder: c.sortOrder,
+        })),
+        products: allProducts,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/admin/products/:id/image
+  app.post("/api/admin/products/:id/image", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id as string);
+      const product = await storage.getProduct(id);
+      if (!product) return res.status(404).json({ message: "Producto no encontrado" });
+
+      const { imageData, mimeType } = req.body;
+      if (!imageData || !mimeType) {
+        return res.status(400).json({ message: "imageData y mimeType son requeridos" });
+      }
+
+      const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+      if (!allowedTypes.includes(mimeType)) {
+        return res.status(400).json({ message: "Formato no soportado. Use JPG, PNG o WebP" });
+      }
+
+      const ext = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/png" ? "png" : "webp";
+      const fileName = `product-${id}.${ext}`;
+
+      const fs = await import("fs");
+      const path = await import("path");
+
+      const dirs = [
+        path.resolve(process.cwd(), "client", "public", "product-images"),
+        path.resolve(process.cwd(), "dist", "public", "product-images"),
+      ];
+      for (const dir of dirs) {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      }
+
+      for (const dir of dirs) {
+        if (!fs.existsSync(dir)) continue;
+        const oldFiles = fs.readdirSync(dir).filter((f: string) => f.startsWith(`product-${id}.`));
+        for (const f of oldFiles) {
+          fs.unlinkSync(path.join(dir, f));
+        }
+      }
+
+      const buffer = Buffer.from(imageData, "base64");
+      if (buffer.length > 2 * 1024 * 1024) {
+        return res.status(400).json({ message: "La imagen no debe exceder 2MB" });
+      }
+
+      for (const dir of dirs) {
+        fs.writeFileSync(path.join(dir, fileName), buffer);
+      }
+
+      const imageUrl = `/product-images/${fileName}`;
+      await storage.updateProduct(id, { imageUrl });
+
+      res.json({ imageUrl });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // DELETE /api/admin/products/:id/image
+  app.delete("/api/admin/products/:id/image", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id as string);
+      const product = await storage.getProduct(id);
+      if (!product) return res.status(404).json({ message: "Producto no encontrado" });
+
+      if (product.imageUrl) {
+        const fs = await import("fs");
+        const path = await import("path");
+        const bases = [
+          path.resolve(process.cwd(), "client", "public"),
+          path.resolve(process.cwd(), "dist", "public"),
+        ];
+        for (const base of bases) {
+          const filePath = path.resolve(base, product.imageUrl.replace(/^\//, ""));
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        }
+      }
+
+      await storage.updateProduct(id, { imageUrl: null });
+      res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

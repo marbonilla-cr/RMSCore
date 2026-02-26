@@ -68,6 +68,7 @@ export const products = pgTable("products", {
   inventoryControlEnabled: boolean("inventory_control_enabled").notNull().default(false),
   recipeYield: numeric("recipe_yield", { precision: 10, scale: 2 }),
   recipeVersion: integer("recipe_version").notNull().default(1),
+  imageUrl: text("image_url"),
 });
 
 export const paymentMethods = pgTable("payment_methods", {
