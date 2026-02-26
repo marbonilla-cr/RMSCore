@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
-import { UtensilsCrossed, Coffee, Loader2, ImageOff } from "lucide-react";
+import placeholderImg from "@assets/image_1772129930201.png";
+import { UtensilsCrossed, Coffee, Loader2 } from "lucide-react";
 
 interface TopCategory {
   id: number;
@@ -63,8 +64,8 @@ function ProductCard({ product }: { product: Product }) {
             loading="lazy"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <ImageOff className="w-10 h-10" style={{ color: "var(--muted-foreground)", opacity: 0.4 }} />
+          <div className="w-full h-full flex items-center justify-center p-6">
+            <img src={placeholderImg} alt="" className="w-12 h-12 opacity-30" />
           </div>
         )}
         {soldOut && (
