@@ -263,8 +263,6 @@ export async function registerRoutes(
 
   app.set("trust proxy", 1);
 
-  app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-
   const isProduction = process.env.NODE_ENV === "production";
 
   const sessionStore = new pgSession({

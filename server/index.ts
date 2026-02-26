@@ -1,17 +1,23 @@
 import express, { type Request, Response, NextFunction } from "express";
 import compression from "compression";
 import helmet from "helmet";
-import { registerRoutes } from "./routes";
 import { createServer } from "http";
-import { ensureSystemPermissions } from "./storage";
-import { startHrBackgroundJobs } from "./hr-jobs";
-import { retryPendingSync } from "./quickbooks";
 
 const app = express();
 const httpServer = createServer(app);
 
 app.disable("x-powered-by");
 const isProduction = process.env.NODE_ENV === "production";
+
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+
+let appReady = false;
+app.use((req, res, next) => {
+  if (!appReady && req.path === "/" && req.method === "GET") {
+    return res.status(200).send("ok");
+  }
+  next();
+});
 
 if (isProduction) {
   app.use(helmet({
@@ -39,15 +45,6 @@ if (isProduction) {
     xFrameOptions: false,
   }));
 }
-
-let appReady = false;
-app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-app.use((req, res, next) => {
-  if (!appReady && req.path === "/" && req.method === "GET") {
-    return res.status(200).send("ok");
-  }
-  next();
-});
 
 app.use(compression());
 
@@ -134,52 +131,63 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
-  await ensureSystemPermissions();
-  await registerRoutes(httpServer, app);
+async function warmup() {
+  try {
+    const { ensureSystemPermissions } = await import("./storage");
+    await ensureSystemPermissions();
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
+    const { registerRoutes } = await import("./routes");
+    await registerRoutes(httpServer, app);
+
+    app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+      const status = err.status || err.statusCode || 500;
+      const isDev = process.env.NODE_ENV === "development";
+
+      console.error("Internal Server Error:", err.message, isDev ? err.stack : "");
+
+      if (res.headersSent) {
+        return next(err);
+      }
+
+      return res.status(status).json({
+        message: status >= 500 ? "Error interno del servidor" : (err.message || "Error"),
+      });
+    });
+
     const isDev = process.env.NODE_ENV === "development";
-
-    console.error("Internal Server Error:", err.message, isDev ? err.stack : "");
-
-    if (res.headersSent) {
-      return next(err);
+    if (isDev) {
+      const { setupVite } = await import("./vite");
+      await setupVite(httpServer, app);
+    } else {
+      const { serveStatic } = await import("./static");
+      serveStatic(app);
     }
 
-    return res.status(status).json({
-      message: status >= 500 ? "Error interno del servidor" : (err.message || "Error"),
-    });
-  });
+    appReady = true;
+    log("Application fully initialized");
 
-  const isDev = process.env.NODE_ENV === "development";
-  if (isDev) {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
-  } else {
-    const { serveStatic } = await import("./static");
-    serveStatic(app);
+    const { startHrBackgroundJobs } = await import("./hr-jobs");
+    startHrBackgroundJobs();
+
+    const { retryPendingSync } = await import("./quickbooks");
+    setInterval(() => {
+      retryPendingSync().catch(err => console.error("[QBO] Retry queue error:", err.message));
+    }, 5 * 60 * 1000);
+  } catch (err: any) {
+    console.error("Warmup failed:", err);
+    process.exit(1);
   }
-  appReady = true;
+}
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-      startHrBackgroundJobs();
-      setInterval(() => {
-        retryPendingSync().catch(err => console.error("[QBO] Retry queue error:", err.message));
-      }, 5 * 60 * 1000);
-    },
-  );
-})();
+const port = Number(process.env.PORT) || 5000;
+httpServer.listen(
+  {
+    port,
+    host: "0.0.0.0",
+    reusePort: true,
+  },
+  () => {
+    log(`serving on port ${port}`);
+    setTimeout(() => void warmup(), 500);
+  },
+);
