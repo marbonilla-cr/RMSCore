@@ -77,6 +77,36 @@ const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 
+// Public API rate limiter - per IP, 30 requests per minute
+const publicApiHits = new Map<string, { count: number; resetAt: number }>();
+const PUBLIC_API_WINDOW_MS = 60 * 1000;
+const PUBLIC_API_MAX = 30;
+
+function checkPublicRateLimit(req: Request, res: Response): boolean {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = publicApiHits.get(ip);
+  if (entry && entry.resetAt > now) {
+    if (entry.count >= PUBLIC_API_MAX) {
+      const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+      res.set("Retry-After", String(retryAfter));
+      res.status(429).json({ message: "Demasiadas solicitudes. Intente de nuevo en un momento." });
+      return false;
+    }
+    entry.count++;
+  } else {
+    publicApiHits.set(ip, { count: 1, resetAt: now + PUBLIC_API_WINDOW_MS });
+  }
+  return true;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of publicApiHits) {
+    if (entry.resetAt <= now) publicApiHits.delete(ip);
+  }
+}, 60 * 1000);
+
 function checkLoginRateLimit(req: Request, res: Response): boolean {
   const ip = req.ip || req.socket.remoteAddress || "unknown";
   const now = Date.now();
@@ -5577,8 +5607,10 @@ export async function registerRoutes(
 
   // ==================== PUBLIC MENU ====================
 
-  app.get("/api/public/menu", async (_req, res) => {
+  app.get("/api/public/menu", async (req, res) => {
+    if (!checkPublicRateLimit(req, res)) return;
     try {
+      res.set("Cache-Control", "public, max-age=60");
       const allCategories = await db
         .select()
         .from(categories)
