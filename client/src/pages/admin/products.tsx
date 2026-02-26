@@ -97,26 +97,40 @@ export default function AdminProductsPage() {
     },
   });
 
+  const compressImage = (file: File, maxSize = 1024, quality = 0.8): Promise<{ base64: string; mimeType: string }> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width;
+        let h = img.height;
+        if (w > maxSize || h > maxSize) {
+          const ratio = Math.min(maxSize / w, maxSize / h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("No canvas context"));
+        ctx.drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        const base64 = dataUrl.split(",")[1];
+        resolve({ base64, mimeType: "image/jpeg" });
+      };
+      img.onerror = () => reject(new Error("Error cargando imagen"));
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
   const uploadImageMutation = useMutation({
     mutationFn: async ({ id, file }: { id: number; file: File }) => {
-      return new Promise<{ imageUrl: string }>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = async () => {
-          try {
-            const base64 = (reader.result as string).split(",")[1];
-            const res = await apiRequest("POST", `/api/admin/products/${id}/image`, {
-              imageData: base64,
-              mimeType: file.type,
-            });
-            const data = await res.json();
-            resolve(data);
-          } catch (err: any) {
-            reject(err);
-          }
-        };
-        reader.onerror = () => reject(new Error("Error leyendo archivo"));
-        reader.readAsDataURL(file);
+      const { base64, mimeType } = await compressImage(file);
+      const res = await apiRequest("POST", `/api/admin/products/${id}/image`, {
+        imageData: base64,
+        mimeType,
       });
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/products"] });
@@ -143,12 +157,8 @@ export default function AdminProductsPage() {
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editing) return;
-    if (file.size > 2 * 1024 * 1024) {
-      toast({ title: "Error", description: "La imagen no debe exceder 2MB", variant: "destructive" });
-      return;
-    }
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      toast({ title: "Error", description: "Use JPG, PNG o WebP", variant: "destructive" });
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Error", description: "Seleccione un archivo de imagen", variant: "destructive" });
       return;
     }
     uploadImageMutation.mutate({ id: editing.id, file });
@@ -481,7 +491,7 @@ export default function AdminProductsPage() {
                   </div>
                   <div className="flex flex-col gap-2">
                     <label className="cursor-pointer" data-testid="button-upload-image">
-                      <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleImageSelect} />
+                      <input type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
                       <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-sm font-medium border hover:bg-muted transition-colors" style={{ borderColor: "var(--border)" }}>
                         {uploadImageMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                         {editing.imageUrl ? "Cambiar" : "Subir"}
