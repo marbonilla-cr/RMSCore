@@ -4,67 +4,47 @@ import helmet from "helmet";
 import { createServer } from "http";
 
 const app = express();
-
-/**
- * ✅ Health checks MUST be instant and ALWAYS return 200.
- * Replit Autoscale may call HEAD / (not only GET /).
- * Use app.all to cover GET/HEAD/others and keep it BEFORE any middleware.
- */
-app.all("/", (_req, res) => res.status(200).send("ok"));
-app.all("/healthz", (_req, res) => res.status(200).send("ok"));
-app.all("/health", (_req, res) => res.status(200).json({ ok: true }));
-
 const httpServer = createServer(app);
-
-// Log server bind errors clearly
-httpServer.on("error", (err) => {
-  console.error("[BOOT] httpServer error:", err);
-});
-
-process.on("uncaughtException", (err) => {
-  console.error("[BOOT] uncaughtException:", err);
-});
-process.on("unhandledRejection", (reason) => {
-  console.error("[BOOT] unhandledRejection:", reason);
-});
 
 app.disable("x-powered-by");
 const isProduction = process.env.NODE_ENV === "production";
 
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
+
 let appReady = false;
+app.use((req, res, next) => {
+  if (!appReady && req.path === "/" && (req.method === "GET" || req.method === "HEAD")) {
+    return res.status(200).send("ok");
+  }
+  next();
+});
 
 if (isProduction) {
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-          fontSrc: ["'self'", "https://fonts.gstatic.com"],
-          imgSrc: ["'self'", "data:", "blob:"],
-          connectSrc: ["'self'", "ws:", "wss:"],
-          frameSrc: ["'none'"],
-          objectSrc: ["'none'"],
-          baseUri: ["'self'"],
-          formAction: ["'self'"],
-          frameAncestors: [
-            "'self'",
-            "https://*.replit.app",
-            "https://*.replit.dev",
-            "https://*.repl.co",
-          ],
-          upgradeInsecureRequests: [],
-        },
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'", "ws:", "wss:"],
+        frameSrc: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'", "https://*.replit.app", "https://*.replit.dev", "https://*.repl.co"],
+        upgradeInsecureRequests: [],
       },
-      crossOriginEmbedderPolicy: false,
-      crossOriginOpenerPolicy: { policy: "same-origin" },
-      crossOriginResourcePolicy: { policy: "same-origin" },
-      hsts: { maxAge: 31536000, includeSubDomains: true },
-      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-      xFrameOptions: false,
-    }),
-  );
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: "same-origin" },
+    crossOriginResourcePolicy: { policy: "same-origin" },
+    hsts: { maxAge: 31536000, includeSubDomains: true },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    xFrameOptions: false,
+  }));
 }
 
 app.use(compression());
@@ -87,13 +67,13 @@ app.use(
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
 function stripHtmlTags(value: string): string {
-  return value.replace(/<[^>]*>/g, "");
+  return value.replace(/<[^>]*>/g, '');
 }
 
 function sanitizeObject(obj: any): any {
-  if (typeof obj === "string") return stripHtmlTags(obj);
+  if (typeof obj === 'string') return stripHtmlTags(obj);
   if (Array.isArray(obj)) return obj.map(sanitizeObject);
-  if (obj && typeof obj === "object") {
+  if (obj && typeof obj === 'object') {
     const result: any = {};
     for (const key of Object.keys(obj)) {
       result[key] = sanitizeObject(obj[key]);
@@ -104,11 +84,7 @@ function sanitizeObject(obj: any): any {
 }
 
 app.use((req, _res, next) => {
-  if (
-    req.body &&
-    typeof req.body === "object" &&
-    ["POST", "PUT", "PATCH"].includes(req.method)
-  ) {
+  if (req.body && typeof req.body === 'object' && ['POST', 'PUT', 'PATCH'].includes(req.method)) {
     req.body = sanitizeObject(req.body);
   }
   next();
@@ -142,18 +118,9 @@ app.use((req, res, next) => {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse && duration > 200) {
         const sanitized = { ...capturedJsonResponse };
-        const sensitiveKeys = [
-          "password",
-          "pin",
-          "guestPhone",
-          "guestEmail",
-          "customerPhone",
-          "customerEmail",
-          "phone",
-          "email",
-        ];
+        const sensitiveKeys = ['password', 'pin', 'guestPhone', 'guestEmail', 'customerPhone', 'customerEmail', 'phone', 'email'];
         for (const key of sensitiveKeys) {
-          if (key in sanitized) sanitized[key] = "[REDACTED]";
+          if (key in sanitized) sanitized[key] = '[REDACTED]';
         }
         logLine += ` :: ${JSON.stringify(sanitized).slice(0, 200)}`;
       }
@@ -184,7 +151,7 @@ async function warmup() {
       }
 
       return res.status(status).json({
-        message: status >= 500 ? "Error interno del servidor" : err.message || "Error",
+        message: status >= 500 ? "Error interno del servidor" : (err.message || "Error"),
       });
     });
 
@@ -205,34 +172,16 @@ async function warmup() {
 
     const { retryPendingSync } = await import("./quickbooks");
     setInterval(() => {
-      retryPendingSync().catch((err) =>
-        console.error("[QBO] Retry queue error:", err.message),
-      );
+      retryPendingSync().catch(err => console.error("[QBO] Retry queue error:", err.message));
     }, 5 * 60 * 1000);
   } catch (err: any) {
     console.error("Warmup failed:", err);
-    // IMPORTANT: do NOT exit; keep server alive so health checks can pass.
+    process.exit(1);
   }
 }
 
-/**
- * ✅ Port selection for Replit Autoscale:
- * - Prefer process.env.PORT if provided
- * - If not provided in production, use 80
- * - In development fallback to 5000
- */
-const port =
-  Number(process.env.PORT) ||
-  (process.env.NODE_ENV === "production" ? 80 : 5000);
-
-console.log(
-  `[BOOT] NODE_ENV=${process.env.NODE_ENV} PORT=${process.env.PORT} -> using ${port}`,
-);
-
+const port = Number(process.env.PORT) || 5000;
 httpServer.listen(port, "0.0.0.0", () => {
-  console.log(`[BOOT] listening on 0.0.0.0:${port}`);
   log(`serving on port ${port}`);
-
-  // Give health checks time first, then warmup.
-  setTimeout(() => void warmup(), 5000);
+  setTimeout(() => void warmup(), 500);
 });
