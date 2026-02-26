@@ -199,21 +199,16 @@ async function warmup() {
     }, 5 * 60 * 1000);
   } catch (err: any) {
     console.error("Warmup failed:", err);
-    process.exit(1);
+    // NO process.exit(1) -> if warmup fails, keep server alive so Replit health checks can pass
+    // Then you can read logs to fix the underlying warmup error.
   }
 }
 
 const port = Number(process.env.PORT) || 5000;
 
-httpServer.listen(
-  {
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  },
-  () => {
-    log(`serving on port ${port}`);
-    // Defer warmup so health checks can pass immediately
-    setTimeout(() => void warmup(), 500);
-  },
-);
+// Use the simplest listen signature for maximum compatibility in deploy environments
+httpServer.listen(port, "0.0.0.0", () => {
+  log(`serving on port ${port}`);
+  // Give Replit time to complete health checks before doing warmup work
+  setTimeout(() => void warmup(), 5000);
+});
