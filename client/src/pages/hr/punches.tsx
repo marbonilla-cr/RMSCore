@@ -249,11 +249,11 @@ export default function PunchesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/punches"] });
       queryClient.invalidateQueries({ queryKey: ["/api/hr/open-punches"] });
-      toast({ title: "Override aplicado" });
+      toast({ title: "Marca manual aplicada" });
       setOverrideReason("");
     },
     onError: (err: Error) => {
-      toast({ title: "Error en override", description: err.message, variant: "destructive" });
+      toast({ title: "Error en marca manual", description: err.message, variant: "destructive" });
     },
   });
 
@@ -284,7 +284,7 @@ export default function PunchesPage() {
       return;
     }
     if (!overrideReason.trim()) {
-      toast({ title: "Razón requerida", description: "Debe indicar una razón para el override.", variant: "destructive" });
+      toast({ title: "Razón requerida", description: "Debe indicar una razón para la marca manual.", variant: "destructive" });
       return;
     }
     overrideMutation.mutate({
@@ -304,7 +304,7 @@ export default function PunchesPage() {
         <CardHeader className="pb-2">
           <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
             <Clock className="h-5 w-5" />
-            Marcas Abiertas
+            Empleados en Turno
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -314,7 +314,7 @@ export default function PunchesPage() {
             </div>
           ) : !openPunches || openPunches.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-testid="text-no-open-punches">
-              No hay marcas abiertas.
+              No hay empleados en turno.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -345,7 +345,7 @@ export default function PunchesPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Override de Marca</CardTitle>
+          <CardTitle className="text-lg">Marca Manual</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex gap-3 flex-wrap items-end">
@@ -374,7 +374,7 @@ export default function PunchesPage() {
                 data-testid="input-override-reason"
                 value={overrideReason}
                 onChange={(e) => setOverrideReason(e.target.value)}
-                placeholder="Razón del override"
+                placeholder="Razón de la marca manual"
               />
             </div>
           </div>
