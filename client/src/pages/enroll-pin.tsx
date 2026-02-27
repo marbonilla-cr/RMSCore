@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Delete, Loader2, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
+import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
 const TRIVIAL_PINS = ["0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8888", "9999", "1234"];
 

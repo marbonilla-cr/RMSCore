@@ -47,7 +47,7 @@ import {
   Factory,
   Database,
 } from "lucide-react";
-import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
+import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
 type DrawerContextType = {
   open: boolean;

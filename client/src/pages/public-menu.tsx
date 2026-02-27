@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
+import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 import placeholderImg from "@assets/image_1772129930201.png";
 import { UtensilsCrossed, Coffee, Loader2 } from "lucide-react";
 

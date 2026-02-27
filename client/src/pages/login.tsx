@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { LogIn, Loader2 } from "lucide-react";
-import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
+import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
 export default function LoginPage() {
   const { login } = useAuth();

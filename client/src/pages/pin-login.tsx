@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { Delete, Loader2, Clock, LogIn, LogOut, CheckCircle } from "lucide-react";
-import logoImg from "@assets/LOGO-PNG-LECHERIA_1770666183401.png";
+import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 import { apiRequest } from "@/lib/queryClient";
 
 interface PinLoginPageProps {
