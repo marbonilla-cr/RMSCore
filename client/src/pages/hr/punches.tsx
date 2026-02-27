@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +29,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2, Edit, Clock, MapPin } from "lucide-react";
+import { Loader2, Edit, Clock, MapPin, ChevronDown, Users, Calendar } from "lucide-react";
 
 interface Punch {
   id: number;
@@ -62,6 +63,11 @@ function formatTime(dateStr: string): string {
   return d.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("es-CR", { day: "2-digit", month: "2-digit" });
+}
+
 function formatWorked(minutes: number | null | undefined): string {
   if (minutes == null) return "-";
   const h = Math.floor(Math.abs(minutes) / 60);
@@ -76,9 +82,100 @@ function toDatetimeLocal(dateStr: string): string {
   return local.toISOString().slice(0, 16);
 }
 
+function EmployeeMultiSelect({
+  employees,
+  selectedIds,
+  onChange,
+}: {
+  employees: Employee[];
+  selectedIds: Set<number>;
+  onChange: (ids: Set<number>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const allSelected = selectedIds.size === 0;
+  const label = allSelected
+    ? "Todos"
+    : selectedIds.size === 1
+      ? employees.find((e) => selectedIds.has(e.id))?.displayName || "1 empleado"
+      : `${selectedIds.size} empleados`;
+
+  function toggleAll() {
+    onChange(new Set());
+  }
+
+  function toggle(id: number) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    if (next.size === employees.length) {
+      onChange(new Set());
+    } else {
+      onChange(next);
+    }
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        data-testid="button-employee-filter"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 h-9 px-3 rounded-md border text-sm w-full justify-between bg-background hover:bg-muted transition-colors"
+        style={{ borderColor: "var(--border)" }}
+      >
+        <span className="flex items-center gap-1.5 truncate">
+          <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          {label}
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full min-w-[200px] max-h-[280px] overflow-y-auto rounded-md border bg-popover shadow-md" style={{ borderColor: "var(--border)" }}>
+          <label
+            className="flex items-center gap-2 px-3 py-2 hover:bg-muted cursor-pointer border-b text-sm font-medium"
+            style={{ borderColor: "var(--border)" }}
+            data-testid="option-employee-all"
+          >
+            <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
+            Todos
+          </label>
+          {employees.map((emp) => (
+            <label
+              key={emp.id}
+              className="flex items-center gap-2 px-3 py-2 hover:bg-muted cursor-pointer text-sm"
+              data-testid={`option-filter-employee-${emp.id}`}
+            >
+              <Checkbox
+                checked={allSelected || selectedIds.has(emp.id)}
+                onCheckedChange={() => toggle(emp.id)}
+              />
+              {emp.displayName}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PunchesPage() {
   const { toast } = useToast();
-  const [date, setDate] = useState(todayStr());
+  const [dateFrom, setDateFrom] = useState(todayStr());
+  const [dateTo, setDateTo] = useState(todayStr());
+  const [selectedEmployees, setSelectedEmployees] = useState<Set<number>>(new Set());
   const [editingPunch, setEditingPunch] = useState<Punch | null>(null);
   const [editClockIn, setEditClockIn] = useState("");
   const [editClockOut, setEditClockOut] = useState("");
@@ -87,9 +184,14 @@ export default function PunchesPage() {
   const [overrideEmployeeId, setOverrideEmployeeId] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
 
+  const isRange = dateFrom !== dateTo;
+  const queryParams = isRange
+    ? `?dateFrom=${dateFrom}&dateTo=${dateTo}`
+    : `?date=${dateFrom}`;
+
   const { data: punches, isLoading: punchesLoading } = useQuery<Punch[]>({
-    queryKey: ["/api/hr/punches", `?date=${date}`],
-    enabled: !!date,
+    queryKey: ["/api/hr/punches", queryParams],
+    enabled: !!dateFrom && !!dateTo,
   });
 
   const { data: employees, isLoading: employeesLoading } = useQuery<Employee[]>({
@@ -106,6 +208,20 @@ export default function PunchesPage() {
       employeeMap.set(emp.id, emp.displayName);
     }
   }
+
+  const filteredPunches = punches?.filter((p) => {
+    if (selectedEmployees.size === 0) return true;
+    return selectedEmployees.has(p.employeeId);
+  }) || [];
+
+  const sortedPunches = [...filteredPunches].sort((a, b) => {
+    const dateA = new Date(a.clockInAt).getTime();
+    const dateB = new Date(b.clockInAt).getTime();
+    if (dateA !== dateB) return dateB - dateA;
+    const nameA = employeeMap.get(a.employeeId) || "";
+    const nameB = employeeMap.get(b.employeeId) || "";
+    return nameA.localeCompare(nameB);
+  });
 
   const editMutation = useMutation({
     mutationFn: async (data: { id: number; clockInAt: string; clockOutAt: string; reason: string }) => {
@@ -285,15 +401,46 @@ export default function PunchesPage() {
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-          <CardTitle className="text-lg">Marcas del Día</CardTitle>
-          <div className="space-y-1">
-            <Input
-              data-testid="input-date-picker"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
+        <CardHeader className="pb-2 space-y-3">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Calendar className="h-5 w-5" />
+            Marcas Diarias
+          </CardTitle>
+          <div className="flex gap-3 flex-wrap items-end">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Desde</Label>
+              <Input
+                data-testid="input-date-from"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => {
+                  setDateFrom(e.target.value);
+                  if (e.target.value > dateTo) setDateTo(e.target.value);
+                }}
+                className="w-[150px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Hasta</Label>
+              <Input
+                data-testid="input-date-to"
+                type="date"
+                value={dateTo}
+                onChange={(e) => {
+                  setDateTo(e.target.value);
+                  if (e.target.value < dateFrom) setDateFrom(e.target.value);
+                }}
+                className="w-[150px]"
+              />
+            </div>
+            <div className="space-y-1 min-w-[180px]">
+              <Label className="text-xs text-muted-foreground">Empleado</Label>
+              <EmployeeMultiSelect
+                employees={employees || []}
+                selectedIds={selectedEmployees}
+                onChange={setSelectedEmployees}
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -301,15 +448,16 @@ export default function PunchesPage() {
             <div className="flex justify-center p-4" data-testid="loading-punches">
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
-          ) : !punches || punches.length === 0 ? (
+          ) : sortedPunches.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-testid="text-no-punches">
-              No hay marcas para esta fecha.
+              No hay marcas para este período.
             </p>
           ) : (
             <div className="overflow-x-auto">
               <Table data-testid="table-punches">
                 <TableHeader>
                   <TableRow>
+                    {isRange && <TableHead>Fecha</TableHead>}
                     <TableHead>Empleado</TableHead>
                     <TableHead>Entrada</TableHead>
                     <TableHead>Salida</TableHead>
@@ -317,12 +465,21 @@ export default function PunchesPage() {
                     <TableHead>Tardía (min)</TableHead>
                     <TableHead>Tipo Salida</TableHead>
                     <TableHead>Geo</TableHead>
-                    <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {punches.map((punch) => (
-                    <TableRow key={punch.id} data-testid={`row-punch-${punch.id}`}>
+                  {sortedPunches.map((punch) => (
+                    <TableRow
+                      key={punch.id}
+                      data-testid={`row-punch-${punch.id}`}
+                      className="cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => openEditDialog(punch)}
+                    >
+                      {isRange && (
+                        <TableCell className="text-xs text-muted-foreground" data-testid={`text-punch-date-${punch.id}`}>
+                          {formatDate(punch.clockInAt)}
+                        </TableCell>
+                      )}
                       <TableCell data-testid={`text-punch-employee-${punch.id}`}>
                         {employeeMap.get(punch.employeeId) || `ID ${punch.employeeId}`}
                       </TableCell>
@@ -345,21 +502,11 @@ export default function PunchesPage() {
                         {punch.geoVerified != null ? (
                           <Badge variant={punch.geoVerified ? "default" : "secondary"}>
                             <MapPin className="h-3 w-3 mr-1" />
-                            {punch.geoVerified ? "Verificado" : "No verificado"}
+                            {punch.geoVerified ? "Sí" : "No"}
                           </Badge>
                         ) : (
                           "-"
                         )}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          data-testid={`button-edit-punch-${punch.id}`}
-                          onClick={() => openEditDialog(punch)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -373,7 +520,14 @@ export default function PunchesPage() {
       <Dialog open={!!editingPunch} onOpenChange={(open) => { if (!open) setEditingPunch(null); }}>
         <DialogContent data-testid="dialog-edit-punch">
           <DialogHeader>
-            <DialogTitle>Editar Marca</DialogTitle>
+            <DialogTitle>
+              Editar Marca
+              {editingPunch && (
+                <span className="block text-sm font-normal text-muted-foreground mt-1">
+                  {employeeMap.get(editingPunch.employeeId) || `ID ${editingPunch.employeeId}`}
+                </span>
+              )}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1">
