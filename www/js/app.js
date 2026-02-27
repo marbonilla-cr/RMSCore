@@ -187,8 +187,10 @@
     try {
       var StatusBar = window.Capacitor.Plugins.StatusBar;
       if (StatusBar) {
+        StatusBar.setOverlaysWebView({ overlay: false });
         StatusBar.setStyle({ style: 'DARK' });
-        StatusBar.setBackgroundColor({ color: '#1a1a2e' });
+        StatusBar.setBackgroundColor({ color: '#f5f0eb' });
+        console.log('[RMS Wrapper] StatusBar configured: overlaysWebView=false');
       }
     } catch (e) {
       console.warn('StatusBar plugin not available');
@@ -208,29 +210,6 @@
     } catch (e) {
       console.warn('SplashScreen plugin not available');
     }
-  }
-
-  function injectSafeAreaCSS() {
-    if (!isCapacitor) return;
-
-    var style = document.createElement('style');
-    style.id = 'rms-safe-area-fix';
-    style.textContent =
-      'html { ' +
-        'padding-top: env(safe-area-inset-top) !important; ' +
-        'padding-bottom: env(safe-area-inset-bottom) !important; ' +
-        'padding-left: env(safe-area-inset-left) !important; ' +
-        'padding-right: env(safe-area-inset-right) !important; ' +
-      '} ' +
-      'body { ' +
-        'min-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important; ' +
-      '}';
-
-    if (!document.getElementById('rms-safe-area-fix')) {
-      document.head.appendChild(style);
-    }
-
-    console.log('[RMS Wrapper] Safe area CSS injected');
   }
 
   var tapCount = 0;
@@ -375,7 +354,6 @@
     setupBackButton();
     setupStatusBar();
     setupSplashScreen();
-    injectSafeAreaCSS();
     setupDebugPanel();
     preventUnwantedZoom();
     hideLoadingScreen();

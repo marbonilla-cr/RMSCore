@@ -53,12 +53,13 @@ const config: CapacitorConfig = {
       showSpinner: true,
       spinnerColor: '#e94560',
       androidScaleType: 'CENTER_CROP',
-      splashFullScreen: true,
-      splashImmersive: true,
+      splashFullScreen: false,
+      splashImmersive: false,
     },
     StatusBar: {
       style: 'DARK',
-      backgroundColor: '#1a1a2e',
+      backgroundColor: '#f5f0eb',
+      overlaysWebView: false,
     },
   },
   android: {
