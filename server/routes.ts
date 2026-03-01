@@ -1799,19 +1799,15 @@ export async function registerRoutes(
         return res.json({ table, activeOrder: null, orderItems: [], pendingQrSubmissions: [] });
       }
 
-      const [items, pendingSubs, voidedItemsList] = await Promise.all([
+      const [items, pendingSubs, voidedItemsList, allMods] = await Promise.all([
         storage.getOrderItems(order.id),
         storage.getPendingSubmissions(order.id),
         storage.getVoidedItemsForOrder(order.id),
+        storage.getOrderItemModifiersByOrderIds([order.id]),
       ]);
 
-      const itemIds = items.map(i => i.id);
       const voidedUserIds = Array.from(new Set(voidedItemsList.map(i => i.voidedByUserId)));
-
-      const [allMods, voidedUsers] = await Promise.all([
-        itemIds.length > 0 ? storage.getOrderItemModifiersByItemIds(itemIds) : Promise.resolve([]),
-        storage.getUsersByIds(voidedUserIds),
-      ]);
+      const voidedUsers = await storage.getUsersByIds(voidedUserIds);
 
       const modsByItem = new Map<number, typeof allMods>();
       for (const m of allMods) {
@@ -3114,11 +3110,14 @@ export async function registerRoutes(
     const parentOrderIds = relevantOrders.filter(o => o.parentOrderId).map(o => o.parentOrderId!);
     const allSubaccountQueryIds = Array.from(new Set([...orderIds, ...parentOrderIds]));
 
-    const [allItems, allSubaccounts] = await Promise.all([
+    const [allItems, allSubaccounts, allMods, allItemDiscounts, allItemTaxes] = await Promise.all([
       storage.getOrderItemsByOrderIds(orderIds),
       allSubaccountQueryIds.length > 0
         ? db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, allSubaccountQueryIds))
         : Promise.resolve([]),
+      storage.getOrderItemModifiersByOrderIds(orderIds),
+      storage.getOrderItemDiscountsByOrderIds(orderIds),
+      storage.getOrderItemTaxesByOrderIds(orderIds),
     ]);
 
     const subaccountsByOrder = new Map<number, string[]>();
@@ -3130,18 +3129,14 @@ export async function registerRoutes(
     }
 
     const activeItems = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PENDING" && i.status !== "PAID");
-    const allItemIds = allItems.map(i => i.id);
-    const activeItemIds = activeItems.map(i => i.id);
+    const activeItemIds = new Set(activeItems.map(i => i.id));
+    const allItemIds = new Set(allItems.map(i => i.id));
+    const activeModsOnly = allMods.filter(m => activeItemIds.has(m.orderItemId));
 
-    const [allMods, allItemDiscounts, allItemTaxes] = await Promise.all([
-      storage.getOrderItemModifiersByItemIds(activeItemIds),
-      storage.getOrderItemDiscountsByItemIds(allItemIds),
-      storage.getOrderItemTaxesByItemIds(allItemIds),
-    ]);
-    if (Date.now() - t0 > 200) console.log(`[perf] /api/pos/tables ${Date.now() - t0}ms (${relevantOrders.length} orders, ${allItems.length} items)`);
+    if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/tables ${Date.now() - t0}ms (${relevantOrders.length} orders, ${allItems.length} items)`);
 
-    const modsMap = new Map<number, typeof allMods>();
-    for (const m of allMods) {
+    const modsMap = new Map<number, typeof activeModsOnly>();
+    for (const m of activeModsOnly) {
       if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []);
       modsMap.get(m.orderItemId)!.push(m);
     }
@@ -3650,13 +3645,18 @@ export async function registerRoutes(
   // ==================== POS: SPLIT ACCOUNTS ====================
   app.get("/api/pos/orders/:orderId/splits", requirePermission("POS_VIEW"), async (req, res) => {
     try {
+      const t0 = Date.now();
       const orderId = parseInt(req.params.orderId as string);
       const splits = await storage.getSplitAccountsForOrder(orderId);
-      const result = [];
-      for (const split of splits) {
-        const items = await storage.getSplitItemsForSplit(split.id);
-        result.push({ ...split, items });
+      const splitIds = splits.map(s => s.id);
+      const allSplitItems = await storage.getSplitItemsByAccountIds(splitIds);
+      const itemsBySplit = new Map<number, typeof allSplitItems>();
+      for (const si of allSplitItems) {
+        if (!itemsBySplit.has(si.splitId)) itemsBySplit.set(si.splitId, []);
+        itemsBySplit.get(si.splitId)!.push(si);
       }
+      const result = splits.map(s => ({ ...s, items: itemsBySplit.get(s.id) || [] }));
+      if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/orders/${orderId}/splits ${Date.now() - t0}ms`);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4328,24 +4328,32 @@ export async function registerRoutes(
       if (order.status === "PAID") return res.status(400).json({ message: "No se puede anular una orden ya pagada" });
       if (order.status === "VOIDED") return res.status(400).json({ message: "La orden ya está anulada" });
 
-      const items = await storage.getOrderItems(orderId);
-      const table = await storage.getTable(order.tableId);
-      const allCategories = await storage.getAllCategories();
+      const [items, table, allCategories] = await Promise.all([
+        storage.getOrderItems(orderId),
+        storage.getTable(order.tableId),
+        storage.getAllCategories(),
+      ]);
 
-      for (const item of items) {
-        if (item.status === "VOIDED") continue;
+      const activeItems = items.filter(i => i.status !== "VOIDED");
+      const productIds = Array.from(new Set(activeItems.map(i => i.productId)));
+      const allProducts = await storage.getProductsByIds(productIds);
+      const productMap = new Map(allProducts.map(p => [p.id, p]));
 
-        const product = await storage.getProduct(item.productId);
+      const activeItemIds = activeItems.map(i => i.id);
+      if (activeItemIds.length > 0) {
+        const now = new Date();
+        await db.update(orderItems)
+          .set({ status: "VOIDED", voidedAt: now, voidedByUserId: userId })
+          .where(inArray(orderItems.id, activeItemIds));
+        await db.update(salesLedgerItems)
+          .set({ status: "VOIDED" })
+          .where(inArray(salesLedgerItems.orderItemId, activeItemIds));
+      }
+
+      const voidInserts = activeItems.map(item => {
+        const product = productMap.get(item.productId);
         const category = allCategories.find(c => c.id === product?.categoryId);
-
-        await storage.updateOrderItem(item.id, {
-          status: "VOIDED",
-          voidedAt: new Date(),
-          voidedByUserId: userId,
-        });
-        await storage.updateSalesLedgerItems(item.id, { status: "VOIDED" });
-
-        await storage.createVoidedItem({
+        return {
           businessDate: order.businessDate || getBusinessDate(),
           tableId: order.tableId,
           tableNameSnapshot: table?.tableName || null,
@@ -4359,13 +4367,19 @@ export async function registerRoutes(
           voidReason: reason || "Anulación de orden completa",
           voidedByUserId: userId,
           voidedByRole: user.role,
-          status: "VOIDED",
+          status: "VOIDED" as const,
           notes: null,
-        });
+        };
+      });
+      if (voidInserts.length > 0) {
+        await db.insert(voidedItems).values(voidInserts);
+      }
 
-        if (item.sentToKitchenAt) {
-          await storage.voidKitchenTicketItemsByOrderItem(item.id, item.qty, true);
-        }
+      const sentItemIds2 = activeItems.filter(i => i.sentToKitchenAt).map(i => i.id);
+      if (sentItemIds2.length > 0) {
+        await db.update(kitchenTicketItems)
+          .set({ status: "VOIDED" })
+          .where(inArray(kitchenTicketItems.orderItemId, sentItemIds2));
       }
 
       const sentItemIds = items
@@ -4736,19 +4750,23 @@ export async function registerRoutes(
 
   // ==================== DASHBOARD ====================
   app.get("/api/dashboard", requireRole("MANAGER"), async (req, res) => {
+    const t0 = Date.now();
     const dateFrom = typeof req.query.from === "string" ? req.query.from : undefined;
     const dateTo = typeof req.query.to === "string" ? req.query.to : undefined;
     const hourFrom = typeof req.query.hourFrom === "string" ? parseInt(req.query.hourFrom) : undefined;
     const hourTo = typeof req.query.hourTo === "string" ? parseInt(req.query.hourTo) : undefined;
-    const data = await storage.getDashboardData(dateFrom, dateTo, hourFrom, hourTo);
     const resolvedFrom = dateFrom || getBusinessDate();
     const resolvedTo = dateTo || resolvedFrom;
-    const ledgerDetails = resolvedFrom === resolvedTo
-      ? await storage.getLedgerItemsForDate(resolvedFrom)
-      : await storage.getLedgerItemsForDateRange(resolvedFrom, resolvedTo);
-    const paymentMethodTotals = resolvedFrom === resolvedTo
-      ? await storage.getPaymentsByDateGrouped(resolvedFrom)
-      : await storage.getPaymentsByDateRangeGrouped(resolvedFrom, resolvedTo);
+    const [data, ledgerDetails, paymentMethodTotals] = await Promise.all([
+      storage.getDashboardData(dateFrom, dateTo, hourFrom, hourTo),
+      resolvedFrom === resolvedTo
+        ? storage.getLedgerItemsForDate(resolvedFrom)
+        : storage.getLedgerItemsForDateRange(resolvedFrom, resolvedTo),
+      resolvedFrom === resolvedTo
+        ? storage.getPaymentsByDateGrouped(resolvedFrom)
+        : storage.getPaymentsByDateRangeGrouped(resolvedFrom, resolvedTo),
+    ]);
+    if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/dashboard ${Date.now() - t0}ms`);
     res.json({ ...data, ledgerDetails, paymentMethodTotals });
   });
 

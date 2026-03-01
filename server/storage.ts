@@ -541,8 +541,16 @@ export async function recalcOrderTotal(orderId: number) {
 
   await db.delete(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, itemIds));
 
-  let allTaxCatsCache: any[] | null = null;
-  const productTaxCache = new Map<number, any[]>();
+  const uniqueProductIds = Array.from(new Set(items.filter(i => !i.taxSnapshotJson || !Array.isArray(i.taxSnapshotJson) || (i.taxSnapshotJson as any[]).length === 0).map(i => i.productId)));
+  const [allTaxCats, allProdTaxCats] = await Promise.all([
+    uniqueProductIds.length > 0 ? getAllTaxCategories() : Promise.resolve([]),
+    uniqueProductIds.length > 0 ? getProductTaxCategoriesByProductIds(uniqueProductIds) : Promise.resolve([]),
+  ]);
+  const productTaxMap = new Map<number, typeof allProdTaxCats>();
+  for (const ptc of allProdTaxCats) {
+    if (!productTaxMap.has(ptc.productId)) productTaxMap.set(ptc.productId, []);
+    productTaxMap.get(ptc.productId)!.push(ptc);
+  }
 
   let subtotal = 0;
   let totalDiscountsAmt = 0;
@@ -585,13 +593,9 @@ export async function recalcOrderTotal(orderId: number) {
         });
       }
     } else {
-      if (!allTaxCatsCache) allTaxCatsCache = await getAllTaxCategories();
-      if (!productTaxCache.has(item.productId)) {
-        productTaxCache.set(item.productId, await getProductTaxCategories(item.productId));
-      }
-      const taxesForItem = productTaxCache.get(item.productId)!;
+      const taxesForItem = productTaxMap.get(item.productId) || [];
       for (const ptc of taxesForItem) {
-        const tc = allTaxCatsCache.find(t => t.id === ptc.taxCategoryId && t.active);
+        const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
         if (tc) {
           const rate = Number(tc.rate);
           let taxAmount: number;
@@ -1440,135 +1444,160 @@ export async function normalizeOrderItemsForSplit(orderId: number) {
   const toSplit = items.filter(i => i.qty > 1);
   if (toSplit.length === 0) return { normalized: false, itemCount: items.length };
 
+  const splitItemIds = toSplit.map(i => i.id);
+
+  const [allMods, allLedger, allKti, allTaxes, allDiscounts] = await Promise.all([
+    db.select().from(orderItemModifiers).where(inArray(orderItemModifiers.orderItemId, splitItemIds)),
+    db.select().from(salesLedgerItems).where(inArray(salesLedgerItems.orderItemId, splitItemIds)),
+    db.select().from(kitchenTicketItems).where(inArray(kitchenTicketItems.orderItemId, splitItemIds)),
+    db.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, splitItemIds)),
+    db.select().from(orderItemDiscounts).where(inArray(orderItemDiscounts.orderItemId, splitItemIds)),
+  ]);
+
+  const modsMap = new Map<number, typeof allMods>();
+  for (const m of allMods) { if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []); modsMap.get(m.orderItemId)!.push(m); }
+  const ledgerMap = new Map<number, typeof allLedger[0]>();
+  for (const l of allLedger) { if (!ledgerMap.has(l.orderItemId)) ledgerMap.set(l.orderItemId, l); }
+  const ktiMap = new Map<number, typeof allKti>();
+  for (const k of allKti) { if (!ktiMap.has(k.orderItemId)) ktiMap.set(k.orderItemId, []); ktiMap.get(k.orderItemId)!.push(k); }
+  const taxesMap = new Map<number, typeof allTaxes>();
+  for (const t of allTaxes) { if (!taxesMap.has(t.orderItemId)) taxesMap.set(t.orderItemId, []); taxesMap.get(t.orderItemId)!.push(t); }
+  const discountsMap = new Map<number, typeof allDiscounts>();
+  for (const d of allDiscounts) { if (!discountsMap.has(d.orderItemId)) discountsMap.set(d.orderItemId, []); discountsMap.get(d.orderItemId)!.push(d); }
+
   let newCount = 0;
-  for (const item of toSplit) {
-    const originalQty = item.qty;
 
-    await db.update(orderItems).set({ qty: 1 }).where(eq(orderItems.id, item.id));
+  await db.transaction(async (tx) => {
+    for (const item of toSplit) {
+      const originalQty = item.qty;
+      const existingModifiers = modsMap.get(item.id) || [];
+      const existingLedger = ledgerMap.get(item.id) || null;
+      const existingKitchenItems = ktiMap.get(item.id) || [];
+      const existingTaxes = taxesMap.get(item.id) || [];
+      const existingItemDiscounts = discountsMap.get(item.id) || [];
 
-    const existingModifiers = await db.select().from(orderItemModifiers)
-      .where(eq(orderItemModifiers.orderItemId, item.id));
+      await tx.update(orderItems).set({ qty: 1 }).where(eq(orderItems.id, item.id));
 
-    const existingLedger = await db.select().from(salesLedgerItems)
-      .where(eq(salesLedgerItems.orderItemId, item.id));
-
-    const existingKitchenItems = await db.select().from(kitchenTicketItems)
-      .where(eq(kitchenTicketItems.orderItemId, item.id));
-
-    if (existingLedger.length > 0) {
-      const ledger = existingLedger[0];
-      await db.update(salesLedgerItems).set({
-        qty: 1,
-        lineSubtotal: ledger.unitPrice,
-      }).where(eq(salesLedgerItems.id, ledger.id));
-    }
-
-    if (existingKitchenItems.length > 0) {
-      for (const kti of existingKitchenItems) {
-        await db.update(kitchenTicketItems).set({ qty: 1 }).where(eq(kitchenTicketItems.id, kti.id));
-      }
-    }
-
-    for (let i = 1; i < originalQty; i++) {
-      const [newItem] = await db.insert(orderItems).values({
-        orderId: item.orderId,
-        productId: item.productId,
-        productNameSnapshot: item.productNameSnapshot,
-        productPriceSnapshot: item.productPriceSnapshot,
-        qty: 1,
-        notes: item.notes,
-        origin: item.origin,
-        createdByUserId: item.createdByUserId,
-        responsibleWaiterId: item.responsibleWaiterId,
-        status: item.status,
-        roundNumber: item.roundNumber,
-        qrSubmissionId: item.qrSubmissionId,
-        sentToKitchenAt: item.sentToKitchenAt,
-      }).returning();
-
-      for (const mod of existingModifiers) {
-        await db.insert(orderItemModifiers).values({
-          orderItemId: newItem.id,
-          modifierOptionId: mod.modifierOptionId,
-          nameSnapshot: mod.nameSnapshot,
-          priceDeltaSnapshot: mod.priceDeltaSnapshot,
-          qty: mod.qty,
-        });
-      }
-
-      if (existingLedger.length > 0) {
-        const ledger = existingLedger[0];
-        await db.insert(salesLedgerItems).values({
-          businessDate: ledger.businessDate,
-          tableId: ledger.tableId,
-          tableNameSnapshot: ledger.tableNameSnapshot,
-          orderId: ledger.orderId,
-          orderItemId: newItem.id,
-          productId: ledger.productId,
-          productCodeSnapshot: ledger.productCodeSnapshot,
-          productNameSnapshot: ledger.productNameSnapshot,
-          categoryId: ledger.categoryId,
-          categoryCodeSnapshot: ledger.categoryCodeSnapshot,
-          categoryNameSnapshot: ledger.categoryNameSnapshot,
+      if (existingLedger) {
+        await tx.update(salesLedgerItems).set({
           qty: 1,
-          unitPrice: ledger.unitPrice,
-          lineSubtotal: ledger.unitPrice,
-          origin: ledger.origin,
-          createdByUserId: ledger.createdByUserId,
-          responsibleWaiterId: ledger.responsibleWaiterId,
-          status: ledger.status,
-          sentToKitchenAt: ledger.sentToKitchenAt,
-          kdsReadyAt: ledger.kdsReadyAt,
-          paidAt: ledger.paidAt,
-        });
+          lineSubtotal: existingLedger.unitPrice,
+        }).where(eq(salesLedgerItems.id, existingLedger.id));
       }
 
       if (existingKitchenItems.length > 0) {
-        const kti = existingKitchenItems[0];
-        await db.insert(kitchenTicketItems).values({
-          kitchenTicketId: kti.kitchenTicketId,
-          orderItemId: newItem.id,
-          productNameSnapshot: kti.productNameSnapshot,
+        const ktiIds = existingKitchenItems.map(k => k.id);
+        await tx.update(kitchenTicketItems).set({ qty: 1 }).where(inArray(kitchenTicketItems.id, ktiIds));
+      }
+
+      const newModInserts: any[] = [];
+      const newLedgerInserts: any[] = [];
+      const newKtiInserts: any[] = [];
+      const newTaxInserts: any[] = [];
+      const newDiscountInserts: any[] = [];
+
+      for (let i = 1; i < originalQty; i++) {
+        const [newItem] = await tx.insert(orderItems).values({
+          orderId: item.orderId,
+          productId: item.productId,
+          productNameSnapshot: item.productNameSnapshot,
+          productPriceSnapshot: item.productPriceSnapshot,
           qty: 1,
-          notes: kti.notes,
-          status: kti.status,
-          prepStartedAt: kti.prepStartedAt,
-          readyAt: kti.readyAt,
-        });
+          notes: item.notes,
+          origin: item.origin,
+          createdByUserId: item.createdByUserId,
+          responsibleWaiterId: item.responsibleWaiterId,
+          status: item.status,
+          roundNumber: item.roundNumber,
+          qrSubmissionId: item.qrSubmissionId,
+          sentToKitchenAt: item.sentToKitchenAt,
+        }).returning();
+
+        for (const mod of existingModifiers) {
+          newModInserts.push({
+            orderItemId: newItem.id,
+            modifierOptionId: mod.modifierOptionId,
+            nameSnapshot: mod.nameSnapshot,
+            priceDeltaSnapshot: mod.priceDeltaSnapshot,
+            qty: mod.qty,
+          });
+        }
+
+        if (existingLedger) {
+          newLedgerInserts.push({
+            businessDate: existingLedger.businessDate,
+            tableId: existingLedger.tableId,
+            tableNameSnapshot: existingLedger.tableNameSnapshot,
+            orderId: existingLedger.orderId,
+            orderItemId: newItem.id,
+            productId: existingLedger.productId,
+            productCodeSnapshot: existingLedger.productCodeSnapshot,
+            productNameSnapshot: existingLedger.productNameSnapshot,
+            categoryId: existingLedger.categoryId,
+            categoryCodeSnapshot: existingLedger.categoryCodeSnapshot,
+            categoryNameSnapshot: existingLedger.categoryNameSnapshot,
+            qty: 1,
+            unitPrice: existingLedger.unitPrice,
+            lineSubtotal: existingLedger.unitPrice,
+            origin: existingLedger.origin,
+            createdByUserId: existingLedger.createdByUserId,
+            responsibleWaiterId: existingLedger.responsibleWaiterId,
+            status: existingLedger.status,
+            sentToKitchenAt: existingLedger.sentToKitchenAt,
+            kdsReadyAt: existingLedger.kdsReadyAt,
+            paidAt: existingLedger.paidAt,
+          });
+        }
+
+        if (existingKitchenItems.length > 0) {
+          const kti = existingKitchenItems[0];
+          newKtiInserts.push({
+            kitchenTicketId: kti.kitchenTicketId,
+            orderItemId: newItem.id,
+            productNameSnapshot: kti.productNameSnapshot,
+            qty: 1,
+            notes: kti.notes,
+            status: kti.status,
+            prepStartedAt: kti.prepStartedAt,
+            readyAt: kti.readyAt,
+          });
+        }
+
+        for (const tax of existingTaxes) {
+          const perUnitTax = Number(tax.taxAmount) / originalQty;
+          newTaxInserts.push({
+            orderItemId: newItem.id,
+            taxCategoryId: tax.taxCategoryId,
+            taxNameSnapshot: tax.taxNameSnapshot,
+            taxRateSnapshot: tax.taxRateSnapshot,
+            inclusiveSnapshot: tax.inclusiveSnapshot,
+            taxAmount: perUnitTax.toFixed(2),
+          });
+        }
+
+        for (const disc of existingItemDiscounts) {
+          const perUnitDiscount = Number(disc.amountApplied) / originalQty;
+          newDiscountInserts.push({
+            orderItemId: newItem.id,
+            orderId: disc.orderId,
+            discountName: disc.discountName,
+            discountType: disc.discountType,
+            discountValue: disc.discountValue,
+            amountApplied: perUnitDiscount.toFixed(2),
+            appliedByUserId: disc.appliedByUserId,
+          });
+        }
+
+        newCount++;
       }
 
-      const existingTaxes = await db.select().from(orderItemTaxes)
-        .where(eq(orderItemTaxes.orderItemId, item.id));
-      for (const tax of existingTaxes) {
-        const perUnitTax = Number(tax.taxAmount) / originalQty;
-        await db.insert(orderItemTaxes).values({
-          orderItemId: newItem.id,
-          taxCategoryId: tax.taxCategoryId,
-          taxNameSnapshot: tax.taxNameSnapshot,
-          taxRateSnapshot: tax.taxRateSnapshot,
-          inclusiveSnapshot: tax.inclusiveSnapshot,
-          taxAmount: perUnitTax.toFixed(2),
-        });
-      }
-
-      const existingItemDiscounts = await db.select().from(orderItemDiscounts)
-        .where(eq(orderItemDiscounts.orderItemId, item.id));
-      for (const disc of existingItemDiscounts) {
-        const perUnitDiscount = Number(disc.amountApplied) / originalQty;
-        await db.insert(orderItemDiscounts).values({
-          orderItemId: newItem.id,
-          orderId: disc.orderId,
-          discountName: disc.discountName,
-          discountType: disc.discountType,
-          discountValue: disc.discountValue,
-          amountApplied: perUnitDiscount.toFixed(2),
-          appliedByUserId: disc.appliedByUserId,
-        });
-      }
-
-      newCount++;
+      if (newModInserts.length > 0) await tx.insert(orderItemModifiers).values(newModInserts);
+      if (newLedgerInserts.length > 0) await tx.insert(salesLedgerItems).values(newLedgerInserts);
+      if (newKtiInserts.length > 0) await tx.insert(kitchenTicketItems).values(newKtiInserts);
+      if (newTaxInserts.length > 0) await tx.insert(orderItemTaxes).values(newTaxInserts);
+      if (newDiscountInserts.length > 0) await tx.insert(orderItemDiscounts).values(newDiscountInserts);
     }
-  }
+  });
 
   return { normalized: true, itemCount: items.length + newCount };
 }
@@ -1711,6 +1740,37 @@ export async function getOrderItemDiscountsByItemIds(itemIds: number[]) {
 export async function getOrderItemTaxesByItemIds(itemIds: number[]) {
   if (itemIds.length === 0) return [];
   return db.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, itemIds));
+}
+
+export async function getOrderItemModifiersByOrderIds(orderIds: number[]) {
+  if (orderIds.length === 0) return [];
+  return db.select({ mod: orderItemModifiers }).from(orderItemModifiers)
+    .innerJoin(orderItems, eq(orderItemModifiers.orderItemId, orderItems.id))
+    .where(inArray(orderItems.orderId, orderIds))
+    .then(rows => rows.map(r => r.mod));
+}
+
+export async function getOrderItemTaxesByOrderIds(orderIds: number[]) {
+  if (orderIds.length === 0) return [];
+  return db.select({ tax: orderItemTaxes }).from(orderItemTaxes)
+    .innerJoin(orderItems, eq(orderItemTaxes.orderItemId, orderItems.id))
+    .where(inArray(orderItems.orderId, orderIds))
+    .then(rows => rows.map(r => r.tax));
+}
+
+export async function getOrderItemDiscountsByOrderIds(orderIds: number[]) {
+  if (orderIds.length === 0) return [];
+  return db.select().from(orderItemDiscounts).where(inArray(orderItemDiscounts.orderId, orderIds));
+}
+
+export async function getSplitItemsByAccountIds(splitIds: number[]) {
+  if (splitIds.length === 0) return [];
+  return db.select().from(splitItems).where(inArray(splitItems.splitId, splitIds));
+}
+
+export async function getVoidedItemsByOrderIds(orderIds: number[]) {
+  if (orderIds.length === 0) return [];
+  return db.select().from(voidedItems).where(inArray(voidedItems.orderId, orderIds));
 }
 
 export async function getPendingSubmissionsByOrderIds(orderIds: number[]) {
