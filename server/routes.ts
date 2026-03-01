@@ -415,6 +415,95 @@ export async function registerRoutes(
     }
   });
 
+  const voidPinAttempts = new Map<string, { count: number; resetAt: number }>();
+  const VOID_PIN_WINDOW_MS = 5 * 60 * 1000;
+  const VOID_PIN_MAX_ATTEMPTS = 5;
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of voidPinAttempts) {
+      if (entry.resetAt <= now) voidPinAttempts.delete(ip);
+    }
+  }, 60 * 1000);
+
+  app.post("/api/auth/verify-manager-pin", requireAuth, async (req, res) => {
+    try {
+      const { pin } = req.body;
+      if (!pin || typeof pin !== "string") {
+        return res.status(400).json({ message: "PIN requerido" });
+      }
+
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const now = Date.now();
+      const entry = voidPinAttempts.get(ip);
+      if (entry && entry.resetAt > now) {
+        if (entry.count >= VOID_PIN_MAX_ATTEMPTS) {
+          const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+          res.set("Retry-After", String(retryAfter));
+          return res.status(429).json({ message: `Demasiados intentos. Intente de nuevo en ${Math.ceil(retryAfter / 60)} minutos.` });
+        }
+      }
+
+      const allUsers = await storage.getAllUsersWithPin();
+      const usersWithPin = allUsers.filter(u => u.pin && u.active);
+
+      let matchedUser: any = null;
+      for (const u of usersWithPin) {
+        if (u.pinLockedUntil && new Date(u.pinLockedUntil) > new Date()) continue;
+        const match = await storage.verifyPin(pin, u.pin!);
+        if (match) {
+          matchedUser = u;
+          break;
+        }
+      }
+
+      if (!matchedUser) {
+        if (entry && entry.resetAt > now) {
+          entry.count++;
+        } else {
+          voidPinAttempts.set(ip, { count: 1, resetAt: now + VOID_PIN_WINDOW_MS });
+        }
+
+        await storage.createAuditEvent({
+          actorType: "USER",
+          actorUserId: req.session.userId || null,
+          action: "VOID_AUTH_FAILED",
+          entityType: "USER",
+          entityId: null,
+          metadata: { ip, reason: "PIN incorrecto o no encontrado" },
+        });
+
+        return res.status(403).json({ message: "PIN de autorización incorrecto" });
+      }
+
+      const perms = await storage.getPermissionKeysForRole(matchedUser.role);
+      if (!perms.includes("VOID_AUTHORIZE")) {
+        if (entry && entry.resetAt > now) {
+          entry.count++;
+        } else {
+          voidPinAttempts.set(ip, { count: 1, resetAt: now + VOID_PIN_WINDOW_MS });
+        }
+
+        await storage.createAuditEvent({
+          actorType: "USER",
+          actorUserId: req.session.userId || null,
+          action: "VOID_AUTH_FAILED",
+          entityType: "USER",
+          entityId: matchedUser.id,
+          metadata: { ip, reason: "Usuario no tiene permiso VOID_AUTHORIZE", matchedUserId: matchedUser.id },
+        });
+
+        return res.status(403).json({ message: "El usuario no tiene permiso para autorizar anulaciones" });
+      }
+
+      voidPinAttempts.delete(ip);
+
+      res.json({ authorized: true, managerId: matchedUser.id, managerName: matchedUser.displayName });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // PIN-based Clock-In/Out (no session required)
   app.post("/api/auth/pin-clock", async (req, res) => {
     try {
@@ -1374,14 +1463,30 @@ export async function registerRoutes(
             : "";
           const fullNotes = [item.notes, modNotes].filter(Boolean).join(" | ");
 
-          await storage.createKitchenTicketItem({
-            kitchenTicketId: ticketId,
-            orderItemId: orderItem.id,
-            productNameSnapshot: product.name,
-            qty: item.qty,
-            notes: fullNotes || null,
-            status: "NEW",
-          });
+          if (item.qty > 1) {
+            const groupId = crypto.randomUUID();
+            for (let seq = 1; seq <= item.qty; seq++) {
+              await storage.createKitchenTicketItem({
+                kitchenTicketId: ticketId,
+                orderItemId: orderItem.id,
+                productNameSnapshot: product.name,
+                qty: 1,
+                notes: fullNotes || null,
+                status: "NEW",
+                kitchenItemGroupId: groupId,
+                seqInGroup: seq,
+              });
+            }
+          } else {
+            await storage.createKitchenTicketItem({
+              kitchenTicketId: ticketId,
+              orderItemId: orderItem.id,
+              productNameSnapshot: product.name,
+              qty: 1,
+              notes: fullNotes || null,
+              status: "NEW",
+            });
+          }
         }
 
         if (item.modifiers && Array.isArray(item.modifiers)) {
@@ -1981,16 +2086,35 @@ export async function registerRoutes(
         const waiterModDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDelta || 0) * (m.qty || 1), 0);
         const waiterUnitWithMods = Number(product.price) + waiterModDelta;
 
-        const parallelOps: Promise<any>[] = [
-          storage.updateOrderItem(orderItem.id, { sentToKitchenAt: now, ...(taxSnapshot ? { taxSnapshotJson: taxSnapshot } : {}) }),
-          storage.createKitchenTicketItem({
+        const kdsItemOps: Promise<any>[] = [];
+        if (item.qty > 1) {
+          const groupId = crypto.randomUUID();
+          for (let seq = 1; seq <= item.qty; seq++) {
+            kdsItemOps.push(storage.createKitchenTicketItem({
+              kitchenTicketId: ticketId,
+              orderItemId: orderItem.id,
+              productNameSnapshot: product.name,
+              qty: 1,
+              notes: fullNotes || null,
+              status: "NEW",
+              kitchenItemGroupId: groupId,
+              seqInGroup: seq,
+            }));
+          }
+        } else {
+          kdsItemOps.push(storage.createKitchenTicketItem({
             kitchenTicketId: ticketId,
             orderItemId: orderItem.id,
             productNameSnapshot: product.name,
-            qty: item.qty,
+            qty: 1,
             notes: fullNotes || null,
             status: "NEW",
-          }),
+          }));
+        }
+
+        const parallelOps: Promise<any>[] = [
+          storage.updateOrderItem(orderItem.id, { sentToKitchenAt: now, ...(taxSnapshot ? { taxSnapshotJson: taxSnapshot } : {}) }),
+          ...kdsItemOps,
           storage.createSalesLedgerItem({
             businessDate,
             tableId,
@@ -2122,14 +2246,30 @@ export async function registerRoutes(
             responsibleWaiterId: userId,
           });
 
-          await storage.createKitchenTicketItem({
-            kitchenTicketId: ticketId,
-            orderItemId: item.id,
-            productNameSnapshot: item.productNameSnapshot,
-            qty: item.qty,
-            notes: item.notes,
-            status: "NEW",
-          });
+          if (item.qty > 1) {
+            const groupId = crypto.randomUUID();
+            for (let seq = 1; seq <= item.qty; seq++) {
+              await storage.createKitchenTicketItem({
+                kitchenTicketId: ticketId,
+                orderItemId: item.id,
+                productNameSnapshot: item.productNameSnapshot,
+                qty: 1,
+                notes: item.notes,
+                status: "NEW",
+                kitchenItemGroupId: groupId,
+                seqInGroup: seq,
+              });
+            }
+          } else {
+            await storage.createKitchenTicketItem({
+              kitchenTicketId: ticketId,
+              orderItemId: item.id,
+              productNameSnapshot: item.productNameSnapshot,
+              qty: 1,
+              notes: item.notes,
+              status: "NEW",
+            });
+          }
 
           try {
             await onOrderItemsConfirmedSent(order.id, [item.id], userId);
@@ -2193,7 +2333,7 @@ export async function registerRoutes(
       const itemId = parseInt(req.params.itemId as string);
       const userId = req.session.userId!;
       const user = (req as any).user;
-      const { reason, qtyToVoid } = req.body;
+      const { reason, qtyToVoid, managerPin } = req.body;
 
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
@@ -2211,11 +2351,76 @@ export async function registerRoutes(
         return res.status(400).json({ message: "El ítem ya está anulado" });
       }
 
+      let authorizedManagerId: number | null = null;
+      let authorizedManagerName: string | null = null;
+
       if (item.sentToKitchenAt) {
-        const userPerms = await storage.getEffectivePermissions(userId);
-        if (!userPerms.includes("ORDERITEM_VOID_POST_KDS")) {
-          return res.status(403).json({ message: "No tiene permiso para anular ítems ya enviados a cocina" });
+        if (!managerPin || typeof managerPin !== "string") {
+          return res.status(403).json({ message: "Autorización de gerente requerida para anular ítems enviados a cocina" });
         }
+
+        const ip = req.ip || req.socket.remoteAddress || "unknown";
+        const now = Date.now();
+        const entry = voidPinAttempts.get(ip);
+        if (entry && entry.resetAt > now && entry.count >= VOID_PIN_MAX_ATTEMPTS) {
+          const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+          res.set("Retry-After", String(retryAfter));
+          return res.status(429).json({ message: `Demasiados intentos. Intente de nuevo en ${Math.ceil(retryAfter / 60)} minutos.` });
+        }
+
+        const allUsers = await storage.getAllUsersWithPin();
+        const usersWithPin = allUsers.filter(u => u.pin && u.active);
+
+        let matchedUser: any = null;
+        for (const u of usersWithPin) {
+          if (u.pinLockedUntil && new Date(u.pinLockedUntil) > new Date()) continue;
+          const match = await storage.verifyPin(managerPin, u.pin!);
+          if (match) {
+            matchedUser = u;
+            break;
+          }
+        }
+
+        if (!matchedUser) {
+          if (entry && entry.resetAt > now) {
+            entry.count++;
+          } else {
+            voidPinAttempts.set(ip, { count: 1, resetAt: now + VOID_PIN_WINDOW_MS });
+          }
+          await storage.createAuditEvent({
+            actorType: "USER",
+            actorUserId: userId,
+            action: "VOID_AUTH_FAILED",
+            entityType: "order_item",
+            entityId: itemId,
+            tableId: order.tableId,
+            metadata: { ip, reason: "PIN incorrecto o no encontrado", orderId },
+          });
+          return res.status(403).json({ message: "PIN de autorización incorrecto" });
+        }
+
+        const perms = await storage.getPermissionKeysForRole(matchedUser.role);
+        if (!perms.includes("VOID_AUTHORIZE")) {
+          if (entry && entry.resetAt > now) {
+            entry.count++;
+          } else {
+            voidPinAttempts.set(ip, { count: 1, resetAt: now + VOID_PIN_WINDOW_MS });
+          }
+          await storage.createAuditEvent({
+            actorType: "USER",
+            actorUserId: userId,
+            action: "VOID_AUTH_FAILED",
+            entityType: "order_item",
+            entityId: itemId,
+            tableId: order.tableId,
+            metadata: { ip, reason: "Usuario no tiene permiso VOID_AUTHORIZE", matchedUserId: matchedUser.id, orderId },
+          });
+          return res.status(403).json({ message: "El usuario no tiene permiso para autorizar anulaciones" });
+        }
+
+        voidPinAttempts.delete(ip);
+        authorizedManagerId = matchedUser.id;
+        authorizedManagerName = matchedUser.displayName;
       }
 
       const effectiveQty = (typeof qtyToVoid === "number" && qtyToVoid > 0 && qtyToVoid <= item.qty) ? qtyToVoid : item.qty;
@@ -2286,6 +2491,27 @@ export async function registerRoutes(
         },
       });
 
+      if (authorizedManagerId) {
+        await storage.createAuditEvent({
+          actorType: "USER",
+          actorUserId: authorizedManagerId,
+          action: "ORDER_ITEM_VOID_AUTHORIZED",
+          entityType: "order_item",
+          entityId: itemId,
+          tableId: order.tableId,
+          metadata: {
+            requestedBy: userId,
+            authorizedBy: authorizedManagerId,
+            managerName: authorizedManagerName,
+            reason: reason || null,
+            productId: item.productId,
+            productName: item.productNameSnapshot,
+            qty: effectiveQty,
+            orderId,
+          },
+        });
+      }
+
       broadcast("order_updated", { tableId: order.tableId, orderId });
       broadcast("table_status_changed", { tableId: order.tableId });
       if (item.sentToKitchenAt) {
@@ -2314,6 +2540,10 @@ export async function registerRoutes(
       }
 
       if (item.sentToKitchenAt && item.status !== "VOIDED") {
+        return res.status(403).json({ message: "No se permite eliminar items enviados a cocina. Use anulación." });
+      }
+
+      if (item.sentToKitchenAt && item.status === "VOIDED") {
         try { await onOrderItemsVoided([itemId], userId); } catch (e) { console.error("[inv] reversal error:", e); }
       }
 
@@ -2611,6 +2841,13 @@ export async function registerRoutes(
       modsByItem.get(m.orderItemId)!.push(m);
     }
 
+    const groupCounts = new Map<string, number>();
+    for (const i of allTicketItems) {
+      if (i.kitchenItemGroupId) {
+        groupCounts.set(i.kitchenItemGroupId, (groupCounts.get(i.kitchenItemGroupId) || 0) + 1);
+      }
+    }
+
     const result = [];
     for (const t of tickets) {
       const items = allTicketItems.filter(i => i.kitchenTicketId === t.id);
@@ -2621,6 +2858,7 @@ export async function registerRoutes(
         prepStartedAt: i.prepStartedAt?.toISOString() || null,
         readyAt: i.readyAt?.toISOString() || null,
         modifiers: modsByItem.get(i.orderItemId) || [],
+        totalInGroup: i.kitchenItemGroupId ? (groupCounts.get(i.kitchenItemGroupId) || 1) : null,
       }));
       result.push({
         ...t,
@@ -2682,10 +2920,22 @@ export async function registerRoutes(
       const item = await storage.updateKitchenTicketItem(itemId, data);
 
       if (item) {
-        const orderItemStatus = status === "PREPARING" ? "PREPARING" : status === "READY" ? "READY" : item.status;
-        await storage.updateOrderItem(item.orderItemId, { status: orderItemStatus });
-        if (status === "READY") {
-          await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+        if (item.kitchenItemGroupId) {
+          const groupItems = await storage.getKitchenTicketItemsByGroupId(item.kitchenItemGroupId);
+          const allGroupReady = groupItems.every(gi => gi.status === "READY");
+          const anyPreparing = groupItems.some(gi => gi.status === "PREPARING");
+          if (allGroupReady) {
+            await storage.updateOrderItem(item.orderItemId, { status: "READY" });
+            await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+          } else if (anyPreparing || status === "PREPARING") {
+            await storage.updateOrderItem(item.orderItemId, { status: "PREPARING" });
+          }
+        } else {
+          const orderItemStatus = status === "PREPARING" ? "PREPARING" : status === "READY" ? "READY" : item.status;
+          await storage.updateOrderItem(item.orderItemId, { status: orderItemStatus });
+          if (status === "READY") {
+            await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+          }
         }
 
         const ticket = await storage.getKitchenTicketByItemId(item.id);

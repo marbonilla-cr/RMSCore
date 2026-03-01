@@ -153,6 +153,8 @@ export const kitchenTicketItems = pgTable("kitchen_ticket_items", {
   status: text("status").notNull().default("NEW"),
   prepStartedAt: timestamp("prep_started_at"),
   readyAt: timestamp("ready_at"),
+  kitchenItemGroupId: text("kitchen_item_group_id"),
+  seqInGroup: integer("seq_in_group"),
 });
 
 export const payments = pgTable("payments", {

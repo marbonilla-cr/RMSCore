@@ -1,4 +1,5 @@
 import type { Express, Request, Response, NextFunction } from "express";
+import crypto from "crypto";
 import { db } from "./db";
 import * as storage from "./storage";
 import * as invStorage from "./inventory-storage";
@@ -445,14 +446,30 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
             sentToKitchenAt: new Date(),
           });
 
-          await storage.createKitchenTicketItem({
-            kitchenTicketId: ticketId,
-            orderItemId: createdItem.id,
-            productNameSnapshot: createdItem.productNameSnapshot,
-            qty: createdItem.qty,
-            notes: createdItem.notes,
-            status: "NEW",
-          });
+          if (createdItem.qty > 1) {
+            const groupId = crypto.randomUUID();
+            for (let seq = 1; seq <= createdItem.qty; seq++) {
+              await storage.createKitchenTicketItem({
+                kitchenTicketId: ticketId,
+                orderItemId: createdItem.id,
+                productNameSnapshot: createdItem.productNameSnapshot,
+                qty: 1,
+                notes: createdItem.notes,
+                status: "NEW",
+                kitchenItemGroupId: groupId,
+                seqInGroup: seq,
+              });
+            }
+          } else {
+            await storage.createKitchenTicketItem({
+              kitchenTicketId: ticketId,
+              orderItemId: createdItem.id,
+              productNameSnapshot: createdItem.productNameSnapshot,
+              qty: 1,
+              notes: createdItem.notes,
+              status: "NEW",
+            });
+          }
 
           try {
             await onOrderItemsConfirmedSent(order.id, [createdItem.id], userId);

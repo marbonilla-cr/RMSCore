@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { wsManager } from "@/lib/ws";
-import { ChefHat, Clock, CheckCircle, Loader2, Trash2, Wine } from "lucide-react";
+import { ChefHat, Clock, CheckCircle, Loader2, Trash2, Wine, Ban } from "lucide-react";
 
 interface KDSTicketItem {
   id: number;
@@ -13,6 +13,9 @@ interface KDSTicketItem {
   prepStartedAt: string | null;
   readyAt: string | null;
   customerNameSnapshot?: string | null;
+  kitchenItemGroupId?: string | null;
+  seqInGroup?: number | null;
+  totalInGroup?: number | null;
   modifiers?: { id: number; nameSnapshot: string; priceDeltaSnapshot: string; qty: number }[];
 }
 
@@ -105,7 +108,8 @@ function groupTicketsByOrder(tickets: KDSTicket[]): GroupedTicket[] {
     }
   }
   Array.from(map.values()).forEach((g) => {
-    g.allReady = g.items.length > 0 && g.items.every((i: KDSTicketItem) => i.status === "READY");
+    const activeItems = g.items.filter((i: KDSTicketItem) => i.status !== "VOIDED");
+    g.allReady = activeItems.length > 0 && activeItems.every((i: KDSTicketItem) => i.status === "READY");
   });
   return Array.from(map.values());
 }
@@ -285,12 +289,14 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
   const getItemStatusLabel = (status: string) => {
     if (status === "NEW") return "NUEVO";
     if (status === "PREPARING") return "PREP";
+    if (status === "VOIDED") return "ANULADO";
     return "LISTO";
   };
 
   const getItemStatusCls = (status: string) => {
     if (status === "NEW") return "new";
     if (status === "PREPARING") return "preparing";
+    if (status === "VOIDED") return "voided";
     return "ready";
   };
 
@@ -434,6 +440,12 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
         .kds-item.new { border-left: 3px solid var(--amber); }
         .kds-item.preparing { border-left: 3px solid var(--blue); background: var(--blue-d); }
         .kds-item.ready { border-left: 3px solid var(--green); background: var(--green-d); opacity: 0.7; }
+        .kds-item.voided { border-left: 3px solid var(--red); background: rgba(239, 68, 68, 0.15); opacity: 0.75; cursor: default; pointer-events: none; }
+        .kds-item.voided .kds-item-name { text-decoration: line-through; color: var(--red); }
+        .kds-item.voided .kds-item-qty { color: var(--red); text-decoration: line-through; }
+        .kds-item.voided .kds-item-status { color: var(--red); }
+        .kds-item.voided .kds-item-mods { text-decoration: line-through; }
+        .kds-item.voided .kds-item-notes { text-decoration: line-through; }
 
         .kds-item-qty {
           font-family: var(--f-mono);
@@ -714,14 +726,26 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
                           key={item.id}
                           className={`kds-item ${statusCls}`}
                           onClick={() => {
+                            if (item.status === "VOIDED") return;
                             const next = getNextStatus(item.status);
                             if (next) updateItemMutation.mutate({ itemId: item.id, status: next });
                           }}
                           data-testid={`kds-item-${item.id}`}
                         >
-                          <span className="kds-item-qty">{item.qty}x</span>
+                          {item.status === "VOIDED" ? (
+                            <Ban size={18} style={{ color: "var(--red)", flexShrink: 0 }} />
+                          ) : (
+                            <span className="kds-item-qty">{item.seqInGroup && item.totalInGroup ? "" : `${item.qty}x`}</span>
+                          )}
                           <div className="kds-item-info">
-                            <div className="kds-item-name">{item.productNameSnapshot}</div>
+                            <div className="kds-item-name">
+                              {item.productNameSnapshot}
+                              {item.seqInGroup && item.totalInGroup && (
+                                <span style={{ fontFamily: "var(--f-mono)", fontSize: 12, color: item.status === "VOIDED" ? "var(--red)" : "var(--text3)", marginLeft: 6 }}>
+                                  ({item.seqInGroup}/{item.totalInGroup})
+                                </span>
+                              )}
+                            </div>
                             {item.customerNameSnapshot && (
                               <div className="kds-item-customer" data-testid={`kds-item-customer-${item.id}`}>{item.customerNameSnapshot}</div>
                             )}
@@ -780,8 +804,14 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
                   </div>
                   <div className="kds-history-items">
                     {group.items.map((item) => (
-                      <div key={item.id} className="kds-history-item">
-                        <span>{item.qty}x {item.productNameSnapshot}</span>
+                      <div key={item.id} className="kds-history-item" style={item.status === "VOIDED" ? { textDecoration: "line-through", color: "var(--red)" } : undefined}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          {item.status === "VOIDED" && <Ban size={12} style={{ color: "var(--red)", flexShrink: 0 }} />}
+                          {item.seqInGroup && item.totalInGroup
+                            ? `${item.productNameSnapshot} (${item.seqInGroup}/${item.totalInGroup})`
+                            : `${item.qty}x ${item.productNameSnapshot}`
+                          }
+                        </span>
                         {item.customerNameSnapshot && (
                           <span style={{ color: "var(--text3)", fontSize: 11 }}>{item.customerNameSnapshot}</span>
                         )}

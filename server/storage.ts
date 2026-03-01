@@ -214,6 +214,7 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "AUDIT_VIEW", description: "Ver auditoría de faltantes" },
   { key: "AUDIT_MANAGE", description: "Gestionar alertas de auditoría" },
   { key: "MENU_TOGGLE_AVAILABILITY", description: "Cambiar disponibilidad de productos" },
+  { key: "VOID_AUTHORIZE", description: "Autorizar anulaciones de items enviados a cocina" },
 ];
 
 export async function ensureSystemPermissions() {
@@ -738,11 +739,18 @@ export async function getKitchenTicketItemsByTicketIds(ticketIds: number[]) {
     status: kitchenTicketItems.status,
     prepStartedAt: kitchenTicketItems.prepStartedAt,
     readyAt: kitchenTicketItems.readyAt,
+    kitchenItemGroupId: kitchenTicketItems.kitchenItemGroupId,
+    seqInGroup: kitchenTicketItems.seqInGroup,
     customerNameSnapshot: orderItems.customerNameSnapshot,
   })
     .from(kitchenTicketItems)
     .leftJoin(orderItems, eq(kitchenTicketItems.orderItemId, orderItems.id))
     .where(inArray(kitchenTicketItems.kitchenTicketId, ticketIds));
+}
+
+export async function getKitchenTicketItemsByGroupId(groupId: string) {
+  return db.select().from(kitchenTicketItems)
+    .where(eq(kitchenTicketItems.kitchenItemGroupId, groupId));
 }
 
 export async function updateKitchenTicketItem(id: number, data: any) {
