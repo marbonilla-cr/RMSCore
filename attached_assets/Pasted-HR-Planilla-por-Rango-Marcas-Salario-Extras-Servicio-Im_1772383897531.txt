@@ -1,0 +1,255 @@
+HR Planilla por Rango: Marcas + Salario + Extras + % Servicio (Implementación End-to-End)
+COPY/PASTE PROMPT PARA REPLIT
+
+Actúa como ingeniero senior full-stack + QA. Implementa end-to-end lo siguiente en el proyecto RMS. No teoría. Quiero cambios concretos, archivos tocados, y pruebas reproducibles. Respeta exactamente este spec.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OBJETIVO
+Corregir y completar el módulo de RRHH:
+(1) Validación de marcas clock-in/out
+(2) Motor de planilla por rango con base legal CR: jornada ordinaria y horas extra por horario (scheduledEnd), NO por umbral
+(3) Extras manuales con catálogo y auditoría
+(4) % servicio para saloneros usando datos existentes (service_charge_ledger)
+Todo usando parámetros del HR Config existente como fuente de verdad.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SOURCE OF TRUTH: HR CONFIG (YA ENCONTRADO)
+Tabla: hr_settings en shared/schema.ts (líneas 390-412)
+- overtimeDailyThresholdHours (numeric default "8") => usar como jornadaOrdinariaHorasPorDia (para derivar hourlyRate)
+- overtimeMultiplier (numeric default "1.5") => multiplicador hora extra
+- serviceChargeRate (numeric default "0.10") => % servicio default (solo para snapshot/UI; el POOL real viene de ledger)
+- latenessGraceMinutes (integer default 0) => gracia para marcar tardía (solo threshold del flag)
+- autoLogoutAfterShiftHours (integer default 4) => NO usar para overtime; solo relevante para auto-logout job
+No existe: redondeo de minutos => fallback minuto exacto
+No existe: jornada mixta/nocturna => NO implementar
+No existe: override % servicio por empleado => motor preparado, NO crear campo
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SOURCE OF TRUTH: SERVICE DATA (YA ENCONTRADO)
+Tabla: service_charge_ledger en shared/schema.ts (líneas 459-472)
+- businessDate (text) => “día de venta”
+- serviceAmount (numeric) => monto servicio cobrado por ítem
+- responsibleWaiterEmployeeId (integer) => salonero responsable
+Reglas:
+- Pool de servicio por día = SUM(serviceAmount) WHERE businessDate = D
+- Fuente preferida: usar serviceAmount directamente (ya calculado durante pago)
+- No recalcular servicio desde ventas si ledger existe: el ledger manda.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ESTADO ACTUAL DE VALIDACIÓN DE MARCAS
+- Clock-in con punch abierto: YA BLOQUEADO (409) ✅
+- Clock-out sin punch abierto: HOY CREA PUNCH VACÍO ❌ => DEBE BLOQUEARSE
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TARIFA DERIVADA (NO hourlyRate EN DB)
+- hourlyRate = dailyRate / Number(hrConfig.overtimeDailyThresholdHours || 8)
+- NO crear hourlyRate en DB
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TASKS (IMPLEMENTAR TAL CUAL)
+
+T001: Block clock-out without open clock-in (marcas validation)
+- En server/routes.ts, encontrar las 3 rutas de clock-out:
+  a) PIN clock-out (~line 627)
+  b) HR clock-out (~line 4899)
+  c) Override clock-out (~line 5001)
+- Cambio requerido:
+  - Si NO existe openPunch, NO crear punch fantasma.
+  - Responder 400 con mensaje EXACTO:
+    "No puede marcar salida si no ha marcado entrada primero."
+  - Registrar audit/log del intento (pero sin crear punch).
+- Frontend: asegurar que el mensaje se muestra correctamente en pantallas PIN clock y HR clock.
+- Acceptance:
+  - clock-out sin clock-in => 400, NO se crea punch
+
+T002: Create hr_extra_types + hr_payroll_extras tables + storage
+- En shared/schema.ts agregar:
+  1) hr_extra_types:
+     - typeCode (text PK)
+     - name (text)
+     - kind (text enum: 'EARNING'|'DEDUCTION')
+     - isActive (boolean default true)
+  2) hr_payroll_extras:
+     - id (serial PK)
+     - employeeId (int notNull)
+     - appliesToDate (text notNull, YYYY-MM-DD)
+     - typeCode (text notNull FK)
+     - amount (numeric(10,2) signed notNull)
+     - note (text)
+     - createdBy (int)
+     - createdAt (timestamp defaultNow)
+     - updatedBy (int)
+     - updatedAt (timestamp)
+     - isDeleted (boolean default false)
+- Ejecutar db:push
+- Seed default types ON STARTUP (upsert, idempotente):
+  BONO(EARNING), VIATICO(EARNING), REEMBOLSO(EARNING),
+  PRESTAMO_DEDUCCION(DEDUCTION), AJUSTE_POSITIVO(EARNING), AJUSTE_NEGATIVO(DEDUCTION)
+- En server/storage.ts agregar funciones:
+  - getExtraTypes() => activos
+  - getPayrollExtrasByRange(employeeId?, dateFrom, dateTo) => no deleted
+  - createPayrollExtra(data) => insert + audit_event
+  - updatePayrollExtra(id, data) => update + audit_event
+  - softDeletePayrollExtra(id) => isDeleted=true + audit_event
+- Acceptance: tablas existen, seed ok, CRUD storage ok
+
+T003: Create payroll computation engine (server/payroll.ts) (FUNCIONES PURAS)
+Crear server/payroll.ts con funciones puras (sin DB):
+A) computeDailyPayroll({ punchesForDay, scheduleForDay, dailyRate, hrConfig }):
+- hrConfig: overtimeDailyThresholdHours, overtimeMultiplier, latenessGraceMinutes
+- hourlyRate = dailyRate / Number(hrConfig.overtimeDailyThresholdHours || 8)
+- Multiple punches same day: first clockIn + last clockOut; hasMultiplePunches flag
+- noShow:
+  - si scheduleForDay existe AND !isDayOff (si existe ese flag en schedule) AND no hay clockIn => noShow=true; basePay=0
+- Sin schedule:
+  - si hay punch => calcular normally (no tardy/noShow)
+- tardyMinutes:
+  - si hay scheduleStart:
+    - si clockIn > scheduleStart + grace => tardyMinutes = (clockIn - scheduleStart) (diferencia completa, NO restar gracia)
+    - grace solo determina si late=true
+  - si clockIn <= scheduleStart + grace => late=false, tardyMinutes=0
+- Early arrival:
+  - clockIn < scheduleStart => tardy=0, pago desde clockIn
+- workedEnd:
+  - si clockOutType=MANUAL => clockOut
+  - si AUTO/missing => scheduledEndAt (autoCheckout=true)
+- workedMinutes = max(0, workedEnd - clockIn) (minutos)
+- overtimeMinutes:
+  - SOLO si clockOutType=MANUAL y clockOut > scheduledEndAt => max(0, clockOut - scheduledEndAt)
+  - si AUTO o clockOut <= scheduledEndAt => 0
+- normalMinutes = workedMinutes - overtimeMinutes
+- normalPay = round2((normalMinutes/60) * hourlyRate)
+- overtimePay = round2((overtimeMinutes/60) * hourlyRate * Number(hrConfig.overtimeMultiplier || 1.5))
+- baseTotalPayDay = round2(normalPay + overtimePay)
+- Midnight-crossing:
+  - usar datetime completos; scheduledEndAt ya debe ser fecha siguiente si cruza medianoche
+- Return:
+  {
+    workedMinutes, normalMinutes, overtimeMinutes, tardyMinutes,
+    normalPay, overtimePay, baseTotalPayDay,
+    flags: { late, noShow, autoCheckout, midnightShift, hasMultiplePunches }
+  }
+
+B) computeServiceForDay({ businessDate, eligibleWaiters, servicePool, workedMinutesByEmployee }):
+- servicePool = SUM(serviceAmount) del service_charge_ledger para businessDate
+- weight(i)=workedMinutes(i)/totalWorkedMinutes
+- servicePay(i)=round2(servicePool*weight(i))
+- si totalWorkedMinutes=0 => todo 0
+- Return: map employeeId -> servicePayDay
+
+C) computeRangePayroll({ employees, schedulesMap, punchesMap, extrasMap, servicePoolMap, dateFrom, dateTo, hrConfig }):
+- Iterar cada fecha del rango, y cada empleado.
+- daily = computeDailyPayroll
+- extrasDay = sum(extras del día)
+- Servicio:
+  - SOLO empleados con rol/permiso de WAITER (usar roles/perms existentes)
+  - Calcular servicePayDay con computeServiceForDay usando eligibleWaiters del día
+  - IMPORTANTE: el pool se usa por día (businessDate)
+- Agregar dailyBreakdown por empleado:
+  Fecha | worked | normal | overtime | tardy | basePay | extras | service | flags
+- Agregados por empleado:
+  daysScheduled, daysPresent, daysNoShow,
+  totalNormalMin, totalOvertimeMin, totalLateMin, lateCount,
+  normalPay, overtimePay, basePayTotal,
+  extrasEarnings, extrasDeductions, extrasNet,
+  servicePayTotal,
+  grandTotalPay = round2(basePayTotal + extrasNet + servicePayTotal)
+- Acceptance:
+  - Pasa 8 casos base + extras + servicio prorrateo
+
+T004: Extras CRUD endpoints + payroll report API
+- En server/routes.ts agregar endpoints (proteger con HR_VIEW_TEAM):
+  GET  /api/hr/extra-types
+  GET  /api/hr/payroll-extras?employeeId=&dateFrom=&dateTo=
+  POST /api/hr/payroll-extras
+    - validar: typeCode existe y activo
+    - validar: note requerida para AJUSTE_POSITIVO, AJUSTE_NEGATIVO, PRESTAMO_DEDUCCION
+    - validar: amount requerido
+    - audit_event
+  PATCH /api/hr/payroll-extras/:id
+    - update + audit
+  DELETE /api/hr/payroll-extras/:id
+    - soft-delete + audit
+
+- Payroll report:
+  GET /api/hr/payroll-report?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD (HR_VIEW_TEAM)
+  También soportar ?weekStart=YYYY-MM-DD (dateTo=weekStart+6)
+  Debe:
+    1) leer hrSettings (snapshot)
+    2) obtener employees con schedules en rango (y/o activos)
+    3) obtener punches en rango
+    4) obtener extras en rango
+    5) obtener service_charge_ledger en rango y construir servicePoolMap por businessDate
+    6) construir schedulesMap por employeeId+date (ojo week schedule)
+    7) llamar computeRangePayroll
+  Respuesta:
+  {
+    hrConfigSnapshot: {
+      jornadaOrdinariaHorasPorDia: hrSettings.overtimeDailyThresholdHours,
+      multiplicadorHoraExtra: hrSettings.overtimeMultiplier,
+      servicePercentDefault: hrSettings.serviceChargeRate,
+      latenessGraceMinutes: hrSettings.latenessGraceMinutes,
+      roundingRule: "EXACT_MINUTE"
+    },
+    employees: [ payrollPorEmpleado con dailyBreakdown ]
+  }
+
+- En server/storage.ts agregar helpers:
+  - getServiceChargeLedgerByDates(dateFrom,dateTo)
+  - getSchedulesForDateRange(dateFrom,dateTo) (o método equivalente)
+  - getPunchesForDateRange(dateFrom,dateTo)
+- Acceptance: API devuelve planilla completa
+
+T005: Build Planilla UI tab in reports page
+En client/src/pages/hr/reports.tsx:
+- Agregar tab "Planilla"
+- Selector modo:
+  - Semanal: weekStart (lunes)
+  - Rango: dateFrom/dateTo
+- Tabla resumen por empleado:
+  Empleado | Días Prog | Días Pres | No Show | Hrs Normal | Hrs Extra | Tardías(count) | Min Tarde | Pago Base | Extras | Servicio | Total
+- Totals row al final
+- Expandible por empleado:
+  Fecha | Hrs Trab | Normal | Extra | Tardía | Pago Base | Extras | Servicio | Flags
+- Inline extras editor por día:
+  - Add extra: dropdown typeCode (active), amount ₡, note
+  - Edit/delete extras existentes
+  - Validación note requerida para AJUSTE_* / PRESTAMO_DEDUCCION
+- Solo WAITER muestra Servicio; otros “—”
+- Mostrar hrConfigSnapshot (badge/tooltip)
+- Moneda ₡ es-CR, 2 decimales
+- Acceptance: UI completa + gestión de extras
+
+T006: Seed extra types on startup + E2E validation
+- Seed idempotente al levantar server:
+  - Upsert defaults si no existen
+- Validar en app:
+  a) payroll report carga y calcula correcto
+  b) extras CRUD funciona
+  c) servicio aparece y suma para WAITER
+  d) clock-out sin clock-in bloqueado 400 (sin punch fantasma)
+  e) no-shows detectados
+  f) overtime = clockOut - scheduledEndAt (no threshold)
+  g) hrConfigSnapshot se retorna y coincide con hr_settings
+- Acceptance: todo OK end-to-end
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DECISIONES YA APROBADAS (NO CAMBIAR)
+- "Día de venta": businessDate de service_charge_ledger
+- Pool de servicio: SUM(serviceAmount) del ledger (ya calculado al cobrar)
+- Redondeo: minuto exacto; pagos a 2 decimales
+- hourlyRate: dailyRate / overtimeDailyThresholdHours (default 8)
+- Overtime: basado en scheduledEndAt (clockOut - scheduledEndAt), NO threshold-based
+- Override % servicio por empleado: NO implementar
+- Jornada mixta/nocturna: NO implementar
+- Multiple punches: first clockIn + last clockOut, intermedios auditados
+- Clock-out sin clock-in: BLOQUEADO (400) y sin punch fantasma
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SALIDA FINAL OBLIGATORIA
+1) Lista de archivos tocados y por qué
+2) Migraciones / db:push aplicado
+3) Evidencia de pruebas: expected vs actual (mínimo 8 casos + servicio + extras + marcas)
+4) Captura/print de hrConfigSnapshot retornado por API
+5) Confirmación de queries usadas para servicePoolMap (SUM(serviceAmount) GROUP BY businessDate)
+6) Confirmación de bloqueo de clock-out sin openPunch en las 3 rutas

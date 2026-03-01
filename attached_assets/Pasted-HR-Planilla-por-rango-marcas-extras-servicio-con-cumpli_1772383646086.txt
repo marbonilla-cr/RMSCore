@@ -1,0 +1,162 @@
+HR / Planilla por rango + marcas + extras + % servicio — con cumplimiento Código de Trabajo CR y parámetros del módulo HR Config (COPY/PASTE)
+
+Actúa como ingeniero senior full-stack + QA. Debes corregir y dejar 100% funcional el módulo de Recursos Humanos: (1) marcas de entrada/salida (clock-in/out) y (2) cálculo de planilla (semanal y por rango), respetando las reglas de negocio del usuario, los parámetros existentes del módulo de configuración de RRHH y aspectos legales del Código de Trabajo de Costa Rica (jornada ordinaria, horas extra, descansos y redondeos/criterios definidos en config). Implementa cambios, enumera archivos tocados y deja pruebas reproducibles. No teoría.
+
+0) PRINCIPIO CLAVE
+- NO asumir nombres de campos de configuración: debes encontrarlos en el schema y código actual.
+- La planilla DEBE usar parámetros del HR Config como fuente de verdad (si existen), y solo usar defaults hardcodeados cuando NO exista parámetro (y documentarlo).
+- Todas las fechas/horas se manejan en America/Costa_Rica con datetimes completos.
+
+1) ZONA HORARIA, SEMANA Y RANGO
+- Timezone: America/Costa_Rica.
+- Semana planilla: Lunes a Domingo.
+- Reporte debe soportar:
+  A) Semanal: weekStart (lunes) => 7 días
+  B) Rango: dateFrom/dateTo inclusive
+
+2) PARÁMETROS DE HR CONFIG (OBLIGATORIOS)
+Debes localizar en el módulo de configuración de RRHH (ya existe) y leer en runtime, mínimo:
+- jornadaOrdinariaHorasPorDia (default legal típico 8 si no existe)
+- multiplicadorHoraExtra (default 1.5 si no existe)
+- reglas de redondeo de minutos (si existe: minuto exacto / 5 / 15, etc.)
+- regla de auto-checkout (si existe: usar scheduledEnd o una hora tope)
+- % servicio default (ya existe según usuario)
+- cualquier parámetro de “jornada mixta/nocturna” si el sistema ya lo contempla (si existe; si no existe, no inventar)
+
+PROCEDIMIENTO OBLIGATORIO PARA ENCONTRAR CONFIG:
+- Buscar en repo por: "hr config", "rrhh", "settings", "config", "jornada", "overtime", "extra", "service", "servicio", "porcentaje", "propina", "gratuity".
+- Identificar tabla/modelo/endpoint del HR Config y leer valores reales.
+- Si falta un valor crítico: documenta fallback aplicado y expón warning en logs.
+
+3) REGLA DE TARIFA (LEGAL + CONFIG)
+- El sistema hoy usa dailyRate.
+- Tarifa por hora se deriva:
+  hourlyRate = dailyRate / jornadaOrdinariaHorasPorDia
+- jornadaOrdinariaHorasPorDia debe venir de HR Config. Si no existe, default = 8.
+- NO crear hourlyRate en DB en esta iteración.
+
+4) AJUSTE MÓDULO DE MARCAS (CLOCK-IN/OUT) — VALIDACIÓN BACKEND + MENSAJE
+Objetivo: consistencia legal y de cálculo.
+- Bloquear clock-out si no hay clock-in abierto:
+  Mensaje: "No puede marcar salida si no ha marcado entrada primero."
+- Bloquear clock-in si ya hay clock-in abierto sin clock-out:
+  Mensaje: "Ya tiene una entrada activa. Debe marcar salida antes de volver a marcar entrada."
+- Validación obligatoria en backend (server/routes.ts). UI solo refleja el error.
+- No romper flujos existentes (PIN clock-out, HR clock-out, etc.)
+
+5) REGLAS DIARIAS DE CÁLCULO (BASE LEGAL + REGLAS DE NEGOCIO)
+Inputs diarios: schedule { scheduledStartAt, scheduledEndAt }, punches del día, user { dailyRate }, HR Config.
+
+Múltiples punches mismo día:
+- v1: usar primer clock_in y último clock_out.
+- Auditar punches intermedios (audit/log).
+
+Tardía (amonestación):
+- late = clock_in > scheduledStartAt
+- tardyMinutes = max(0, clock_in - scheduledStartAt)
+- La tardía NO elimina pago por el tiempo trabajado real.
+
+No show (amonestación):
+- Si existe schedule para el día y NO hay clock_in => noShow = true, pago base = 0.
+
+Worked time:
+- workedStart = clock_in
+- workedEnd:
+  - Si clock_out MANUAL/REAL: workedEnd = clock_out
+  - Si falta salida (AUTO por sistema): workedEnd = scheduledEndAt (o regla definida en HR Config si existe)
+- workedMinutes = max(0, workedEnd - workedStart)
+
+Horas extra (cumplimiento legal + regla negocio):
+- Overtime NO se calcula por umbral fijo, se calcula por horario:
+  - Si clock_out es MANUAL/REAL y scheduledEndAt existe:
+      overtimeMinutes = max(0, clock_out - scheduledEndAt)
+    Si clock_out es AUTO o clock_out <= scheduledEndAt:
+      overtimeMinutes = 0
+- normalMinutes = max(0, workedMinutes - overtimeMinutes)
+
+Redondeos:
+- Aplicar regla de redondeo definida en HR Config (si existe).
+- Si no existe, usar minuto exacto sin redondeo. Documentar.
+
+Pago:
+- hourlyRate = dailyRate / jornadaOrdinariaHorasPorDia
+- normalPay = (normalMinutes/60) * hourlyRate
+- overtimePay = (overtimeMinutes/60) * hourlyRate * multiplicadorHoraExtra
+  donde multiplicadorHoraExtra viene de HR Config; default legal común = 1.5 si no existe.
+- baseTotalPayDay = normalPay + overtimePay
+
+Turnos cruzando medianoche:
+- Soportar con datetime real (18:00–02:00). No usar comparación de horas sin fecha.
+
+6) EXTRAS (AJUSTES MANUALES CONTROLADOS + AUDITORÍA)
+- Implementar extras con catálogo (dropdown), monto y nota, con auditoría.
+- No permitir “tipo” libre.
+- Tabla sugerida:
+  hr_extra_types(typeCode, name, kind EARNING|DEDUCTION, isActive)
+  hr_payroll_extras(id, employeeId, appliesToDate, typeCode, amount signed, note, createdBy/At, updatedBy/At, isDeleted)
+- Nota obligatoria en tipos sensibles (AJUSTE_*, PRESTAMO_*, o según config si existe).
+- Registrar audit_events en create/update/delete.
+
+7) % SERVICIO (SOLO SALONEROS) — CONFIG EXISTENTE
+- Solo rol WAITER (salonero) o permiso habilitante si existe.
+- % servicio default YA existe en HR Config: localizarlo y leer valor real.
+- Override por empleado:
+  - usar solo si ya existe en schema actual; si no existe, no inventar.
+- Base:
+  - Si existe monto de servicio cobrado (service_amount): usarlo.
+  - Si no existe, calcular servicio = ventas_base * percentDefault.
+  - No duplicar.
+- Prorrateo por tiempo trabajado por día:
+  weight(i,D) = workedMinutes(i,D) / sum(workedMinutes elegibles(D))
+  servicePay(i,D) = poolService(D) * weight(i,D)
+- Definir “día de venta” con business_date o paid_at en TZ local (usar la fuente real del sistema).
+
+8) MOTOR (server/payroll.ts) — FUNCIONES PURAS
+Crear server/payroll.ts con:
+- computeDailyPayroll({ punchesForDay, scheduleForDay, dailyRate, hrConfig }) =>
+  { workedMinutes, normalMinutes, overtimeMinutes, tardyMinutes, normalPay, overtimePay, baseTotalPayDay, flags }
+- computeWeeklyPayroll({ punchesWeek, schedulesWeek, extrasWeek, salesWeek, employees, weekStart, hrConfig }) => agregados + dailyBreakdown
+- computeRangePayroll({ punches, schedules, extras, sales, employees, dateFrom, dateTo, hrConfig }) => agregados + dailyBreakdown
+- computeServiceForRange(...) separado o integrado, usando hrConfig.servicePercentDefault real.
+
+9) ENDPOINTS
+- GET /api/hr/payroll-report?weekStart=YYYY-MM-DD
+- GET /api/hr/payroll-report?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+Return por empleado:
+{
+  employeeId, name, role,
+  hrConfigSnapshot: { jornadaOrdinariaHorasPorDia, multiplicadorHoraExtra, servicePercentDefault, roundingRule, ... },
+  daysScheduled, daysPresent, daysNoShow,
+  totalNormalMin, totalOvertimeMin, totalLateMin, lateCount,
+  normalPay, overtimePay, basePayTotal,
+  extrasEarnings, extrasDeductions, extrasNet,
+  servicePayTotal,
+  totalPay,
+  dailyBreakdown: [{ date, workedMinutes, normalMinutes, overtimeMinutes, tardyMinutes, basePay, extras[], servicePayDay, flags }]
+}
+
+Extras CRUD:
+- GET /api/hr/extra-types
+- GET/POST/PUT/DELETE(soft) /api/hr/payroll-extras
+
+10) UI (client/src/pages/hr/reports.tsx)
+- Tab "Planilla Semanal" + modo "Rango".
+- Tabla: Empleado | Días Prog | Días Pres | No Show | Hrs Norm | Hrs Extra | Tardías | Pago Base | Extras | Servicio | Total
+- Expandible con dailyBreakdown + editor extras (dropdown + monto + nota).
+- Mostrar snapshot de HR Config usado (tooltip o panel) para trazabilidad.
+
+11) PRUEBAS (MÍNIMO)
+- 8 casos base (puntual, tarde, overtime, auto, no show, salida antes, entrada antes, midnight).
+- Extras: bono positivo, deducción con nota obligatoria.
+- Servicio: 2 saloneros prorrateo; día sin elegibles.
+- Marcas: bloquear salida sin entrada; bloquear entrada con entrada activa.
+- Además: validar que multiplicadorHoraExtra y jornadaOrdinariaHorasPorDia se están leyendo de HR Config (o fallback documentado).
+
+12) SALIDA FINAL OBLIGATORIA
+Entregar:
+- Archivos tocados
+- Migraciones (si extras/catálogo)
+- Evidencia tests expected vs actual
+- Dónde está cada parámetro de HR Config (archivo/tabla/campo exacto), incluyendo % servicio, jornada ordinaria y multiplicador horas extra
+- Qué campos/tablas se usan para ventas_base y/o monto servicio y cómo defines “día de venta”
+- Cualquier fallback aplicado (y por qué)

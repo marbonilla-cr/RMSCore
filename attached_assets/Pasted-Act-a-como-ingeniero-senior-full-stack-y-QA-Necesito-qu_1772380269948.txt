@@ -1,0 +1,91 @@
+Actúa como ingeniero senior full-stack y QA. Necesito que corrijas y dejes 100% funcional el módulo de Recursos Humanos (marcas de ingreso/salida + cálculo semanal de salario) con base en estas reglas. Implementa la lógica, agrega validaciones, cubre casos borde y deja pruebas (unitarias o al menos un set de casos de prueba reproducibles).
+
+CONTEXTO
+- El sistema guarda marcas de ingreso (clock_in) y salida (clock_out).
+- Los horarios por empleado están definidos (por día) con hora de inicio y fin (scheduled_start, scheduled_end).
+- El salario del empleado se calcula por hora (hourly_rate). (Si existe salario diario, conviértelo a hourly_rate según horas programadas del día.)
+- Semana laboral para planilla: Lunes a Domingo (business_week).
+
+OBJETIVOS FUNCIONALES
+1) Reporte de tardías (amonestación):
+   - Si clock_in > scheduled_start => tardía.
+   - Guardar minutos_tardia = diferencia en minutos.
+   - La tardía NO elimina el derecho a salario por las horas que sí trabajó.
+
+2) Reporte de no presentación (amonestación):
+   - Si NO existe clock_in en un día programado => “no se presentó”.
+   - Si existe clock_in pero falta clock_out, NO es “no se presentó”; se maneja como salida faltante.
+
+3) Cálculo de horas trabajadas del día:
+   - El tiempo trabajado se mide desde clock_in (NO desde scheduled_start).
+   - Caso A: Marcó salida correctamente:
+       worked_end = clock_out
+   - Caso B: No marcó salida y el sistema lo desloguea/auto-cierra:
+       worked_end = scheduled_end (hora final del horario del día)
+       (esto es regla obligatoria: si falta salida, se asume salida = scheduled_end)
+   - worked_minutes = max(0, worked_end - clock_in)
+
+4) Separación de jornada normal vs tiempo adicional:
+   - “Tiempo adicional” = tiempo por encima de scheduled_end, SOLO si clock_out > scheduled_end (y marcó salida real).
+   - Si clock_out <= scheduled_end, todo es tiempo normal (aunque haya entrado tarde).
+   - Si falta salida (auto) => NO hay tiempo adicional; se asume worked_end = scheduled_end.
+
+5) Pago de horas extra (1.5):
+   - Las horas extra SOLO aplican para el tramo fuera del horario normal:
+       overtime_minutes = max(0, clock_out - scheduled_end) (solo cuando hay clock_out real)
+   - normal_minutes = worked_minutes - overtime_minutes
+   - Pagar:
+       normal_pay = (normal_minutes/60) * hourly_rate
+       overtime_pay = (overtime_minutes/60) * hourly_rate * 1.5
+
+6) Salario semanal:
+   - Sumar por empleado, de lunes a domingo:
+       total_normal_minutes, total_overtime_minutes, total_pay = sum(normal_pay + overtime_pay)
+   - También sumar métricas para reportes:
+       days_scheduled, days_present, days_no_show, total_late_minutes, late_count
+
+RESTRICCIONES Y DECISIONES CLAVE
+- Si el empleado llega tarde y luego se queda hasta más tarde: se paga overtime SOLO por lo que exceda scheduled_end, no “para compensar tardía”.
+- Si el empleado llega antes de scheduled_start:
+   - Definir comportamiento (elige uno y documenta):
+     Opción recomendada: contar tiempo desde clock_in igualmente (se paga), pero NO se marca tardía.
+- Si hay múltiples marcas en el día (ej: salió y volvió a entrar):
+   - Definir una política clara:
+     Opción recomendada v1: tomar el primer clock_in y el último clock_out del día, y registrar los intermedios como eventos de auditoría.
+- Si un turno cruza medianoche:
+   - Debe soportarse (ej. 6pm–2am). Calcular con datetime completos, no solo horas.
+- Redondeo:
+   - Definir regla consistente: redondear minutos al minuto exacto (sin redondeo a 15), y pago con 2 decimales.
+- Zona horaria:
+   - Usar la TZ del negocio; no mezclar UTC en cálculos sin normalizar.
+
+SALIDA ESPERADA (ENTREGABLES)
+A) Implementación lista:
+   - Función pura (ej: computeDailyPayroll(employee, schedule, marks) -> resultado)
+   - Función semanal (computeWeeklyPayroll(week_range, employees))
+B) Persistencia / reportes:
+   - Guardar por día: normal_minutes, overtime_minutes, tardy_minutes, flags (late, no_show, auto_checkout_used)
+   - Guardar por semana: totales y pago.
+C) Pruebas:
+   - Crea un set de casos de prueba mínimo (con fechas y horas exactas) que cubra:
+     1. Puntual: 8:00–17:00
+     2. Tarde: 8:10–17:00 (tardía 10, normal desde 8:10)
+     3. Tarde + overtime: 8:10–18:00 (tardía 10, overtime 60)
+     4. Sin salida (auto): 8:00–(sin salida) => salida = 17:00
+     5. No show: sin clock_in
+     6. Salida antes: 8:00–16:30
+     7. Entrada antes: 7:50–17:00
+     8. Turno cruzando medianoche: 18:00–02:00
+   - En cada caso, imprime expected vs actual.
+
+ANTES DE CODEAR
+1) Encuentra dónde están los modelos/tabla de: schedules, time punches (marks), employees, payroll weekly.
+2) Identifica el bug actual: qué está calculando mal (tardía, no show, overtime, auto checkout, etc.)
+3) Propón un ajuste mínimo de esquema si hace falta (ej: guardar auto_checkout_used, punch_source, etc.)
+
+IMPLEMENTA Y DEJA FUNCIONANDO
+No me des teoría. Dame:
+- Qué archivos tocaste
+- Funciones creadas/modificadas
+- Casos de prueba con resultados
+- Cualquier decisión tomada (como múltiples marcas o entrada antes)

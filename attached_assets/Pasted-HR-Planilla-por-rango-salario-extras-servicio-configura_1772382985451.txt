@@ -1,0 +1,236 @@
+HR / Planilla por rango: salario + extras + % servicio configurable (solo saloneros) — SIN tocar módulo de marcas
+
+Actúa como ingeniero senior full-stack + QA. Debes implementar y dejar 100% funcional el cálculo de planilla por rango de fechas usando datos EXISTENTES del módulo de marcas (punches). IMPORTANTE: NO modificar el módulo de marcas; solo consumir su información como fuente de verdad.
+
+OBJETIVO
+- Calcular planilla por rango [dateFrom, dateTo] (inclusive).
+- Entregar reporte por empleado con:
+  - Pago base (horas normales + horas extra 1.5) según reglas.
+  - Tardías y no-shows (amonestaciones).
+  - “Extras” (ajustes manuales) controlados por dropdown + notas + auditoría.
+  - “Servicio” (monto adicional por % servicio) SOLO para saloneros, según configuración del módulo HR (default) y, si existe, override por empleado.
+
+RANGO DE FECHAS
+- El usuario escoge dateFrom y dateTo (inclusive).
+- Todo cálculo (pago, no-shows, tardías, extras y servicio) se computa estrictamente dentro de ese rango.
+- Timezone: America/Costa_Rica. Usar datetimes completos, no strings de hora.
+
+REGLA DE TARIFA (NO hourlyRate EN DB)
+- hourlyRate NO existe en DB.
+- hourlyRate = dailyRate / 8 (siempre, jornada ordinaria de 8h).
+- dailyRate ya existe en usuario/empleado.
+
+REGLAS BASE DE CÁLCULO (POR DÍA)
+Inputs del día: schedule { scheduledStartAt, scheduledEndAt }, punches del día (pueden ser múltiples), user { dailyRate }.
+- Derivar hourlyRate = dailyRate / 8
+
+Política múltiples punches mismo día:
+- Tomar primer clock_in y último clock_out del día.
+- Marcas intermedias: registrar audit/log (no se pierden; al menos quedan auditadas).
+
+Tardía (amonestación):
+- late = clock_in > scheduledStartAt
+- tardyMinutes = max(0, clock_in - scheduledStartAt)
+
+No show (amonestación):
+- Si existe schedule para ese día y NO existe clock_in => noShow = true
+- Si noShow = true, pago base del día = 0.
+
+Worked time:
+- workedStart = clock_in
+- workedEnd:
+  - Si clock_out es MANUAL/REAL: workedEnd = clock_out
+  - Si falta clock_out (AUTO / cierre por sistema): workedEnd = scheduledEndAt (obligatorio)
+- workedMinutes = max(0, workedEnd - workedStart)
+
+Overtime (CRÍTICO: NO usar umbral fijo):
+- Si clock_out es MANUAL/REAL y scheduledEndAt existe:
+    overtimeMinutes = max(0, clock_out - scheduledEndAt)
+  Si clock_out es AUTO o clock_out <= scheduledEndAt:
+    overtimeMinutes = 0
+- normalMinutes = workedMinutes - overtimeMinutes
+- normalPay = (normalMinutes/60) * hourlyRate
+- overtimePay = (overtimeMinutes/60) * hourlyRate * 1.5
+- baseTotalPayDay = normalPay + overtimePay
+
+Early arrival:
+- Si clock_in < scheduledStartAt: tardía 0, se paga desde clock_in igualmente.
+
+Turnos cruzando medianoche:
+- Debe soportarse (ej: 18:00–02:00). Comparar con datetime real en TZ local.
+
+NO MODIFICAR EL MÓDULO DE MARCAS
+- No tocar endpoints, lógica ni datos del módulo de punches/marcas.
+- Si hoy punches históricos guardan overtime mal, NO los “arregles” reescribiendo marcas.
+- El motor de planilla debe calcular overtime “on the fly” usando scheduleEndAt para el reporte.
+
+EXTRAS (AJUSTES MANUALES CONTROLADOS + AUDITORÍA)
+Se requiere un mecanismo de extras que afecte el total de planilla y quede correctamente registrado.
+- Crear tablas nuevas (si no existen):
+  1) hr_payroll_extras:
+     - id
+     - employeeId
+     - appliesToDate (date, obligatorio)  // v1: por día; no inventar rango por ahora
+     - typeCode (FK a catálogo)
+     - amount (numeric signed, ₡)
+     - note (text)
+     - createdBy, createdAt, updatedBy, updatedAt
+     - isDeleted (bool) opcional para soft-delete
+  2) hr_extra_types (catálogo controlado):
+     - typeCode (unique)
+     - name
+     - kind (EARNING|DEDUCTION)
+     - isActive
+     Ejemplos: BONO, VIATICO, REEMBOLSO, PRESTAMO_DEDUCCION, AJUSTE_POSITIVO, AJUSTE_NEGATIVO
+
+Reglas de UI/validación:
+- El usuario solo puede elegir typeCode de catálogo activo (dropdown).
+- note obligatoria para AJUSTE_* y PRESTAMO_DEDUCCION.
+- Registrar en audit_events la creación/edición/soft-delete de extras.
+
+% SERVICIO (SOLO SALONEROS — CONFIG EXISTENTE EN HR)
+Objetivo: sumar a saloneros un “servicePay” adicional calculado por % servicio.
+
+ELEGIBILIDAD:
+- Solo empleados con rol WAITER (salonero) o permiso específico habilitante (si existe).
+- Por el momento NO aplica a cajeros.
+
+CONFIG % SERVICIO (OBLIGATORIO — NO INVENTAR):
+- El % servicio DEFAULT ya existe en la configuración del módulo de Recursos Humanos.
+- Debes localizarlo en el código y DB/settings existente. Pasos obligatorios:
+  1) Buscar en el repo por: "service", "servicio", "percent", "percentage", "gratuity", "tip", "propina", "serviceCharge", "service_rate".
+  2) Identificar el modelo/tabla/endpoint que expone la config del módulo HR (ej: hr_settings, settings, module_config, etc.).
+  3) Confirmar con un ejemplo real: leer el valor actual desde la config en runtime (o query DB).
+- Si NO encuentras el campo:
+  - NO crear uno nuevo en esta iteración.
+  - Lanza error controlado y visible: "HR service percent default not found in HR module config" e indica dónde buscaste.
+
+OVERRIDE % POR EMPLEADO (si ya existe):
+- Si ya existe un override por empleado en el schema actual, úsalo con prioridad sobre el default.
+- Si NO existe override hoy:
+  - no inventar campos nuevos en DB en esta iteración.
+  - deja el motor preparado para aceptar override opcional (nullable) y documenta el punto de extensión.
+
+BASE DE CÁLCULO DEL SERVICIO (ELEGIR SEGÚN DATOS REALES)
+- Primero intenta usar “monto de servicio cobrado” si existe en ventas/pagos (preferido):
+    poolService(D) = sum(service_amount) de ventas pagadas del día D
+- Si NO existe service_amount pero sí existe base de ventas:
+    poolService(D) = sum(ventas_base(D)) * hrServicePercentDefault
+- No duplicar servicio (no sumar service_amount y además % sobre ventas).
+- Debes documentar exactamente qué campos/tablas usaste para:
+  - ventas_base(D)
+  - service_amount (si existe)
+  - fecha de ventas (business_date o paid_at normalizado a TZ)
+
+PRORRATEO DEL SERVICIO POR TIEMPO (por día)
+Para cada día D dentro del rango:
+1) Elegibles(D) = saloneros elegibles que trabajaron ese día (workedMinutes > 0).
+2) weight(i,D) = workedMinutes(i,D) / sum(workedMinutes(all eligibles, D))
+3) Percent por empleado:
+   percent(i) = employeeOverridePercent ?? hrServicePercentDefault  (solo si override existe en schema)
+4) Si percent varía por empleado (override existe):
+   - NO uses un único pool con un solo percent.
+   - Calcula por empleado:
+     serviceRaw(i,D) = ventas_base(D) * percent(i)  (o proporcional sobre service_amount si existe y quieres mantener override: documenta)
+     servicePay(i,D) = serviceRaw(i,D) * weight(i,D)
+5) Si percent NO varía (solo default):
+   - servicePay(i,D) = poolService(D) * weight(i,D)
+
+Nota: si no hay elegibles(D), servicePay=0 y documentar.
+
+CÁLCULO TOTAL POR EMPLEADO (RANGO)
+Para cada empleado, para cada día dentro [dateFrom, dateTo]:
+- Determina schedule del día y punches del día.
+- Calcula dailyBase = baseTotalPayDay (o 0 si noShow).
+- Aplica extras del día: extrasNetDay = sum(extras.amount)
+- Calcula servicePayDay (solo saloneros).
+- dailyGrand = dailyBase + extrasNetDay + servicePayDay
+Acumula totales del rango:
+- daysScheduled, daysPresent, daysNoShow
+- totalNormalMinutes, totalOvertimeMinutes, totalLateMinutes, lateCount
+- normalPay, overtimePay, basePayTotal
+- extrasEarnings, extrasDeductions, extrasNet
+- servicePayTotal
+- grandTotalPay
+
+MOTOR DE CÁLCULO (ENTREGABLES)
+Crear/actualizar server/payroll.ts con funciones puras:
+1) computeDailyPayroll({ punchesForDay, scheduleForDay, dailyRate }) =>
+   {
+     normalMinutes, overtimeMinutes, tardyMinutes,
+     normalPay, overtimePay, baseTotalPayDay,
+     flags: { late, noShow, autoCheckout, midnightShift, hasMultiplePunches }
+   }
+
+2) computeRangePayroll({ employees, schedules, punches, extras, dateFrom, dateTo, hrServicePercentDefault, salesData }) =>
+   returns por empleado: agregados + dailyBreakdown
+
+3) computeServiceForRange(...) separada o integrada:
+   - Identifica ventas_base(D) y/o service_amount(D) desde DB real
+   - Calcula servicePay por día con prorrateo
+
+ENDPOINTS NUEVOS
+1) GET /api/hr/payroll-report?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+   - Obtiene: empleados, schedules, punches, extras, ventas/pagos/servicio del rango
+   - Para cada empleado + día: computeDailyPayroll + extras + servicio
+   - Retorna por empleado:
+     {
+       employeeId, name, role,
+       daysScheduled, daysPresent, daysNoShow,
+       totalNormalMinutes, totalOvertimeMinutes, totalLateMinutes, lateCount,
+       normalPay, overtimePay, basePayTotal,
+       extrasEarnings, extrasDeductions, extrasNet,
+       hrServicePercentDefault, employeeServicePercentOverride (si existe), servicePayTotal,
+       grandTotalPay,
+       dailyBreakdown: [
+         { date, workedMinutes, normalMinutes, overtimeMinutes, tardyMinutes, basePay,
+           extras: [{typeCode, amount, note}],
+           servicePayDay
+         }
+       ]
+     }
+
+2) Extras CRUD:
+   - GET /api/hr/extra-types
+   - GET /api/hr/payroll-extras?employeeId=&dateFrom=&dateTo=
+   - POST /api/hr/payroll-extras
+   - PUT /api/hr/payroll-extras/:id
+   - DELETE (soft) /api/hr/payroll-extras/:id (si se implementa)
+
+UI (PLANILLA POR RANGO)
+En HR reports:
+- Selector dateFrom/dateTo.
+- Tabla por empleado:
+  Empleado | Días Prog | Días Pres | No Show | Hrs Norm | Hrs Extra | Tardías | Pago Base | Extras | Servicio | Total
+- Expandible por empleado: desglose diario.
+- Editor de extras en cada día:
+  dropdown typeCode (activo), amount, note (validación).
+- Moneda ₡ (es-CR).
+- Mostrar el % servicio default del HR config y si hay override (si existe).
+
+PRUEBAS / CASOS MÍNIMOS
+- 8 casos base (puntual, tarde, overtime, auto, no show, salida antes, entrada antes, midnight).
+- Extras:
+  - bono positivo con nota opcional
+  - deducción con nota obligatoria
+- Servicio:
+  - 2 saloneros mismo día con workedMinutes distintos => reparto proporcional exacto
+  - si percent override existe => cálculo correcto sin pool único
+  - día sin elegibles => servicio 0 asignado y documentado
+
+SALIDA FINAL (OBLIGATORIA)
+- Lista de archivos creados/modificados
+- Migraciones nuevas (solo extras/catálogo si aplica)
+- Evidencia de pruebas expected vs actual
+- Decisiones documentadas:
+  - dónde está hrServicePercentDefault (archivo/tabla/campo exacto)
+  - qué tablas/campos se usaron para ventas_base y service_amount
+  - cómo se definió “día de venta” (business_date vs paid_at) con TZ
+  - criterio de elegibilidad (rol/permisos)
+  - manejo de días sin schedule pero con punch (si aplica)
+
+RESTRICCIONES
+- No rehacer ni tocar el módulo de marcas.
+- No permitir texto libre como “tipo” de extra: siempre catálogo + nota.
+- No inventar nombres de campos: debes encontrarlos en el schema real.
+- Si falta el % servicio default en config HR (aunque el usuario dice que existe), NO crear nuevo; error controlado + evidencia de búsqueda.
