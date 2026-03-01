@@ -1,0 +1,206 @@
+Eres un senior full-stack/performance engineer trabajando en RMS (Node/Express + Drizzle/Postgres + React Query + WebSocket). Objetivo: hacer que los módulos MESAS y CAJA (POS) sean más rápidos que cualquier POS comercial. No cambies UX ni comportamiento funcional. No agregues dependencias nuevas. No inventes tablas/columnas: usa las existentes en el repo (schema.ts / migrations). Cambios deben compilar y correr.
+
+========================================
+SCOPE (SOLO MESAS + CAJA / POS HOT PATH)
+========================================
+Optimiza exclusivamente endpoints y queries que alimentan:
+- MESAS (POS tables + table current + waiter accept/void + QR submit impacta mesa)
+- CAJA (pay, pay-split/multi, receipt data, payments, paid orders, cash close/open)
+No optimices inventario/HR/etc salvo que impacte directamente CAJA/MESAS.
+
+========================================
+PERF RULES (OBLIGATORIAS)
+========================================
+1) Endpoints hot: p95 < 200ms en dev con data real; p99 < 400ms.
+2) Máximo 2 “rounds” por endpoint hot (máximo 2 awaits grandes con DB work).
+3) Máximo 6 queries por request en hot endpoints (ideal 3–5).
+4) CERO N+1: no queries dentro de loops. Todo batch con IN (...) + Map.
+5) Payload liviano: listados devuelven “snapshot” (resumen). Detalles solo cuando se abre una mesa/orden.
+6) Totales: nunca recalcular en runtime para listados; servir totales pre-calculados desde DB.
+7) Mutaciones (add/void/split/pay): siempre en db.transaction() y con batch updates/inserts.
+
+========================================
+ENDPOINTS HOT A OPTIMIZAR (BUSCAR LOS REALES)
+========================================
+Ubica en server/routes.ts (o donde estén):
+A) MESAS
+- GET /api/pos/tables
+- GET /api/tables/:id/current
+- POST /api/pos/orders/:orderId/add-items
+- POST /api/waiter/orders/:orderId/items/:itemId/void (o equivalente)
+- POST /api/qr/:tableCode/submit
+- POST /api/pos/split-order
+- GET /api/pos/orders/:orderId/splits
+
+B) CAJA
+- POST /api/pos/pay
+- POST /api/pos/pay-multi
+- POST /api/pos/pay-split
+- GET /api/pos/orders/:orderId/payments
+- GET /api/pos/receipt-data/:orderId
+- GET /api/pos/paid-orders
+- POST /api/cash/open + POST /api/cash/close (o equivalente)
+- GET /api/dashboard SOLO si CAJA lo usa al cerrar (si no, fuera de scope)
+
+Si algún endpoint tiene nombre diferente, usa el equivalente funcional (misma pantalla/flujo).
+
+===========================================================
+STEP 0 — PERF LOGGING GLOBAL (PARA HOT PATH, CONDICIONAL)
+===========================================================
+Implementa logging mínimo, sin dependencias:
+- En cada handler hot: const t0=Date.now(); al final si ms>200 => console.log(`[PERF] METHOD PATH ${ms}ms`)
+- Si puedes, incluye payload size (aprox) y counts (ej. orderIds.length) sin costo alto.
+No loguees todo, solo hot endpoints y solo >200ms.
+
+===============================================
+STEP 1 — ÍNDICES (FK + COMPUESTOS PARA HOT PATH)
+===============================================
+En server/db.ts (o init DB) agrega ensurePerfIndexes(db) con CREATE INDEX IF NOT EXISTS para:
+FK (si no existen):
+- order_item_modifiers(order_item_id)
+- order_item_taxes(order_item_id)
+- order_item_discounts(order_item_id)
+- order_item_discounts(order_id)
+- split_accounts(order_id)
+- split_items(split_id)
+- split_items(order_item_id)
+- order_subaccounts(order_id)
+- sales_ledger_items(order_item_id)
+- sales_ledger_items(order_id)
+- voided_items(order_id)
+- product_tax_categories(product_id)
+- qr_submissions(order_id)
+- payments(cash_session_id)
+
+COMPUESTOS (crear solo si columnas existen y se usan en WHERE/ORDER):
+- order_items(order_id, status)
+- orders(table_id, status) o (status, table_id) según queries existentes
+- sales_ledger_items(order_id, status)
+- payments(order_id) si existe order_id en payments
+- kitchen_ticket_items(status, created_at DESC) si KDS depende (solo si afecta MESAS)
+
+Acceptance: startup sin error; índices creados.
+
+=================================================
+STEP 2 — “SNAPSHOT” PARA GET /api/pos/tables (MESAS)
+=================================================
+Objetivo: que GET /api/pos/tables sea extremadamente rápido.
+Reglas:
+- 2 rounds máximo.
+- NO incluir relaciones pesadas en la lista (mods/taxes/discounts completos). Eso va al detalle.
+- Debe devolver por mesa: tableId, tableName, orderId (si hay), orderStatus, totals (precalc), itemCount, timestamps mínimos.
+
+Implementación:
+1) Asegura que orders tiene totales precalculados (ver Step 4). Si no existe, crea tabla order_totals o columnas en orders, y un método para mantenerlo.
+2) En storage.ts crea funciones batch y usa Promise.all en 2 rounds:
+   R1: tablas + open orders (solo campos mínimos, incluido total precalculado)
+   R2: itemCounts por orderId en una sola query (GROUP BY order_id) o usando order_items con COUNT(*).
+3) Evita traer items completos/mods/taxes en este endpoint.
+
+Acceptance: payload pequeño; 2 rounds; <=6 queries; se siente instantáneo.
+
+========================================================
+STEP 3 — DETALLE OPTIMIZADO GET /api/tables/:id/current
+========================================================
+Objetivo: detalle rápido pero completo.
+Reglas: 2 rounds máximo; todo batch; mods/taxes/discounts deben filtrarse por orderId sin depender de itemIds.
+
+Implementación:
+- Round 1: obtener {table, currentOpenOrder} de forma eficiente (ideal: query order por tableId; validar table existe).
+- Round 2: Promise.all de:
+  - order_items por orderId
+  - order_subaccounts por orderId
+  - voided_items por orderId (si aplica)
+  - modifiers/taxes/discounts por orderId (JOIN con order_items si solo tienen order_item_id)
+  - usuarios relacionados a voids en batch (WHERE id IN (...)) solo si hoy se devuelve
+Ensamblar respuesta igual a hoy.
+
+Acceptance: 2 rounds; sin loops await; perf <120ms.
+
+==========================================================
+STEP 4 — TOTALES PRECALCULADOS (CRÍTICO PARA MESAS + CAJA)
+==========================================================
+Objetivo: NUNCA recalcular total en runtime para listados ni para cobro.
+Implementa “source of truth” de totales por orden.
+
+Opciones:
+A) Si orders ya tiene campos de totals, úsalo.
+B) Si no, crea tabla order_totals(order_id PK, subtotal, tax_total, discount_total, service_total, total, updated_at).
+Preferir B si no quieres tocar orders.
+
+Reglas:
+- En cada mutación que impacta dinero: add-items, void item(s), split, pay, pay-split/multi: actualiza totales dentro de la misma transacción.
+- Deja recalcOrderTotal como función interna “rebuild” o fallback, pero no debe correr en endpoints hot salvo que sea estrictamente necesario.
+
+Implementación:
+- Crea storage.ensureOrderTotals(orderId) si ocupas bootstrap para órdenes viejas.
+- Crea storage.updateOrderTotalsTx(tx, orderId) que:
+  - calcula con queries batch (una vez) y escribe totals.
+  - NO N+1 de taxes: usa getProductTaxCategoriesByProductIds(productIds[]) fuera de loops.
+- Reemplaza usos de recalcOrderTotal en hot endpoints por lectura directa de totals.
+
+Acceptance: /api/pos/tables y flujos de CAJA leen totals precalculados; 0 recalcs por request.
+
+=======================================================
+STEP 5 — SPLITS: eliminar N+1 en GET /api/pos/orders/:id/splits
+=======================================================
+- Query 1: split_accounts por orderId
+- Query 2: split_items WHERE split_id IN (accountIds)
+- Agrupa con Map y responde.
+Cero loops await.
+
+======================================================
+STEP 6 — VOID: batch updates para void en MESAS/CAJA
+======================================================
+Optimiza void endpoints (void item, void order, void kitchen items):
+- UPDATE order_items SET status='VOIDED' ... WHERE id IN (...)
+- UPDATE sales_ledger_items SET status='VOIDED' ... WHERE order_item_id IN (...)
+- kitchen ticket items: SELECT ids WHERE order_item_id IN (...) + UPDATE ... WHERE id IN (...)
+Todo en tx.
+Luego update totals (Step 4) dentro de la misma tx.
+
+Acceptance: ~4 queries batch; sin loops await.
+
+====================================================
+STEP 7 — PAY / PAY-SPLIT / PAY-MULTI (CAJA) EN TX + BATCH
+====================================================
+Objetivo: pagar debe ser “instantáneo”.
+- Asegura que ledger/payments updates son batch.
+- Marca sales_ledger_items con paid_method_code/payment_id/paid_at/status=PAID en batch.
+- Inserta payments en 1 insert batch (si hay múltiples subcuentas).
+- Actualiza order status a PAID/closed en 1 update.
+- Update totals (o valida totals) sin recalcular caro; ideal: totals ya precalc.
+- Garantiza idempotencia básica: si ya está PAID, no duplicar pagos.
+
+Acceptance: <=6 queries; tx; p95 <200ms.
+
+===================================================
+STEP 8 — RECEIPT DATA / PAID ORDERS / PAYMENTS (READ OPT)
+===================================================
+- receipt-data: 2 rounds máximo (order+totals en R1, items+payments en R2).
+- paid-orders: paginación/cursor si hoy trae demasiadas; al menos LIMIT por defecto.
+- payments: un solo SELECT por orderId (con índices).
+
+===================================================
+STEP 9 — FRONTEND (MESAS + CAJA): WS FIRST, POLLING WATCHDOG
+===================================================
+Ubica hooks React Query del POS/MESAS/CAJA:
+- Cambia refetchInterval agresivo (5s/10s) a 60s en MESAS/CAJA si WS está activo.
+- Deja refetchOnReconnect true.
+- Evita invalidar queries redundantes si WS ya actualiza.
+- Al recibir WS event:
+  - actualiza cache con queryClient.setQueryData para snapshot y order detail.
+  - invalida solo si no puedes actualizar incrementalmente.
+
+Acceptance: reducción fuerte de tráfico; UI sigue “real time”.
+
+================
+ENTREGA ESPERADA
+================
+1) Lista exacta de archivos tocados (server/storage.ts, server/routes.ts, server/db.ts, hooks frontend).
+2) Para cada endpoint hot:
+   - Antes/Después: número de rounds, número de queries (estimado), y por qué.
+3) Ejemplos de logs [PERF] antes vs después (si aparece).
+4) Todo compila y corre.
+
+COMIENZA ahora: primero encuentra los handlers reales y sus funciones storage asociadas y aplica el plan sin salirte del scope.

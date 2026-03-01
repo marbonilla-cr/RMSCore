@@ -1,0 +1,308 @@
+Optimización de Rendimiento — MESAS + CAJA (POS) Hot Path (Plan Final + Hardening, SIN DUDAS)
+
+Eres un senior full-stack/performance engineer trabajando en RMS (Node/Express + Drizzle/Postgres + React Query + WebSocket). Objetivo: hacer MESAS + CAJA ultra-rápidos (p95 <200ms, p99 <400ms) y “vendibles”: sin doble cobro, sin desincronización cuando WS cae, y con observabilidad para evitar regresiones.
+
+CONTEXTO (ya optimizado sesión anterior):
+- 14 FK indexes ✓
+- GET /api/pos/tables: 2 rounds pero payload pesado ✓
+- GET /api/tables/:id/current: 2 rounds ✓
+- GET splits sin N+1 ✓
+- normalizeOrderItemsForSplit batch+tx ✓
+- recalcOrderTotal batch tax ✓
+- void-order batch ✓
+- dashboard parallelizado ✓
+
+BUGS actuales (bloquean arranque):
+- server/routes.ts: db.insert(voidedItems) usa voidedItems sin importarlo desde @shared/schema (error compilación)
+- server/db.ts ensurePerfIndexes: idx_payments_cash_session_id indexa payments.cash_session_id (columna NO existe)
+
+REGLAS (OBLIGATORIAS, NO NEGOCIABLES):
+1) NO cambies UX ni comportamiento funcional (solo performance y hardening).
+2) NO agregues dependencias nuevas.
+3) NO inventes tablas/columnas: valida todo en @shared/schema y ajusta nombres reales.
+4) CERO N+1: no queries dentro de loops; todo batch con IN (...) + Map caches.
+5) Endpoints hot: máximo 2 rounds (máximo 2 awaits grandes con DB work) y <=6 queries (ideal 3–5).
+6) Mutaciones (pay/pay-split/pay-multi/add-items): SIEMPRE dentro de db.transaction().
+7) Logs [PERF] solo si >200ms (no spamear).
+8) Idempotencia de pagos OBLIGATORIA: impedir doble cobro por doble click, refresh o retry (incluye casos “pago creado pero order no cerró”).
+9) “Finalization” de pagos debe ser idempotente y centralizada (una sola función reutilizada).
+
+SCOPE (SOLO):
+- Endpoints que alimentan MESAS y CAJA: /api/pos/tables, /api/tables/:id/current, add-items, pay, pay-split, pay-multi, splits, receipt-data, payments, paid-orders, waiter tables, qr submit si impacta mesa, cash open/close.
+NO optimizar inventario/HR salvo que afecte directamente estos endpoints.
+
+================================================================================
+T000: CORREGIR BUGS DE ARRANQUE
+================================================================================
+Bug 1 (compilación):
+- En server/routes.ts (alrededor del bloque void) existe: db.insert(voidedItems).values(voidInserts)
+- voidedItems NO está importado desde @shared/schema.
+Acción:
+- Agregar voidedItems al import desde @shared/schema en server/routes.ts (donde se importan tablas).
+Acceptance: compila sin error.
+
+Bug 2 (índices):
+- En server/db.ts ensurePerfIndexes existe idx_payments_cash_session_id ON payments(cash_session_id) pero payments NO tiene cash_session_id.
+Acción:
+- Eliminar ese índice.
+- Reemplazar por idx_payments_order_id ON payments(order_id) SOLO si payments.order_id existe.
+- ensurePerfIndexes no debe intentar indexar columnas inexistentes.
+Acceptance: startup sin errores/ruido.
+
+================================================================================
+T001: ÍNDICES COMPUESTOS HOT PATH (incluye “index extra” correcto según ORDER BY real)
+================================================================================
+Archivo: server/db.ts (ensurePerfIndexes)
+Agregar CREATE INDEX IF NOT EXISTS (solo si columnas existen):
+- idx_order_items_order_status ON order_items(order_id, status)
+- idx_orders_table_status ON orders(table_id, status)
+- idx_payments_order_id ON payments(order_id)  (esto reemplaza el índice roto)
+- idx_kti_order_item_id ON kitchen_ticket_items(order_item_id)
+
+ÍNDICE EXTRA (crear SOLO según el ORDER BY real usado por la query que lista órdenes OPEN en /api/pos/tables):
+- Si la query hace WHERE status='OPEN' ORDER BY updated_at DESC => idx_orders_status_updated ON orders(status, updated_at DESC)
+- Si ORDER BY created_at/opened_at => idx_orders_status_created (o opened_at) ON orders(status, created_at/opened_at DESC)
+NO adivinar: inspecciona la query existente y elige el índice correcto.
+
+Acceptance: startup sin error; índices creados.
+
+================================================================================
+T002: GET /api/pos/tables — SNAPSHOT LIVIANO (payload mínimo + campos necesarios)
+================================================================================
+Problema: hoy trae items completos + mods + taxes + discounts por orden (payload pesado).
+Objetivo: devolver SOLO snapshot por mesa:
+{ tableId, tableName, orderId, orderStatus, totalAmount, balanceDue, paidAmount, itemCount, openedAt, updatedAt(lastChangedAt), dailyNumber, globalNumber, ticketNumber, parentOrderId, splitIndex, subaccountNames }
+
+Reglas:
+1) Eliminar fetch de items completos/mods/taxes/discounts del listing.
+2) Round 1: tables + openOrders (incluye totals precalculados en orders; NO recalcular totals aquí).
+3) Round 2: Promise.all([itemCounts, subaccounts]) con 2 queries.
+4) Target: <=4 queries y payload 80% menor.
+5) itemCount debe contar “items que afectan el balance / siguen activos” SIN hardcode frágil.
+   - Preferir: contar items NO voided y que no estén finalizados, usando el modelo real (status enums reales y/o voided_at flag).
+   - Evitar “NOT IN” con statuses inventados. Define una constante COUNTABLE_STATUSES basada en schema real y reutilízala.
+
+Implementación:
+- server/storage.ts:
+  Crear getActiveItemCountsByOrderIds(orderIds):
+    SELECT order_id, COUNT(*)
+    FROM order_items
+    WHERE order_id IN (...) AND (condición robusta: status IN COUNTABLE_STATUSES o (status != VOIDED y no-finalizado))
+    GROUP BY order_id
+  Ajusta a enums reales desde schema.
+
+- server/routes.ts:
+  Modificar handler GET /api/pos/tables:
+  - Construir orderIds
+  - const [itemCounts, subaccounts] = await Promise.all([
+      storage.getActiveItemCountsByOrderIds(orderIds),
+      storage.getOrderSubaccountsByOrderIds(orderIds) (o equivalente real)
+    ])
+  - Ensamblar snapshot SIN items/mods/taxes/discounts
+  - Incluir updatedAt/lastChangedAt desde orders (campo real: updatedAt/updated_at/etc.)
+
+- client/src/pages/pos.tsx:
+  - Verificar que la lista de mesas NO depende de items/mods/taxes del listing.
+  - Si depende, adaptar para usar snapshot y cargar detalle solo con GET /api/tables/:id/current al seleccionar mesa.
+  - UX debe verse igual.
+
+Acceptance:
+- Payload mínimo; 2 rounds; <=4 queries; la lista funciona igual.
+
+================================================================================
+T003: POST /api/pos/pay — BATCH + TX + IDEMPOTENCIA + MENOS AWAITS
+================================================================================
+Problema: ~11 awaits seriales, sin tx, getActiveCashSession x2, getOrder x2.
+Objetivo: <=6 awaits principales, todo en db.transaction, idempotencia sólida, finalization idempotente.
+
+Idempotencia (OBLIGATORIA, sin migración si se puede):
+- El request body debe aceptar idempotencyKey (string). Frontend lo genera al abrir el modal “Pagar”.
+- Guardar el idempotencyKey en un campo EXISTENTE de payments de forma consistente:
+  - Preferir payments.metadata JSON si existe => metadata.idempotencyKey
+  - Si no: usar payments.notes/reference/description (el campo real) con formato EXACTO: "IDEMP:<key>"
+- Check idempotencia: antes de insertar pago, buscar payment existente para (order_id=X y key match y status válido).
+- Importante: si existe payment por key pero la order NO quedó finalizada (status no PAID), ejecutar finalization idempotente dentro de tx y devolver (no duplicar).
+
+Implementación:
+- const now = new Date() (una sola vez).
+- Cachear getActiveCashSession: 1 vez.
+- Cachear getOrder: 1 vez.
+- Dentro de db.transaction(async (tx)=>{...}):
+  1) Validaciones con lecturas no duplicadas.
+  2) Idempotency check:
+     - si payment existe por key => ejecutar finalizePaymentTx(...) (idempotente) y return.
+  3) Pago total:
+     - Batch update order_items por order_id SOLO en pago total:
+       UPDATE order_items SET status='PAID' WHERE order_id=X AND status NOT IN ('VOIDED') (ajusta enums reales)
+     - Batch update ledger por order_id:
+       UPDATE sales_ledger_items SET status='PAID', paid_at=now WHERE order_id=X AND status != 'VOIDED'
+  4) Split cleanup (si aplica):
+     - 1 query splitAccountIds por order_id=X
+     - DELETE split_items WHERE split_id IN (...)
+     - DELETE split_accounts WHERE order_id=X
+  5) Service charge: construir array y 1 insert batch (sin loop await).
+  6) Insert payment (1) guardando idempotencyKey.
+  7) Insert audit events en batch si aplica.
+  8) finalizePaymentTx(...) para cerrar orden/timestamps/balances.
+- Reducir awaits redundantes (no llamar getOrder/getActiveCashSession dos veces).
+
+Acceptance:
+- <=6 awaits principales; tx; idempotencia evita doble cobro; finalization idempotente; p95 <200ms.
+
+================================================================================
+T004: POST /api/pos/pay-split — ELIMINAR N+1 + TX + IDEMPOTENCIA
+================================================================================
+Problema: N+1 en loop por item split (mods/discounts/taxes). Sin tx.
+Objetivo: 0 queries en loops; tx; batch updates; idempotencia; finalization centralizada.
+
+Implementación:
+- const now = new Date()
+- Cachear getActiveCashSession: 1 vez.
+- Dentro de tx:
+  1) Idempotency check (por split payment) con el mismo esquema que T003.
+     - Si existe payment por key => finalizePaymentTx(...) si falta y devolver.
+  2) Load split items en batch (1 query).
+  3) orderItemIds únicos -> Promise.all([
+       storage.getOrderItemModifiersByItemIds(ids),
+       storage.getOrderItemDiscountsByItemIds(ids),
+       storage.getOrderItemTaxesByItemIds(ids),
+     ])
+     Crear estas funciones en storage.ts si no existen: SELECT WHERE order_item_id IN (...)
+  4) Construir Maps por orderItemId; calcular splitTotal sin awaits en loop.
+  5) Batch updates SOLO por itemIds (NO por order_id):
+     - UPDATE order_items SET status='PAID' WHERE id IN (itemIds)
+     - UPDATE sales_ledger_items SET status='PAID', paid_at=now WHERE order_item_id IN (itemIds)
+  6) Service charge: 1 insert batch.
+  7) Insert payment (1) + audit (batch) + finalizePaymentTx(...) para actualizar balances/estado según lógica existente.
+
+Acceptance:
+- 0 queries en loops; tx; idempotencia; p95 <200ms.
+
+================================================================================
+T005: POST /api/pos/pay-multi — BATCH INSERTS + TX + IDEMPOTENCIA (por leg) + FINALIZATION CORRECTA
+================================================================================
+Problema: loop serial createPayment + auditEvent por leg.
+Objetivo: 1 batch insert payments; 1 batch insert audit; 1 cash update; finalization batch; sin loops await.
+
+Definición para pay-multi:
+- Trátalo como “múltiples legs” dentro de la misma orden/subcuentas. NO asumas que es pago total.
+- Cada leg debe tener itemIds o split/subaccount target real; si el endpoint actual paga por subcuenta, respeta esa lógica, pero optimiza.
+
+Implementación:
+- const now = new Date()
+- Dentro de tx:
+  1) Idempotencia por leg:
+     - Cada leg debe tener idempotencyKey propio (o baseKey + index).
+     - Para cada key existente, NO insertar payment.
+  2) Construir paymentsValues[] SOLO de legs nuevas y hacer 1 insert returning.
+  3) Construir auditEventsValues[] SOLO para legs nuevas y 1 insert batch.
+  4) Cash session: sumar montos CASH de legs NUEVAS y 1 update.
+  5) Batch updates de items/ledger:
+     - Si pay-multi paga items específicos: usar itemIds IN (...)
+     - Si paga subcuentas: obtener itemIds por subcuenta en batch y luego batch update por itemIds.
+     NO usar UPDATE por order_id a menos que sea explícitamente pago total (no lo es típicamente).
+  6) finalizePaymentTx(...) para estado/balances (idempotente).
+
+Acceptance:
+- 1 insert payments para N; 1 insert audit; 1 cash update; tx; sin loops await; sin pagar items incorrectos.
+
+================================================================================
+T006: POST /api/pos/orders/:orderId/add-items — PREFETCH BATCH (CERO LECTURAS EN LOOP)
+================================================================================
+Problema: N+1: getProduct + getProductTaxCategories + getAllTaxCategories por item.
+Objetivo: 0 queries de producto/tax dentro del loop.
+
+Implementación:
+- Antes del loop:
+  - productIds únicos del body
+  - Promise.all([
+      storage.getProductsByIds(productIds) o equivalente,
+      storage.getProductTaxCategoriesByProductIds(productIds),
+      storage.getAllTaxCategories() (solo si requerido),
+    ])
+  - Maps: productsById, taxCatsByProductId, allTaxCatsById
+- Loop inserta usando Maps (sin lecturas).
+- Mantén inserts secuenciales si necesitas IDs, pero sin lecturas.
+Acceptance: 0 queries de producto/tax dentro del loop.
+
+================================================================================
+T007: PERF TIMING + (OPCIONAL) QUERY COUNT SIN DEPENDENCIAS
+================================================================================
+Agregar timing + log condicional (>200ms) formato:
+[PERF] METHOD PATH XXXms (counts: orderId, itemCount, splitCount, bytes=?, queries=?)
+
+- Si es viable sin romper nada: implementar contador de queries por request usando AsyncLocalStorage:
+  - wrap db.execute/tx.execute para incrementar.
+  - reset por request (middleware) y leer al final del handler.
+- Si es demasiado invasivo, omitir queryCount (pero mantener ms+counts).
+
+Agregar logs SOLO a hot endpoints:
+- POST pay/pay-split/pay-multi
+- POST add-items, split-order, void-order, waiter void, qr submit
+- GET payments, receipt-data, paid-orders, waiter tables
+- POST cash open/close
+Verificar que ya existan en GET pos/tables, GET table current, splits, dashboard.
+
+Acceptance: logs solo >200ms; formato consistente.
+
+================================================================================
+T008: FRONTEND — WS FIRST + POLLING WATCHDOG 60s + FALLBACK 10s SI WS DOWN
+================================================================================
+Archivos:
+client/src/pages/kds.tsx
+client/src/pages/pos.tsx
+client/src/pages/table-detail.tsx
+client/src/pages/tables.tsx
+
+Cambios:
+- refetchInterval default: 60000 cuando WS está conectado.
+- WATCHDOG: si WS no está conectado, usar refetchInterval=10000 hasta reconectar, luego volver a 60000.
+- Usar la señal REAL de conexión del proyecto:
+  - Si existe un WS provider/store/hook (ej socket.connected), úsalo.
+  - Si no existe, exponer un boolean isConnected desde el provider actual.
+- Mantener refetchOnReconnect: true.
+- Reducir invalidaciones redundantes: si WS actualiza cache, no invalidar masivamente.
+
+Acceptance: polling 60s con WS; fallback 10s sin WS; UI real-time sin regresión.
+
+================================================================================
+T009: FINALIZATION CENTRALIZADA — finalizePaymentTx (IDEMPOTENTE) Y REUSADA
+================================================================================
+Objetivo: evitar duplicación de lógica y bugs entre pay/pay-split/pay-multi.
+Crear helper:
+- Ubicación preferida: server/storage.ts (o en routes.ts si no hay otra opción).
+- Firma: finalizePaymentTx(tx, params)
+  params: {
+    orderId: number,
+    itemIds?: number[],
+    now: Date,
+    paymentId: number,
+    methodCode?: string,
+    closeOrder?: boolean,
+  }
+
+Debe encapsular (según modelo real):
+- Batch updates de order_items / ledger (si ya se hicieron afuera, debe ser idempotente y no romper).
+- split cleanup si aplica (seguro y idempotente).
+- update order status/timestamps/balanceDue/paidAmount según esquema real (1 update).
+- NO debe duplicar payments; solo finaliza estado.
+
+Reusar finalizePaymentTx en T003/T004/T005.
+
+Acceptance: menos duplicación; mismo comportamiento; finalization idempotente; performance consistente.
+
+================================================================================
+ENTREGA OBLIGATORIA
+================================================================================
+1) Lista exacta de archivos tocados.
+2) Para cada endpoint modificado: antes/después (#rounds, #queries estimadas, payload).
+3) Confirmar: GET /api/pos/tables ya NO manda items/mods/taxes/discounts y ahora incluye updatedAt.
+4) Confirmar: pay/pay-split/pay-multi corren en tx, sin loops await, y con idempotencia (sin doble cobro).
+5) Confirmar: bug voidedItems import resuelto y ensurePerfIndexes ya NO referencia cash_session_id.
+6) Confirmar: frontend polling 60s con WS y fallback 10s sin WS.
+7) Todo compila y corre.
+
+ORDEN DE IMPLEMENTACIÓN:
+T000 -> T001 -> T002 -> T009 (crear finalizePaymentTx) -> T003 -> T004 -> T005 -> T006 -> T007 -> T008
+
+Comienza ahora. Cambios mínimos, seguros y sin romper UX.
