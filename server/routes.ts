@@ -15,7 +15,7 @@ import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import * as qbo from "./quickbooks";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
 declare module "express-session" {
@@ -1445,6 +1445,7 @@ export async function registerRoutes(
 
   // ==================== POS: ADD ITEMS TO ORDER ====================
   app.post("/api/pos/orders/:orderId/add-items", requirePermission("MODULE_POS_VIEW"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const orderId = parseInt(req.params.orderId as string);
       const userId = req.session.userId!;
@@ -1458,16 +1459,33 @@ export async function registerRoutes(
       const tableId = order.tableId || 0;
       const tableName = table?.tableName || "Mostrador";
 
-      const existingItems = await storage.getOrderItems(order.id);
+      const productIds = Array.from(new Set(items.map((i: any) => i.productId as number)));
+
+      const [existingItems, allCategories, allProductsList, allPtcs, allTaxCats] = await Promise.all([
+        storage.getOrderItems(order.id),
+        storage.getAllCategories(),
+        storage.getProductsByIds(productIds),
+        storage.getProductTaxCategoriesByProductIds(productIds),
+        storage.getAllTaxCategories(),
+      ]);
+
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
       const roundNumber = maxRound + 1;
 
-      const allCategories = await storage.getAllCategories();
+      const productsById = new Map(allProductsList.map(p => [p.id, p]));
+      const ptcsByProductId = new Map<number, typeof allPtcs>();
+      for (const ptc of allPtcs) {
+        if (!ptcsByProductId.has(ptc.productId)) ptcsByProductId.set(ptc.productId, []);
+        ptcsByProductId.get(ptc.productId)!.push(ptc);
+      }
+      const taxCatsById = new Map(allTaxCats.map(tc => [tc.id, tc]));
+
       const kdsTickets: Map<string, number> = new Map();
       const createdTicketIds: number[] = [];
+      const bd = getBusinessDate();
 
       for (const item of items) {
-        const product = await storage.getProduct(item.productId);
+        const product = productsById.get(item.productId);
         if (!product || !product.active) continue;
 
         if (product.availablePortions !== null && product.availablePortions < item.qty) {
@@ -1504,12 +1522,11 @@ export async function registerRoutes(
           qrSubmissionId: null,
         });
 
-        const posTaxLinks = await storage.getProductTaxCategories(product.id);
+        const posTaxLinks = ptcsByProductId.get(product.id) || [];
         if (posTaxLinks.length > 0) {
-          const allTaxCats = await storage.getAllTaxCategories();
           const taxSnapshot = posTaxLinks.map(ptc => {
-            const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
-            return tc ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
+            const tc = taxCatsById.get(ptc.taxCategoryId);
+            return tc && tc.active ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
           }).filter(Boolean);
           if (taxSnapshot.length > 0) {
             await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot });
@@ -1574,7 +1591,7 @@ export async function registerRoutes(
         const posUnitWithMods = Number(product.price) + posModDelta;
 
         await storage.createSalesLedgerItem({
-          businessDate: getBusinessDate(),
+          businessDate: bd,
           tableId,
           tableNameSnapshot: tableName,
           orderId: order.id,
@@ -1617,6 +1634,7 @@ export async function registerRoutes(
       broadcast("order_updated", { tableId, orderId: order.id });
       broadcast("table_status_changed", { tableId });
 
+      if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/orders/${orderId}/add-items ${Date.now() - t0}ms (${items.length} items)`);
       res.json({ ok: true, ticketIds: createdTicketIds });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1625,6 +1643,7 @@ export async function registerRoutes(
 
   // ==================== WAITER: TABLES ====================
   app.get("/api/waiter/tables", requireRole("WAITER", "MANAGER"), async (_req, res) => {
+    const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
       storage.getAllTables(),
       storage.getAllOpenOrders(),
@@ -1778,6 +1797,7 @@ export async function registerRoutes(
         subaccountNames: order ? (subaccountNamesByOrder.get(order.id) || []) : [],
       };
     });
+    if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/waiter/tables ${Date.now() - t0}ms (${allTables.length} tables)`);
     res.json(result);
   });
 
@@ -1833,7 +1853,7 @@ export async function registerRoutes(
         voidedByName: voidedUsersMap.get(i.voidedByUserId) || "Desconocido",
       }));
 
-      if (Date.now() - t0 > 200) console.log(`[perf] /api/tables/${tableId}/current ${Date.now() - t0}ms`);
+      if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/tables/${tableId}/current ${Date.now() - t0}ms`);
       res.json({ table, activeOrder: order, orderItems: itemsWithMods, pendingQrSubmissions: subsWithItems, voidedItems: voidedItemsWithNames });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2971,7 +2991,7 @@ export async function registerRoutes(
         items: itemsWithMods,
       });
     }
-    if (Date.now() - t0 > 200) console.log(`[perf] /api/kds/tickets/${type} ${Date.now() - t0}ms (${tickets.length} tickets, ${allTicketItems.length} items)`);
+    if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/kds/tickets/${type} ${Date.now() - t0}ms (${tickets.length} tickets, ${allTicketItems.length} items)`);
     res.json(result);
   });
 
@@ -3094,6 +3114,88 @@ export async function registerRoutes(
     res.json(await storage.getAllPaymentMethods());
   });
 
+  async function finalizePaymentTx(tx: any, opts: { orderId: number; itemIds?: number[]; now: Date; closeOrder?: boolean }) {
+    const { orderId, itemIds, now, closeOrder } = opts;
+    const itemCondition = itemIds
+      ? and(inArray(orderItems.id, itemIds), sql`${orderItems.status} NOT IN ('VOIDED','PAID')`)
+      : and(eq(orderItems.orderId, orderId), sql`${orderItems.status} NOT IN ('VOIDED','PAID')`);
+    await tx.update(orderItems).set({ status: "PAID" }).where(itemCondition);
+
+    const sliCondition = itemIds
+      ? and(inArray(salesLedgerItems.orderItemId, itemIds), sql`${salesLedgerItems.status} NOT IN ('VOIDED','PAID')`)
+      : and(eq(salesLedgerItems.orderId, orderId), sql`${salesLedgerItems.status} NOT IN ('VOIDED','PAID')`);
+    await tx.update(salesLedgerItems).set({ status: "PAID", paidAt: now }).where(sliCondition);
+
+    if (closeOrder) {
+      await tx.update(orders).set({ status: "PAID", closedAt: now }).where(and(eq(orders.id, orderId), ne(orders.status, "PAID")));
+    }
+
+    const splits = await tx.select({ id: splitAccounts.id }).from(splitAccounts).where(eq(splitAccounts.orderId, orderId));
+    if (splits.length > 0) {
+      const splitIds = splits.map((s: any) => s.id);
+      await tx.delete(splitItems).where(inArray(splitItems.splitId, splitIds));
+      await tx.delete(splitAccounts).where(eq(splitAccounts.orderId, orderId));
+    }
+
+    await tx.delete(orderSubaccounts).where(eq(orderSubaccounts.orderId, orderId));
+  }
+
+  async function maybeAutoCloseParentOrder(orderId: number) {
+    const paidOrder = await storage.getOrder(orderId);
+    if (!paidOrder?.parentOrderId) return;
+    const siblings = await storage.getChildOrders(paidOrder.parentOrderId);
+    const allSiblingsPaid = siblings.every(s => s.status === "PAID" || s.status === "VOIDED");
+    if (!allSiblingsPaid) return;
+    const parentOrder = await storage.getOrder(paidOrder.parentOrderId);
+    if (!parentOrder || (parentOrder.status !== "SPLIT" && parentOrder.status !== "OPEN")) return;
+    const parentItems = await storage.getOrderItems(paidOrder.parentOrderId);
+    const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
+    if (parentActive.length === 0) {
+      await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() });
+      await cleanupSubaccountsForOrder(paidOrder.parentOrderId);
+    }
+  }
+
+  async function buildServiceChargeOps(orderId: number, order: any, activeItems: any[]) {
+    try {
+      const [hrSettings, allProducts] = await Promise.all([
+        storage.getHrSettings(),
+        storage.getAllProducts(),
+      ]);
+      const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
+      if (scRate <= 0) return;
+      const productMap = new Map(allProducts.map(p => [p.id, p]));
+      const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
+      const bd = getBusinessDate();
+      const entries: any[] = [];
+      for (const item of activeItems) {
+        const prod = item.productId ? productMap.get(item.productId) : null;
+        if (prod && !prod.serviceTaxApplicable) continue;
+        const baseAmount = Number(item.productPriceSnapshot) * item.qty;
+        const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
+        if (serviceAmount > 0) {
+          entries.push({
+            businessDate: bd,
+            orderId,
+            orderItemId: item.id,
+            tableId: order.tableId || null,
+            tableNameSnapshot: tableName || null,
+            responsibleWaiterEmployeeId: order.responsibleWaiterId || null,
+            rateSnapshot: scRate.toFixed(4),
+            baseAmountSnapshot: baseAmount.toFixed(2),
+            serviceAmount: serviceAmount.toFixed(2),
+            status: "PAID",
+          });
+        }
+      }
+      if (entries.length > 0) {
+        await Promise.all(entries.map(e => storage.createServiceChargeLedgerEntry(e)));
+      }
+    } catch (scErr) {
+      console.error("[ServiceCharge] Error creating ledger entries:", scErr);
+    }
+  }
+
   // ==================== POS ====================
   app.get("/api/pos/tables", requirePermission("POS_VIEW"), async (_req, res) => {
     const t0 = Date.now();
@@ -3106,18 +3208,14 @@ export async function registerRoutes(
     if (relevantOrders.length === 0) return res.json([]);
 
     const orderIds = relevantOrders.map(o => o.id);
-
     const parentOrderIds = relevantOrders.filter(o => o.parentOrderId).map(o => o.parentOrderId!);
     const allSubaccountQueryIds = Array.from(new Set([...orderIds, ...parentOrderIds]));
 
-    const [allItems, allSubaccounts, allMods, allItemDiscounts, allItemTaxes] = await Promise.all([
-      storage.getOrderItemsByOrderIds(orderIds),
+    const [itemCounts, allSubaccounts] = await Promise.all([
+      storage.getActiveItemCountsByOrderIds(orderIds),
       allSubaccountQueryIds.length > 0
         ? db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, allSubaccountQueryIds))
         : Promise.resolve([]),
-      storage.getOrderItemModifiersByOrderIds(orderIds),
-      storage.getOrderItemDiscountsByOrderIds(orderIds),
-      storage.getOrderItemTaxesByOrderIds(orderIds),
     ]);
 
     const subaccountsByOrder = new Map<number, string[]>();
@@ -3128,57 +3226,13 @@ export async function registerRoutes(
       }
     }
 
-    const activeItems = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PENDING" && i.status !== "PAID");
-    const activeItemIds = new Set(activeItems.map(i => i.id));
-    const allItemIds = new Set(allItems.map(i => i.id));
-    const activeModsOnly = allMods.filter(m => activeItemIds.has(m.orderItemId));
-
-    if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/tables ${Date.now() - t0}ms (${relevantOrders.length} orders, ${allItems.length} items)`);
-
-    const modsMap = new Map<number, typeof activeModsOnly>();
-    for (const m of activeModsOnly) {
-      if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []);
-      modsMap.get(m.orderItemId)!.push(m);
-    }
-    const discountsMap = new Map<number, typeof allItemDiscounts>();
-    for (const d of allItemDiscounts) {
-      if (!discountsMap.has(d.orderItemId)) discountsMap.set(d.orderItemId, []);
-      discountsMap.get(d.orderItemId)!.push(d);
-    }
-    const taxesMap = new Map<number, typeof allItemTaxes>();
-    for (const t of allItemTaxes) {
-      if (!taxesMap.has(t.orderItemId)) taxesMap.set(t.orderItemId, []);
-      taxesMap.get(t.orderItemId)!.push(t);
-    }
-
-    const itemsByOrder = new Map<number, typeof activeItems>();
-    for (const item of activeItems) {
-      if (!itemsByOrder.has(item.orderId)) itemsByOrder.set(item.orderId, []);
-      itemsByOrder.get(item.orderId)!.push(item);
-    }
-
-    const allItemsByOrder = new Map<number, typeof allItems>();
-    for (const item of allItems) {
-      if (!allItemsByOrder.has(item.orderId)) allItemsByOrder.set(item.orderId, []);
-      allItemsByOrder.get(item.orderId)!.push(item);
-    }
+    if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/tables ${Date.now() - t0}ms (${relevantOrders.length} orders)`);
 
     const result: any[] = [];
     for (const order of relevantOrders) {
-      const orderActiveItems = itemsByOrder.get(order.id) || [];
-      if (orderActiveItems.length === 0) continue;
+      const activeCount = itemCounts.get(order.id) || 0;
+      if (activeCount === 0) continue;
       const table = tableMap.get(order.tableId)!;
-
-      const itemsWithModifiers = orderActiveItems.map(item => ({
-        ...item,
-        modifiers: modsMap.get(item.id) || [],
-        discounts: discountsMap.get(item.id) || [],
-        taxes: taxesMap.get(item.id) || [],
-      }));
-
-      const orderActiveItemIds = new Set(orderActiveItems.map(i => i.id));
-      const orderDiscountsList = allItemDiscounts.filter(d => orderActiveItemIds.has(d.orderItemId));
-      const orderTaxesList = allItemTaxes.filter(t => orderActiveItemIds.has(t.orderItemId));
 
       const isChild = !!order.parentOrderId;
       const ticketNumber = isChild
@@ -3187,6 +3241,14 @@ export async function registerRoutes(
       const displayName = isChild
         ? `${table.tableName} #${ticketNumber}`
         : `${table.tableName} #${order.dailyNumber}`;
+
+      const names = new Set<string>();
+      const saNames = subaccountsByOrder.get(order.id) || [];
+      saNames.forEach(n => names.add(n));
+      if (order.parentOrderId) {
+        const parentSaNames = subaccountsByOrder.get(order.parentOrderId) || [];
+        parentSaNames.forEach(n => names.add(n));
+      }
 
       result.push({
         id: table.id,
@@ -3201,50 +3263,112 @@ export async function registerRoutes(
         balanceDue: order.balanceDue,
         paidAmount: order.paidAmount,
         openedAt: order.openedAt,
-        itemCount: orderActiveItems.length,
-        items: itemsWithModifiers,
-        totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
-        totalTaxes: orderTaxesList.reduce((s, t) => s + Number(t.taxAmount), 0).toFixed(2),
-        taxBreakdown: aggregateTaxBreakdown(orderTaxesList),
-        subaccountNames: (() => {
-          const names = new Set<string>();
-          const saNames = subaccountsByOrder.get(order.id) || [];
-          saNames.forEach(n => names.add(n));
-          if (order.parentOrderId) {
-            const parentSaNames = subaccountsByOrder.get(order.parentOrderId) || [];
-            parentSaNames.forEach(n => names.add(n));
-          }
-          for (const item of orderActiveItems) {
-            if (item.customerNameSnapshot) names.add(item.customerNameSnapshot);
-          }
-          return Array.from(names);
-        })(),
+        itemCount: activeCount,
+        subaccountNames: Array.from(names),
       });
     }
     res.json(result);
   });
 
+  app.get("/api/pos/table-detail/:orderId", requirePermission("POS_VIEW"), async (req, res) => {
+    const t0 = Date.now();
+    const orderId = parseInt(req.params.orderId);
+    const order = await storage.getOrder(orderId);
+    if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+    const table = await storage.getTable(order.tableId);
+    if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+
+    const [allItems, allMods, allItemDiscounts, allItemTaxes, allSubaccounts] = await Promise.all([
+      storage.getOrderItems(orderId),
+      storage.getOrderItemModifiersByOrderIds([orderId]),
+      storage.getOrderItemDiscountsByOrderIds([orderId]),
+      storage.getOrderItemTaxesByOrderIds([orderId]),
+      db.select().from(orderSubaccounts).where(
+        inArray(orderSubaccounts.orderId, order.parentOrderId ? [orderId, order.parentOrderId] : [orderId])
+      ),
+    ]);
+
+    const activeItems = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PENDING" && i.status !== "PAID");
+    const activeItemIds = new Set(activeItems.map(i => i.id));
+
+    const modsMap = new Map<number, typeof allMods>();
+    for (const m of allMods) { if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []); modsMap.get(m.orderItemId)!.push(m); }
+    const discountsMap = new Map<number, typeof allItemDiscounts>();
+    for (const d of allItemDiscounts) { if (!discountsMap.has(d.orderItemId)) discountsMap.set(d.orderItemId, []); discountsMap.get(d.orderItemId)!.push(d); }
+    const taxesMap = new Map<number, typeof allItemTaxes>();
+    for (const t of allItemTaxes) { if (!taxesMap.has(t.orderItemId)) taxesMap.set(t.orderItemId, []); taxesMap.get(t.orderItemId)!.push(t); }
+
+    const itemsWithModifiers = activeItems.map(item => ({
+      ...item,
+      modifiers: modsMap.get(item.id) || [],
+      discounts: discountsMap.get(item.id) || [],
+      taxes: taxesMap.get(item.id) || [],
+    }));
+
+    const orderDiscountsList = allItemDiscounts.filter(d => activeItemIds.has(d.orderItemId));
+    const orderTaxesList = allItemTaxes.filter(t => activeItemIds.has(t.orderItemId));
+
+    const isChild = !!order.parentOrderId;
+    const ticketNumber = isChild ? `${order.dailyNumber}-${order.splitIndex}` : `${order.dailyNumber}`;
+    const displayName = isChild ? `${table.tableName} #${ticketNumber}` : `${table.tableName} #${order.dailyNumber}`;
+
+    const names = new Set<string>();
+    for (const sa of allSubaccounts) { if (sa.label) names.add(sa.label); }
+    for (const item of activeItems) { if (item.customerNameSnapshot) names.add(item.customerNameSnapshot); }
+
+    if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/table-detail/${orderId} ${Date.now() - t0}ms`);
+
+    res.json({
+      id: table.id,
+      tableName: displayName,
+      orderId: order.id,
+      parentOrderId: order.parentOrderId || null,
+      splitIndex: order.splitIndex || null,
+      dailyNumber: order.dailyNumber,
+      globalNumber: order.globalNumber,
+      ticketNumber,
+      totalAmount: order.totalAmount,
+      balanceDue: order.balanceDue,
+      paidAmount: order.paidAmount,
+      openedAt: order.openedAt,
+      itemCount: activeItems.length,
+      items: itemsWithModifiers,
+      totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
+      totalTaxes: orderTaxesList.reduce((s, t) => s + Number(t.taxAmount), 0).toFixed(2),
+      taxBreakdown: aggregateTaxBreakdown(orderTaxesList),
+      subaccountNames: Array.from(names),
+    });
+  });
+
+  // ==================== POS: PAY ====================
   app.post("/api/pos/pay", requirePermission("POS_PAY"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const { orderId, paymentMethodId, amount, clientName, clientEmail } = req.body;
       const userId = req.session.userId!;
 
-      const order = await storage.getOrder(orderId);
+      const [order, allPMs, cashSession] = await Promise.all([
+        storage.getOrder(orderId),
+        storage.getAllPaymentMethods(),
+        storage.getActiveCashSession(),
+      ]);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
-      
-      const currentBalanceDue = Number(order.balanceDue || order.totalAmount || 0);
+      if (order.status === "PAID") return res.json({ ok: true, alreadyPaid: true });
+
       const payAmount = Number(amount);
+      const currentBalanceDue = Number(order.balanceDue || order.totalAmount || 0);
       if (payAmount > currentBalanceDue + 0.01) {
         return res.status(400).json({ message: `Monto excede el saldo pendiente (₡${currentBalanceDue.toFixed(2)})` });
       }
 
-      const pm = (await storage.getAllPaymentMethods()).find(m => m.id === paymentMethodId);
-      if (pm?.paymentCode === "CASH") {
-        const cashSession = await storage.getActiveCashSession();
-        if (!cashSession) {
-          return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
-        }
+      const pm = allPMs.find(m => m.id === paymentMethodId);
+      if (pm?.paymentCode === "CASH" && !cashSession) {
+        return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
       }
+
+      const bd = getBusinessDate();
+      const now = new Date();
 
       const payment = await storage.createPayment({
         orderId,
@@ -3255,77 +3379,23 @@ export async function registerRoutes(
         status: "PAID",
         clientNameSnapshot: clientName || null,
         clientEmailSnapshot: clientEmail || null,
-        businessDate: getBusinessDate(),
+        businessDate: bd,
       });
 
       const { balanceDue } = await storage.updateOrderPaymentTotals(orderId);
 
       if (balanceDue <= 0) {
-        const [, items] = await Promise.all([
-          storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() }),
-          storage.getOrderItems(orderId),
-        ]);
-
-        const now = new Date();
+        const items = await storage.getOrderItems(orderId);
         const activeItems = items.filter(i => i.status !== "VOIDED");
-
-        const itemUpdateOps = activeItems.flatMap(item => [
-          storage.updateOrderItem(item.id, { status: "PAID" }),
-          storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: now }),
-        ]);
-        await Promise.all(itemUpdateOps);
-
-        const remainingSplitsFullPay = await storage.getSplitAccountsForOrder(orderId);
-        for (const sp of remainingSplitsFullPay) {
-          await storage.deleteSplitAccount(sp.id);
-        }
-
-        await cleanupSubaccountsForOrder(orderId);
-
-        try {
-          const [hrSettings, allProducts] = await Promise.all([
-            storage.getHrSettings(),
-            storage.getAllProducts(),
-          ]);
-          const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
-          if (scRate > 0) {
-            const productMap = new Map(allProducts.map(p => [p.id, p]));
-            const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
-            const scOps: Promise<any>[] = [];
-            const bd = getBusinessDate();
-            for (const item of activeItems) {
-              const prod = item.productId ? productMap.get(item.productId) : null;
-              if (prod && !prod.serviceTaxApplicable) continue;
-              const baseAmount = Number(item.productPriceSnapshot) * item.qty;
-              const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
-              if (serviceAmount > 0) {
-                scOps.push(storage.createServiceChargeLedgerEntry({
-                  businessDate: bd,
-                  orderId,
-                  orderItemId: item.id,
-                  tableId: order.tableId || null,
-                  tableNameSnapshot: tableName || null,
-                  responsibleWaiterEmployeeId: order.responsibleWaiterId || null,
-                  rateSnapshot: scRate.toFixed(4),
-                  baseAmountSnapshot: baseAmount.toFixed(2),
-                  serviceAmount: serviceAmount.toFixed(2),
-                  status: "PAID",
-                }));
-              }
-            }
-            if (scOps.length > 0) await Promise.all(scOps);
-          }
-        } catch (scErr) {
-          console.error("[ServiceCharge] Error creating ledger entries:", scErr);
-        }
+        await db.transaction(async (tx) => {
+          await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
+        });
+        await buildServiceChargeOps(orderId, order, activeItems);
       }
 
-      if (pm?.paymentCode === "CASH") {
-        const session = await storage.getActiveCashSession();
-        if (session) {
-          const newExpected = Number(session.expectedCash || session.openingCash) + payAmount;
-          await storage.updateCashSession(session.id, { expectedCash: newExpected.toFixed(2) });
-        }
+      if (pm?.paymentCode === "CASH" && cashSession) {
+        const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + payAmount;
+        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
       }
 
       await storage.createAuditEvent({
@@ -3339,22 +3409,7 @@ export async function registerRoutes(
       });
 
       if (balanceDue <= 0) {
-        const paidOrder = await storage.getOrder(orderId);
-        if (paidOrder?.parentOrderId) {
-          const siblings = await storage.getChildOrders(paidOrder.parentOrderId);
-          const allSiblingsPaid = siblings.every(s => s.status === "PAID" || s.status === "VOIDED");
-          if (allSiblingsPaid) {
-            const parentOrder = await storage.getOrder(paidOrder.parentOrderId);
-            if (parentOrder && (parentOrder.status === "SPLIT" || parentOrder.status === "OPEN")) {
-              const parentItems = await storage.getOrderItems(paidOrder.parentOrderId);
-              const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
-              if (parentActive.length === 0) {
-                await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() });
-                await cleanupSubaccountsForOrder(paidOrder.parentOrderId);
-              }
-            }
-          }
-        }
+        await maybeAutoCloseParentOrder(orderId);
       }
 
       broadcast("payment_completed", { orderId });
@@ -3362,6 +3417,7 @@ export async function registerRoutes(
 
       qbo.enqueueSyncForPayment(payment.id, orderId).catch(() => {});
 
+      if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay ${Date.now() - t0}ms`);
       res.json({ ok: true, paymentId: payment.id });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -3370,6 +3426,7 @@ export async function registerRoutes(
 
   // ==================== POS: PAY MULTI (varios métodos) ====================
   app.post("/api/pos/pay-multi", requirePermission("POS_PAY"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const { orderId, payments: legs, clientName, clientEmail } = req.body;
       if (!orderId || !Array.isArray(legs) || legs.length < 2) {
@@ -3377,8 +3434,13 @@ export async function registerRoutes(
       }
       const userId = req.session.userId!;
 
-      const order = await storage.getOrder(orderId);
+      const [order, allPMs, cashSession] = await Promise.all([
+        storage.getOrder(orderId),
+        storage.getAllPaymentMethods(),
+        storage.getActiveCashSession(),
+      ]);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+      if (order.status === "PAID") return res.json({ ok: true, alreadyPaid: true, paymentIds: [], hasCash: false });
 
       const totalDue = Number(order.balanceDue || order.totalAmount || 0);
       const legsTotal = legs.reduce((s: number, l: any) => s + Number(l.amount), 0);
@@ -3386,134 +3448,65 @@ export async function registerRoutes(
         return res.status(400).json({ message: `La suma de tramos (₡${legsTotal}) no coincide con el saldo (₡${totalDue})` });
       }
 
-      const allPMs = await storage.getAllPaymentMethods();
       const pmMap = new Map(allPMs.map(p => [p.id, p]));
+      const hasCashLeg = legs.some((l: any) => pmMap.get(l.paymentMethodId)?.paymentCode === "CASH");
 
       for (const leg of legs) {
         const pm = pmMap.get(leg.paymentMethodId);
         if (!pm) return res.status(400).json({ message: `Método de pago ${leg.paymentMethodId} no encontrado` });
-        if (pm.paymentCode === "CASH") {
-          const cashSession = await storage.getActiveCashSession();
-          if (!cashSession) {
-            return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
-          }
-        }
+      }
+      if (hasCashLeg && !cashSession) {
+        return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
       }
 
-      const paymentIds: number[] = [];
       const bd = getBusinessDate();
+      const now = new Date();
 
-      for (const leg of legs) {
-        const payAmount = Number(leg.amount);
-        const payment = await storage.createPayment({
-          orderId,
-          splitId: null,
-          amount: payAmount.toFixed(2),
-          paymentMethodId: leg.paymentMethodId,
-          cashierUserId: userId,
-          status: "PAID",
-          clientNameSnapshot: clientName || null,
-          clientEmailSnapshot: clientEmail || null,
-          businessDate: bd,
-        });
-        paymentIds.push(payment.id);
+      const paymentValues = legs.map((leg: any) => ({
+        orderId,
+        splitId: null,
+        amount: Number(leg.amount).toFixed(2),
+        paymentMethodId: leg.paymentMethodId,
+        cashierUserId: userId,
+        status: "PAID" as const,
+        clientNameSnapshot: clientName || null,
+        clientEmailSnapshot: clientEmail || null,
+        businessDate: bd,
+      }));
 
-        const pm = pmMap.get(leg.paymentMethodId);
-        if (pm?.paymentCode === "CASH") {
-          const session = await storage.getActiveCashSession();
-          if (session) {
-            const newExpected = Number(session.expectedCash || session.openingCash) + payAmount;
-            await storage.updateCashSession(session.id, { expectedCash: newExpected.toFixed(2) });
-          }
-        }
+      const createdPayments = await db.insert(payments).values(paymentValues).returning();
+      const paymentIds = createdPayments.map(p => p.id);
 
-        await storage.createAuditEvent({
-          actorType: "USER",
-          actorUserId: userId,
-          action: "PAYMENT_CREATED",
-          entityType: "payment",
-          entityId: payment.id,
-          tableId: order.tableId,
-          metadata: { orderId, amount: payAmount, paymentMethodId: leg.paymentMethodId, multiPay: true },
-        });
-      }
+      const auditValues = createdPayments.map(p => ({
+        actorType: "USER" as const,
+        actorUserId: userId,
+        action: "PAYMENT_CREATED",
+        entityType: "payment",
+        entityId: p.id,
+        tableId: order.tableId,
+        metadata: { orderId, amount: Number(p.amount), paymentMethodId: p.paymentMethodId, multiPay: true },
+      }));
+      await db.insert(auditEvents).values(auditValues);
 
       const { balanceDue } = await storage.updateOrderPaymentTotals(orderId);
 
       if (balanceDue <= 0) {
-        const [, items] = await Promise.all([
-          storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() }),
-          storage.getOrderItems(orderId),
-        ]);
-
-        const now = new Date();
+        const items = await storage.getOrderItems(orderId);
         const activeItems = items.filter(i => i.status !== "VOIDED");
+        await db.transaction(async (tx) => {
+          await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
+        });
+        await buildServiceChargeOps(orderId, order, activeItems);
+        await maybeAutoCloseParentOrder(orderId);
+      }
 
-        const itemUpdateOps = activeItems.flatMap(item => [
-          storage.updateOrderItem(item.id, { status: "PAID" }),
-          storage.updateSalesLedgerItems(item.id, { status: "PAID", paidAt: now }),
-        ]);
-        await Promise.all(itemUpdateOps);
-
-        const remainingSplitsMulti = await storage.getSplitAccountsForOrder(orderId);
-        for (const sp of remainingSplitsMulti) {
-          await storage.deleteSplitAccount(sp.id);
-        }
-
-        await cleanupSubaccountsForOrder(orderId);
-
-        try {
-          const [hrSettings, allProducts] = await Promise.all([
-            storage.getHrSettings(),
-            storage.getAllProducts(),
-          ]);
-          const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
-          if (scRate > 0) {
-            const productMap = new Map(allProducts.map(p => [p.id, p]));
-            const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
-            const scOps: Promise<any>[] = [];
-            for (const item of activeItems) {
-              const prod = item.productId ? productMap.get(item.productId) : null;
-              if (prod && !prod.serviceTaxApplicable) continue;
-              const baseAmount = Number(item.productPriceSnapshot) * item.qty;
-              const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
-              if (serviceAmount > 0) {
-                scOps.push(storage.createServiceChargeLedgerEntry({
-                  businessDate: bd,
-                  orderId,
-                  orderItemId: item.id,
-                  tableId: order.tableId || null,
-                  tableNameSnapshot: tableName || null,
-                  responsibleWaiterEmployeeId: order.responsibleWaiterId || null,
-                  rateSnapshot: scRate.toFixed(4),
-                  baseAmountSnapshot: baseAmount.toFixed(2),
-                  serviceAmount: serviceAmount.toFixed(2),
-                  status: "PAID",
-                }));
-              }
-            }
-            if (scOps.length > 0) await Promise.all(scOps);
-          }
-        } catch (scErr) {
-          console.error("[ServiceCharge] Error creating ledger entries:", scErr);
-        }
-
-        const paidOrder = await storage.getOrder(orderId);
-        if (paidOrder?.parentOrderId) {
-          const siblings = await storage.getChildOrders(paidOrder.parentOrderId);
-          const allSiblingsPaid = siblings.every(s => s.status === "PAID" || s.status === "VOIDED");
-          if (allSiblingsPaid) {
-            const parentOrder = await storage.getOrder(paidOrder.parentOrderId);
-            if (parentOrder && (parentOrder.status === "SPLIT" || parentOrder.status === "OPEN")) {
-              const parentItems = await storage.getOrderItems(paidOrder.parentOrderId);
-              const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
-              if (parentActive.length === 0) {
-                await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() });
-                await cleanupSubaccountsForOrder(paidOrder.parentOrderId);
-              }
-            }
-          }
-        }
+      if (hasCashLeg && cashSession) {
+        const cashTotal = legs.reduce((s: number, l: any) => {
+          const pm = pmMap.get(l.paymentMethodId);
+          return pm?.paymentCode === "CASH" ? s + Number(l.amount) : s;
+        }, 0);
+        const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + cashTotal;
+        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
       }
 
       broadcast("payment_completed", { orderId });
@@ -3528,6 +3521,7 @@ export async function registerRoutes(
         qbo.enqueueSyncForPayment(pid, orderId).catch(() => {});
       }
 
+      if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay-multi ${Date.now() - t0}ms (${legs.length} legs)`);
       res.json({ ok: true, paymentIds, hasCash });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -3735,6 +3729,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/pos/split-order", requirePermission("POS_SPLIT"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const { orderId } = req.body;
       const order = await storage.getOrder(orderId);
@@ -3797,6 +3792,7 @@ export async function registerRoutes(
       broadcast("order_updated", { orderId });
       broadcast("table_status_changed", {});
 
+      if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/split-order ${Date.now() - t0}ms (${createdOrderIds.length} splits)`);
       res.json({ ok: true, parentOrderId: orderId, childOrderIds: createdOrderIds });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -3804,44 +3800,70 @@ export async function registerRoutes(
   });
 
   app.post("/api/pos/pay-split", requirePermission("POS_SPLIT"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const { splitId, paymentMethodId, clientName, clientEmail } = req.body;
       const userId = req.session.userId!;
 
-      const splitItemsList = await storage.getSplitItemsForSplit(splitId);
+      const [splitAccount, splitItemsList, allPMs, cashSession] = await Promise.all([
+        storage.getSplitAccount(splitId),
+        storage.getSplitItemsForSplit(splitId),
+        storage.getAllPaymentMethods(),
+        storage.getActiveCashSession(),
+      ]);
+
+      if (!splitAccount) return res.status(404).json({ message: "Split no encontrado" });
       if (!splitItemsList.length) return res.status(400).json({ message: "Split sin items" });
 
-      const splitAccount = await storage.getSplitAccount(splitId);
-      if (!splitAccount) return res.status(404).json({ message: "Split no encontrado" });
-
       const orderId = splitAccount.orderId;
-      const orderItemsList = await storage.getOrderItems(orderId);
+      const splitOrderItemIds = splitItemsList.map(si => si.orderItemId);
+
+      const [orderItemsList, order] = await Promise.all([
+        storage.getOrderItems(orderId),
+        storage.getOrder(orderId),
+      ]);
+
+      const splitOIs = orderItemsList.filter(oi => splitOrderItemIds.includes(oi.id));
+      const alreadyPaid = splitOIs.every(oi => oi.status === "PAID");
+      if (alreadyPaid) return res.json({ ok: true, alreadyPaid: true });
+
+      const [allMods, allDiscounts, allTaxes] = await Promise.all([
+        storage.getOrderItemModifiersByItemIds(splitOrderItemIds),
+        storage.getOrderItemDiscountsByItemIds(splitOrderItemIds),
+        storage.getOrderItemTaxesByItemIds(splitOrderItemIds),
+      ]);
+
+      const modsMap = new Map<number, number>();
+      for (const m of allMods) {
+        modsMap.set(m.orderItemId, (modsMap.get(m.orderItemId) || 0) + Number(m.priceDeltaSnapshot) * m.qty);
+      }
+      const discMap = new Map<number, number>();
+      for (const d of allDiscounts) {
+        discMap.set(d.orderItemId, (discMap.get(d.orderItemId) || 0) + Number(d.amountApplied));
+      }
+      const taxMap = new Map<number, number>();
+      for (const t of allTaxes) {
+        if (!t.inclusiveSnapshot) {
+          taxMap.set(t.orderItemId, (taxMap.get(t.orderItemId) || 0) + Number(t.taxAmount));
+        }
+      }
 
       let splitTotal = 0;
-      for (const si of splitItemsList) {
-        const oi = orderItemsList.find(i => i.id === si.orderItemId);
-        if (oi) {
-          const mods = await storage.getOrderItemModifiers(oi.id);
-          const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
-          const lineSubtotal = (Number(oi.productPriceSnapshot) + modDelta) * oi.qty;
-          
-          const itemDiscounts = await storage.getOrderItemDiscounts(oi.id);
-          const discountAmount = itemDiscounts.reduce((s, d) => s + Number(d.amountApplied), 0);
-          
-          const itemTaxes = await storage.getOrderItemTaxes(oi.id);
-          const additiveTax = itemTaxes.filter(t => !t.inclusiveSnapshot).reduce((s, t) => s + Number(t.taxAmount), 0);
-          
-          splitTotal += lineSubtotal - discountAmount + additiveTax;
-        }
+      for (const oi of splitOIs) {
+        const modDelta = modsMap.get(oi.id) || 0;
+        const lineSubtotal = (Number(oi.productPriceSnapshot) + modDelta) * oi.qty;
+        const discountAmount = discMap.get(oi.id) || 0;
+        const additiveTax = taxMap.get(oi.id) || 0;
+        splitTotal += lineSubtotal - discountAmount + additiveTax;
       }
 
-      const pm = (await storage.getAllPaymentMethods()).find(m => m.id === paymentMethodId);
-      if (pm?.paymentCode === "CASH") {
-        const cashSession = await storage.getActiveCashSession();
-        if (!cashSession) {
-          return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
-        }
+      const pm = allPMs.find(m => m.id === paymentMethodId);
+      if (pm?.paymentCode === "CASH" && !cashSession) {
+        return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
       }
+
+      const bd = getBusinessDate();
+      const now = new Date();
 
       const payment = await storage.createPayment({
         orderId,
@@ -3852,66 +3874,28 @@ export async function registerRoutes(
         status: "PAID",
         clientNameSnapshot: clientName || null,
         clientEmailSnapshot: clientEmail || null,
-        businessDate: getBusinessDate(),
+        businessDate: bd,
       });
 
-      const order = await storage.getOrder(orderId);
-      for (const si of splitItemsList) {
-        await storage.updateOrderItem(si.orderItemId, { status: "PAID" });
-        await storage.updateSalesLedgerItems(si.orderItemId, { status: "PAID", paidAt: new Date() });
-      }
+      await db.transaction(async (tx) => {
+        await finalizePaymentTx(tx, { orderId, itemIds: splitOrderItemIds, now });
+      });
 
-      try {
-        const hrSettings = await storage.getHrSettings();
-        const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
-        if (scRate > 0 && order) {
-          const allProducts = await storage.getAllProducts();
-          const productMap = new Map(allProducts.map(p => [p.id, p]));
-          const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
-          for (const si of splitItemsList) {
-            const oi = orderItemsList.find(i => i.id === si.orderItemId);
-            if (!oi || oi.status === "VOIDED") continue;
-            const prod = oi.productId ? productMap.get(oi.productId) : null;
-            if (prod && !prod.serviceTaxApplicable) continue;
-            const baseAmount = Number(oi.productPriceSnapshot) * oi.qty;
-            const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
-            if (serviceAmount > 0) {
-              await storage.createServiceChargeLedgerEntry({
-                businessDate: getBusinessDate(),
-                orderId,
-                orderItemId: oi.id,
-                tableId: order.tableId || null,
-                tableNameSnapshot: tableName || null,
-                responsibleWaiterEmployeeId: order.responsibleWaiterId || null,
-                rateSnapshot: scRate.toFixed(4),
-                baseAmountSnapshot: baseAmount.toFixed(2),
-                serviceAmount: serviceAmount.toFixed(2),
-                status: "PAID",
-              });
-            }
-          }
-        }
-      } catch (scErr) {
-        console.error("[ServiceCharge] Split payment ledger error:", scErr);
-      }
+      const splitActiveOIs = splitOIs.filter(oi => oi.status !== "VOIDED");
+      await buildServiceChargeOps(orderId, order!, splitActiveOIs);
 
-      if (pm?.paymentCode === "CASH") {
-        const cashSession = await storage.getActiveCashSession();
-        if (cashSession) {
-          const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + splitTotal;
-          await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
-        }
+      if (pm?.paymentCode === "CASH" && cashSession) {
+        const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + splitTotal;
+        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
       }
-
-      await storage.deleteSplitAccount(splitId);
 
       await storage.recalcOrderTotal(orderId);
       await storage.updateOrderPaymentTotals(orderId);
 
       const allItems = await storage.getOrderItems(orderId);
-      const allPaid = allItems.filter(i => i.status !== "VOIDED").every(i => i.status === "PAID");
-      if (allPaid) {
-        await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() });
+      const allPaidNow = allItems.filter(i => i.status !== "VOIDED").every(i => i.status === "PAID");
+      if (allPaidNow) {
+        await storage.updateOrder(orderId, { status: "PAID", closedAt: now });
         await cleanupSubaccountsForOrder(orderId);
       }
 
@@ -3920,6 +3904,7 @@ export async function registerRoutes(
 
       qbo.enqueueSyncForPayment(payment.id, orderId).catch(() => {});
 
+      if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay-split ${Date.now() - t0}ms`);
       const paidItemIds = splitItemsList.map(si => si.orderItemId);
       res.json({ ok: true, paymentId: payment.id, splitLabel: splitAccount.label, paidItemIds });
     } catch (err: any) {
@@ -4315,6 +4300,7 @@ export async function registerRoutes(
 
   // ==================== POS: VOID ORDER (entire table) ====================
   app.post("/api/pos/void-order/:orderId", requirePermission("POS_VOID_ORDER"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const orderId = parseInt(req.params.orderId as string);
       const userId = req.session.userId!;
@@ -4434,6 +4420,7 @@ export async function registerRoutes(
       broadcast("order_updated", { tableId: order.tableId, orderId });
       broadcast("table_status_changed", { tableId: order.tableId });
 
+      if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/void-order/${orderId} ${Date.now() - t0}ms`);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4493,6 +4480,7 @@ export async function registerRoutes(
 
   // ==================== POS: RECEIPT DATA (for screen print) ====================
   app.get("/api/pos/receipt-data/:orderId", requirePermission("POS_PRINT"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const orderId = parseInt(req.params.orderId as string);
       const order = await storage.getOrder(orderId);
@@ -4545,7 +4533,7 @@ export async function registerRoutes(
       const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
       const taxBreakdown = orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : [];
 
-      res.json({
+      const receiptResult = {
         items: receiptItems,
         total: Number(order.totalAmount),
         paymentMethod: paymentMethodName,
@@ -4555,7 +4543,9 @@ export async function registerRoutes(
         totalDiscounts,
         totalTaxes,
         taxBreakdown,
-      });
+      };
+      if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/receipt-data/${orderId} ${Date.now() - t0}ms`);
+      res.json(receiptResult);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -4563,6 +4553,7 @@ export async function registerRoutes(
 
   // ==================== POS: PAID ORDERS LIST ====================
   app.get("/api/pos/paid-orders", requirePermission("MODULE_POS_VIEW"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const date = (req.query.date as string) || undefined;
       const [paidOrders, allTables] = await Promise.all([
@@ -4626,6 +4617,7 @@ export async function registerRoutes(
         };
       });
 
+      if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/paid-orders ${Date.now() - t0}ms (${result.length} orders)`);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

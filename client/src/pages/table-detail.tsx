@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { wsManager } from "@/lib/ws";
+import { useWsConnected } from "@/hooks/use-ws-connected";
 import { formatCurrency, timeAgo } from "@/lib/utils";
 import {
   ArrowLeft, Plus, Send, Check, Trash2, Loader2,
@@ -146,10 +147,11 @@ export default function TableDetailPage() {
     }
   }, [cart, tableId]);
 
+  const wsUp = useWsConnected();
   const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
     queryKey: ["/api/tables", tableId, "current"],
     enabled: !!tableId,
-    refetchInterval: 10000,
+    refetchInterval: wsUp ? 60000 : 10000,
   });
 
   const prevOrderIdRef = useRef<number | null>(null);

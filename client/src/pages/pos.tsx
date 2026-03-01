@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { wsManager } from "@/lib/ws";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
+import { useWsConnected } from "@/hooks/use-ws-connected";
 import {
   CreditCard, DollarSign, Loader2, Receipt,
   Banknote, ArrowLeft, Lock, Unlock, Wallet, Coins,
@@ -65,7 +66,7 @@ interface TaxBreakdownEntry {
   totalAmount: number;
 }
 
-interface POSTable {
+interface POSTableSnapshot {
   id: number;
   tableName: string;
   orderId: number;
@@ -79,11 +80,14 @@ interface POSTable {
   paidAmount?: string;
   openedAt?: string | null;
   itemCount: number;
+  subaccountNames?: string[];
+}
+
+interface POSTable extends POSTableSnapshot {
   items: POSItem[];
   totalDiscounts?: string;
   totalTaxes?: string;
   taxBreakdown?: TaxBreakdownEntry[];
-  subaccountNames?: string[];
 }
 
 interface SplitAccountData {
@@ -164,55 +168,74 @@ export default function POSPage() {
   const [paidSendingEmail, setPaidSendingEmail] = useState(false);
   const [paidPrintingDirect, setPaidPrintingDirect] = useState(false);
 
+  const wsUp = useWsConnected();
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
+
   useEffect(() => {
     wsManager.connect();
     const invalidateTables = () => {
       queryClient.refetchQueries({ queryKey: ["/api/pos/tables"] });
     };
-    const invalidateOrderDetail = () => {
-      if (selectedTable?.orderId) {
-        queryClient.refetchQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "splits"] });
-        queryClient.refetchQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "payments"] });
+    const invalidateDetail = () => {
+      if (selectedOrderId) {
+        queryClient.refetchQueries({ queryKey: ["/api/pos/table-detail", selectedOrderId] });
+        queryClient.refetchQueries({ queryKey: ["/api/pos/orders", selectedOrderId, "splits"] });
+        queryClient.refetchQueries({ queryKey: ["/api/pos/orders", selectedOrderId, "payments"] });
       }
     };
     const invalidatePaymentData = () => {
       invalidateTables();
-      invalidateOrderDetail();
+      invalidateDetail();
       queryClient.refetchQueries({ queryKey: ["/api/pos/cash-session"] });
       queryClient.refetchQueries({ queryKey: ["/api/pos/paid-orders"] });
     };
     const handleAutoClose = (data: any) => {
       invalidateTables();
-      if (selectedTable && data?.orderId === selectedTable.orderId) {
+      if (selectedOrderId && data?.orderId === selectedOrderId) {
         setSelectedTable(null);
+        setSelectedOrderId(null);
         setDetailView(false);
       }
     };
     const unsubs = [
-      wsManager.on("order_updated", () => { invalidateTables(); invalidateOrderDetail(); }),
+      wsManager.on("order_updated", () => { invalidateTables(); invalidateDetail(); }),
       wsManager.on("table_status_changed", invalidateTables),
       wsManager.on("payment_completed", invalidatePaymentData),
       wsManager.on("payment_voided", invalidatePaymentData),
-      wsManager.on("kitchen_item_status_changed", () => { invalidateTables(); invalidateOrderDetail(); }),
+      wsManager.on("kitchen_item_status_changed", () => { invalidateTables(); invalidateDetail(); }),
       wsManager.on("qr_submission_created", invalidateTables),
       wsManager.on("order_auto_closed", handleAutoClose),
     ];
     return () => unsubs.forEach(u => u());
-  }, [selectedTable?.orderId]);
+  }, [selectedOrderId]);
 
-  const { data: posTables = [], isLoading } = useQuery<POSTable[]>({
+  const { data: posTableSnapshots = [], isLoading } = useQuery<POSTableSnapshot[]>({
     queryKey: ["/api/pos/tables"],
-    refetchInterval: 10000,
+    refetchInterval: wsUp ? 60000 : 10000,
+  });
+
+  const { data: tableDetail } = useQuery<POSTable>({
+    queryKey: ["/api/pos/table-detail", selectedOrderId],
+    enabled: !!selectedOrderId,
+    refetchInterval: wsUp ? 60000 : 10000,
   });
 
   useEffect(() => {
-    if (selectedTable && posTables.length > 0) {
-      const fresh = posTables.find(t => t.orderId === selectedTable.orderId);
-      if (fresh && JSON.stringify(fresh) !== JSON.stringify(selectedTable)) {
-        setSelectedTable(fresh);
+    if (tableDetail && selectedOrderId) {
+      setSelectedTable(tableDetail);
+    }
+  }, [tableDetail, selectedOrderId]);
+
+  useEffect(() => {
+    if (selectedTable && selectedOrderId) {
+      const stillExists = posTableSnapshots.some(t => t.orderId === selectedOrderId);
+      if (!stillExists) {
+        setSelectedTable(null);
+        setSelectedOrderId(null);
+        setDetailView(false);
       }
     }
-  }, [posTables]);
+  }, [posTableSnapshots]);
 
   const { data: paymentMethods = [] } = useQuery<PaymentMethod[]>({
     queryKey: ["/api/pos/payment-methods"],
@@ -332,6 +355,7 @@ export default function POSPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       setPaymentOpen(false);
       setSelectedTable(null);
+      setSelectedOrderId(null);
       setDetailView(false);
       setClientName("");
       setClientEmail("");
@@ -585,6 +609,7 @@ export default function POSPage() {
       setVoidOrderId(null);
       setVoidOrderReason("");
       setSelectedTable(null);
+      setSelectedOrderId(null);
       setDetailView(false);
       toast({ title: "Orden anulada completamente" });
     },
@@ -607,6 +632,7 @@ export default function POSPage() {
       setSplitMode(false);
       setDetailView(false);
       setSelectedTable(null);
+      setSelectedOrderId(null);
       setSelectedItemIds([]);
       setActiveSplitId(null);
       const childIds = data.childOrderIds || [];
@@ -851,10 +877,8 @@ export default function POSPage() {
     try {
       await apiRequest("POST", `/api/pos/orders/${selectedTable.orderId}/normalize-split`);
       await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/table-detail", selectedTable.orderId] });
       await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable.orderId, "splits"] });
-      const freshTables: POSTable[] = queryClient.getQueryData(["/api/pos/tables"]) || [];
-      const freshTable = freshTables.find(t => t.orderId === selectedTable.orderId);
-      if (freshTable) setSelectedTable(freshTable);
       setSplitMode(true);
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -875,14 +899,16 @@ export default function POSPage() {
   const closeDetailView = () => {
     setDetailView(false);
     setSelectedTable(null);
+    setSelectedOrderId(null);
     setSelectedItemIds([]);
     setSplitLabel("");
     setSplitMode(false);
     setMovingItemId(null);
   };
 
-  const openNewPayDialog = (table: POSTable, splitId?: number | null, splitLabel?: string, splitTotal?: number) => {
-    setSelectedTable(table);
+  const openNewPayDialog = (table: POSTableSnapshot | POSTable, splitId?: number | null, splitLabel?: string, splitTotal?: number) => {
+    setSelectedOrderId(table.orderId);
+    if ('items' in table) setSelectedTable(table as POSTable);
     setPayDialogSplitId(splitId || null);
     setPayDialogSplitLabel(splitLabel || "");
     setPayDialogSplitTotal(splitTotal || 0);
@@ -898,6 +924,7 @@ export default function POSPage() {
     }
 
     queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/pos/table-detail", tbl.orderId] });
     queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
     queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
     queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", tbl.orderId, "splits"] });
@@ -915,6 +942,7 @@ export default function POSPage() {
 
     if (!payDialogSplitId) {
       setSelectedTable(null);
+      setSelectedOrderId(null);
       setDetailView(false);
     }
     toast({ title: payDialogSplitId ? "Subcuenta pagada" : "Pago procesado" });
@@ -927,10 +955,8 @@ export default function POSPage() {
     try {
       await apiRequest("POST", `/api/pos/orders/${table.orderId}/normalize-split`);
       await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/table-detail", table.orderId] });
       await queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", table.orderId, "splits"] });
-      const freshTables: POSTable[] = queryClient.getQueryData(["/api/pos/tables"]) || [];
-      const freshTable = freshTables.find(t => t.orderId === table.orderId);
-      if (freshTable) setSelectedTable(freshTable);
       setSplitDialogOpen(true);
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -959,6 +985,7 @@ export default function POSPage() {
     setSplitDialogOpen(false);
     setDetailView(false);
     setSelectedTable(null);
+    setSelectedOrderId(null);
     setHighlightedOrderIds(childIds);
     setTimeout(() => setHighlightedOrderIds([]), 2500);
   };
@@ -1819,14 +1846,14 @@ export default function POSPage() {
               <>
                 {isLoading ? (
                   <div className="pos-loading"><Loader2 size={32} className="animate-spin" /></div>
-                ) : posTables.length === 0 ? (
+                ) : posTableSnapshots.length === 0 ? (
                   <div className="pos-empty">
                     <div className="pos-empty-icon"><Receipt size={48} /></div>
                     <div className="pos-empty-text">No hay mesas con consumos pendientes de pago</div>
                   </div>
                 ) : (
                   <div className="pos-table-grid">
-                    {[...posTables].sort((a, b) => {
+                    {[...posTableSnapshots].sort((a, b) => {
                       if (a.id !== b.id) return a.id - b.id;
                       const aIsParent = !a.parentOrderId ? 0 : 1;
                       const bIsParent = !b.parentOrderId ? 0 : 1;
@@ -1838,7 +1865,7 @@ export default function POSPage() {
                       <div
                         key={`${t.id}-${t.orderId}`}
                         className={`pos-table-card ${highlightedOrderIds.includes(t.orderId) ? "highlighted" : ""}`}
-                        onClick={() => { setSelectedTable(t); setDetailView(true); }}
+                        onClick={() => { setSelectedOrderId(t.orderId); setDetailView(true); }}
                         data-testid={`card-pos-table-${t.id}-order-${t.orderId}`}
                       >
                         <div className="pos-tc-top">
@@ -2218,11 +2245,12 @@ export default function POSPage() {
             queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
             toast({ title: "Item anulado correctamente" });
             setTimeout(() => {
-              const currentTables = queryClient.getQueryData<POSTable[]>(["/api/pos/tables"]);
+              const currentTables = queryClient.getQueryData<POSTableSnapshot[]>(["/api/pos/tables"]);
               if (selectedTable && currentTables) {
                 const stillOpen = currentTables.find(t => t.orderId === selectedTable.orderId);
                 if (!stillOpen) {
                   setSelectedTable(null);
+                  setSelectedOrderId(null);
                   setDetailView(false);
                 }
               }

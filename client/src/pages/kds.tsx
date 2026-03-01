@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { wsManager } from "@/lib/ws";
+import { useWsConnected } from "@/hooks/use-ws-connected";
 import { ChefHat, Clock, CheckCircle, Loader2, Trash2, Wine, Ban } from "lucide-react";
 
 interface KDSTicketItem {
@@ -122,6 +123,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
   const knownTicketIdsRef = useRef<Set<number> | null>(null);
   const alertDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [currentTime, setCurrentTime] = useState("");
+  const wsUp = useWsConnected();
 
   const activeQueryKey = ["/api/kds/tickets", "active", destination];
   const historyQueryKey = ["/api/kds/tickets", "history", destination];
@@ -132,7 +134,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
       const res = await apiRequest("GET", `/api/kds/tickets/active?destination=${destination}`);
       return res.json();
     },
-    refetchInterval: 5000,
+    refetchInterval: wsUp ? 60000 : 5000,
   });
 
   const groupedTickets = useMemo(() => groupTicketsByOrder(activeTickets), [activeTickets]);

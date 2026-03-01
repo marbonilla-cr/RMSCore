@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, desc, asc, sql, isNull, ne, inArray, gte, lte } from "drizzle-orm";
+import { eq, and, desc, asc, sql, isNull, ne, inArray, gte, lte, count } from "drizzle-orm";
 import {
   users, tables, categories, products, paymentMethods,
   orders, orderItems, qrSubmissions, kitchenTickets, kitchenTicketItems,
@@ -1718,6 +1718,19 @@ export async function deleteOrderItemDiscountsByItem(orderItemId: number) {
 export async function getAllOpenOrders() {
   return db.select().from(orders)
     .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "PREPARING", "READY"]));
+}
+
+export async function getActiveItemCountsByOrderIds(orderIds: number[]): Promise<Map<number, number>> {
+  if (orderIds.length === 0) return new Map();
+  const rows = await db
+    .select({ orderId: orderItems.orderId, cnt: count() })
+    .from(orderItems)
+    .where(and(
+      inArray(orderItems.orderId, orderIds),
+      sql`${orderItems.status} NOT IN ('VOIDED','PAID','PENDING')`
+    ))
+    .groupBy(orderItems.orderId);
+  return new Map(rows.map(r => [r.orderId, Number(r.cnt)]));
 }
 
 export async function getOrderItemsByOrderIds(orderIds: number[]) {

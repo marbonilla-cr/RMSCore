@@ -5,6 +5,7 @@ import { Link, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell, ArrowRightLeft, AlertTriangle } from "lucide-react";
 import { wsManager } from "@/lib/ws";
+import { useWsConnected } from "@/hooks/use-ws-connected";
 import { formatCurrency, timeAgo } from "@/lib/utils";
 import { ReservationsSheet } from "@/components/reservations/ReservationsSheet";
 
@@ -127,9 +128,10 @@ export default function TablesPage() {
     return new Set<ColumnKey>(["waiter", "items", "amount", "time"]);
   });
 
+  const wsUp = useWsConnected();
   const { data: tables = [], isLoading } = useQuery<TableView[]>({
     queryKey: ["/api/waiter/tables"],
-    refetchInterval: 10000,
+    refetchInterval: wsUp ? 60000 : 10000,
   });
 
   useEffect(() => {
