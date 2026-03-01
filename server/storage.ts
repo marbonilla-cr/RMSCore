@@ -1598,6 +1598,11 @@ export async function getProductTaxCategories(productId: number) {
   return db.select().from(productTaxCategories).where(eq(productTaxCategories.productId, productId));
 }
 
+export async function getProductTaxCategoriesByProductIds(productIds: number[]) {
+  if (productIds.length === 0) return [];
+  return db.select().from(productTaxCategories).where(inArray(productTaxCategories.productId, productIds));
+}
+
 export async function setProductTaxCategories(productId: number, taxCategoryIds: number[]) {
   await db.delete(productTaxCategories).where(eq(productTaxCategories.productId, productId));
   if (taxCategoryIds.length > 0) {

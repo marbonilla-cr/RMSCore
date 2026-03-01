@@ -27,6 +27,7 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
     -   **Order Consecutives:** Daily and global order numbering.
     -   **Multi-Printer Support:** Configurable for different printer types with auto-printing.
     -   **HTML Sanitization:** Global middleware to strip HTML tags from request bodies.
+    -   **Performance:** DB pool: max 20, idleTimeout 30s, connTimeout 5s. Single shared pool (`server/db.ts`). Inventory deduction uses batch transactions (1 per lote, not per item). Hot endpoints (`/api/pos/tables`, `/api/kds/tickets/active`, `/api/tables/:id/current`) use `Promise.all` for parallel queries. Accept-v2 pre-fetches products/modifiers/taxes in batch. Performance logging for requests >200ms. Polling intervals: KDS 5s, POS/tables 10s (WebSocket provides real-time updates). 22+ database indexes on FK columns and hot filters.
 
 **Key Features:**
 -   **Order Management:** Waiter interface for table management and QR order acceptance.

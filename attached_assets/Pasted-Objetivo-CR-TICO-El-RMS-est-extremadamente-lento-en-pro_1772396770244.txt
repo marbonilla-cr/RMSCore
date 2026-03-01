@@ -1,0 +1,154 @@
+Objetivo (CRÍTICO)
+El RMS está extremadamente lento en producción:
+- Lecturas (GET) simples tardan 400–1100ms
+- Escrituras (aceptar QR, anular items) tardan 3–5s
+
+Necesito optimizar performance atacando causas raíz:
+1) Pool DB pequeño y/o pools duplicados
+2) Inventory deduction abre conexiones por item y hace múltiples transacciones
+3) Accept-v2 procesa items en serie con await secuencial
+4) Endpoints hot (POS tables, KDS active tickets) hacen N+1 queries
+
+IMPORTANTE: No romper consistencia. No usar “fire-and-forget” para inventario sin mecanismo de job/idempotencia.
+
+Definición de “listo”
+- /api/pos/tables p95 < 200ms con 20+ órdenes abiertas
+- /api/kds/tickets/active p95 < 200ms
+- accept-v2 p95 < 1s cuando inventario no es crítico y < 1.5s cuando inventario sí se deduce
+- void de items enviados a cocina p95 < 1.5s
+- Sin deadlocks y sin duplicar deducciones
+- Logs claros por endpoint (timing)
+
+Tareas (hacer en este orden)
+-------------------------------------------------------
+T001: Unificar pool de DB y subir capacidad + timeouts
+1) En server/db.ts configurar Pool con:
+   - max: 30 (si el provider limita conexiones, usar 20 y dejar comentario)
+   - idleTimeoutMillis: 30000
+   - connectionTimeoutMillis: 5000
+2) Eliminar cualquier “pool separado” en server/inventory-deduction.ts y reutilizar el pool exportado por server/db.ts.
+3) Validar que todas las rutas/storage usan el mismo pool.
+
+Acceptance:
+- Existe 1 solo pool compartido
+- No se crean pools ad-hoc en módulos
+
+Files:
+- server/db.ts
+- server/inventory-deduction.ts
+- cualquier otro módulo que cree Pool
+
+-------------------------------------------------------
+T002: Inventory deduction en UNA transacción por lote (no por ítem)
+Problema actual: onOrderItemsConfirmedSent hace pool.connect() por ítem. Eso crea N transacciones y satura pool.
+
+Refactor:
+1) Tomar UNA conexión del pool:
+   const client = await pool.connect()
+2) BEGIN una sola vez.
+3) Procesar todos los items dentro de la misma transacción.
+4) Mantener FOR UPDATE para locking.
+5) ORDENAR locks consistentemente para evitar deadlocks:
+   - ordenar por itemType ASC y invItemId ASC
+6) COMMIT al final.
+7) En error: ROLLBACK y rethrow (o devolver error bien controlado).
+
+Acceptance:
+- Aceptar 5 items con inventario usa 1 transacción, no 5.
+- No deadlocks bajo concurrencia.
+
+Files:
+- server/inventory-deduction.ts
+
+-------------------------------------------------------
+T003: Optimizar accept-v2 eliminando awaits seriales, SIN romper inventario
+NO hacer fire-and-forget de inventario a lo bruto.
+
+Cambios:
+1) En server/qr-subaccount-routes.ts (accept-v2):
+   - Identificar pasos “no críticos” que pueden ejecutarse en paralelo:
+     * logs, websocket emits, notificaciones, métricas, etc.
+   - Agruparlos con Promise.all donde aplique.
+2) Mantener el paso de deducción de inventario dentro del flujo transaccional si el inventario es “crítico” para disponibilidad.
+   - Si el sistema actual NO valida disponibilidad, igual deduce sin bloquear extras, pero no lo sueltes async sin control.
+3) Si se quiere respuesta ultra rápida, implementar mini-job con idempotencia (preferido) SOLO si estás en Reserved VM:
+   - Crear tabla inv_deduction_jobs:
+     id, orderId, status(PENDING/RUNNING/SUCCESS/FAILED), error, retries, createdAt, updatedAt
+   - accept-v2 crea el job y responde rápido.
+   - Worker in-process (setInterval cada 2–5s) procesa jobs, con idempotencia por orderId.
+   - Si falla, queda FAILED y se puede reintentar.
+   - Solo hacer esto si se confirma que estamos en Reserved VM (no autoscale).
+   Si no, NO usar jobs en memoria.
+
+Acceptance:
+- accept-v2 ya no hace awaits seriales innecesarios
+- Si hay job: idempotente, sin doble deducción, reintentos controlados
+- Si no hay job: sigue consistente y más rápido gracias a T001+T002+Promise.all
+
+Files:
+- server/qr-subaccount-routes.ts
+- server/routes.ts (si aplica a void)
+- server/storage.ts si necesitas soporte
+- migrations si agregas tabla jobs
+
+-------------------------------------------------------
+T004: Optimizar endpoints hot (lecturas)
+Endpoint 1: /api/pos/tables
+- Actualmente hace 5+ queries separados: getAllTables, getAllOpenOrders, getOrderItems, modifiers, discounts, taxes.
+- Optimizar para reducir round-trips:
+  Opción A (rápida): 2–3 queries máximo + join en memoria.
+  Opción B (mejor): 1 query principal con joins selectivos y luego post-procesar.
+- Evitar N+1 a toda costa.
+
+Endpoint 2: /api/kds/tickets/active
+- Consolidar tickets + items + modifiers en menos queries.
+- Validar índices y uso con EXPLAIN ANALYZE en queries clave.
+
+Índices:
+- Revisar y crear índices si faltan (según filtros reales):
+  - kitchen_ticket_items(ticketId, status)
+  - kitchen_tickets(status, createdAt)
+  - order_items(orderId, sentToKitchenAt, status)
+  - orders(status, tableId, createdAt)
+(Usar nombres y columnas reales del schema)
+
+Acceptance:
+- /api/pos/tables p95 < 200ms con carga
+- /api/kds/tickets/active p95 < 200ms
+
+Files:
+- server/storage.ts
+- server/routes.ts
+- migrations si agregas índices
+
+-------------------------------------------------------
+T005 (obligatorio): Instrumentación de latencia y conteo de queries
+Agregar logs por request:
+- endpoint + statusCode + duration ms (ya existe algo, reforzarlo)
+- para endpoints hot: log adicional con:
+  - # de queries ejecutadas (si fácil) o al menos “fases”: fetch tables, fetch orders, fetch items, assemble
+
+Implementar medición:
+- al inicio del handler: const t0 = Date.now()
+- en puntos clave: log(`phase X took ${Date.now()-tx}ms`)
+
+Acceptance:
+- Logs permiten identificar dónde se va el tiempo.
+
+-------------------------------------------------------
+Notas / constraints
+- Mantener atomicidad e idempotencia. Nada de doble deducción.
+- Orden de locks consistente.
+- Si cambias queries, asegurar que los campos necesarios siguen existiendo para UI.
+- No romper WebSockets.
+- Si hay jobs: SOLO si Reserved VM. Autoscale puede duplicar instancias y romper jobs in-process.
+
+Entregables
+- PR/commit con cambios en los archivos indicados
+- Breve resumen:
+  - Qué cambió en pool
+  - Cómo quedó inventory deduction
+  - Qué endpoints se optimizaron y cómo
+  - Evidencia de mejora (logs con tiempos antes/después o medición)
+
+Empezar por T001 y T002 primero. Luego T003 y T004.

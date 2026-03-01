@@ -317,16 +317,48 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         subaccount = sa || null;
       }
 
-      const existingItems = await storage.getOrderItems(order.id);
+      const t0 = Date.now();
+
+      const [existingItems, allCategories, allTaxCats] = await Promise.all([
+        storage.getOrderItems(order.id),
+        storage.getAllCategories(),
+        storage.getAllTaxCategories(),
+      ]);
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
       const roundNumber = maxRound + 1;
 
-      const allCategories = await storage.getAllCategories();
-      const allTaxCats = await storage.getAllTaxCategories();
+      const uniqueProductIds = Array.from(new Set(payloadItems.map(i => i.productId)));
+      const allModOptionIds = Array.from(new Set(
+        payloadItems.flatMap(i => (i.modifiers || []).map(m => m.optionId))
+      ));
+
+      const [productsArr, modOptionsArr, allProductTaxLinks] = await Promise.all([
+        uniqueProductIds.length > 0
+          ? db.select().from(products).where(inArray(products.id, uniqueProductIds))
+          : Promise.resolve([]),
+        allModOptionIds.length > 0
+          ? db.select().from(modifierOptions).where(inArray(modifierOptions.id, allModOptionIds))
+          : Promise.resolve([]),
+        uniqueProductIds.length > 0
+          ? storage.getProductTaxCategoriesByProductIds(uniqueProductIds)
+          : Promise.resolve([]),
+      ]);
+
+      const productsMap = new Map(productsArr.map(p => [p.id, p]));
+      const modOptionsMap = new Map(modOptionsArr.map(o => [o.id, o]));
+      const taxLinksByProduct = new Map<number, typeof allProductTaxLinks>();
+      for (const tl of allProductTaxLinks) {
+        if (!taxLinksByProduct.has(tl.productId)) taxLinksByProduct.set(tl.productId, []);
+        taxLinksByProduct.get(tl.productId)!.push(tl);
+      }
+
+      console.log(`[perf] accept-v2 prefetch took ${Date.now() - t0}ms`);
+
       const createdItems: any[] = [];
+      const businessDate = getBusinessDate();
 
       for (const item of payloadItems) {
-        const product = await storage.getProduct(item.productId);
+        const product = productsMap.get(item.productId);
         if (!product || !product.active) continue;
 
         const category = allCategories.find(c => c.id === product.categoryId);
@@ -352,7 +384,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           customerNameSnapshot: item.customerName || null,
         }).where(eq(orderItems.id, orderItem.id));
 
-        const taxLinks = await storage.getProductTaxCategories(product.id);
+        const taxLinks = taxLinksByProduct.get(product.id) || [];
         if (taxLinks.length > 0) {
           const taxSnapshot = taxLinks.map(ptc => {
             const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
@@ -365,8 +397,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
         if (item.modifiers && Array.isArray(item.modifiers)) {
           for (const mod of item.modifiers) {
-            const [option] = await db.select().from(modifierOptions)
-              .where(eq(modifierOptions.id, mod.optionId));
+            const option = modOptionsMap.get(mod.optionId);
             if (option) {
               await storage.createOrderItemModifier({
                 orderItemId: orderItem.id,
@@ -379,17 +410,15 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           }
         }
 
-        const itemMods = item.modifiers || [];
         let modDelta = 0;
-        for (const mod of itemMods) {
-          const [option] = await db.select().from(modifierOptions)
-            .where(eq(modifierOptions.id, mod.optionId));
+        for (const mod of (item.modifiers || [])) {
+          const option = modOptionsMap.get(mod.optionId);
           if (option) modDelta += Number(option.priceDelta || 0);
         }
         const unitWithMods = Number(product.price) + modDelta;
 
         await storage.createSalesLedgerItem({
-          businessDate: getBusinessDate(),
+          businessDate,
           tableId: table.id,
           tableNameSnapshot: table.tableName,
           orderId: order.id,
@@ -409,8 +438,10 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           status: "OPEN",
         });
 
-        createdItems.push({ ...orderItem, productName: product.name });
+        createdItems.push({ ...orderItem, productName: product.name, categoryId: product.categoryId });
       }
+
+      console.log(`[perf] accept-v2 items created in ${Date.now() - t0}ms`);
 
       await storage.updateSubmission(subId, {
         status: "ACCEPTED",
@@ -423,8 +454,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         const kdsTickets: Map<string, number> = new Map();
 
         for (const createdItem of createdItems) {
-          const product = await storage.getProduct(createdItem.productId);
-          const category = product ? allCategories.find(c => c.id === product.categoryId) : null;
+          const category = allCategories.find(c => c.id === createdItem.categoryId);
           const kdsDestination = category?.kdsDestination || "cocina";
 
           if (!kdsTickets.has(kdsDestination)) {
@@ -471,24 +501,29 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
             });
           }
 
-          try {
-            await onOrderItemsConfirmedSent(order.id, [createdItem.id], userId);
-          } catch (deductionErr: any) {
-            console.error("[inv] deduction error:", deductionErr);
-          }
-
           await storage.updateSalesLedgerItems(createdItem.id, {
             sentToKitchenAt: new Date(),
             responsibleWaiterId: userId,
           });
         }
 
+        console.log(`[perf] accept-v2 tickets created in ${Date.now() - t0}ms`);
+
+        try {
+          const allCreatedItemIds = createdItems.map(ci => ci.id);
+          await onOrderItemsConfirmedSent(order.id, allCreatedItemIds, userId);
+        } catch (deductionErr: any) {
+          console.error("[inv] deduction error:", deductionErr);
+        }
+
+        console.log(`[perf] accept-v2 inventory done in ${Date.now() - t0}ms`);
+
         await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
       }
 
       await storage.recalcOrderTotal(order.id);
 
-      await storage.createAuditEvent({
+      storage.createAuditEvent({
         actorType: "USER",
         actorUserId: userId,
         action: "WAITER_ACCEPTED_QR_V2",
@@ -496,7 +531,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         entityId: subId,
         tableId: sub.tableId,
         metadata: { itemCount: createdItems.length, submissionId: subId },
-      });
+      }).catch(() => {});
 
       if (createdTicketIds.length > 0) {
         broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: sub.tableId, tableName: table.tableName });
@@ -506,6 +541,8 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       const updatedOrder = await storage.getOpenOrderForTable(sub.tableId);
       const updatedItems = updatedOrder ? await storage.getOrderItems(updatedOrder.id) : [];
+
+      console.log(`[perf] accept-v2 total ${Date.now() - t0}ms (${createdItems.length} items)`);
 
       res.json({
         ok: true,

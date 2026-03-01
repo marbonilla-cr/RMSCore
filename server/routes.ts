@@ -1699,6 +1699,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/tables/:id/current", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    const t0 = Date.now();
     try {
       const tableId = parseInt(req.params.id as string);
       const table = await storage.getTable(tableId);
@@ -1709,9 +1710,20 @@ export async function registerRoutes(
         return res.json({ table, activeOrder: null, orderItems: [], pendingQrSubmissions: [] });
       }
 
-      const items = await storage.getOrderItems(order.id);
+      const [items, pendingSubs, voidedItemsList] = await Promise.all([
+        storage.getOrderItems(order.id),
+        storage.getPendingSubmissions(order.id),
+        storage.getVoidedItemsForOrder(order.id),
+      ]);
+
       const itemIds = items.map(i => i.id);
-      const allMods = itemIds.length > 0 ? await storage.getOrderItemModifiersByItemIds(itemIds) : [];
+      const voidedUserIds = Array.from(new Set(voidedItemsList.map(i => i.voidedByUserId)));
+
+      const [allMods, voidedUsers] = await Promise.all([
+        itemIds.length > 0 ? storage.getOrderItemModifiersByItemIds(itemIds) : Promise.resolve([]),
+        storage.getUsersByIds(voidedUserIds),
+      ]);
+
       const modsByItem = new Map<number, typeof allMods>();
       for (const m of allMods) {
         if (!modsByItem.has(m.orderItemId)) modsByItem.set(m.orderItemId, []);
@@ -1722,18 +1734,13 @@ export async function registerRoutes(
         modifiers: modsByItem.get(item.id) || [],
       }));
 
-      const pendingSubs = await storage.getPendingSubmissions(order.id);
-
       const subsWithItems = [];
       for (const sub of pendingSubs) {
         const subItems = itemsWithMods.filter(i => i.qrSubmissionId === sub.id);
         subsWithItems.push({ ...sub, items: subItems });
       }
 
-      const voidedItemsList = await storage.getVoidedItemsForOrder(order.id);
-      const voidedUserIds = Array.from(new Set(voidedItemsList.map(i => i.voidedByUserId)));
       const voidedUsersMap = new Map<number, string>();
-      const voidedUsers = await storage.getUsersByIds(voidedUserIds);
       for (const u of voidedUsers) voidedUsersMap.set(u.id, u.displayName);
       const voidedItemsWithNames = voidedItemsList.map(i => ({
         ...i,
@@ -1741,6 +1748,7 @@ export async function registerRoutes(
         voidedByName: voidedUsersMap.get(i.voidedByUserId) || "Desconocido",
       }));
 
+      if (Date.now() - t0 > 200) console.log(`[perf] /api/tables/${tableId}/current ${Date.now() - t0}ms`);
       res.json({ table, activeOrder: order, orderItems: itemsWithMods, pendingQrSubmissions: subsWithItems, voidedItems: voidedItemsWithNames });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2797,6 +2805,7 @@ export async function registerRoutes(
 
   // ==================== KDS ====================
   app.get("/api/kds/tickets/:type", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
+    const t0 = Date.now();
     const type = req.params.type;
     const destination = (req.query.destination as string) || undefined;
     let tickets;
@@ -2842,6 +2851,7 @@ export async function registerRoutes(
         items: itemsWithMods,
       });
     }
+    if (Date.now() - t0 > 200) console.log(`[perf] /api/kds/tickets/${type} ${Date.now() - t0}ms (${tickets.length} tickets, ${allTicketItems.length} items)`);
     res.json(result);
   });
 
@@ -2966,6 +2976,7 @@ export async function registerRoutes(
 
   // ==================== POS ====================
   app.get("/api/pos/tables", requirePermission("POS_VIEW"), async (_req, res) => {
+    const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
       storage.getAllTables(),
       storage.getAllOpenOrders(),
@@ -2975,13 +2986,17 @@ export async function registerRoutes(
     if (relevantOrders.length === 0) return res.json([]);
 
     const orderIds = relevantOrders.map(o => o.id);
-    const allItems = await storage.getOrderItemsByOrderIds(orderIds);
 
     const parentOrderIds = relevantOrders.filter(o => o.parentOrderId).map(o => o.parentOrderId!);
     const allSubaccountQueryIds = Array.from(new Set([...orderIds, ...parentOrderIds]));
-    const allSubaccounts = allSubaccountQueryIds.length > 0
-      ? await db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, allSubaccountQueryIds))
-      : [];
+
+    const [allItems, allSubaccounts] = await Promise.all([
+      storage.getOrderItemsByOrderIds(orderIds),
+      allSubaccountQueryIds.length > 0
+        ? db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, allSubaccountQueryIds))
+        : Promise.resolve([]),
+    ]);
+
     const subaccountsByOrder = new Map<number, string[]>();
     for (const sa of allSubaccounts) {
       if (sa.label) {
@@ -2999,6 +3014,7 @@ export async function registerRoutes(
       storage.getOrderItemDiscountsByItemIds(allItemIds),
       storage.getOrderItemTaxesByItemIds(allItemIds),
     ]);
+    if (Date.now() - t0 > 200) console.log(`[perf] /api/pos/tables ${Date.now() - t0}ms (${relevantOrders.length} orders, ${allItems.length} items)`);
 
     const modsMap = new Map<number, typeof allMods>();
     for (const m of allMods) {
