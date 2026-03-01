@@ -456,6 +456,27 @@ export const hrTimePunches = pgTable("hr_time_punches", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const hrExtraTypes = pgTable("hr_extra_types", {
+  typeCode: text("type_code").primaryKey(),
+  name: text("name").notNull(),
+  kind: text("kind").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const hrPayrollExtras = pgTable("hr_payroll_extras", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull(),
+  appliesToDate: text("applies_to_date").notNull(),
+  typeCode: text("type_code").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  note: text("note"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedBy: integer("updated_by"),
+  updatedAt: timestamp("updated_at"),
+  isDeleted: boolean("is_deleted").notNull().default(false),
+});
+
 export const serviceChargeLedger = pgTable("service_charge_ledger", {
   id: serial("id").primaryKey(),
   businessDate: text("business_date").notNull(),

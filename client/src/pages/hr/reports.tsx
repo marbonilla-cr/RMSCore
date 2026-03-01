@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -8,6 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -15,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown, ChevronRight, Plus, Trash2, Info } from "lucide-react";
 
 function formatMinutes(totalMinutes: number): string {
   const h = Math.floor(Math.abs(totalMinutes) / 60);
@@ -67,13 +74,20 @@ interface ServicePayout {
 }
 
 export default function HrReportsPage() {
-  const [activeTab, setActiveTab] = useState<"overtime" | "service">("overtime");
+  const [activeTab, setActiveTab] = useState<"payroll" | "overtime" | "service">("payroll");
 
   return (
     <div className="admin-page">
       <h1 className="admin-page-title" data-testid="text-reports-title">Reportes HR</h1>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
+        <Button
+          variant={activeTab === "payroll" ? "default" : "outline"}
+          data-testid="button-tab-payroll"
+          onClick={() => setActiveTab("payroll")}
+        >
+          Planilla
+        </Button>
         <Button
           variant={activeTab === "overtime" ? "default" : "outline"}
           data-testid="button-tab-overtime"
@@ -90,8 +104,341 @@ export default function HrReportsPage() {
         </Button>
       </div>
 
-      {activeTab === "overtime" ? <OvertimeTab /> : <ServiceChargeTab />}
+      {activeTab === "payroll" ? <PayrollTab /> : activeTab === "overtime" ? <OvertimeTab /> : <ServiceChargeTab />}
     </div>
+  );
+}
+
+function getMondayStr(): string {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - diff);
+  return d.toISOString().slice(0, 10);
+}
+
+function getSundayStr(mondayStr: string): string {
+  const d = new Date(mondayStr + "T12:00:00");
+  d.setDate(d.getDate() + 6);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatColones(n: number): string {
+  return "₡" + n.toLocaleString("es-CR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+interface PayrollEmployee {
+  employeeId: number;
+  name: string;
+  role: string;
+  daysScheduled: number;
+  daysPresent: number;
+  daysNoShow: number;
+  totalNormalMin: number;
+  totalOvertimeMin: number;
+  totalLateMin: number;
+  lateCount: number;
+  normalPay: number;
+  overtimePay: number;
+  basePayTotal: number;
+  extrasEarnings: number;
+  extrasDeductions: number;
+  extrasNet: number;
+  servicePayTotal: number;
+  grandTotalPay: number;
+  dailyBreakdown: {
+    date: string;
+    workedMinutes: number;
+    normalMinutes: number;
+    overtimeMinutes: number;
+    tardyMinutes: number;
+    basePay: number;
+    extras: { id: number; typeCode: string; amount: number; note: string | null; kind: string }[];
+    servicePayDay: number;
+    flags: { late: boolean; noShow: boolean; autoCheckout: boolean; midnightShift: boolean; hasMultiplePunches: boolean };
+  }[];
+}
+
+interface PayrollReport {
+  hrConfigSnapshot: {
+    jornadaOrdinariaHorasPorDia: number;
+    multiplicadorHoraExtra: number;
+    servicePercentDefault: number;
+    latenessGraceMinutes: number;
+    roundingRule: string;
+  };
+  employees: PayrollEmployee[];
+}
+
+interface ExtraType {
+  typeCode: string;
+  name: string;
+  kind: string;
+  isActive: boolean;
+}
+
+function PayrollTab() {
+  const { toast } = useToast();
+  const [mode, setMode] = useState<"weekly" | "range">("weekly");
+  const [weekStart, setWeekStart] = useState(getMondayStr());
+  const [dateFrom, setDateFrom] = useState(weekAgoStr());
+  const [dateTo, setDateTo] = useState(todayStr());
+  const [expandedEmp, setExpandedEmp] = useState<number | null>(null);
+
+  const actualFrom = mode === "weekly" ? weekStart : dateFrom;
+  const actualTo = mode === "weekly" ? getSundayStr(weekStart) : dateTo;
+
+  const { data, isLoading } = useQuery<PayrollReport>({
+    queryKey: ["/api/hr/payroll-report", `?dateFrom=${actualFrom}&dateTo=${actualTo}`],
+    enabled: !!actualFrom && !!actualTo,
+  });
+
+  const { data: extraTypes } = useQuery<ExtraType[]>({
+    queryKey: ["/api/hr/extra-types"],
+  });
+
+  const [addingExtraFor, setAddingExtraFor] = useState<{ empId: number; date: string } | null>(null);
+  const [newExtraType, setNewExtraType] = useState("");
+  const [newExtraAmount, setNewExtraAmount] = useState("");
+  const [newExtraNote, setNewExtraNote] = useState("");
+
+  const createExtraMutation = useMutation({
+    mutationFn: async (body: { employeeId: number; appliesToDate: string; typeCode: string; amount: number; note: string }) => {
+      await apiRequest("POST", "/api/hr/payroll-extras", body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      setAddingExtraFor(null);
+      setNewExtraType("");
+      setNewExtraAmount("");
+      setNewExtraNote("");
+      toast({ title: "Extra agregado" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteExtraMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/hr/payroll-extras/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      toast({ title: "Extra eliminado" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const needsNote = ["AJUSTE_POSITIVO", "AJUSTE_NEGATIVO", "PRESTAMO_DEDUCCION"].includes(newExtraType);
+
+  const totals = useMemo(() => {
+    if (!data?.employees) return null;
+    return data.employees.reduce(
+      (acc, e) => ({
+        basePayTotal: acc.basePayTotal + e.basePayTotal,
+        extrasNet: acc.extrasNet + e.extrasNet,
+        servicePayTotal: acc.servicePayTotal + e.servicePayTotal,
+        grandTotalPay: acc.grandTotalPay + e.grandTotalPay,
+      }),
+      { basePayTotal: 0, extrasNet: 0, servicePayTotal: 0, grandTotalPay: 0 }
+    );
+  }, [data]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between flex-wrap gap-2">
+          <span>Planilla</span>
+          {data?.hrConfigSnapshot && (
+            <div className="flex items-center gap-1" data-testid="badge-hr-config">
+              <Info className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground font-normal">
+                Jornada: {data.hrConfigSnapshot.jornadaOrdinariaHorasPorDia}h | Extra: ×{data.hrConfigSnapshot.multiplicadorHoraExtra} | Servicio: {(data.hrConfigSnapshot.servicePercentDefault * 100).toFixed(0)}% | Gracia: {data.hrConfigSnapshot.latenessGraceMinutes}min
+              </span>
+            </div>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex gap-4 flex-wrap items-end">
+          <div className="flex gap-2">
+            <Button size="sm" variant={mode === "weekly" ? "default" : "outline"} onClick={() => setMode("weekly")} data-testid="button-mode-weekly">Semanal</Button>
+            <Button size="sm" variant={mode === "range" ? "default" : "outline"} onClick={() => setMode("range")} data-testid="button-mode-range">Rango</Button>
+          </div>
+          {mode === "weekly" ? (
+            <div className="space-y-1">
+              <Label>Semana (Lunes)</Label>
+              <Input type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)} data-testid="input-payroll-weekStart" />
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1">
+                <Label>Desde</Label>
+                <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} data-testid="input-payroll-dateFrom" />
+              </div>
+              <div className="space-y-1">
+                <Label>Hasta</Label>
+                <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} data-testid="input-payroll-dateTo" />
+              </div>
+            </>
+          )}
+        </div>
+
+        {isLoading ? (
+          <div className="flex justify-center p-4"><Loader2 className="h-6 w-6 animate-spin" /></div>
+        ) : data?.employees && data.employees.length > 0 ? (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead></TableHead>
+                  <TableHead>Empleado</TableHead>
+                  <TableHead className="text-center">Días Prog</TableHead>
+                  <TableHead className="text-center">Días Pres</TableHead>
+                  <TableHead className="text-center">No Show</TableHead>
+                  <TableHead className="text-right">Hrs Normal</TableHead>
+                  <TableHead className="text-right">Hrs Extra</TableHead>
+                  <TableHead className="text-center">Tardías</TableHead>
+                  <TableHead className="text-right">Min Tarde</TableHead>
+                  <TableHead className="text-right">Pago Base</TableHead>
+                  <TableHead className="text-right">Extras</TableHead>
+                  <TableHead className="text-right">Servicio</TableHead>
+                  <TableHead className="text-right font-bold">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.employees.filter(e => e.daysScheduled > 0 || e.daysPresent > 0 || e.grandTotalPay !== 0).map((emp) => {
+                  const isExpanded = expandedEmp === emp.employeeId;
+                  return (
+                    <Fragment key={emp.employeeId}>
+                      <TableRow
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => setExpandedEmp(isExpanded ? null : emp.employeeId)}
+                        data-testid={`row-payroll-${emp.employeeId}`}
+                      >
+                        <TableCell className="w-8">{isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">{emp.name}</div>
+                          <div className="text-xs text-muted-foreground">{emp.role}</div>
+                        </TableCell>
+                        <TableCell className="text-center">{emp.daysScheduled}</TableCell>
+                        <TableCell className="text-center">{emp.daysPresent}</TableCell>
+                        <TableCell className="text-center">{emp.daysNoShow > 0 ? <Badge variant="destructive" className="text-xs">{emp.daysNoShow}</Badge> : "0"}</TableCell>
+                        <TableCell className="text-right">{formatMinutes(emp.totalNormalMin)}</TableCell>
+                        <TableCell className="text-right">{emp.totalOvertimeMin > 0 ? <span className="text-amber-600 font-medium">{formatMinutes(emp.totalOvertimeMin)}</span> : "00:00"}</TableCell>
+                        <TableCell className="text-center">{emp.lateCount > 0 ? <Badge variant="secondary" className="text-xs">{emp.lateCount}</Badge> : "0"}</TableCell>
+                        <TableCell className="text-right">{emp.totalLateMin > 0 ? formatMinutes(emp.totalLateMin) : "00:00"}</TableCell>
+                        <TableCell className="text-right">{formatColones(emp.basePayTotal)}</TableCell>
+                        <TableCell className="text-right">{emp.extrasNet !== 0 ? <span className={emp.extrasNet > 0 ? "text-green-600" : "text-red-600"}>{formatColones(emp.extrasNet)}</span> : "—"}</TableCell>
+                        <TableCell className="text-right">{emp.role === "WAITER" || emp.role === "SALONERO" ? formatColones(emp.servicePayTotal) : "—"}</TableCell>
+                        <TableCell className="text-right font-bold">{formatColones(emp.grandTotalPay)}</TableCell>
+                      </TableRow>
+                      {isExpanded && (
+                        <TableRow key={`${emp.employeeId}-detail`}>
+                          <TableCell colSpan={13} className="p-0">
+                            <div className="bg-muted/30 p-3">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Fecha</TableHead>
+                                    <TableHead className="text-right">Hrs Trab</TableHead>
+                                    <TableHead className="text-right">Normal</TableHead>
+                                    <TableHead className="text-right">Extra</TableHead>
+                                    <TableHead className="text-right">Tardía</TableHead>
+                                    <TableHead className="text-right">Pago Base</TableHead>
+                                    <TableHead>Extras</TableHead>
+                                    <TableHead className="text-right">Servicio</TableHead>
+                                    <TableHead>Flags</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {emp.dailyBreakdown.filter(d => d.workedMinutes > 0 || d.flags.noShow || d.extras.length > 0).map((day) => (
+                                    <TableRow key={day.date} data-testid={`row-daily-${emp.employeeId}-${day.date}`}>
+                                      <TableCell className="font-mono text-sm">{day.date}</TableCell>
+                                      <TableCell className="text-right">{formatMinutes(day.workedMinutes)}</TableCell>
+                                      <TableCell className="text-right">{formatMinutes(day.normalMinutes)}</TableCell>
+                                      <TableCell className="text-right">{day.overtimeMinutes > 0 ? <span className="text-amber-600">{formatMinutes(day.overtimeMinutes)}</span> : "—"}</TableCell>
+                                      <TableCell className="text-right">{day.tardyMinutes > 0 ? <span className="text-red-500">{day.tardyMinutes} min</span> : "—"}</TableCell>
+                                      <TableCell className="text-right">{formatColones(day.basePay)}</TableCell>
+                                      <TableCell>
+                                        <div className="space-y-1">
+                                          {day.extras.map((ex) => (
+                                            <div key={ex.id} className="flex items-center gap-1 text-xs">
+                                              <span className={ex.kind === "EARNING" ? "text-green-600" : "text-red-600"}>
+                                                {ex.kind === "EARNING" ? "+" : ""}{formatColones(ex.amount)}
+                                              </span>
+                                              <span className="text-muted-foreground">{ex.typeCode}</span>
+                                              {ex.note && <span className="text-muted-foreground italic truncate max-w-[100px]" title={ex.note}>({ex.note})</span>}
+                                              <button onClick={(e) => { e.stopPropagation(); deleteExtraMutation.mutate(ex.id); }} className="text-red-400 hover:text-red-600" data-testid={`button-delete-extra-${ex.id}`}>
+                                                <Trash2 className="h-3 w-3" />
+                                              </button>
+                                            </div>
+                                          ))}
+                                          {addingExtraFor?.empId === emp.employeeId && addingExtraFor?.date === day.date ? (
+                                            <div className="flex flex-col gap-1 p-2 border rounded bg-background" onClick={(e) => e.stopPropagation()}>
+                                              <Select value={newExtraType} onValueChange={setNewExtraType}>
+                                                <SelectTrigger className="h-7 text-xs" data-testid="select-extra-type">
+                                                  <SelectValue placeholder="Tipo" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  {extraTypes?.map((t) => (
+                                                    <SelectItem key={t.typeCode} value={t.typeCode}>{t.name} ({t.kind === "EARNING" ? "+" : "-"})</SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                              <Input type="number" placeholder="Monto ₡" className="h-7 text-xs" value={newExtraAmount} onChange={(e) => setNewExtraAmount(e.target.value)} data-testid="input-extra-amount" />
+                                              <Input placeholder={needsNote ? "Nota (requerida)" : "Nota (opcional)"} className="h-7 text-xs" value={newExtraNote} onChange={(e) => setNewExtraNote(e.target.value)} data-testid="input-extra-note" />
+                                              <div className="flex gap-1">
+                                                <Button size="sm" className="h-6 text-xs" disabled={!newExtraType || !newExtraAmount || (needsNote && !newExtraNote.trim()) || createExtraMutation.isPending}
+                                                  onClick={() => createExtraMutation.mutate({ employeeId: emp.employeeId, appliesToDate: day.date, typeCode: newExtraType, amount: Number(newExtraAmount), note: newExtraNote })} data-testid="button-save-extra">
+                                                  Guardar
+                                                </Button>
+                                                <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setAddingExtraFor(null)} data-testid="button-cancel-extra">Cancelar</Button>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <button onClick={(e) => { e.stopPropagation(); setAddingExtraFor({ empId: emp.employeeId, date: day.date }); }} className="text-xs text-primary flex items-center gap-0.5 hover:underline" data-testid={`button-add-extra-${emp.employeeId}-${day.date}`}>
+                                              <Plus className="h-3 w-3" /> Extra
+                                            </button>
+                                          )}
+                                        </div>
+                                      </TableCell>
+                                      <TableCell className="text-right">{(emp.role === "WAITER" || emp.role === "SALONERO") ? formatColones(day.servicePayDay) : "—"}</TableCell>
+                                      <TableCell>
+                                        <div className="flex gap-1 flex-wrap">
+                                          {day.flags.noShow && <Badge variant="destructive" className="text-[10px] px-1">No Show</Badge>}
+                                          {day.flags.late && <Badge variant="secondary" className="text-[10px] px-1">Tarde</Badge>}
+                                          {day.flags.autoCheckout && <Badge variant="outline" className="text-[10px] px-1">Auto</Badge>}
+                                          {day.flags.midnightShift && <Badge variant="outline" className="text-[10px] px-1">Nocturno</Badge>}
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {totals && (
+                  <TableRow className="font-bold border-t-2" data-testid="row-payroll-totals">
+                    <TableCell colSpan={9} className="text-right">TOTALES</TableCell>
+                    <TableCell className="text-right">{formatColones(totals.basePayTotal)}</TableCell>
+                    <TableCell className="text-right">{totals.extrasNet !== 0 ? formatColones(totals.extrasNet) : "—"}</TableCell>
+                    <TableCell className="text-right">{formatColones(totals.servicePayTotal)}</TableCell>
+                    <TableCell className="text-right">{formatColones(totals.grandTotalPay)}</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground" data-testid="text-no-payroll-data">No hay datos para el rango seleccionado.</p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

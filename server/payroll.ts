@@ -1,0 +1,385 @@
+const TZ = "America/Costa_Rica";
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function diffMinutes(a: Date, b: Date): number {
+  return Math.floor((b.getTime() - a.getTime()) / 60000);
+}
+
+export interface HrConfig {
+  overtimeDailyThresholdHours: string | number;
+  overtimeMultiplier: string | number;
+  latenessGraceMinutes: number;
+  serviceChargeRate: string | number;
+}
+
+export interface PunchRecord {
+  id: number;
+  employeeId: number;
+  businessDate: string;
+  clockInAt: Date | string;
+  clockOutAt: Date | string | null;
+  clockOutType: string | null;
+  scheduledStartAt: Date | string | null;
+  scheduledEndAt: Date | string | null;
+  lateMinutes: number;
+  workedMinutes: number;
+  overtimeMinutesDaily: number;
+}
+
+export interface ScheduleDay {
+  dayOfWeek: number;
+  startTime: string | null;
+  endTime: string | null;
+  isDayOff: boolean;
+  employeeId: number;
+  weekStartDate: string;
+}
+
+export interface DailyPayrollResult {
+  workedMinutes: number;
+  normalMinutes: number;
+  overtimeMinutes: number;
+  tardyMinutes: number;
+  normalPay: number;
+  overtimePay: number;
+  baseTotalPayDay: number;
+  flags: {
+    late: boolean;
+    noShow: boolean;
+    autoCheckout: boolean;
+    midnightShift: boolean;
+    hasMultiplePunches: boolean;
+  };
+}
+
+function toDate(v: Date | string | null): Date | null {
+  if (!v) return null;
+  return v instanceof Date ? v : new Date(v);
+}
+
+function parseDateInTZ(dateStr: string, timeStr: string): Date {
+  const [h, m] = timeStr.split(":").map(Number);
+  const d = new Date(dateStr + "T00:00:00");
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+
+function getScheduleTimesForDate(
+  dateStr: string,
+  schedule: ScheduleDay | null
+): { scheduledStart: Date | null; scheduledEnd: Date | null } {
+  if (!schedule || schedule.isDayOff || !schedule.startTime || !schedule.endTime) {
+    return { scheduledStart: null, scheduledEnd: null };
+  }
+  const scheduledStart = parseDateInTZ(dateStr, schedule.startTime);
+  let scheduledEnd = parseDateInTZ(dateStr, schedule.endTime);
+  if (scheduledEnd <= scheduledStart) {
+    scheduledEnd.setDate(scheduledEnd.getDate() + 1);
+  }
+  return { scheduledStart, scheduledEnd };
+}
+
+export function computeDailyPayroll(args: {
+  punchesForDay: PunchRecord[];
+  scheduleForDay: ScheduleDay | null;
+  dailyRate: number;
+  hrConfig: HrConfig;
+  dateStr: string;
+}): DailyPayrollResult {
+  const { punchesForDay, scheduleForDay, dailyRate, hrConfig, dateStr } = args;
+  const jornadaHoras = Number(hrConfig.overtimeDailyThresholdHours) || 8;
+  const multiplier = Number(hrConfig.overtimeMultiplier) || 1.5;
+  const graceMinutes = hrConfig.latenessGraceMinutes || 0;
+  const hourlyRate = dailyRate / jornadaHoras;
+
+  const hasSchedule = scheduleForDay && !scheduleForDay.isDayOff && scheduleForDay.startTime && scheduleForDay.endTime;
+
+  const { scheduledStart, scheduledEnd } = getScheduleTimesForDate(dateStr, scheduleForDay || null);
+
+  if (punchesForDay.length === 0) {
+    return {
+      workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0, tardyMinutes: 0,
+      normalPay: 0, overtimePay: 0, baseTotalPayDay: 0,
+      flags: { late: false, noShow: !!hasSchedule, autoCheckout: false, midnightShift: false, hasMultiplePunches: false },
+    };
+  }
+
+  const hasMultiplePunches = punchesForDay.length > 1;
+  const sorted = [...punchesForDay].sort((a, b) => toDate(a.clockInAt)!.getTime() - toDate(b.clockInAt)!.getTime());
+  const firstPunch = sorted[0];
+  const lastPunch = sorted[sorted.length - 1];
+
+  const clockIn = toDate(firstPunch.clockInAt)!;
+  const clockOutRaw = toDate(lastPunch.clockOutAt);
+  const clockOutType = lastPunch.clockOutType;
+  const isManualClockOut = clockOutType === "MANUAL" || clockOutType === "OVERRIDE";
+
+  let tardyMinutes = 0;
+  let late = false;
+  if (scheduledStart) {
+    const diff = diffMinutes(scheduledStart, clockIn);
+    if (diff > graceMinutes) {
+      tardyMinutes = diff;
+      late = true;
+    }
+  }
+
+  let workedEnd: Date;
+  let autoCheckout = false;
+  if (isManualClockOut && clockOutRaw) {
+    workedEnd = clockOutRaw;
+  } else if (scheduledEnd) {
+    workedEnd = scheduledEnd;
+    autoCheckout = true;
+  } else if (clockOutRaw) {
+    workedEnd = clockOutRaw;
+    autoCheckout = clockOutType === "AUTO";
+  } else {
+    return {
+      workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0, tardyMinutes,
+      normalPay: 0, overtimePay: 0, baseTotalPayDay: 0,
+      flags: { late, noShow: false, autoCheckout: true, midnightShift: false, hasMultiplePunches },
+    };
+  }
+
+  const workedMinutes = Math.max(0, diffMinutes(clockIn, workedEnd));
+
+  let overtimeMinutes = 0;
+  if (isManualClockOut && clockOutRaw && scheduledEnd && clockOutRaw.getTime() > scheduledEnd.getTime()) {
+    overtimeMinutes = Math.max(0, diffMinutes(scheduledEnd, clockOutRaw));
+  }
+
+  const normalMinutes = Math.max(0, workedMinutes - overtimeMinutes);
+
+  const midnightShift = scheduledStart && scheduledEnd
+    ? scheduledEnd.getDate() !== scheduledStart.getDate()
+    : false;
+
+  const normalPay = round2((normalMinutes / 60) * hourlyRate);
+  const overtimePay = round2((overtimeMinutes / 60) * hourlyRate * multiplier);
+  const baseTotalPayDay = round2(normalPay + overtimePay);
+
+  return {
+    workedMinutes, normalMinutes, overtimeMinutes, tardyMinutes,
+    normalPay, overtimePay, baseTotalPayDay,
+    flags: { late, noShow: false, autoCheckout, midnightShift, hasMultiplePunches },
+  };
+}
+
+export function computeServiceForDay(args: {
+  servicePool: number;
+  eligibleWaiters: { employeeId: number; workedMinutes: number }[];
+}): Record<number, number> {
+  const { servicePool, eligibleWaiters } = args;
+  const result: Record<number, number> = {};
+
+  if (servicePool <= 0 || eligibleWaiters.length === 0) return result;
+
+  const totalWorked = eligibleWaiters.reduce((s, w) => s + w.workedMinutes, 0);
+  if (totalWorked <= 0) return result;
+
+  for (const w of eligibleWaiters) {
+    const weight = w.workedMinutes / totalWorked;
+    result[w.employeeId] = round2(servicePool * weight);
+  }
+  return result;
+}
+
+export interface ExtraRecord {
+  id: number;
+  employeeId: number;
+  appliesToDate: string;
+  typeCode: string;
+  amount: string;
+  note: string | null;
+  kind?: string;
+}
+
+export interface EmployeePayrollResult {
+  employeeId: number;
+  name: string;
+  role: string;
+  daysScheduled: number;
+  daysPresent: number;
+  daysNoShow: number;
+  totalNormalMin: number;
+  totalOvertimeMin: number;
+  totalLateMin: number;
+  lateCount: number;
+  normalPay: number;
+  overtimePay: number;
+  basePayTotal: number;
+  extrasEarnings: number;
+  extrasDeductions: number;
+  extrasNet: number;
+  servicePayTotal: number;
+  grandTotalPay: number;
+  dailyBreakdown: DailyBreakdownEntry[];
+}
+
+export interface DailyBreakdownEntry {
+  date: string;
+  workedMinutes: number;
+  normalMinutes: number;
+  overtimeMinutes: number;
+  tardyMinutes: number;
+  basePay: number;
+  extras: { id: number; typeCode: string; amount: number; note: string | null; kind: string }[];
+  servicePayDay: number;
+  flags: DailyPayrollResult["flags"];
+}
+
+function getDateRange(dateFrom: string, dateTo: string): string[] {
+  const dates: string[] = [];
+  const start = new Date(dateFrom + "T12:00:00");
+  const end = new Date(dateTo + "T12:00:00");
+  const current = new Date(start);
+  while (current <= end) {
+    dates.push(current.toISOString().slice(0, 10));
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
+
+function getDayOfWeek(dateStr: string): number {
+  return new Date(dateStr + "T12:00:00").getDay();
+}
+
+export function computeRangePayroll(args: {
+  employees: { id: number; displayName: string; role: string; dailyRate: string | number | null }[];
+  schedulesMap: Record<string, ScheduleDay>;
+  punchesMap: Record<string, PunchRecord[]>;
+  extrasMap: Record<string, ExtraRecord[]>;
+  servicePoolMap: Record<string, number>;
+  extraTypesKindMap: Record<string, string>;
+  dateFrom: string;
+  dateTo: string;
+  hrConfig: HrConfig;
+}): EmployeePayrollResult[] {
+  const { employees, schedulesMap, punchesMap, extrasMap, servicePoolMap, extraTypesKindMap, dateFrom, dateTo, hrConfig } = args;
+  const dates = getDateRange(dateFrom, dateTo);
+
+  const dailyCache: Record<string, DailyPayrollResult> = {};
+  function getDailyResult(empId: number, dateStr: string, dailyRate: number): DailyPayrollResult {
+    const key = `${empId}_${dateStr}`;
+    if (!dailyCache[key]) {
+      dailyCache[key] = computeDailyPayroll({
+        punchesForDay: punchesMap[key] || [],
+        scheduleForDay: schedulesMap[key] || null,
+        dailyRate,
+        hrConfig,
+        dateStr,
+      });
+    }
+    return dailyCache[key];
+  }
+
+  const serviceCache: Record<string, Record<number, number>> = {};
+  function getServiceForDate(dateStr: string): Record<number, number> {
+    if (!serviceCache[dateStr]) {
+      const pool = servicePoolMap[dateStr] || 0;
+      if (pool <= 0) {
+        serviceCache[dateStr] = {};
+      } else {
+        const eligibles: { employeeId: number; workedMinutes: number }[] = [];
+        for (const emp of employees) {
+          if (emp.role !== "WAITER" && emp.role !== "SALONERO") continue;
+          const daily = getDailyResult(emp.id, dateStr, Number(emp.dailyRate) || 0);
+          if (daily.workedMinutes > 0) {
+            eligibles.push({ employeeId: emp.id, workedMinutes: daily.workedMinutes });
+          }
+        }
+        serviceCache[dateStr] = computeServiceForDay({ servicePool: pool, eligibleWaiters: eligibles });
+      }
+    }
+    return serviceCache[dateStr];
+  }
+
+  const results: EmployeePayrollResult[] = [];
+
+  for (const emp of employees) {
+    const dailyRate = Number(emp.dailyRate) || 0;
+    const isWaiter = emp.role === "WAITER" || emp.role === "SALONERO";
+
+    let daysScheduled = 0, daysPresent = 0, daysNoShow = 0;
+    let totalNormalMin = 0, totalOvertimeMin = 0, totalLateMin = 0, lateCount = 0;
+    let normalPay = 0, overtimePay = 0, basePayTotal = 0;
+    let extrasEarnings = 0, extrasDeductions = 0;
+    let servicePayTotal = 0;
+    const dailyBreakdown: DailyBreakdownEntry[] = [];
+
+    for (const dateStr of dates) {
+      const key = `${emp.id}_${dateStr}`;
+      const schedule = schedulesMap[key] || null;
+      const punches = punchesMap[key] || [];
+      const dayExtras = extrasMap[key] || [];
+
+      if (schedule && !schedule.isDayOff && schedule.startTime && schedule.endTime) {
+        daysScheduled++;
+      }
+
+      const daily = getDailyResult(emp.id, dateStr, dailyRate);
+
+      if (punches.length > 0) daysPresent++;
+      if (daily.flags.noShow) daysNoShow++;
+      totalNormalMin += daily.normalMinutes;
+      totalOvertimeMin += daily.overtimeMinutes;
+      if (daily.flags.late) {
+        lateCount++;
+        totalLateMin += daily.tardyMinutes;
+      }
+      normalPay += daily.normalPay;
+      overtimePay += daily.overtimePay;
+      basePayTotal += daily.baseTotalPayDay;
+
+      const extrasFormatted: DailyBreakdownEntry["extras"] = [];
+      for (const ex of dayExtras) {
+        const amt = Number(ex.amount);
+        const kind = ex.kind || extraTypesKindMap[ex.typeCode] || "EARNING";
+        extrasFormatted.push({ id: ex.id, typeCode: ex.typeCode, amount: amt, note: ex.note, kind });
+        if (kind === "EARNING") extrasEarnings += amt;
+        else extrasDeductions += Math.abs(amt);
+      }
+
+      let servicePayDay = 0;
+      if (isWaiter) {
+        const svcMap = getServiceForDate(dateStr);
+        servicePayDay = svcMap[emp.id] || 0;
+      }
+      servicePayTotal += servicePayDay;
+
+      dailyBreakdown.push({
+        date: dateStr,
+        workedMinutes: daily.workedMinutes,
+        normalMinutes: daily.normalMinutes,
+        overtimeMinutes: daily.overtimeMinutes,
+        tardyMinutes: daily.tardyMinutes,
+        basePay: daily.baseTotalPayDay,
+        extras: extrasFormatted,
+        servicePayDay,
+        flags: daily.flags,
+      });
+    }
+
+    const extrasNet = round2(extrasEarnings - extrasDeductions);
+    const grandTotalPay = round2(basePayTotal + extrasNet + servicePayTotal);
+
+    results.push({
+      employeeId: emp.id,
+      name: emp.displayName,
+      role: emp.role,
+      daysScheduled, daysPresent, daysNoShow,
+      totalNormalMin, totalOvertimeMin, totalLateMin, lateCount,
+      normalPay: round2(normalPay), overtimePay: round2(overtimePay), basePayTotal: round2(basePayTotal),
+      extrasEarnings: round2(extrasEarnings), extrasDeductions: round2(extrasDeductions), extrasNet,
+      servicePayTotal: round2(servicePayTotal),
+      grandTotalPay,
+      dailyBreakdown,
+    });
+  }
+
+  return results;
+}

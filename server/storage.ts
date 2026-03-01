@@ -12,6 +12,7 @@ import {
   portionReservations, qrRateLimits,
   invRecipes, invShortages,
   hrSettings, hrWeeklySchedules, hrScheduleDays, hrTimePunches, serviceChargeLedger, serviceChargePayouts,
+  hrExtraTypes, hrPayrollExtras,
   type InsertUser, type User,
   type InsertTable, type Table,
   type InsertCategory, type Category,
@@ -2011,6 +2012,111 @@ export async function smartDeleteProduct(id: number): Promise<{ product: any; ha
   }
   const product = await hardDeleteProduct(id);
   return { product, hardDeleted: true };
+}
+
+export async function getExtraTypes() {
+  return db.select().from(hrExtraTypes).where(eq(hrExtraTypes.isActive, true));
+}
+
+export async function getPayrollExtrasByRange(dateFrom: string, dateTo: string, employeeId?: number) {
+  const conditions = [
+    eq(hrPayrollExtras.isDeleted, false),
+    gte(hrPayrollExtras.appliesToDate, dateFrom),
+    lte(hrPayrollExtras.appliesToDate, dateTo),
+  ];
+  if (employeeId) conditions.push(eq(hrPayrollExtras.employeeId, employeeId));
+  return db.select().from(hrPayrollExtras).where(and(...conditions));
+}
+
+export async function createPayrollExtra(data: {
+  employeeId: number; appliesToDate: string; typeCode: string;
+  amount: string; note?: string; createdBy?: number;
+}) {
+  const [extra] = await db.insert(hrPayrollExtras).values({
+    ...data,
+    createdAt: new Date(),
+  }).returning();
+  return extra;
+}
+
+export async function updatePayrollExtra(id: number, data: {
+  typeCode?: string; amount?: string; note?: string; updatedBy?: number;
+}) {
+  const [extra] = await db.update(hrPayrollExtras).set({
+    ...data,
+    updatedAt: new Date(),
+  }).where(eq(hrPayrollExtras.id, id)).returning();
+  return extra;
+}
+
+export async function softDeletePayrollExtra(id: number) {
+  const [extra] = await db.update(hrPayrollExtras).set({
+    isDeleted: true,
+    updatedAt: new Date(),
+  }).where(eq(hrPayrollExtras.id, id)).returning();
+  return extra;
+}
+
+export async function getPayrollExtraById(id: number) {
+  const [extra] = await db.select().from(hrPayrollExtras).where(eq(hrPayrollExtras.id, id));
+  return extra;
+}
+
+export async function getServiceChargeLedgerByDates(dateFrom: string, dateTo: string) {
+  return db.select().from(serviceChargeLedger)
+    .where(and(
+      gte(serviceChargeLedger.businessDate, dateFrom),
+      lte(serviceChargeLedger.businessDate, dateTo),
+    ));
+}
+
+export async function getAllSchedulesForDateRange(dateFrom: string, dateTo: string) {
+  const mondayFrom = getWeekMondayForDate(dateFrom);
+  const mondayTo = getWeekMondayForDate(dateTo);
+  const schedules = await db.select().from(hrWeeklySchedules)
+    .where(and(
+      gte(hrWeeklySchedules.weekStartDate, mondayFrom),
+      lte(hrWeeklySchedules.weekStartDate, mondayTo),
+    ));
+  const allDays = [];
+  for (const s of schedules) {
+    const days = await db.select().from(hrScheduleDays)
+      .where(eq(hrScheduleDays.scheduleId, s.id));
+    for (const d of days) {
+      allDays.push({ ...d, employeeId: s.employeeId, weekStartDate: s.weekStartDate });
+    }
+  }
+  return allDays;
+}
+
+function getWeekMondayForDate(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - diff);
+  return d.toISOString().slice(0, 10);
+}
+
+export async function getPunchesForDateRange(dateFrom: string, dateTo: string) {
+  return db.select().from(hrTimePunches)
+    .where(and(
+      gte(hrTimePunches.businessDate, dateFrom),
+      lte(hrTimePunches.businessDate, dateTo),
+    ));
+}
+
+export async function seedExtraTypes() {
+  const defaults = [
+    { typeCode: "BONO", name: "Bono", kind: "EARNING" },
+    { typeCode: "VIATICO", name: "Viático", kind: "EARNING" },
+    { typeCode: "REEMBOLSO", name: "Reembolso", kind: "EARNING" },
+    { typeCode: "PRESTAMO_DEDUCCION", name: "Préstamo / Deducción", kind: "DEDUCTION" },
+    { typeCode: "AJUSTE_POSITIVO", name: "Ajuste Positivo", kind: "EARNING" },
+    { typeCode: "AJUSTE_NEGATIVO", name: "Ajuste Negativo", kind: "DEDUCTION" },
+  ];
+  for (const d of defaults) {
+    await db.insert(hrExtraTypes).values(d).onConflictDoNothing();
+  }
 }
 
 export { getBusinessDate };

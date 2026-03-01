@@ -8,6 +8,7 @@ import { sql, and, eq, gte, lte, inArray, or, ne, asc, desc, count } from "drizz
 import { db } from "./db";
 import * as storage from "./storage";
 import { registerInventoryRoutes } from "./inventory-routes";
+import { computeRangePayroll, type HrConfig, type PunchRecord, type ScheduleDay, type ExtraRecord } from "./payroll";
 import { registerShortageRoutes } from "./shortage-routes";
 import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
@@ -625,33 +626,12 @@ export async function registerRoutes(
         const user = await storage.getUser(employeeId);
 
         if (!openPunch) {
-          const businessDate = getBusinessDate();
-          const punchData: any = {
-            employeeId,
-            businessDate,
-            clockInAt: now,
-            clockOutAt: now,
-            clockOutType: "MANUAL",
-            workedMinutes: 0,
-            notes: "Salida sin entrada registrada - requiere corrección manual de hora de entrada",
-            clockinGeoVerified: false,
-            clockoutGeoLat: lat ? String(lat) : null,
-            clockoutGeoLng: lng ? String(lng) : null,
-            clockoutGeoAccuracyM: accuracy ? String(accuracy) : null,
-            clockoutGeoVerified: geoVerified,
-          };
-          const newPunch = await storage.createTimePunch(punchData);
           await storage.createAuditEvent({
             actorType: "USER", actorUserId: employeeId,
-            action: "CLOCK_OUT_WITHOUT_ENTRY", entityType: "HR_PUNCH", entityId: newPunch.id,
-            metadata: { note: "Employee clocked out without prior clock-in" },
+            action: "CLOCK_OUT_BLOCKED_NO_ENTRY", entityType: "HR_PUNCH", entityId: 0,
+            metadata: { note: "Attempted clock-out without prior clock-in (PIN)" },
           });
-          sendHrAlertEmail(settings,
-            `[Sin Entrada] ${user?.displayName || "Empleado"} - Salida sin marca de entrada`,
-            `${user?.displayName || "Empleado"} marcó salida el ${businessDate} sin haber registrado entrada.\nSe requiere corrección manual de la hora de entrada.`
-          );
-          broadcast("hr_punch_update", { employeeId, type: "clock_out" });
-          return res.json({ punch: newPunch, displayName: user?.displayName || "Empleado", action: "clock_out", workedMinutes: 0, missingClockIn: true });
+          return res.status(400).json({ message: "No puede marcar salida si no ha marcado entrada primero." });
         }
 
         const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
@@ -4897,34 +4877,12 @@ export async function registerRoutes(
       }
 
       if (!openPunch) {
-        const businessDate = getBusinessDate();
-        const punchData: any = {
-          employeeId,
-          businessDate,
-          clockInAt: now,
-          clockOutAt: now,
-          clockOutType: "MANUAL",
-          workedMinutes: 0,
-          notes: "Salida sin entrada registrada - requiere corrección manual de hora de entrada",
-          clockinGeoVerified: false,
-          clockoutGeoLat: lat ? String(lat) : null,
-          clockoutGeoLng: lng ? String(lng) : null,
-          clockoutGeoAccuracyM: accuracy ? String(accuracy) : null,
-          clockoutGeoVerified: geoVerified,
-        };
-        const newPunch = await storage.createTimePunch(punchData);
         await storage.createAuditEvent({
           actorType: "USER", actorUserId: employeeId,
-          action: "CLOCK_OUT_WITHOUT_ENTRY", entityType: "HR_PUNCH", entityId: newPunch.id,
-          metadata: { note: "Employee clocked out without prior clock-in" },
+          action: "CLOCK_OUT_BLOCKED_NO_ENTRY", entityType: "HR_PUNCH", entityId: 0,
+          metadata: { note: "Attempted clock-out without prior clock-in (HR)" },
         });
-        const user = await storage.getUser(employeeId);
-        sendHrAlertEmail(settings,
-          `[Sin Entrada] ${user?.displayName || "Empleado"} - Salida sin marca de entrada`,
-          `${user?.displayName || "Empleado"} marcó salida el ${businessDate} sin haber registrado entrada.\nSe requiere corrección manual de la hora de entrada.`
-        );
-        broadcast("hr_punch_update", { employeeId, type: "clock_out" });
-        return res.json(newPunch);
+        return res.status(400).json({ message: "No puede marcar salida si no ha marcado entrada primero." });
       }
       
       const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
@@ -4999,30 +4957,12 @@ export async function registerRoutes(
         const openPunch = await storage.getOpenPunchForEmployee(employeeId);
         
         if (!openPunch) {
-          const punchData: any = {
-            employeeId,
-            businessDate,
-            clockInAt: now,
-            clockOutAt: now,
-            clockOutType: "OVERRIDE",
-            workedMinutes: 0,
-            notes: `Override por gerente: ${reason || "Sin razón"} - Salida sin entrada registrada`,
-            clockinGeoVerified: false,
-            clockoutGeoVerified: false,
-          };
-          const newPunch = await storage.createTimePunch(punchData);
           await storage.createAuditEvent({
             actorType: "USER", actorUserId: req.session.userId!,
-            action: "CLOCK_OUT_WITHOUT_ENTRY", entityType: "HR_PUNCH", entityId: newPunch.id,
-            metadata: { targetEmployeeId: employeeId, reason, note: "Override clock-out without prior clock-in" },
+            action: "CLOCK_OUT_BLOCKED_NO_ENTRY", entityType: "HR_PUNCH", entityId: 0,
+            metadata: { targetEmployeeId: employeeId, reason, note: "Override clock-out blocked - no prior clock-in" },
           });
-          const targetUser = await storage.getUser(employeeId);
-          sendHrAlertEmail(settings,
-            `[Sin Entrada] ${targetUser?.displayName || "Empleado"} - Override salida sin entrada`,
-            `${targetUser?.displayName || "Empleado"} recibió override de salida el ${businessDate} sin haber registrado entrada.\nRazón: ${reason || "Sin razón"}\nSe requiere corrección manual de la hora de entrada.`
-          );
-          broadcast("hr_punch_update", { employeeId, type: "clock_out" });
-          return res.json(newPunch);
+          return res.status(400).json({ message: "No puede marcar salida si no ha marcado entrada primero." });
         }
         
         const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
@@ -5136,6 +5076,209 @@ export async function registerRoutes(
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- Extra Types + Payroll Extras CRUD --
+  app.get("/api/hr/extra-types", requirePermission("HR_VIEW_TEAM"), async (_req, res) => {
+    const types = await storage.getExtraTypes();
+    res.json(types);
+  });
+
+  app.get("/api/hr/payroll-extras", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    const { employeeId, dateFrom, dateTo } = req.query;
+    if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom and dateTo required" });
+    const extras = await storage.getPayrollExtrasByRange(
+      dateFrom as string, dateTo as string,
+      employeeId ? Number(employeeId) : undefined
+    );
+    res.json(extras);
+  });
+
+  app.post("/api/hr/payroll-extras", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      const { employeeId, appliesToDate, typeCode, amount, note } = req.body;
+      if (!employeeId || !appliesToDate || !typeCode || amount == null) {
+        return res.status(400).json({ message: "employeeId, appliesToDate, typeCode, and amount are required" });
+      }
+      const types = await storage.getExtraTypes();
+      const t = types.find(tt => tt.typeCode === typeCode);
+      if (!t) return res.status(400).json({ message: "typeCode inválido o inactivo" });
+      const needsNote = ["AJUSTE_POSITIVO", "AJUSTE_NEGATIVO", "PRESTAMO_DEDUCCION"].includes(typeCode);
+      if (needsNote && (!note || !note.trim())) {
+        return res.status(400).json({ message: "La nota es obligatoria para este tipo de extra" });
+      }
+      const extra = await storage.createPayrollExtra({
+        employeeId: Number(employeeId),
+        appliesToDate,
+        typeCode,
+        amount: String(amount),
+        note: note || null,
+        createdBy: req.session.userId!,
+      });
+      await storage.createAuditEvent({
+        actorType: "USER", actorUserId: req.session.userId!,
+        action: "PAYROLL_EXTRA_CREATE", entityType: "HR_PAYROLL_EXTRA", entityId: extra.id,
+        metadata: { employeeId, appliesToDate, typeCode, amount, note },
+      });
+      res.json(extra);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/hr/payroll-extras/:id", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const existing = await storage.getPayrollExtraById(id);
+      if (!existing || existing.isDeleted) return res.status(404).json({ message: "Extra no encontrado" });
+      const { typeCode, amount, note } = req.body;
+      if (typeCode) {
+        const types = await storage.getExtraTypes();
+        if (!types.find(t => t.typeCode === typeCode)) {
+          return res.status(400).json({ message: "typeCode inválido" });
+        }
+        const tc = typeCode || existing.typeCode;
+        const needsNote = ["AJUSTE_POSITIVO", "AJUSTE_NEGATIVO", "PRESTAMO_DEDUCCION"].includes(tc);
+        if (needsNote && (!note && !existing.note)) {
+          return res.status(400).json({ message: "La nota es obligatoria para este tipo" });
+        }
+      }
+      const updated = await storage.updatePayrollExtra(id, {
+        typeCode, amount: amount != null ? String(amount) : undefined,
+        note, updatedBy: req.session.userId!,
+      });
+      await storage.createAuditEvent({
+        actorType: "USER", actorUserId: req.session.userId!,
+        action: "PAYROLL_EXTRA_UPDATE", entityType: "HR_PAYROLL_EXTRA", entityId: id,
+        metadata: { before: existing, after: updated },
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/hr/payroll-extras/:id", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const existing = await storage.getPayrollExtraById(id);
+      if (!existing || existing.isDeleted) return res.status(404).json({ message: "Extra no encontrado" });
+      const deleted = await storage.softDeletePayrollExtra(id);
+      await storage.createAuditEvent({
+        actorType: "USER", actorUserId: req.session.userId!,
+        action: "PAYROLL_EXTRA_DELETE", entityType: "HR_PAYROLL_EXTRA", entityId: id,
+        metadata: { extra: existing },
+      });
+      res.json(deleted);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // -- Payroll Report --
+  app.get("/api/hr/payroll-report", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      let dateFrom = req.query.dateFrom as string;
+      let dateTo = req.query.dateTo as string;
+      const weekStart = req.query.weekStart as string;
+
+      if (weekStart) {
+        dateFrom = weekStart;
+        const end = new Date(weekStart + "T12:00:00");
+        end.setDate(end.getDate() + 6);
+        dateTo = end.toISOString().slice(0, 10);
+      }
+
+      if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom/dateTo or weekStart required" });
+
+      const settings = await storage.getHrSettings();
+      const hrConfig: HrConfig = {
+        overtimeDailyThresholdHours: settings?.overtimeDailyThresholdHours || "8",
+        overtimeMultiplier: settings?.overtimeMultiplier || "1.5",
+        latenessGraceMinutes: settings?.latenessGraceMinutes || 0,
+        serviceChargeRate: settings?.serviceChargeRate || "0.10",
+      };
+
+      const employees = await storage.getAllUsers();
+      const activeEmployees = employees.filter(e => e.active !== false);
+      const punches = await storage.getPunchesForDateRange(dateFrom, dateTo);
+      const scheduleDays = await storage.getAllSchedulesForDateRange(dateFrom, dateTo);
+      const extras = await storage.getPayrollExtrasByRange(dateFrom, dateTo);
+      const serviceLedger = await storage.getServiceChargeLedgerByDates(dateFrom, dateTo);
+      const extraTypes = await storage.getExtraTypes();
+
+      const extraTypesKindMap: Record<string, string> = {};
+      for (const t of extraTypes) extraTypesKindMap[t.typeCode] = t.kind;
+
+      const schedulesMap: Record<string, ScheduleDay> = {};
+      for (const sd of scheduleDays) {
+        const weekMonday = new Date(sd.weekStartDate + "T12:00:00");
+        let dayOffset = sd.dayOfWeek === 0 ? 6 : sd.dayOfWeek - 1;
+        const actualDate = new Date(weekMonday);
+        actualDate.setDate(actualDate.getDate() + dayOffset);
+        const dateStr = actualDate.toISOString().slice(0, 10);
+        if (dateStr >= dateFrom && dateStr <= dateTo) {
+          schedulesMap[`${sd.employeeId}_${dateStr}`] = sd as ScheduleDay;
+        }
+      }
+
+      const punchesMap: Record<string, PunchRecord[]> = {};
+      for (const p of punches) {
+        const key = `${p.employeeId}_${p.businessDate}`;
+        if (!punchesMap[key]) punchesMap[key] = [];
+        punchesMap[key].push(p as unknown as PunchRecord);
+      }
+
+      const extrasMap: Record<string, ExtraRecord[]> = {};
+      for (const ex of extras) {
+        const key = `${ex.employeeId}_${ex.appliesToDate}`;
+        if (!extrasMap[key]) extrasMap[key] = [];
+        extrasMap[key].push({
+          ...ex,
+          amount: String(ex.amount),
+          kind: extraTypesKindMap[ex.typeCode],
+        } as unknown as ExtraRecord);
+      }
+
+      const servicePoolMap: Record<string, number> = {};
+      for (const entry of serviceLedger) {
+        const d = entry.businessDate;
+        servicePoolMap[d] = (servicePoolMap[d] || 0) + Number(entry.serviceAmount);
+      }
+
+      const empData = activeEmployees.map(e => ({
+        id: e.id,
+        displayName: e.displayName || e.username,
+        role: e.role,
+        dailyRate: e.dailyRate,
+      }));
+
+      const result = computeRangePayroll({
+        employees: empData,
+        schedulesMap,
+        punchesMap,
+        extrasMap,
+        servicePoolMap,
+        extraTypesKindMap,
+        dateFrom,
+        dateTo,
+        hrConfig,
+      });
+
+      res.json({
+        hrConfigSnapshot: {
+          jornadaOrdinariaHorasPorDia: Number(hrConfig.overtimeDailyThresholdHours),
+          multiplicadorHoraExtra: Number(hrConfig.overtimeMultiplier),
+          servicePercentDefault: Number(hrConfig.serviceChargeRate),
+          latenessGraceMinutes: hrConfig.latenessGraceMinutes,
+          roundingRule: "EXACT_MINUTE",
+        },
+        employees: result,
+      });
+    } catch (err: any) {
+      console.error("[payroll-report] Error:", err);
+      res.status(500).json({ message: err.message });
     }
   });
 

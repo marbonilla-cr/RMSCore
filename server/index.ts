@@ -3,7 +3,7 @@ import compression from "compression";
 import helmet from "helmet";
 import { createServer } from "http";
 import { registerRoutes } from "./routes";
-import { ensureSystemPermissions } from "./storage";
+import { ensureSystemPermissions, seedExtraTypes } from "./storage";
 import { startHrBackgroundJobs } from "./hr-jobs";
 import { retryPendingSync } from "./quickbooks";
 
@@ -129,6 +129,7 @@ app.use((req, res, next) => {
 
 (async () => {
   await ensureSystemPermissions();
+  await seedExtraTypes();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
