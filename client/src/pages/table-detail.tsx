@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import type { Product, Category } from "@shared/schema";
 import { printReceipt } from "@/lib/print-receipt";
+import { VoidItemDialog, type VoidItemDialogItem } from "@/components/VoidItemDialog";
+import { usePermissions } from "@/hooks/use-permissions";
 
 interface ModifierOption {
   id: number;
@@ -75,6 +77,8 @@ export default function TableDetailPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { hasPermission } = usePermissions();
+  const canVoidAuthorize = hasPermission("VOID_AUTHORIZE");
   const tableId = params?.id ? parseInt(params.id) : 0;
 
   const [viewMode, setViewMode] = useState<ViewMode>("order");
@@ -1900,194 +1904,28 @@ export default function TableDetailPage() {
         </div>
       )}
 
-      {voidDialogItem && (() => {
-        const requiresManagerPin = !!voidDialogItem.sentToKitchenAt;
-        const handlePinDigit = (digit: string) => {
-          if (managerPin.length >= 4) return;
-          setManagerPin(prev => prev + digit);
-          setManagerPinError("");
-        };
-        const handlePinDelete = () => {
-          setManagerPin(prev => prev.slice(0, -1));
-          setManagerPinError("");
-        };
-        const handlePinClear = () => {
-          setManagerPin("");
-          setManagerPinError("");
-        };
-        const canSubmitVoid = requiresManagerPin
-          ? managerPin.length === 4 && voidReason.trim().length > 0
-          : true;
-
-        return (
-          <div className="td-overlay" data-testid="void-dialog-overlay">
-            <div className="td-dialog-center" onClick={(e) => e.stopPropagation()}>
-              <div style={{ padding: 16 }}>
-                <h3 className="td-section-title" style={{ margin: "0 0 12px" }}>
-                  {requiresManagerPin ? "Autorización del Gerente" : "Ajustar / Anular Item"}
-                </h3>
-                <p className="oi-name" style={{ fontWeight: 700, marginBottom: 12 }}>{voidDialogItem.productNameSnapshot}</p>
-                {requiresManagerPin && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, padding: "6px 10px", borderRadius: 6, background: "var(--amber-bg, rgba(245,158,11,0.1))", border: "1px solid var(--amber-border, rgba(245,158,11,0.3))" }}>
-                    <AlertCircle size={14} style={{ color: "var(--amber, #f59e0b)", flexShrink: 0 }} />
-                    <span className="oi-mods" style={{ color: "var(--amber, #f59e0b)" }}>
-                      Item enviado a cocina. Se requiere PIN de gerente.
-                    </span>
-                  </div>
-                )}
-                <div className="void-qty-row">
-                  <span className="oi-mods">Cantidad a anular</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <button
-                      className="qty-btn"
-                      onClick={() => setVoidQty(q => Math.max(1, q - 1))}
-                      disabled={voidQty <= 1}
-                      data-testid="button-void-qty-minus"
-                    >
-                      <Minus size={14} />
-                    </button>
-                    <span className="qty-val" style={{ fontSize: 18, width: 32 }} data-testid="text-void-qty">{voidQty}</span>
-                    <button
-                      className="qty-btn"
-                      onClick={() => setVoidQty(q => Math.min(voidDialogItem.qty, q + 1))}
-                      disabled={voidQty >= voidDialogItem.qty}
-                      data-testid="button-void-qty-plus"
-                    >
-                      <Plus size={14} />
-                    </button>
-                  </div>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                  <span className="oi-mods">
-                    {voidQty < voidDialogItem.qty
-                      ? `Quedan: ${voidDialogItem.qty - voidQty} unidad${(voidDialogItem.qty - voidQty) !== 1 ? "es" : ""}`
-                      : "Anulacion total"}
-                  </span>
-                  <span className="oi-price">{formatCurrency(Number(voidDialogItem.productPriceSnapshot) * voidQty)}</span>
-                </div>
-                <textarea
-                  className="field-input"
-                  placeholder={requiresManagerPin ? "Motivo de anulación (requerido)" : "Motivo de anulacion (opcional)"}
-                  value={voidReason}
-                  onChange={(e) => setVoidReason(e.target.value)}
-                  rows={2}
-                  style={{ width: "100%", marginBottom: 12, resize: "none" }}
-                  data-testid="input-void-reason"
-                />
-                {requiresManagerPin && (
-                  <div style={{ marginBottom: 12 }}>
-                    <span className="oi-mods" style={{ display: "block", marginBottom: 8, fontWeight: 600 }}>PIN del Gerente</span>
-                    <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 12 }}>
-                      {[0, 1, 2, 3].map((i) => (
-                        <div
-                          key={i}
-                          style={{
-                            width: 36,
-                            height: 36,
-                            borderRadius: 8,
-                            border: "2px solid var(--border)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 20,
-                            fontWeight: 700,
-                            background: managerPin.length > i ? "var(--foreground)" : "transparent",
-                            transition: "background 0.15s",
-                          }}
-                          data-testid={`pin-dot-${i}`}
-                        >
-                          {managerPin.length > i && (
-                            <span style={{ color: "var(--background)", fontSize: 14 }}>*</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, maxWidth: 220, margin: "0 auto" }}>
-                      {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
-                        <button
-                          key={digit}
-                          className="btn-secondary"
-                          style={{ padding: "10px 0", fontSize: 18, fontWeight: 600 }}
-                          onClick={() => handlePinDigit(digit)}
-                          disabled={managerPin.length >= 4}
-                          data-testid={`button-pin-${digit}`}
-                        >
-                          {digit}
-                        </button>
-                      ))}
-                      <button
-                        className="btn-secondary"
-                        style={{ padding: "10px 0", fontSize: 12 }}
-                        onClick={handlePinClear}
-                        data-testid="button-pin-clear"
-                      >
-                        <X size={16} />
-                      </button>
-                      <button
-                        className="btn-secondary"
-                        style={{ padding: "10px 0", fontSize: 18, fontWeight: 600 }}
-                        onClick={() => handlePinDigit("0")}
-                        disabled={managerPin.length >= 4}
-                        data-testid="button-pin-0"
-                      >
-                        0
-                      </button>
-                      <button
-                        className="btn-secondary"
-                        style={{ padding: "10px 0", fontSize: 12 }}
-                        onClick={handlePinDelete}
-                        data-testid="button-pin-delete"
-                      >
-                        <ArrowLeft size={16} />
-                      </button>
-                    </div>
-                    {managerPinError && (
-                      <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: "var(--red-bg, rgba(239,68,68,0.1))", border: "1px solid var(--red-border, rgba(239,68,68,0.3))", display: "flex", alignItems: "center", gap: 6 }}>
-                        <AlertCircle size={14} style={{ color: "var(--red)", flexShrink: 0 }} />
-                        <span className="oi-mods" style={{ color: "var(--red)" }} data-testid="text-pin-error">{managerPinError}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    className="btn-secondary"
-                    style={{ flex: 1 }}
-                    onClick={() => { setVoidDialogItem(null); setVoidReason(""); setVoidQty(1); setManagerPin(""); setManagerPinError(""); }}
-                    data-testid="button-cancel-void"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    className="btn-danger"
-                    style={{ flex: 1 }}
-                    disabled={voidItemMutation.isPending || !canSubmitVoid}
-                    onClick={() => {
-                      if (requiresManagerPin && !voidReason.trim()) {
-                        setManagerPinError("El motivo es requerido para anular items enviados a cocina");
-                        return;
-                      }
-                      if (activeOrder) {
-                        voidItemMutation.mutate({
-                          orderId: activeOrder.id,
-                          itemId: voidDialogItem.id,
-                          reason: voidReason,
-                          qtyToVoid: voidQty,
-                          managerPin: requiresManagerPin ? managerPin : undefined,
-                        });
-                      }
-                    }}
-                    data-testid="button-confirm-void"
-                  >
-                    {voidItemMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
-                    {requiresManagerPin ? "Autorizar Anulación" : (voidQty < voidDialogItem.qty ? `Anular ${voidQty}` : "Anular todo")}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {voidDialogItem && activeOrder && (
+        <VoidItemDialog
+          item={{
+            orderId: activeOrder.id,
+            itemId: voidDialogItem.id,
+            productName: voidDialogItem.productNameSnapshot,
+            qty: voidDialogItem.qty,
+            sentToKitchenAt: voidDialogItem.sentToKitchenAt || null,
+          }}
+          userCanAuthorize={canVoidAuthorize}
+          onClose={() => { setVoidDialogItem(null); setVoidReason(""); setVoidQty(1); setManagerPin(""); setManagerPinError(""); }}
+          onSuccess={() => {
+            setVoidDialogItem(null);
+            setVoidReason("");
+            setVoidQty(1);
+            setManagerPin("");
+            setManagerPinError("");
+            queryClient.invalidateQueries({ queryKey: ["/api/tables", tableId, "current"] });
+            toast({ title: "Item anulado correctamente" });
+          }}
+        />
+      )}
 
       {noteDialogItem && (
         <div className="td-overlay" data-testid="note-dialog-overlay" onClick={() => { setNoteDialogItem(null); setNoteText(""); }}>

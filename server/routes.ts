@@ -16,6 +16,7 @@ import * as invStorage from "./inventory-storage";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import * as qbo from "./quickbooks";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products } from "@shared/schema";
+import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
 declare module "express-session" {
   interface SessionData {
@@ -279,6 +280,94 @@ function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
   const dLng = toRad(lng2 - lng1);
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcast): Promise<{ closed: boolean; newStatus?: string } | null> {
+  try {
+    const order = await storage.getOrder(orderId);
+    if (!order) return null;
+    if (order.status === "PAID" || order.status === "VOIDED") return null;
+
+    const allItems = await storage.getOrderItems(orderId);
+    const activeItems = allItems.filter(i => i.status !== "VOIDED");
+
+    if (activeItems.length === 0) {
+      const childOrders = await storage.getChildOrders(orderId);
+
+      if (childOrders.length > 0) {
+        const allChildrenDone = childOrders.every(c => c.status === "PAID" || c.status === "VOIDED");
+        if (allChildrenDone) {
+          await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() });
+          broadcastFn("order_updated", { tableId: order.tableId, orderId });
+          broadcastFn("table_status_changed", { tableId: order.tableId });
+          broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "all_children_done" });
+          return { closed: true, newStatus: "PAID" };
+        }
+      } else {
+        await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date() });
+        broadcastFn("order_updated", { tableId: order.tableId, orderId });
+        broadcastFn("table_status_changed", { tableId: order.tableId });
+        broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "no_active_items" });
+        return { closed: true, newStatus: "VOIDED" };
+      }
+    }
+
+    const balance = Number(order.balanceDue || 0);
+    const totalAmount = Number(order.totalAmount || 0);
+
+    if (balance <= 0 && activeItems.length > 0) {
+      const allPaidOrZero = activeItems.every(i =>
+        i.status === "PAID" || Number(i.productPriceSnapshot) === 0
+      );
+      if (allPaidOrZero) {
+        for (const ai of activeItems) {
+          if (ai.status !== "PAID") {
+            await storage.updateOrderItem(ai.id, { status: "PAID" });
+            await storage.updateSalesLedgerItems(ai.id, { status: "PAID", paidAt: new Date() });
+          }
+        }
+        await storage.updateOrder(orderId, {
+          status: "PAID",
+          closedAt: new Date(),
+          balanceDue: "0.00",
+          totalAmount: Math.max(0, totalAmount).toFixed(2),
+        });
+        broadcastFn("order_updated", { tableId: order.tableId, orderId });
+        broadcastFn("table_status_changed", { tableId: order.tableId });
+        broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "zero_balance" });
+        return { closed: true, newStatus: "PAID" };
+      }
+    }
+
+    if (balance <= 0 && activeItems.length > 0) {
+      const childOrders = await storage.getChildOrders(orderId);
+      if (childOrders.length > 0) {
+        const allChildrenDone = childOrders.every(c => c.status === "PAID" || c.status === "VOIDED");
+        if (allChildrenDone) {
+          for (const ai of activeItems) {
+            if (ai.status !== "PAID") {
+              await storage.updateOrderItem(ai.id, { status: "PAID" });
+              await storage.updateSalesLedgerItems(ai.id, { status: "PAID", paidAt: new Date() });
+            }
+          }
+          await storage.updateOrder(orderId, {
+            status: "PAID",
+            closedAt: new Date(),
+            balanceDue: "0.00",
+          });
+          broadcastFn("order_updated", { tableId: order.tableId, orderId });
+          broadcastFn("table_status_changed", { tableId: order.tableId });
+          broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "children_paid_balance_zero" });
+          return { closed: true, newStatus: "PAID" };
+        }
+      }
+    }
+
+    return { closed: false };
+  } catch (err) {
+    console.error("[maybeAutoCloseOrder] Error:", err);
+    return null;
+  }
 }
 
 export async function registerRoutes(
@@ -2319,7 +2408,7 @@ export async function registerRoutes(
       const itemId = parseInt(req.params.itemId as string);
       const userId = req.session.userId!;
       const user = (req as any).user;
-      const { reason, qtyToVoid, managerPin } = req.body;
+      const { reason, reasonCode, reasonText, qtyToVoid, managerPin } = req.body;
 
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
@@ -2339,75 +2428,100 @@ export async function registerRoutes(
 
       let authorizedManagerId: number | null = null;
       let authorizedManagerName: string | null = null;
+      let authorizedBySession = false;
 
       if (item.sentToKitchenAt) {
-        if (!managerPin || typeof managerPin !== "string") {
-          return res.status(403).json({ message: "Autorización de gerente requerida para anular ítems enviados a cocina" });
-        }
-
-        const ip = req.ip || req.socket.remoteAddress || "unknown";
-        const now = Date.now();
-        const entry = voidPinAttempts.get(ip);
-        if (entry && entry.resetAt > now && entry.count >= VOID_PIN_MAX_ATTEMPTS) {
-          const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
-          res.set("Retry-After", String(retryAfter));
-          return res.status(429).json({ message: `Demasiados intentos. Intente de nuevo en ${Math.ceil(retryAfter / 60)} minutos.` });
-        }
-
-        const allUsers = await storage.getAllUsersWithPin();
-        const usersWithPin = allUsers.filter(u => u.pin && u.active);
-
-        let matchedUser: any = null;
-        for (const u of usersWithPin) {
-          if (u.pinLockedUntil && new Date(u.pinLockedUntil) > new Date()) continue;
-          const match = await storage.verifyPin(managerPin, u.pin!);
-          if (match) {
-            matchedUser = u;
-            break;
+        if (reasonCode) {
+          if (!(VOID_REASON_CODES as readonly string[]).includes(reasonCode)) {
+            return res.status(400).json({ message: "Código de razón inválido" });
           }
-        }
-
-        if (!matchedUser) {
-          if (entry && entry.resetAt > now) {
-            entry.count++;
-          } else {
-            voidPinAttempts.set(ip, { count: 1, resetAt: now + VOID_PIN_WINDOW_MS });
+          if (reasonCode === "OTHER" && (!reasonText || typeof reasonText !== "string" || reasonText.trim().length < 3)) {
+            return res.status(400).json({ message: "Debe especificar una razón de al menos 3 caracteres" });
           }
-          await storage.createAuditEvent({
-            actorType: "USER",
-            actorUserId: userId,
-            action: "VOID_AUTH_FAILED",
-            entityType: "order_item",
-            entityId: itemId,
-            tableId: order.tableId,
-            metadata: { ip, reason: "PIN incorrecto o no encontrado", orderId },
-          });
-          return res.status(403).json({ message: "PIN de autorización incorrecto" });
+        } else {
+          return res.status(400).json({ message: "Razón de anulación obligatoria para ítems enviados a cocina" });
         }
 
-        const perms = await storage.getPermissionKeysForRole(matchedUser.role);
-        if (!perms.includes("VOID_AUTHORIZE")) {
-          if (entry && entry.resetAt > now) {
-            entry.count++;
-          } else {
-            voidPinAttempts.set(ip, { count: 1, resetAt: now + VOID_PIN_WINDOW_MS });
+        const currentUserPerms = await storage.getPermissionKeysForRole(user.role);
+        if (currentUserPerms.includes("VOID_AUTHORIZE")) {
+          authorizedManagerId = userId;
+          authorizedManagerName = user.displayName;
+          authorizedBySession = true;
+        } else {
+          if (!managerPin || typeof managerPin !== "string") {
+            return res.status(403).json({ message: "Autorización de gerente requerida para anular ítems enviados a cocina" });
           }
-          await storage.createAuditEvent({
-            actorType: "USER",
-            actorUserId: userId,
-            action: "VOID_AUTH_FAILED",
-            entityType: "order_item",
-            entityId: itemId,
-            tableId: order.tableId,
-            metadata: { ip, reason: "Usuario no tiene permiso VOID_AUTHORIZE", matchedUserId: matchedUser.id, orderId },
-          });
-          return res.status(403).json({ message: "El usuario no tiene permiso para autorizar anulaciones" });
-        }
 
-        voidPinAttempts.delete(ip);
-        authorizedManagerId = matchedUser.id;
-        authorizedManagerName = matchedUser.displayName;
+          const ip = req.ip || req.socket.remoteAddress || "unknown";
+          const now = Date.now();
+          const entry = voidPinAttempts.get(ip);
+          if (entry && entry.resetAt > now && entry.count >= VOID_PIN_MAX_ATTEMPTS) {
+            const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+            res.set("Retry-After", String(retryAfter));
+            return res.status(429).json({ message: `Demasiados intentos. Intente de nuevo en ${Math.ceil(retryAfter / 60)} minutos.` });
+          }
+
+          const allUsers = await storage.getAllUsersWithPin();
+          const usersWithPin = allUsers.filter(u => u.pin && u.active);
+
+          let matchedUser: any = null;
+          for (const u of usersWithPin) {
+            if (u.pinLockedUntil && new Date(u.pinLockedUntil) > new Date()) continue;
+            const match = await storage.verifyPin(managerPin, u.pin!);
+            if (match) {
+              matchedUser = u;
+              break;
+            }
+          }
+
+          if (!matchedUser) {
+            if (entry && entry.resetAt > now) {
+              entry.count++;
+            } else {
+              voidPinAttempts.set(ip, { count: 1, resetAt: now + VOID_PIN_WINDOW_MS });
+            }
+            await storage.createAuditEvent({
+              actorType: "USER",
+              actorUserId: userId,
+              action: "VOID_AUTH_FAILED",
+              entityType: "order_item",
+              entityId: itemId,
+              tableId: order.tableId,
+              metadata: { ip, reason: "PIN incorrecto o no encontrado", orderId },
+            });
+            return res.status(403).json({ message: "PIN de autorización incorrecto" });
+          }
+
+          const perms = await storage.getPermissionKeysForRole(matchedUser.role);
+          if (!perms.includes("VOID_AUTHORIZE")) {
+            if (entry && entry.resetAt > now) {
+              entry.count++;
+            } else {
+              voidPinAttempts.set(ip, { count: 1, resetAt: now + VOID_PIN_WINDOW_MS });
+            }
+            await storage.createAuditEvent({
+              actorType: "USER",
+              actorUserId: userId,
+              action: "VOID_AUTH_FAILED",
+              entityType: "order_item",
+              entityId: itemId,
+              tableId: order.tableId,
+              metadata: { ip, reason: "Usuario no tiene permiso VOID_AUTHORIZE", matchedUserId: matchedUser.id, orderId },
+            });
+            return res.status(403).json({ message: "El usuario no tiene permiso para autorizar anulaciones" });
+          }
+
+          voidPinAttempts.delete(ip);
+          authorizedManagerId = matchedUser.id;
+          authorizedManagerName = matchedUser.displayName;
+        }
       }
+
+      const effectiveReasonCode = reasonCode || null;
+      const effectiveReasonText = reasonCode === "OTHER" ? (reasonText || "").trim() : null;
+      const voidReasonString = effectiveReasonCode
+        ? (effectiveReasonText ? `${effectiveReasonCode}: ${effectiveReasonText}` : effectiveReasonCode)
+        : (reason || null);
 
       const effectiveQty = (typeof qtyToVoid === "number" && qtyToVoid > 0 && qtyToVoid <= item.qty) ? qtyToVoid : item.qty;
       const isFullVoid = effectiveQty >= item.qty;
@@ -2442,7 +2556,7 @@ export async function registerRoutes(
         categorySnapshot: category?.name || null,
         qtyVoided: effectiveQty,
         unitPriceSnapshot: item.productPriceSnapshot,
-        voidReason: reason || null,
+        voidReason: voidReasonString,
         voidedByUserId: userId,
         voidedByRole: user.role,
         status: "VOIDED",
@@ -2472,7 +2586,10 @@ export async function registerRoutes(
           qtyVoided: effectiveQty,
           originalQty: item.qty,
           partial: !isFullVoid,
-          reason: reason || null,
+          reasonCode: effectiveReasonCode,
+          reasonText: effectiveReasonText,
+          reason: voidReasonString,
+          authorizedBySession,
           role: user.role,
         },
       });
@@ -2489,7 +2606,10 @@ export async function registerRoutes(
             requestedBy: userId,
             authorizedBy: authorizedManagerId,
             managerName: authorizedManagerName,
-            reason: reason || null,
+            reasonCode: effectiveReasonCode,
+            reasonText: effectiveReasonText,
+            reason: voidReasonString,
+            authorizedBySession,
             productId: item.productId,
             productName: item.productNameSnapshot,
             qty: effectiveQty,
@@ -2504,7 +2624,9 @@ export async function registerRoutes(
         broadcast("kitchen_item_status_changed", { orderItemId: itemId, status: "VOIDED" });
       }
 
-      res.json({ ok: true });
+      const autoCloseResult = await maybeAutoCloseOrder(orderId, broadcast);
+
+      res.json({ ok: true, autoClosed: autoCloseResult?.closed || false });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -2555,7 +2677,9 @@ export async function registerRoutes(
       broadcast("order_updated", { tableId: order.tableId, orderId });
       broadcast("table_status_changed", { tableId: order.tableId });
 
-      res.json({ ok: true });
+      const autoCloseResult = await maybeAutoCloseOrder(orderId, broadcast);
+
+      res.json({ ok: true, autoClosed: autoCloseResult?.closed || false });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -3057,10 +3181,9 @@ export async function registerRoutes(
         taxes: taxesMap.get(item.id) || [],
       }));
 
-      const orderAllItems = allItemsByOrder.get(order.id) || [];
-      const orderAllItemIds = new Set(orderAllItems.map(i => i.id));
-      const orderDiscountsList = allItemDiscounts.filter(d => orderAllItemIds.has(d.orderItemId));
-      const orderTaxesList = allItemTaxes.filter(t => orderAllItemIds.has(t.orderItemId));
+      const orderActiveItemIds = new Set(orderActiveItems.map(i => i.id));
+      const orderDiscountsList = allItemDiscounts.filter(d => orderActiveItemIds.has(d.orderItemId));
+      const orderTaxesList = allItemTaxes.filter(t => orderActiveItemIds.has(t.orderItemId));
 
       const isChild = !!order.parentOrderId;
       const ticketNumber = isChild

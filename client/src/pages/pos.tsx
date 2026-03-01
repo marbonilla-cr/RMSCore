@@ -9,7 +9,7 @@ import {
   CreditCard, DollarSign, Loader2, Receipt,
   Banknote, ArrowLeft, Lock, Unlock, Wallet, Coins,
   Split, Trash2, XCircle, Mail, Printer, ArrowRight, ArrowLeftRight,
-  Percent, X, Plus, Minus, Save, SendHorizontal,
+  Percent, X, Plus, Minus, Save, SendHorizontal, Ban,
 } from "lucide-react";
 import type { PaymentMethod, Product, Category } from "@shared/schema";
 import { printReceipt } from "@/lib/print-receipt";
@@ -17,6 +17,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Checkbox } from "@/components/ui/checkbox";
 import { PayDialog } from "@/components/pos/PayDialog";
 import { SplitDialog } from "@/components/pos/SplitDialog";
+import { VoidItemDialog, type VoidItemDialogItem } from "@/components/VoidItemDialog";
 import "@/components/pos/pos-dialogs.css";
 import { formatCurrency } from "@/lib/utils";
 
@@ -51,6 +52,7 @@ interface POSItem {
   notes?: string | null;
   customerNameSnapshot?: string | null;
   subaccountId?: number | null;
+  sentToKitchenAt?: string | null;
   modifiers?: POSItemModifier[];
   discounts?: POSItemDiscount[];
   taxes?: POSItemTax[];
@@ -149,6 +151,9 @@ export default function POSPage() {
   const [discountOpen, setDiscountOpen] = useState(false);
   const [discountItemId, setDiscountItemId] = useState<number | null>(null);
 
+  const [voidItemDialogData, setVoidItemDialogData] = useState<VoidItemDialogItem | null>(null);
+  const canVoidAuthorize = hasPermission("VOID_AUTHORIZE");
+
   const [printConfirmOrderId, setPrintConfirmOrderId] = useState<number | null>(null);
   const [printConfirmSplitPaymentId, setPrintConfirmSplitPaymentId] = useState<number | null>(null);
   const [printConfirmSplitLabel, setPrintConfirmSplitLabel] = useState<string>("");
@@ -176,6 +181,13 @@ export default function POSPage() {
       queryClient.refetchQueries({ queryKey: ["/api/pos/cash-session"] });
       queryClient.refetchQueries({ queryKey: ["/api/pos/paid-orders"] });
     };
+    const handleAutoClose = (data: any) => {
+      invalidateTables();
+      if (selectedTable && data?.orderId === selectedTable.orderId) {
+        setSelectedTable(null);
+        setDetailView(false);
+      }
+    };
     const unsubs = [
       wsManager.on("order_updated", () => { invalidateTables(); invalidateOrderDetail(); }),
       wsManager.on("table_status_changed", invalidateTables),
@@ -183,6 +195,7 @@ export default function POSPage() {
       wsManager.on("payment_voided", invalidatePaymentData),
       wsManager.on("kitchen_item_status_changed", () => { invalidateTables(); invalidateOrderDetail(); }),
       wsManager.on("qr_submission_created", invalidateTables),
+      wsManager.on("order_auto_closed", handleAutoClose),
     ];
     return () => unsubs.forEach(u => u());
   }, [selectedTable?.orderId]);
@@ -1642,14 +1655,29 @@ export default function POSPage() {
                           </div>
                           <span className="pos-ir-price">{formatCurrency(unitPrice)}</span>
                           <span className={`pos-ir-price ${hasDiscount ? "pos-ir-strikethrough" : ""}`}>{formatCurrency(group.totalAmount)}</span>
-                          <div style={{ display: 'flex', justifyContent: 'center' }}>
-                            {!group.hasPaid && canPay ? (
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: 4 }}>
+                            {!group.hasPaid && canPay && (
                               <button className="pos-ir-disc-btn" onClick={() => openDiscountDialog(group.firstItemId)} data-testid={`button-discount-item-${group.firstItemId}`}>
                                 <Percent size={13} />
                               </button>
-                            ) : (
-                              <span style={{ fontSize: 13, color: 'var(--text3)' }}>-</span>
                             )}
+                            {!group.hasPaid && canVoid && (
+                              <button
+                                className="pos-ir-disc-btn"
+                                style={{ color: 'var(--danger, #dc2626)' }}
+                                onClick={() => setVoidItemDialogData({
+                                  orderId: selectedTable.orderId,
+                                  itemId: group.firstItemId,
+                                  productName: group.productNameSnapshot,
+                                  qty: group.totalQty,
+                                  sentToKitchenAt: group.items[0]?.sentToKitchenAt || null,
+                                })}
+                                data-testid={`button-void-item-${group.firstItemId}`}
+                              >
+                                <Ban size={13} />
+                              </button>
+                            )}
+                            {group.hasPaid && <span style={{ fontSize: 13, color: 'var(--text3)' }}>-</span>}
                           </div>
                         </div>
                         {hasDiscount && (
@@ -2178,6 +2206,29 @@ export default function POSPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {voidItemDialogData && (
+        <VoidItemDialog
+          item={voidItemDialogData}
+          userCanAuthorize={canVoidAuthorize}
+          onClose={() => setVoidItemDialogData(null)}
+          onSuccess={() => {
+            setVoidItemDialogData(null);
+            queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+            toast({ title: "Item anulado correctamente" });
+            setTimeout(() => {
+              const currentTables = queryClient.getQueryData<POSTable[]>(["/api/pos/tables"]);
+              if (selectedTable && currentTables) {
+                const stillOpen = currentTables.find(t => t.orderId === selectedTable.orderId);
+                if (!stillOpen) {
+                  setSelectedTable(null);
+                  setDetailView(false);
+                }
+              }
+            }, 500);
+          }}
+        />
       )}
 
       {addItemsOpen && (
