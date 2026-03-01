@@ -1,0 +1,112 @@
+Objetivo
+Mejorar el flujo de anulación (void) para que:
+1) Si el usuario YA está logueado como MANAGER/ADMIN (tiene permiso de autorizar), NO se pida PIN nuevamente.
+2) Siempre se pida una RAZÓN obligatoria para anulaciones de items enviados a cocina.
+3) La razón debe ser un dropdown predefinido (reasonCode), con opción OTHER que obliga a escribir detalle (reasonText).
+4) Auditoría completa: quién solicitó, quién autorizó (por sesión o por PIN), razón y timestamps.
+5) Mantener seguridad: si el usuario NO tiene permiso, entonces sí pedir PIN de gerente para anular items enviados a cocina.
+
+Definiciones
+- “Item enviado a cocina” = order_item.sentToKitchenAt != null (o equivalente).
+- “Usuario autorizado por sesión” = req.session.user tiene rol MANAGER/ADMIN o un permiso específico (recomendado):
+  PERMISSION: VOID_AFTER_SENT_APPROVE (o reutilizar POS_VOID/POS_VOID_ORDER si ya existen).
+
+Razones (dropdown)
+Crear catálogo fijo (puede ser const en frontend y validación backend):
+- KITCHEN_MISTAKE
+- WAITER_MISTAKE
+- CUSTOMER_CANCELLED
+- ITEM_UNAVAILABLE
+- DUPLICATE
+- QUALITY_ISSUE
+- COMPED
+- OTHER (requiere reasonText)
+
+Reglas
+A) Void de item NO enviado a cocina:
+- No requiere PIN.
+- Requiere razón opcional (si quieren, puede ser obligatoria también, pero mínimo opcional).
+- Auditoría: requestedBy = usuario sesión.
+
+B) Void de item enviado a cocina:
+- reasonCode obligatorio (y reasonText obligatorio si OTHER).
+- Si usuario sesión tiene permiso/rol de autorizar:
+  - NO pedir PIN
+  - authorizedBy = req.session.user.id
+- Si usuario sesión NO tiene permiso:
+  - exigir managerPin (obligatorio)
+  - validar PIN con endpoint existente o lógica directa
+  - authorizedBy = managerId obtenido del PIN
+- Auditoría siempre: requestedBy = usuario sesión, authorizedBy según arriba.
+
+C) Hard delete:
+- NO permitir hard delete de items enviados a cocina. Convertir a VOIDED (o bloquear con 400/403).
+- Hard delete solo si nunca se envió a cocina (si la política actual lo permite).
+
+Backend Tasks
+T001: Validación de razón en endpoints de void
+- En POST /api/waiter/orders/:orderId/items/:itemId/void:
+  - leer { reasonCode, reasonText?, managerPin? }
+  - si item.sentToKitchenAt != null:
+    - reasonCode obligatorio
+    - si reasonCode == OTHER => reasonText obligatorio (min 3 chars)
+  - si item.sentToKitchenAt != null y usuario NO autorizado por sesión:
+    - managerPin obligatorio y validar que corresponde a MANAGER
+  - registrar audit_events con:
+    actorUserId = requestedByUserId (el que ejecutó)
+    authorizedByUserId = (user session si autorizado) o managerId (si PIN)
+    action = ITEM_VOIDED
+    entityType = ORDER_ITEM
+    entityId = itemId
+    metadata: { orderId, tableId, reasonCode, reasonText, sentToKitchenAt, previousStatus }
+  - ejecutar recalcOrderTotal(orderId)
+  - (si ya existe) llamar maybeAutoCloseOrder(orderId) para liberar mesa cuando corresponda
+Files: server/routes.ts (+ server/storage.ts si aplica)
+
+Acceptance:
+- Un manager logueado puede anular item enviado a cocina SIN ingresar PIN, pero con razón obligatoria.
+- Un mesero/cajero debe ingresar PIN de manager + razón obligatoria para items enviados a cocina.
+
+T002: Endpoint verify-manager-pin (si no existe o mejorar)
+- POST /api/auth/verify-manager-pin { pin }
+- verifica que pin pertenece a un usuario con rol/permiso MANAGER
+- devuelve { authorized: true, managerId, managerName }
+- agregar rate-limit simple (por IP o por sesión): 5 intentos/5 min -> 403
+- log de intentos fallidos en audit_events (opcional pero recomendado)
+Files: server/routes.ts
+
+Frontend Tasks
+T003: Modal unificado “Anular Item” con dropdown de razones
+- Crear/ajustar modal usado en POS y vista de mesero:
+  - Dropdown reasonCode (obligatorio si sentToKitchenAt != null; recomendado siempre)
+  - Si reasonCode == OTHER mostrar textarea reasonText (obligatorio)
+  - Mostrar campo PIN SOLO si:
+    - item.sentToKitchenAt != null AND usuario actual NO tiene permiso/rol manager
+  - Botón “Confirmar anulación”
+- Enviar POST void con:
+  { reasonCode, reasonText?, managerPin? }
+Files: client/src/pages/pos.tsx, client/src/pages/table-detail.tsx (o componente compartido)
+
+Acceptance:
+- Manager logueado ve solo Razón y Confirmar (sin PIN).
+- Mesero ve Razón + PIN (si fue enviado a cocina).
+- Si OTHER sin texto, bloquear submit.
+
+T004: UI reasons centralizada
+- Crear const/shared (ej shared/voidReasons.ts) con lista de razones y labels (ES):
+  - “Error de cocina”, “Error de mesero”, “Cliente canceló”, etc.
+- Backend valida reasonCode contra allowlist para evitar valores inventados.
+
+Acceptance:
+- Razones consistentes entre front/back.
+
+Notas
+- No pedir PIN si el usuario ya está autorizado por sesión.
+- Razón obligatoria para items enviados a cocina.
+- Guardar reasonCode/reasonText en audit_events y/o en order_item.voidReasonCode/voidReasonText si quieres persistencia directa en el item.
+- Mantener consistencia con el cierre automático de órdenes/mesa si aplica (recalc + maybeAutoCloseOrder).
+
+Entregables
+- Commit con cambios backend + frontend
+- Evidencia: video o screenshots del flujo manager vs mesero
+- Logs/audit_events mostrando requestedBy y authorizedBy correctamente
