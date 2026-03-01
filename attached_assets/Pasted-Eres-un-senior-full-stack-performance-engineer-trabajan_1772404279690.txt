@@ -1,0 +1,196 @@
+Eres un senior full-stack/performance engineer trabajando en RMS (Node/Express + Drizzle/Postgres + React Query). Objetivo: optimización global de rendimiento del sistema. El sistema está lento por: falta de índices en tablas de relación, N+1 queries, awaits seriales en endpoints hot, y polling agresivo en frontend. Debes implementar los Tasks T001–T009 abajo. Reglas: 
+- No cambies UX ni comportamiento funcional.
+- No rompas compatibilidad de tipos.
+- No agregues dependencias nuevas.
+- No inventes nombres de tablas/columnas: usa los existentes en el repo.
+- Si una tabla/columna no existe con ese nombre, busca la equivalente en schema.ts y ajusta.
+- Mantén cambios pequeños y seguros; preferir batch queries, Promise.all, y Map caches.
+- Agrega logs de perf solo para endpoints hot y solo si >200ms.
+- Asegura idempotencia en índices: CREATE INDEX IF NOT EXISTS.
+- Donde tenga sentido, usa transacciones db.transaction() para consistencia y rendimiento.
+
+========================
+T001: Índices faltantes
+========================
+Agregar en server/db.ts (o el archivo real de init DB) una función ensurePerfIndexes(db) que ejecute (Postgres):
+- idx_order_item_modifiers_item_id ON order_item_modifiers (order_item_id)
+- idx_order_item_taxes_item_id ON order_item_taxes (order_item_id)
+- idx_order_item_discounts_item_id ON order_item_discounts (order_item_id)
+- idx_order_item_discounts_order_id ON order_item_discounts (order_id)
+- idx_split_accounts_order_id ON split_accounts (order_id)
+- idx_split_items_split_id ON split_items (split_id)
+- idx_split_items_order_item_id ON split_items (order_item_id)
+- idx_order_subaccounts_order_id ON order_subaccounts (order_id)
+- idx_sales_ledger_items_order_item_id ON sales_ledger_items (order_item_id)
+- idx_sales_ledger_items_order_id ON sales_ledger_items (order_id)
+- idx_voided_items_order_id ON voided_items (order_id)
+- idx_product_tax_categories_product_id ON product_tax_categories (product_id)
+- idx_qr_submissions_order_id ON qr_submissions (order_id)
+- idx_payments_cash_session_id ON payments (cash_session_id)
+
+Debe correr al startup sin fallar. Si el proyecto usa drizzle db.execute(sql) úsalo; si usa sql`` tagged literal, usa el patrón existente.
+Acceptance: arranca y no hay error; índices creados.
+
+=========================================
+T002: /api/pos/tables 3 rounds -> 2 rounds
+=========================================
+En server/routes.ts ubica el handler GET /api/pos/tables. Actualmente hace 3 rondas seriales:
+R1(tables+orders) -> R2(items+subaccounts) -> R3(mods+discounts+taxes)
+Objetivo: 2 rondas máximo, combinando R2+R3 con Promise.all.
+
+En server/storage.ts crea estas funciones batch:
+1) getOrderItemModifiersByOrderIds(orderIds)
+   - Debe filtrar por orderIds aunque la tabla tenga solo order_item_id.
+   - Solución: JOIN con order_items para filtrar por order_items.order_id IN (orderIds).
+2) getOrderItemTaxesByOrderIds(orderIds)
+   - Igual: JOIN order_items.
+3) getOrderItemDiscountsByOrderIds(orderIds)
+   - Si discounts tiene order_id directo, úsalo con inArray(orderId,...). Si no, JOIN order_items.
+
+Luego en /api/pos/tables:
+- R1 obtiene tables + openOrders.
+- Construye orderIds.
+- R2 hace: Promise.all([itemsByOrderIds, subaccountsByOrderIds, modifiersByOrderIds, discountsByOrderIds, taxesByOrderIds])
+- Ensambla respuesta igual que antes.
+
+Acceptance:
+- Solo 2 awaits “grandes” (uno para R1 y uno para Promise.all).
+- Con índices, perf <150ms en ambiente dev con datos reales.
+
+================================================
+T003: /api/tables/:id/current 3-4 rounds -> 2 rounds
+================================================
+En server/routes.ts ubica GET /api/tables/:id/current. Hoy hace:
+table -> order -> items+subs+voids -> mods+users (serial y dependiente)
+Objetivo: 2 rounds máximo.
+
+Implementación:
+- Round 1: obtener table y current open order de forma eficiente:
+  - Ideal: buscar order por tableId directamente; validar existencia de table al final si es necesario.
+- Round 2: en paralelo (Promise.all):
+  - items del orderId
+  - subaccounts del orderId
+  - voided_items del orderId (o equivalente)
+  - modifiers (filtrar por orderId: JOIN order_items si hace falta)
+  - usuarios relacionados a voids (si hoy se hace) pero en batch: WHERE user_id IN (...)
+
+Acceptance: 2 rounds máximo; perf <120ms.
+
+========================================================
+T004: Eliminar N+1 en GET /api/pos/orders/:orderId/splits
+========================================================
+En server/routes.ts ubica GET /api/pos/orders/:orderId/splits (o endpoint equivalente).
+Hoy: obtiene accounts y luego hace loop con getSplitItemsForSplit / getSplitItemsForAccount en serie.
+Cambiar a:
+- Query 1: accounts (split subaccounts) para orderId
+- Query 2: split_items donde split_id IN (accountIds)
+- Agrupar en Map<splitId, items[]>
+- Responder igual.
+
+Crear en server/storage.ts: getSplitItemsByAccountIds(splitIds: number[])
+Acceptance: 2 queries (accounts + items). Sin loops con await.
+
+========================================================
+T005: Optimizar normalizeOrderItemsForSplit (batch reads + tx)
+========================================================
+En server/storage.ts ubica normalizeOrderItemsForSplit. Hoy hace ~90 queries seriales.
+Objetivo: reducir a ~5 reads batch + batch inserts/updates dentro de db.transaction().
+
+Implementación:
+- Obtener itemIds relevantes primero.
+- Pre-fetch batch (con inArray(itemIds)):
+  - modifiers por order_item_id
+  - taxes por order_item_id
+  - discounts por order_item_id (o por order_id si aplica)
+  - sales_ledger_items por order_item_id
+  - kitchen_ticket_items por order_item_id (si existe esa relación)
+- Convertir a Maps para lookup O(1) dentro del loop.
+- Dentro del loop: NO hacer lecturas.
+- Acumular inserts/updates en arrays y ejecutar al final en batch:
+  - db.insert(table).values(array)
+  - db.update(table).set(...).where(inArray(id,...)) cuando aplique
+- Envolver todo en db.transaction(async (tx)=>{...}).
+
+Acceptance: ~5 lecturas batch + ~6 escrituras batch; 0 lecturas dentro del loop.
+
+==================================================
+T006: Optimizar recalcOrderTotal (eliminar N+1 de tax lookup)
+==================================================
+En server/storage.ts ubica recalcOrderTotal. Hoy llama getProductTaxCategories(productId) dentro del loop.
+Ya existe getProductTaxCategoriesByProductIds(productIds[]) en storage.ts.
+Cambiar a:
+- Antes del loop: extraer unique productIds de items.
+- Llamar una vez getProductTaxCategoriesByProductIds(productIds).
+- Construir Map<productId, taxCats[]>
+- Dentro del loop: lookup en Map (0 queries).
+
+Acceptance: 0 queries de tax dentro del loop.
+
+=========================================
+T007: Optimizar voidOrderItems (batch updates)
+=========================================
+En server/storage.ts ubica voidOrderItems y voidKitchenTicketItemsByOrderItem(s).
+Hoy hace loops con await.
+Cambiar a batch:
+- UPDATE order_items SET status='VOIDED', void_reason=?, voided_by=?, voided_at=? WHERE id IN (...)
+- UPDATE sales_ledger_items SET status='VOIDED', ... WHERE order_item_id IN (...)
+- Kitchen ticket items:
+  - SELECT ids WHERE order_item_id IN (...)
+  - UPDATE kitchen_ticket_items SET status='VOIDED' WHERE id IN (...)
+- Mantener auditoría existente.
+- Usar transacción.
+
+Acceptance: ~4 queries batch en vez de N*M serial.
+
+=============================
+T008: Paralelizar /api/dashboard
+=============================
+En server/routes.ts ubica GET /api/dashboard (o equivalente).
+Hoy hace 3 awaits seriales:
+dashboardData -> ledger -> paymentMethodTotals
+Cambiar a Promise.all porque son independientes.
+Acceptance: 1 round de queries en vez de 3.
+
+========================================
+T009: Perf timing global endpoints hot (>200ms)
+========================================
+Después de aplicar T002–T008:
+Agregar perf timing simple (Date.now) y log condicional solo si >200ms a estos handlers:
+- /api/waiter/tables
+- /api/pos/orders/:orderId/splits
+- /api/pos/orders/:orderId/payments
+- /api/pos/orders/:orderId/normalize-split
+- /api/pos/pay, /api/pos/pay-multi, /api/pos/pay-split
+- /api/pos/split-order
+- /api/pos/receipt-data/:orderId
+- /api/pos/paid-orders
+- /api/dashboard
+- /api/qr/:tableCode/menu
+- /api/qr/:tableCode/submit
+- /api/waiter/orders/:orderId/items/:itemId/void
+- /api/pos/orders/:orderId/add-items
+- /api/inventory/basic
+
+Formato log:
+[PERF] METHOD PATH XXXms (y opcional: rows counts si ya lo tienes, pero no agregues costo alto).
+Acceptance: logs aparecen solo cuando pasa 200ms.
+
+========================
+Frontend (quick win)
+========================
+Ubica los React Query hooks y reduce polling agresivo:
+- KDS: refetchInterval 5000 -> 10000 o 15000
+- POS/table-detail/waiter: 10000 -> 20000 o 30000
+Y elimina invalidaciones redundantes en mutaciones que ya se actualizan por polling o WS: 
+- Si hay WS activo, polling queda como fallback lento y invalidations deben ser mínimas.
+No rompas consistencia: si quitas una invalidación, asegúrate que WS o polling cubra actualización.
+
+========================
+Entrega
+========================
+1) Implementa cambios con commits lógicos (o bloques claros).
+2) En tu respuesta final, lista:
+- Archivos tocados
+- Antes/Después de endpoints clave (número de queries/rounds)
+- Ejemplos de logs PERF (si salen)
+3) No dejes TODOs; el código debe compilar y pasar lint/build del repo.
