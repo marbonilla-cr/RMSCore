@@ -1,0 +1,59 @@
+1) T001: No uses solo “rol MANAGER”; usa permiso específico
+
+Hoy “MANAGER” puede ser amplio. Mejor:
+	•	Validar por permiso: POS_VOID / POS_VOID_ORDER / KDS_VOID_OVERRIDE o un nuevo VOID_AFTER_SENT_APPROVE.
+
+Así si mañana tenés “Manager de salón” sin permisos críticos, no le das el botón nuclear.
+
+2) T001: Rate limit + lockout por PIN
+
+Si dejas el endpoint abierto sin freno, te pueden brute-force el PIN.
+	•	5 intentos por IP/usuario → bloqueo 5 minutos
+	•	y registrar en audit_events intentos fallidos.
+
+3) T002: “Hard delete” para items enviados a cocina: NO
+
+Si un item llegó a cocina, no debería existir hard delete nunca. Solo:
+	•	status = VOIDED
+	•	y queda en auditoría.
+
+Hard delete es el camino fácil para borrar evidencia.
+
+4) T004: Vinculación y contabilidad (muy importante)
+
+Si expandís en kitchen_ticket_items, necesitás 2 cosas para que cuadre:
+	•	groupId (ej. kitchenItemGroupId) para agrupar las N líneas que vienen del mismo orderItemId.
+	•	sequence (1..N) para que en UI se vea “Hamburguesa (1/3)”, “(2/3)”, “(3/3)” si querés.
+
+Y regla de negocio:
+	•	El order_item.qty sigue siendo N.
+	•	Los estados del grupo pueden agregarse:
+	•	si todas READY → order item READY
+	•	si una VOIDED parcial → el order item sigue N pero necesitas registrar “voidedUnits” o “netQty”.
+
+OJO: la parte contable/pago:
+	•	Si cobrás por order_item.qty, y void parcial, tenés que reflejarlo en el cobro.
+Si no, vas a terminar cobrando 3 aunque anulaste 1.
+
+Solución simple:
+	•	Mantener order_item.qty como “qty original”
+	•	agregar order_item.voidedQty (o qtyEffective = qty - voidedQty)
+	•	y en el POS cobrás qtyEffective.
+
+5) T003: Los VOIDED no deben “cerrarse/limpiarse” sin rastro
+
+Asegurate que:
+	•	el ticket “clear” del KDS solo limpia la vista, pero el historial queda.
+	•	y en cierre de orden, el ticket de cocina se guarda con VOIDED incluido.
+
+Recomendación final (cómo lo ejecutaría)
+
+Orden mejor para evitar retrabajo:
+	1.	T004 (items individuales) primero
+	2.	T003 (mostrar VOIDED en KDS)
+	3.	T001 + T002 (seguridad)
+	4.	T005 (UI override)
+
+Porque el KDS individual cambia el modelo; mejor hacerlo primero y no reescribir endpoints dos veces.
+
+⸻
