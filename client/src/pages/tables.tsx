@@ -129,7 +129,7 @@ export default function TablesPage() {
 
   const { data: tables = [], isLoading } = useQuery<TableView[]>({
     queryKey: ["/api/waiter/tables"],
-    refetchInterval: 2000,
+    refetchInterval: 10000,
   });
 
   useEffect(() => {

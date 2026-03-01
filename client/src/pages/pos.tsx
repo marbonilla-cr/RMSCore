@@ -189,7 +189,7 @@ export default function POSPage() {
 
   const { data: posTables = [], isLoading } = useQuery<POSTable[]>({
     queryKey: ["/api/pos/tables"],
-    refetchInterval: 2000,
+    refetchInterval: 10000,
   });
 
   useEffect(() => {

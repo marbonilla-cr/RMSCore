@@ -145,7 +145,7 @@ export default function TableDetailPage() {
   const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
     queryKey: ["/api/tables", tableId, "current"],
     enabled: !!tableId,
-    refetchInterval: 2000,
+    refetchInterval: 10000,
   });
 
   const prevOrderIdRef = useRef<number | null>(null);

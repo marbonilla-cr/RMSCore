@@ -1733,10 +1733,8 @@ export async function registerRoutes(
       const voidedItemsList = await storage.getVoidedItemsForOrder(order.id);
       const voidedUserIds = Array.from(new Set(voidedItemsList.map(i => i.voidedByUserId)));
       const voidedUsersMap = new Map<number, string>();
-      for (const uid of voidedUserIds) {
-        const u = await storage.getUser(uid);
-        if (u) voidedUsersMap.set(uid, u.displayName);
-      }
+      const voidedUsers = await storage.getUsersByIds(voidedUserIds);
+      for (const u of voidedUsers) voidedUsersMap.set(u.id, u.displayName);
       const voidedItemsWithNames = voidedItemsList.map(i => ({
         ...i,
         voidedAt: i.voidedAt?.toISOString() || null,
@@ -2562,10 +2560,8 @@ export async function registerRoutes(
       const items = await storage.getVoidedItemsForOrder(orderId);
       const userIds = Array.from(new Set(items.map(i => i.voidedByUserId)));
       const usersMap = new Map<number, string>();
-      for (const uid of userIds) {
-        const u = await storage.getUser(uid);
-        if (u) usersMap.set(uid, u.displayName);
-      }
+      const bulkUsers = await storage.getUsersByIds(userIds);
+      for (const u of bulkUsers) usersMap.set(u.id, u.displayName);
       const result = items.map(i => ({
         ...i,
         voidedAt: i.voidedAt?.toISOString() || null,
