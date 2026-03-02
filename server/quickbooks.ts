@@ -331,14 +331,15 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
   const config = await getQboConfig();
   if (!config || !config.isConnected) throw new Error("QBO not connected");
 
-  const order = await storage.getOrder(orderId);
-  if (!order) throw new Error(`Order ${orderId} not found`);
-
-  const items = await storage.getOrderItems(orderId);
-  const activeItems = items.filter(i => i.status !== "VOIDED");
-
   const payment = await storage.getPayment(paymentId);
   if (!payment) throw new Error(`Payment ${paymentId} not found`);
+
+  const effectiveOrderId = payment.orderId;
+  const order = await storage.getOrder(effectiveOrderId);
+  if (!order) throw new Error(`Order ${effectiveOrderId} not found (payment ${paymentId} references this order)`);
+
+  const items = await storage.getOrderItems(effectiveOrderId);
+  const activeItems = items.filter(i => i.status !== "VOIDED");
 
   const pm = await storage.getPaymentMethod(payment.paymentMethodId);
 
@@ -378,23 +379,33 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
     }
   }
 
+  const isSandbox = config.dbEnvironment === "sandbox";
+  const useTaxCode = !isSandbox && config.taxCodeRef;
+
   const lines: any[] = [];
   let lineNum = 1;
   grouped.forEach((group) => {
+    const lineDetail: any = {
+      ItemRef: { value: group.qboItemId },
+      Qty: 1,
+      UnitPrice: Math.round(group.amount * 100) / 100,
+    };
+    if (useTaxCode) {
+      lineDetail.TaxCodeRef = { value: config.taxCodeRef };
+    }
     lines.push({
       LineNum: lineNum++,
       Amount: Math.round(group.amount * 100) / 100,
       DetailType: "SalesItemLineDetail",
-      SalesItemLineDetail: {
-        ItemRef: { value: group.qboItemId },
-        Qty: 1,
-        UnitPrice: Math.round(group.amount * 100) / 100,
-        TaxCodeRef: config.taxCodeRef ? { value: config.taxCodeRef } : undefined,
-      },
+      SalesItemLineDetail: lineDetail,
     });
   });
 
-  const discountRows = await storage.getOrderItemDiscountsByOrder(orderId);
+  if (lines.length === 0) {
+    throw new Error(`No items mapped to QBO categories for order ${effectiveOrderId} — check category mappings`);
+  }
+
+  const discountRows = await storage.getOrderItemDiscountsByOrder(effectiveOrderId);
   const totalDiscounts = discountRows.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
   if (totalDiscounts > 0) {
     lines.push({
