@@ -6962,19 +6962,39 @@ export async function registerRoutes(
 
   app.post("/api/setup/create-manager-marbonilla", async (_req, res) => {
     try {
+      const results: any[] = [];
+
+      const gerente = await storage.getUserByUsername("gerente");
+      if (gerente && !gerente.active) {
+        await storage.updateUser(gerente.id, { active: true });
+        results.push({ action: "reactivated", username: "gerente", id: gerente.id });
+      } else if (gerente) {
+        results.push({ action: "already_active", username: "gerente", id: gerente.id });
+      }
+
       const existing = await storage.getUserByUsername("marbonilla");
-      if (existing) return res.json({ message: "Ya existe", id: existing.id });
-      const user = await storage.createUser({
-        username: "marbonilla",
-        password: "marbonilla2024",
-        displayName: "Marcelo Bonilla",
-        role: "MANAGER",
-        active: true,
-        email: null,
-        dailyRate: null,
-      });
-      await storage.enrollPin(user.id, "8098");
-      res.json({ message: "Usuario creado", id: user.id });
+      if (existing) {
+        if (!existing.active) {
+          await storage.updateUser(existing.id, { active: true });
+          results.push({ action: "reactivated", username: "marbonilla", id: existing.id });
+        } else {
+          results.push({ action: "already_exists", username: "marbonilla", id: existing.id });
+        }
+      } else {
+        const user = await storage.createUser({
+          username: "marbonilla",
+          password: "marbonilla2024",
+          displayName: "Marcelo Bonilla",
+          role: "MANAGER",
+          active: true,
+          email: null,
+          dailyRate: null,
+        });
+        await storage.enrollPin(user.id, "8098");
+        results.push({ action: "created", username: "marbonilla", id: user.id });
+      }
+
+      res.json({ ok: true, results });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
