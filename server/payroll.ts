@@ -113,12 +113,10 @@ export function computeDailyPayroll(args: {
   const hasMultiplePunches = punchesForDay.length > 1;
   const sorted = [...punchesForDay].sort((a, b) => toDate(a.clockInAt)!.getTime() - toDate(b.clockInAt)!.getTime());
   const firstPunch = sorted[0];
-  const lastPunch = sorted[sorted.length - 1];
 
   const clockIn = toDate(firstPunch.clockInAt)!;
-  const clockOutRaw = toDate(lastPunch.clockOutAt);
-  const clockOutType = lastPunch.clockOutType;
-  const isManualClockOut = clockOutType === "MANUAL" || clockOutType === "OVERRIDE";
+  const firstClockOut = toDate(firstPunch.clockOutAt);
+  const firstClockOutType = firstPunch.clockOutType;
 
   let tardyMinutes = 0;
   let late = false;
@@ -130,16 +128,21 @@ export function computeDailyPayroll(args: {
     }
   }
 
-  let workedEnd: Date;
+  const effectiveStart = scheduledStart && clockIn.getTime() < scheduledStart.getTime()
+    ? scheduledStart : clockIn;
+
+  let normalEnd: Date;
   let autoCheckout = false;
-  if (isManualClockOut && clockOutRaw) {
-    workedEnd = clockOutRaw;
+  if (firstClockOut) {
+    if (scheduledEnd && firstClockOut.getTime() > scheduledEnd.getTime()) {
+      normalEnd = scheduledEnd;
+    } else {
+      normalEnd = firstClockOut;
+    }
+    autoCheckout = firstClockOutType === "AUTO" || firstClockOutType === "AUTO_NO_SCHEDULE";
   } else if (scheduledEnd) {
-    workedEnd = scheduledEnd;
+    normalEnd = scheduledEnd;
     autoCheckout = true;
-  } else if (clockOutRaw) {
-    workedEnd = clockOutRaw;
-    autoCheckout = clockOutType === "AUTO" || clockOutType === "AUTO_NO_SCHEDULE";
   } else {
     return {
       workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0,
@@ -149,16 +152,22 @@ export function computeDailyPayroll(args: {
     };
   }
 
-  const workedMinutes = Math.max(0, diffMinutes(clockIn, workedEnd));
+  const normalWorkedMinutes = Math.max(0, diffMinutes(effectiveStart, normalEnd));
 
   let overtimeMinutes = 0;
-  if (isManualClockOut && clockOutRaw && scheduledEnd && clockOutRaw.getTime() > scheduledEnd.getTime()) {
-    overtimeMinutes = Math.max(0, diffMinutes(scheduledEnd, clockOutRaw));
+  if (hasMultiplePunches) {
+    for (let i = 1; i < sorted.length; i++) {
+      const pIn = toDate(sorted[i].clockInAt);
+      const pOut = toDate(sorted[i].clockOutAt);
+      if (pIn && pOut) {
+        overtimeMinutes += Math.max(0, diffMinutes(pIn, pOut));
+      }
+    }
   }
 
-  const normalMinutesRaw = Math.max(0, workedMinutes - overtimeMinutes);
-  const unpaidBreakMinutes = workedMinutes >= 540 ? 60 : 0;
-  const normalMinutes = Math.max(0, normalMinutesRaw - unpaidBreakMinutes);
+  const totalWorkedMinutes = normalWorkedMinutes + overtimeMinutes;
+  const unpaidBreakMinutes = normalWorkedMinutes >= 540 ? 60 : 0;
+  const normalMinutes = Math.max(0, normalWorkedMinutes - unpaidBreakMinutes);
   const paidWorkedMinutes = normalMinutes + overtimeMinutes;
 
   const midnightShift = scheduledStart && scheduledEnd
@@ -170,7 +179,7 @@ export function computeDailyPayroll(args: {
   const baseTotalPayDay = round2(normalPay + overtimePay);
 
   return {
-    workedMinutes, normalMinutes, overtimeMinutes,
+    workedMinutes: totalWorkedMinutes, normalMinutes, overtimeMinutes,
     unpaidBreakMinutes, paidWorkedMinutes, tardyMinutes,
     normalPay, overtimePay, baseTotalPayDay,
     flags: { late, noShow: false, autoCheckout, midnightShift, hasMultiplePunches },
