@@ -934,6 +934,7 @@ export const businessConfig = pgTable("business_config", {
   legalNote: text("legal_note").notNull().default(""),
   updatedAt: timestamp("updated_at").defaultNow(),
   maxSubaccounts: integer("max_subaccounts").notNull().default(15),
+  serviceTaxCategoryId: integer("service_tax_category_id"),
 });
 
 export const printers = pgTable("printers", {
