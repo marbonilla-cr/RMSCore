@@ -3165,32 +3165,49 @@ export async function registerRoutes(
 
   async function buildServiceChargeOps(orderId: number, order: any, activeItems: any[]) {
     try {
-      const [hrSettings, allProducts] = await Promise.all([
+      const [hrSettings, allProducts, existing] = await Promise.all([
         storage.getHrSettings(),
         storage.getAllProducts(),
+        storage.getServiceChargeByOrder(orderId),
       ]);
       const scRate = hrSettings ? Number(hrSettings.serviceChargeRate) : 0.10;
       if (scRate <= 0) return;
+      const paidItemIds = new Set(
+        existing.filter(x => x.status === "PAID").map(x => x.orderItemId)
+      );
       const productMap = new Map(allProducts.map(p => [p.id, p]));
       const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
       const bd = getBusinessDate();
       const entries: any[] = [];
       for (const item of activeItems) {
+        const itemKey = item.id;
+        if (paidItemIds.has(itemKey)) continue;
         const prod = item.productId ? productMap.get(item.productId) : null;
-        if (prod && !prod.serviceTaxApplicable) continue;
-        const baseAmount = Number(item.productPriceSnapshot) * item.qty;
-        const serviceAmount = Math.round(baseAmount * scRate * 100) / 100;
+        if (!prod) {
+          try {
+            await storage.createAuditEvent({
+              userId: order.responsibleWaiterId || null,
+              action: "SERVICE_LEDGER_SKIPPED_PRODUCT_NOT_FOUND",
+              metadata: JSON.stringify({ orderId, orderItemId: itemKey, productId: item.productId }),
+            });
+          } catch (_) {}
+          continue;
+        }
+        if (!prod.serviceTaxApplicable) continue;
+        const gross = Number(item.productPriceSnapshot) * item.qty;
+        const serviceAmount = Math.round(gross * scRate / (1 + scRate) * 100) / 100;
         if (serviceAmount > 0) {
           entries.push({
             businessDate: bd,
             orderId,
-            orderItemId: item.id,
+            orderItemId: itemKey,
             tableId: order.tableId || null,
             tableNameSnapshot: tableName || null,
             responsibleWaiterEmployeeId: order.responsibleWaiterId || null,
             rateSnapshot: scRate.toFixed(4),
-            baseAmountSnapshot: baseAmount.toFixed(2),
+            baseAmountSnapshot: gross.toFixed(2),
             serviceAmount: serviceAmount.toFixed(2),
+            includesServiceSnapshot: true,
             status: "PAID",
           });
         }
@@ -5443,9 +5460,13 @@ export async function registerRoutes(
       });
 
       const servicePoolMap: Record<string, number> = {};
+      const serviceLedgerByEmployee: Record<string, Record<number, number>> = {};
       for (const entry of serviceLedger) {
         const d = entry.businessDate;
         servicePoolMap[d] = (servicePoolMap[d] || 0) + Number(entry.serviceAmount);
+        const empId = entry.responsibleWaiterEmployeeId || 0;
+        if (!serviceLedgerByEmployee[d]) serviceLedgerByEmployee[d] = {};
+        serviceLedgerByEmployee[d][empId] = (serviceLedgerByEmployee[d][empId] || 0) + Number(entry.serviceAmount);
       }
 
       let servicePunchesMap: Record<string, PunchRecord[]> = punchesMap;
@@ -5475,7 +5496,7 @@ export async function registerRoutes(
         }
       }
 
-      const serviceByEmployee = computeServiceForRange({
+      const { result: serviceByEmployee, serviceUnassignedTotal } = computeServiceForRange({
         servicePoolMap,
         employees: empData,
         punchesMap: servicePunchesMap,
@@ -5483,6 +5504,7 @@ export async function registerRoutes(
         hrConfig,
         serviceFrom,
         serviceTo,
+        serviceLedgerByEmployee,
       });
 
       for (const emp of payrollResult) {
@@ -5494,6 +5516,7 @@ export async function registerRoutes(
       res.json({
         planillaRange: { from: dateFrom, to: dateTo },
         serviceRange: { from: serviceFrom, to: serviceTo },
+        serviceUnassignedTotal,
         hrConfigSnapshot: {
           jornadaOrdinariaHorasPorDia: Number(hrConfig.overtimeDailyThresholdHours),
           multiplicadorHoraExtra: Number(hrConfig.overtimeMultiplier),

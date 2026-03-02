@@ -204,10 +204,12 @@ export function computeServiceForRange(args: {
   hrConfig: HrConfig;
   serviceFrom: string;
   serviceTo: string;
-}): Record<number, number> {
-  const { servicePoolMap, employees, punchesMap, schedulesMap, hrConfig, serviceFrom, serviceTo } = args;
+  serviceLedgerByEmployee?: Record<string, Record<number, number>>;
+}): { result: Record<number, number>; serviceUnassignedTotal: number } {
+  const { servicePoolMap, employees, punchesMap, schedulesMap, hrConfig, serviceFrom, serviceTo, serviceLedgerByEmployee } = args;
   const dates = getDateRange(serviceFrom, serviceTo);
   const result: Record<number, number> = {};
+  let serviceUnassignedTotal = 0;
 
   for (const dateStr of dates) {
     const pool = servicePoolMap[dateStr] || 0;
@@ -229,14 +231,31 @@ export function computeServiceForRange(args: {
       }
     }
 
-    const dayService = computeServiceForDay({ servicePool: pool, eligibleWaiters: eligibles });
-    for (const [empIdStr, amount] of Object.entries(dayService)) {
-      const empId = Number(empIdStr);
-      result[empId] = round2((result[empId] || 0) + amount);
+    if (eligibles.length > 0) {
+      const dayService = computeServiceForDay({ servicePool: pool, eligibleWaiters: eligibles });
+      for (const [empIdStr, amount] of Object.entries(dayService)) {
+        const empId = Number(empIdStr);
+        result[empId] = round2((result[empId] || 0) + amount);
+      }
+    } else if (serviceLedgerByEmployee && serviceLedgerByEmployee[dateStr]) {
+      const dayLedger = serviceLedgerByEmployee[dateStr];
+      for (const [empIdStr, amount] of Object.entries(dayLedger)) {
+        const empId = Number(empIdStr);
+        result[empId] = round2((result[empId] || 0) + amount);
+      }
     }
   }
 
-  return result;
+  if (serviceLedgerByEmployee) {
+    for (const dateStr of Object.keys(serviceLedgerByEmployee)) {
+      const dayLedger = serviceLedgerByEmployee[dateStr];
+      if (dayLedger[0]) {
+        serviceUnassignedTotal = round2(serviceUnassignedTotal + dayLedger[0]);
+      }
+    }
+  }
+
+  return { result, serviceUnassignedTotal };
 }
 
 export interface ExtraRecord {

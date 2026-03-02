@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
-import { salesLedgerItems } from "@shared/schema";
+import { salesLedgerItems, users } from "@shared/schema";
 import { sql, and, eq, inArray, gte, lte, or, SQL } from "drizzle-orm";
 import * as storage from "./storage";
 
@@ -75,7 +75,7 @@ function getGroupSelect(key: GroupKey): { selectExpr: SQL; alias: string } {
     case "origin":
       return { selectExpr: sql`${salesLedgerItems.origin}`, alias: "origin" };
     case "waiter":
-      return { selectExpr: sql`${salesLedgerItems.responsibleWaiterId}`, alias: "waiter_id" };
+      return { selectExpr: sql`COALESCE(${users.displayName}, ${users.username})`, alias: "waiter_name" };
     case "table":
       return { selectExpr: sql`${salesLedgerItems.tableNameSnapshot}`, alias: "table_name" };
   }
@@ -213,9 +213,11 @@ export function registerSalesCubeRoutes(app: Express) {
           .orderBy(salesLedgerItems.productNameSnapshot),
         db.select({
           id: sql<number>`${salesLedgerItems.responsibleWaiterId}`,
+          name: sql<string>`COALESCE(${users.displayName}, ${users.username})`,
         }).from(salesLedgerItems)
+          .leftJoin(users, eq(salesLedgerItems.responsibleWaiterId, users.id))
           .where(and(eq(salesLedgerItems.status, "PAID"), sql`${salesLedgerItems.responsibleWaiterId} IS NOT NULL`))
-          .groupBy(salesLedgerItems.responsibleWaiterId),
+          .groupBy(salesLedgerItems.responsibleWaiterId, users.displayName, users.username),
         db.select({
           minDate: sql<string>`MIN(${salesLedgerItems.businessDate})`,
           maxDate: sql<string>`MAX(${salesLedgerItems.businessDate})`,
@@ -226,7 +228,7 @@ export function registerSalesCubeRoutes(app: Express) {
         categories: categories.map(c => c.value).filter(Boolean).sort(),
         origins: origins.map(o => o.value).filter(Boolean).sort(),
         products: products.filter(p => p.name),
-        waiterIds: waiters.map(w => w.id).filter(Boolean),
+        waiters: waiters.filter(w => w.id).map(w => ({ id: w.id, name: w.name || `Waiter #${w.id}` })),
         dateRange: dateRange[0] || { minDate: null, maxDate: null },
       });
     } catch (err) {
@@ -294,9 +296,15 @@ export function registerSalesCubeRoutes(app: Express) {
         limitClause = sql` LIMIT ${body.topN}`;
       }
 
+      const needsUserJoin = groupByKeys.includes("waiter");
+      const joinClause = needsUserJoin
+        ? sql`LEFT JOIN ${users} ON ${salesLedgerItems.responsibleWaiterId} = ${users.id}`
+        : sql``;
+
       const query = sql`
         SELECT ${sql.join(selectParts, sql`, `)}
         FROM ${salesLedgerItems}
+        ${joinClause}
         WHERE ${whereClause}
         GROUP BY ${sql.join(groupByExprs, sql`, `)}
         ORDER BY ${sortExpr} ${dirSql}

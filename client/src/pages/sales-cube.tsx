@@ -39,7 +39,7 @@ interface FilterOptions {
   categories: string[];
   origins: string[];
   products: { id: number; name: string }[];
-  waiterIds: number[];
+  waiters: { id: number; name: string }[];
   dateRange: { minDate: string | null; maxDate: string | null };
 }
 

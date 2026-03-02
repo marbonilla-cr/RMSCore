@@ -488,6 +488,7 @@ export const serviceChargeLedger = pgTable("service_charge_ledger", {
   rateSnapshot: numeric("rate_snapshot", { precision: 5, scale: 4 }).notNull(),
   baseAmountSnapshot: numeric("base_amount_snapshot", { precision: 10, scale: 2 }).notNull(),
   serviceAmount: numeric("service_amount", { precision: 10, scale: 2 }).notNull(),
+  includesServiceSnapshot: boolean("includes_service_snapshot").notNull().default(true),
   status: text("status").notNull().default("PAID"),
   createdAt: timestamp("created_at").defaultNow(),
 });
