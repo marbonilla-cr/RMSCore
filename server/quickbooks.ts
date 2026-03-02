@@ -290,7 +290,9 @@ async function qboApiPost(path: string, body: any): Promise<any> {
 export async function getQBOItems(): Promise<{ id: string; name: string; type: string }[]> {
   const data = await qboApiGet("/query?query=" + encodeURIComponent("SELECT * FROM Item WHERE Active = true MAXRESULTS 1000"));
   const items = data?.QueryResponse?.Item || [];
-  return items.map((i: any) => ({ id: String(i.Id), name: i.Name, type: i.Type }));
+  return items
+    .filter((i: any) => i.Type !== "Category")
+    .map((i: any) => ({ id: String(i.Id), name: i.Name, type: i.Type }));
 }
 
 export async function getQBOAccounts(): Promise<{ id: string; name: string; accountType: string }[]> {
