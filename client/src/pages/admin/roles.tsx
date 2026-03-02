@@ -71,25 +71,32 @@ export default function AdminRolesPage() {
     }
   }, [rolePermissions]);
 
-  const saveMutation = useMutation({
-    mutationFn: async (role: string) => {
-      return apiRequest("PUT", `/api/admin/role-permissions/${role}`, {
-        permissions: localPermissions[role] || [],
-      });
-    },
-    onSuccess: (_data, role) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/role-permissions"] });
-      setDirtyRoles((prev) => {
-        const next = new Set(prev);
-        next.delete(role);
-        return next;
-      });
-      toast({ title: `Permisos de ${ROLE_LABELS[role] || role} guardados` });
-    },
-    onError: (err: any) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
+  const [saving, setSaving] = useState(false);
+
+  const saveAll = async () => {
+    if (dirtyRoles.size === 0) return;
+    setSaving(true);
+    const rolesToSave = Array.from(dirtyRoles);
+    const failed: string[] = [];
+    for (const role of rolesToSave) {
+      try {
+        await apiRequest("PUT", `/api/admin/role-permissions/${role}`, {
+          permissions: localPermissions[role] || [],
+        });
+      } catch {
+        failed.push(role);
+      }
+    }
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/role-permissions"] });
+    if (failed.length > 0) {
+      setDirtyRoles(new Set(failed));
+      toast({ title: "Error", description: `No se pudieron guardar: ${failed.map(r => ROLE_LABELS[r] || r).join(", ")}`, variant: "destructive" });
+    } else {
+      setDirtyRoles(new Set());
+      toast({ title: "Permisos guardados correctamente" });
+    }
+    setSaving(false);
+  };
 
   const togglePermission = (role: string, permKey: string) => {
     setLocalPermissions((prev) => {
@@ -127,6 +134,16 @@ export default function AdminRolesPage() {
           </h1>
           <p className="admin-page-sub">Configure los permisos para cada rol del sistema</p>
         </div>
+        {dirtyRoles.size > 0 && (
+          <Button
+            onClick={saveAll}
+            disabled={saving}
+            data-testid="button-save-all-permissions"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+            Guardar Todo ({dirtyRoles.size})
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -151,24 +168,9 @@ export default function AdminRolesPage() {
                     {ROLES.map((role) => (
                       <TableHead key={role} className="text-center min-w-[100px]">
                         <div className="flex flex-col items-center gap-1">
-                          <Badge variant="secondary" data-testid={`badge-role-${role}`}>
+                          <Badge variant={dirtyRoles.has(role) ? "default" : "secondary"} data-testid={`badge-role-${role}`}>
                             {ROLE_LABELS[role]}
                           </Badge>
-                          {dirtyRoles.has(role) && (
-                            <Button
-                              size="sm"
-                              onClick={() => saveMutation.mutate(role)}
-                              disabled={saveMutation.isPending}
-                              data-testid={`button-save-role-${role}`}
-                            >
-                              {saveMutation.isPending ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <Save className="w-3 h-3" />
-                              )}
-                              <span className="ml-1">Guardar</span>
-                            </Button>
-                          )}
                         </div>
                       </TableHead>
                     ))}

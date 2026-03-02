@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Loader2, Clock, LogIn, LogOut, MapPin, AlertCircle } from "lucide-react";
 
 interface PunchStatus {
@@ -48,6 +49,7 @@ export default function MiTurno() {
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState("");
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; coords: any } | null>(null);
 
   const { data: status, isLoading: statusLoading } = useQuery<PunchStatus>({
     queryKey: ["/api/hr/my-punch"],
@@ -70,15 +72,24 @@ export default function MiTurno() {
   }, [status?.clockedIn, status?.clockInTime]);
 
   const clockInMutation = useMutation({
-    mutationFn: async (coords: { lat: number; lng: number; accuracy: number }) => {
-      await apiRequest("POST", "/api/hr/clock-in", coords);
+    mutationFn: async (coords: { lat: number; lng: number; accuracy: number; confirmNoSchedule?: boolean }) => {
+      const res = await apiRequest("POST", "/api/hr/clock-in", coords);
+      const data = await res.json();
+      if (data.requireConfirm) {
+        throw Object.assign(new Error("requireConfirm"), { confirmData: data, coords });
+      }
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/my-punch"] });
       queryClient.invalidateQueries({ queryKey: ["/api/hr/punches/my"] });
       toast({ title: "Entrada registrada" });
     },
-    onError: (err: Error) => {
+    onError: (err: any) => {
+      if (err.confirmData) {
+        setConfirmDialog({ message: err.confirmData.message, coords: err.coords });
+        return;
+      }
       toast({ title: "Error al registrar entrada", description: err.message, variant: "destructive" });
     },
   });
@@ -273,6 +284,34 @@ export default function MiTurno() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!confirmDialog} onOpenChange={(open) => { if (!open) setConfirmDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar entrada</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground" data-testid="text-confirm-no-schedule">
+            {confirmDialog?.message}
+          </p>
+          <div className="flex gap-2 justify-end mt-4">
+            <Button variant="outline" onClick={() => setConfirmDialog(null)} data-testid="button-cancel-confirm">
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (confirmDialog) {
+                  const coords = { ...confirmDialog.coords, confirmNoSchedule: true };
+                  setConfirmDialog(null);
+                  clockInMutation.mutate(coords);
+                }
+              }}
+              data-testid="button-confirm-clock-in"
+            >
+              Confirmar Entrada
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

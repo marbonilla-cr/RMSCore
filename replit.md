@@ -55,6 +55,15 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 -   **KDS Individual Items:** Items with qty > 1 are expanded into individual lines in KDS (e.g., 3x Hamburguesa → 3 separate lines with independent status). `kitchenItemGroupId` and `seqInGroup` columns on `kitchen_ticket_items`. Each line progresses independently (NEW→PREPARING→READY). Order item marked READY only when all group lines are READY. Voided items display in red with strikethrough and Ban icon, remain visible in KDS.
 -   **QR Order Editing:** Waiter sees QR submissions in direct edit mode (no intermediate step). +/- qty controls, X to remove, and "+Menu" button to add products from the menu before accepting. Products added via inline product picker with search.
 -   **QuickBooks Online Integration:** OAuth flow for connection, encrypted token storage, asynchronous fire-and-forget sync strategy for payments, and a retry queue for failed syncs. Mapping of RMS categories to QBO items and deposit accounts per payment method. TaxCodeRef is environment-aware: omitted in sandbox (US doesn't support CR tax codes), sent in production when configured. `createSalesReceipt` uses `payment.orderId` as source of truth (resilient to DB restores). Empty-lines validation prevents invalid API requests.
+-   **HR Payroll Engine** (`server/payroll.ts`):
+    -   **Clock-in without schedule:** Requires double confirmation (`confirmNoSchedule: true`). Backend returns `{ requireConfirm: true }` if no schedule today. Audit action `CLOCK_IN_NO_SCHEDULE_CONFIRMED`. Applies to both PIN-clock (`/api/auth/pin-clock`) and session clock-in (`/api/hr/clock-in`).
+    -   **Auto clock-out** (`server/hr-jobs.ts`): Runs every 5min. Punches WITH `scheduledEndAt` close at scheduled end (type=AUTO). Punches WITHOUT `scheduledEndAt` close after `overtimeDailyThresholdHours` hours (type=AUTO_NO_SCHEDULE, overtime=0).
+    -   **Break deduction:** `workedMinutes >= 540 (9h)` → 60min unpaid break deducted from normal minutes only. Overtime minutes NOT reduced. Fields: `unpaidBreakMinutes`, `paidWorkedMinutes` = normalMinutes + overtimeMinutes.
+    -   **Overtime rule:** ONLY if `clockOutType=MANUAL` AND `scheduledEndAt` exists AND `clockOut > scheduledEnd`. AUTO and AUTO_NO_SCHEDULE never generate overtime.
+    -   **Service charge proration:** Uses `paidWorkedMinutes` (not raw workedMinutes) as weight for WAITER/SALONERO employees.
+    -   **Independent service range:** `GET /api/hr/payroll-report` accepts `serviceFrom`/`serviceTo` params. Default: planillaFrom-14days to serviceFrom+6days (2 weeks back). Service computed via `computeServiceForRange()` with dedicated punches/schedules loaded for the service date range.
+    -   **Role permissions:** Single "Guardar Todo" button saves all dirty roles at once (no per-role save buttons).
+    -   **Cross-invalidation:** Editing schedules or punches auto-refreshes payroll report queries.
 
 ## External Dependencies
 -   **PostgreSQL:** Primary database.

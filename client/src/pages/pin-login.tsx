@@ -84,7 +84,9 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
     }
   };
 
-  const submitClock = async (p: string) => {
+  const [confirmData, setConfirmData] = useState<{ pin: string; geoData: any; message: string } | null>(null);
+
+  const submitClock = async (p: string, confirmNoSchedule?: boolean) => {
     setLoading(true);
     setClockResult(null);
     try {
@@ -96,12 +98,23 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
         geoData = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
       } catch {}
 
-      const res = await apiRequest("POST", "/api/auth/pin-clock", {
+      const payload: any = {
         pin: p,
         action: clockAction,
         ...geoData,
-      });
+      };
+      if (confirmNoSchedule) payload.confirmNoSchedule = true;
+
+      const res = await apiRequest("POST", "/api/auth/pin-clock", payload);
       const data = await res.json();
+
+      if (data.requireConfirm) {
+        setConfirmData({ pin: p, geoData, message: data.message });
+        setPin("");
+        setLoading(false);
+        return;
+      }
+
       const mins = data.workedMinutes;
       const hoursStr = mins ? `${Math.floor(mins / 60)}h ${mins % 60}m` : "";
       setClockResult({
@@ -114,6 +127,7 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
         workedMinutes: mins,
       });
       setPin("");
+      setConfirmData(null);
     } catch (err: any) {
       let msg = "Error al marcar";
       try {
@@ -415,6 +429,33 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
             <CheckCircle size={14} />
             {clockResult.message}
           </span>
+        )}
+        {confirmData && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
+            <span className="pin-error" data-testid="text-confirm-message">{confirmData.message}</span>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                className="clock-toggle-btn active"
+                style={{ padding: "8px 16px", fontSize: "12px" }}
+                data-testid="button-confirm-no-schedule"
+                onClick={() => {
+                  const p = confirmData.pin;
+                  setConfirmData(null);
+                  submitClock(p, true);
+                }}
+              >
+                Confirmar
+              </button>
+              <button
+                className="clock-toggle-btn"
+                style={{ padding: "8px 16px", fontSize: "12px" }}
+                data-testid="button-cancel-no-schedule"
+                onClick={() => { setConfirmData(null); setPin(""); }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         )}
         {loading && (
           <Loader2 size={20} className="pin-loading animate-spin" />

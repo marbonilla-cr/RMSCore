@@ -1,6 +1,6 @@
 const TZ = "America/Costa_Rica";
 
-function round2(n: number): number {
+export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
@@ -42,6 +42,8 @@ export interface DailyPayrollResult {
   workedMinutes: number;
   normalMinutes: number;
   overtimeMinutes: number;
+  unpaidBreakMinutes: number;
+  paidWorkedMinutes: number;
   tardyMinutes: number;
   normalPay: number;
   overtimePay: number;
@@ -101,7 +103,8 @@ export function computeDailyPayroll(args: {
 
   if (punchesForDay.length === 0) {
     return {
-      workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0, tardyMinutes: 0,
+      workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0,
+      unpaidBreakMinutes: 0, paidWorkedMinutes: 0, tardyMinutes: 0,
       normalPay: 0, overtimePay: 0, baseTotalPayDay: 0,
       flags: { late: false, noShow: !!hasSchedule, autoCheckout: false, midnightShift: false, hasMultiplePunches: false },
     };
@@ -136,10 +139,11 @@ export function computeDailyPayroll(args: {
     autoCheckout = true;
   } else if (clockOutRaw) {
     workedEnd = clockOutRaw;
-    autoCheckout = clockOutType === "AUTO";
+    autoCheckout = clockOutType === "AUTO" || clockOutType === "AUTO_NO_SCHEDULE";
   } else {
     return {
-      workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0, tardyMinutes,
+      workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0,
+      unpaidBreakMinutes: 0, paidWorkedMinutes: 0, tardyMinutes,
       normalPay: 0, overtimePay: 0, baseTotalPayDay: 0,
       flags: { late, noShow: false, autoCheckout: true, midnightShift: false, hasMultiplePunches },
     };
@@ -152,7 +156,10 @@ export function computeDailyPayroll(args: {
     overtimeMinutes = Math.max(0, diffMinutes(scheduledEnd, clockOutRaw));
   }
 
-  const normalMinutes = Math.max(0, workedMinutes - overtimeMinutes);
+  const normalMinutesRaw = Math.max(0, workedMinutes - overtimeMinutes);
+  const unpaidBreakMinutes = workedMinutes >= 540 ? 60 : 0;
+  const normalMinutes = Math.max(0, normalMinutesRaw - unpaidBreakMinutes);
+  const paidWorkedMinutes = normalMinutes + overtimeMinutes;
 
   const midnightShift = scheduledStart && scheduledEnd
     ? scheduledEnd.getDate() !== scheduledStart.getDate()
@@ -163,7 +170,8 @@ export function computeDailyPayroll(args: {
   const baseTotalPayDay = round2(normalPay + overtimePay);
 
   return {
-    workedMinutes, normalMinutes, overtimeMinutes, tardyMinutes,
+    workedMinutes, normalMinutes, overtimeMinutes,
+    unpaidBreakMinutes, paidWorkedMinutes, tardyMinutes,
     normalPay, overtimePay, baseTotalPayDay,
     flags: { late, noShow: false, autoCheckout, midnightShift, hasMultiplePunches },
   };
@@ -171,20 +179,63 @@ export function computeDailyPayroll(args: {
 
 export function computeServiceForDay(args: {
   servicePool: number;
-  eligibleWaiters: { employeeId: number; workedMinutes: number }[];
+  eligibleWaiters: { employeeId: number; paidWorkedMinutes: number }[];
 }): Record<number, number> {
   const { servicePool, eligibleWaiters } = args;
   const result: Record<number, number> = {};
 
   if (servicePool <= 0 || eligibleWaiters.length === 0) return result;
 
-  const totalWorked = eligibleWaiters.reduce((s, w) => s + w.workedMinutes, 0);
+  const totalWorked = eligibleWaiters.reduce((s, w) => s + w.paidWorkedMinutes, 0);
   if (totalWorked <= 0) return result;
 
   for (const w of eligibleWaiters) {
-    const weight = w.workedMinutes / totalWorked;
+    const weight = w.paidWorkedMinutes / totalWorked;
     result[w.employeeId] = round2(servicePool * weight);
   }
+  return result;
+}
+
+export function computeServiceForRange(args: {
+  servicePoolMap: Record<string, number>;
+  employees: { id: number; displayName: string; role: string; dailyRate: string | number | null }[];
+  punchesMap: Record<string, PunchRecord[]>;
+  schedulesMap: Record<string, ScheduleDay>;
+  hrConfig: HrConfig;
+  serviceFrom: string;
+  serviceTo: string;
+}): Record<number, number> {
+  const { servicePoolMap, employees, punchesMap, schedulesMap, hrConfig, serviceFrom, serviceTo } = args;
+  const dates = getDateRange(serviceFrom, serviceTo);
+  const result: Record<number, number> = {};
+
+  for (const dateStr of dates) {
+    const pool = servicePoolMap[dateStr] || 0;
+    if (pool <= 0) continue;
+
+    const eligibles: { employeeId: number; paidWorkedMinutes: number }[] = [];
+    for (const emp of employees) {
+      if (emp.role !== "WAITER" && emp.role !== "SALONERO") continue;
+      const key = `${emp.id}_${dateStr}`;
+      const daily = computeDailyPayroll({
+        punchesForDay: punchesMap[key] || [],
+        scheduleForDay: schedulesMap[key] || null,
+        dailyRate: Number(emp.dailyRate) || 0,
+        hrConfig,
+        dateStr,
+      });
+      if (daily.paidWorkedMinutes > 0) {
+        eligibles.push({ employeeId: emp.id, paidWorkedMinutes: daily.paidWorkedMinutes });
+      }
+    }
+
+    const dayService = computeServiceForDay({ servicePool: pool, eligibleWaiters: eligibles });
+    for (const [empIdStr, amount] of Object.entries(dayService)) {
+      const empId = Number(empIdStr);
+      result[empId] = round2((result[empId] || 0) + amount);
+    }
+  }
+
   return result;
 }
 
@@ -207,6 +258,7 @@ export interface EmployeePayrollResult {
   daysNoShow: number;
   totalNormalMin: number;
   totalOvertimeMin: number;
+  totalUnpaidBreakMin: number;
   totalLateMin: number;
   lateCount: number;
   normalPay: number;
@@ -225,6 +277,7 @@ export interface DailyBreakdownEntry {
   workedMinutes: number;
   normalMinutes: number;
   overtimeMinutes: number;
+  unpaidBreakMinutes: number;
   tardyMinutes: number;
   basePay: number;
   extras: { id: number; typeCode: string; amount: number; note: string | null; kind: string }[];
@@ -284,12 +337,12 @@ export function computeRangePayroll(args: {
       if (pool <= 0) {
         serviceCache[dateStr] = {};
       } else {
-        const eligibles: { employeeId: number; workedMinutes: number }[] = [];
+        const eligibles: { employeeId: number; paidWorkedMinutes: number }[] = [];
         for (const emp of employees) {
           if (emp.role !== "WAITER" && emp.role !== "SALONERO") continue;
           const daily = getDailyResult(emp.id, dateStr, Number(emp.dailyRate) || 0);
-          if (daily.workedMinutes > 0) {
-            eligibles.push({ employeeId: emp.id, workedMinutes: daily.workedMinutes });
+          if (daily.paidWorkedMinutes > 0) {
+            eligibles.push({ employeeId: emp.id, paidWorkedMinutes: daily.paidWorkedMinutes });
           }
         }
         serviceCache[dateStr] = computeServiceForDay({ servicePool: pool, eligibleWaiters: eligibles });
@@ -305,7 +358,7 @@ export function computeRangePayroll(args: {
     const isWaiter = emp.role === "WAITER" || emp.role === "SALONERO";
 
     let daysScheduled = 0, daysPresent = 0, daysNoShow = 0;
-    let totalNormalMin = 0, totalOvertimeMin = 0, totalLateMin = 0, lateCount = 0;
+    let totalNormalMin = 0, totalOvertimeMin = 0, totalUnpaidBreakMin = 0, totalLateMin = 0, lateCount = 0;
     let normalPay = 0, overtimePay = 0, basePayTotal = 0;
     let extrasEarnings = 0, extrasDeductions = 0;
     let servicePayTotal = 0;
@@ -327,6 +380,7 @@ export function computeRangePayroll(args: {
       if (daily.flags.noShow) daysNoShow++;
       totalNormalMin += daily.normalMinutes;
       totalOvertimeMin += daily.overtimeMinutes;
+      totalUnpaidBreakMin += daily.unpaidBreakMinutes;
       if (daily.flags.late) {
         lateCount++;
         totalLateMin += daily.tardyMinutes;
@@ -356,6 +410,7 @@ export function computeRangePayroll(args: {
         workedMinutes: daily.workedMinutes,
         normalMinutes: daily.normalMinutes,
         overtimeMinutes: daily.overtimeMinutes,
+        unpaidBreakMinutes: daily.unpaidBreakMinutes,
         tardyMinutes: daily.tardyMinutes,
         basePay: daily.baseTotalPayDay,
         extras: extrasFormatted,
@@ -372,7 +427,7 @@ export function computeRangePayroll(args: {
       name: emp.displayName,
       role: emp.role,
       daysScheduled, daysPresent, daysNoShow,
-      totalNormalMin, totalOvertimeMin, totalLateMin, lateCount,
+      totalNormalMin, totalOvertimeMin, totalUnpaidBreakMin, totalLateMin, lateCount,
       normalPay: round2(normalPay), overtimePay: round2(overtimePay), basePayTotal: round2(basePayTotal),
       extrasEarnings: round2(extrasEarnings), extrasDeductions: round2(extrasDeductions), extrasNet,
       servicePayTotal: round2(servicePayTotal),

@@ -22,7 +22,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2, ChevronDown, ChevronRight, Plus, Trash2, Info } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Loader2, ChevronDown, ChevronRight, Plus, Trash2, Info, AlertTriangle } from "lucide-react";
 
 function formatMinutes(totalMinutes: number): string {
   const h = Math.floor(Math.abs(totalMinutes) / 60);
@@ -136,6 +137,7 @@ interface PayrollEmployee {
   daysNoShow: number;
   totalNormalMin: number;
   totalOvertimeMin: number;
+  totalUnpaidBreakMin?: number;
   totalLateMin: number;
   lateCount: number;
   normalPay: number;
@@ -151,6 +153,7 @@ interface PayrollEmployee {
     workedMinutes: number;
     normalMinutes: number;
     overtimeMinutes: number;
+    unpaidBreakMinutes?: number;
     tardyMinutes: number;
     basePay: number;
     extras: { id: number; typeCode: string; amount: number; note: string | null; kind: string }[];
@@ -160,6 +163,8 @@ interface PayrollEmployee {
 }
 
 interface PayrollReport {
+  planillaRange?: { from: string; to: string };
+  serviceRange?: { from: string; to: string };
   hrConfigSnapshot: {
     jornadaOrdinariaHorasPorDia: number;
     multiplicadorHoraExtra: number;
@@ -177,6 +182,12 @@ interface ExtraType {
   isActive: boolean;
 }
 
+function addDaysStr(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T12:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function PayrollTab() {
   const { toast } = useToast();
   const [mode, setMode] = useState<"weekly" | "range">("weekly");
@@ -184,13 +195,22 @@ function PayrollTab() {
   const [dateFrom, setDateFrom] = useState(weekAgoStr());
   const [dateTo, setDateTo] = useState(todayStr());
   const [expandedEmp, setExpandedEmp] = useState<number | null>(null);
+  const [useDefaultService, setUseDefaultService] = useState(true);
+  const [customServiceFrom, setCustomServiceFrom] = useState("");
+  const [customServiceTo, setCustomServiceTo] = useState("");
 
   const actualFrom = mode === "weekly" ? weekStart : dateFrom;
   const actualTo = mode === "weekly" ? getSundayStr(weekStart) : dateTo;
 
+  const defaultServiceFrom = addDaysStr(actualFrom, -14);
+  const defaultServiceTo = addDaysStr(defaultServiceFrom, 6);
+  const serviceFrom = useDefaultService ? defaultServiceFrom : customServiceFrom;
+  const serviceTo = useDefaultService ? defaultServiceTo : customServiceTo;
+
+  const queryParams = `?dateFrom=${actualFrom}&dateTo=${actualTo}&serviceFrom=${serviceFrom}&serviceTo=${serviceTo}`;
   const { data, isLoading } = useQuery<PayrollReport>({
-    queryKey: ["/api/hr/payroll-report", `?dateFrom=${actualFrom}&dateTo=${actualTo}`],
-    enabled: !!actualFrom && !!actualTo,
+    queryKey: ["/api/hr/payroll-report", queryParams],
+    enabled: !!actualFrom && !!actualTo && !!serviceFrom && !!serviceTo,
   });
 
   const { data: extraTypes } = useQuery<ExtraType[]>({
@@ -283,6 +303,51 @@ function PayrollTab() {
           )}
         </div>
 
+        <div className="flex gap-4 flex-wrap items-end border rounded p-3 bg-muted/30">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="use-default-service"
+              checked={useDefaultService}
+              onCheckedChange={(checked) => {
+                setUseDefaultService(!!checked);
+                if (!checked) {
+                  setCustomServiceFrom(defaultServiceFrom);
+                  setCustomServiceTo(defaultServiceTo);
+                }
+              }}
+              data-testid="checkbox-default-service"
+            />
+            <Label htmlFor="use-default-service" className="text-sm">2 semanas de fondo</Label>
+          </div>
+          {!useDefaultService && (
+            <>
+              <div className="space-y-1">
+                <Label className="text-xs">Servicio desde</Label>
+                <Input type="date" value={customServiceFrom} onChange={(e) => setCustomServiceFrom(e.target.value)} className="h-8 text-sm" data-testid="input-service-from" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Servicio hasta</Label>
+                <Input type="date" value={customServiceTo} onChange={(e) => setCustomServiceTo(e.target.value)} className="h-8 text-sm" data-testid="input-service-to" />
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="text-xs text-muted-foreground space-y-1">
+          <p data-testid="text-planilla-range">Salarios: <strong>{actualFrom}</strong> → <strong>{actualTo}</strong></p>
+          <p data-testid="text-service-range">
+            Servicio corresponde a: <strong>{serviceFrom}</strong> → <strong>{serviceTo}</strong>
+            {(() => {
+              const diffDays = Math.round((new Date(serviceTo + "T12:00:00").getTime() - new Date(serviceFrom + "T12:00:00").getTime()) / 86400000) + 1;
+              return diffDays !== 7 ? (
+                <span className="inline-flex items-center gap-1 ml-2 text-amber-600">
+                  <AlertTriangle className="h-3 w-3" /> Rango no semanal ({diffDays} días)
+                </span>
+              ) : null;
+            })()}
+          </p>
+        </div>
+
         {isLoading ? (
           <div className="flex justify-center p-4"><Loader2 className="h-6 w-6 animate-spin" /></div>
         ) : data?.employees && data.employees.length > 0 ? (
@@ -297,6 +362,7 @@ function PayrollTab() {
                   <TableHead className="text-center">No Show</TableHead>
                   <TableHead className="text-right">Hrs Normal</TableHead>
                   <TableHead className="text-right">Hrs Extra</TableHead>
+                  <TableHead className="text-right">Desc.</TableHead>
                   <TableHead className="text-center">Tardías</TableHead>
                   <TableHead className="text-right">Min Tarde</TableHead>
                   <TableHead className="text-right">Pago Base</TableHead>
@@ -325,6 +391,7 @@ function PayrollTab() {
                         <TableCell className="text-center">{emp.daysNoShow > 0 ? <Badge variant="destructive" className="text-xs">{emp.daysNoShow}</Badge> : "0"}</TableCell>
                         <TableCell className="text-right">{formatMinutes(emp.totalNormalMin)}</TableCell>
                         <TableCell className="text-right">{emp.totalOvertimeMin > 0 ? <span className="text-amber-600 font-medium">{formatMinutes(emp.totalOvertimeMin)}</span> : "00:00"}</TableCell>
+                        <TableCell className="text-right">{(emp.totalUnpaidBreakMin || 0) > 0 ? <span className="text-orange-500">{formatMinutes(emp.totalUnpaidBreakMin || 0)}</span> : "—"}</TableCell>
                         <TableCell className="text-center">{emp.lateCount > 0 ? <Badge variant="secondary" className="text-xs">{emp.lateCount}</Badge> : "0"}</TableCell>
                         <TableCell className="text-right">{emp.totalLateMin > 0 ? formatMinutes(emp.totalLateMin) : "00:00"}</TableCell>
                         <TableCell className="text-right">{formatColones(emp.basePayTotal)}</TableCell>
@@ -334,7 +401,7 @@ function PayrollTab() {
                       </TableRow>
                       {isExpanded && (
                         <TableRow key={`${emp.employeeId}-detail`}>
-                          <TableCell colSpan={13} className="p-0">
+                          <TableCell colSpan={14} className="p-0">
                             <div className="bg-muted/30 p-3">
                               <Table>
                                 <TableHeader>
@@ -343,6 +410,7 @@ function PayrollTab() {
                                     <TableHead className="text-right">Hrs Trab</TableHead>
                                     <TableHead className="text-right">Normal</TableHead>
                                     <TableHead className="text-right">Extra</TableHead>
+                                    <TableHead className="text-right">Desc.</TableHead>
                                     <TableHead className="text-right">Tardía</TableHead>
                                     <TableHead className="text-right">Pago Base</TableHead>
                                     <TableHead>Extras</TableHead>
@@ -357,6 +425,7 @@ function PayrollTab() {
                                       <TableCell className="text-right">{formatMinutes(day.workedMinutes)}</TableCell>
                                       <TableCell className="text-right">{formatMinutes(day.normalMinutes)}</TableCell>
                                       <TableCell className="text-right">{day.overtimeMinutes > 0 ? <span className="text-amber-600">{formatMinutes(day.overtimeMinutes)}</span> : "—"}</TableCell>
+                                      <TableCell className="text-right">{(day.unpaidBreakMinutes || 0) > 0 ? <span className="text-orange-500">{formatMinutes(day.unpaidBreakMinutes || 0)}</span> : "—"}</TableCell>
                                       <TableCell className="text-right">{day.tardyMinutes > 0 ? <span className="text-red-500">{day.tardyMinutes} min</span> : "—"}</TableCell>
                                       <TableCell className="text-right">{formatColones(day.basePay)}</TableCell>
                                       <TableCell>

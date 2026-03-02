@@ -8,7 +8,7 @@ import { sql, and, eq, gte, lte, inArray, or, ne, asc, desc, count } from "drizz
 import { db } from "./db";
 import * as storage from "./storage";
 import { registerInventoryRoutes } from "./inventory-routes";
-import { computeRangePayroll, type HrConfig, type PunchRecord, type ScheduleDay, type ExtraRecord } from "./payroll";
+import { computeRangePayroll, computeServiceForRange, round2, type HrConfig, type PunchRecord, type ScheduleDay, type ExtraRecord } from "./payroll";
 import { registerShortageRoutes } from "./shortage-routes";
 import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
@@ -653,10 +653,12 @@ export async function registerRoutes(
         mondayDate.setDate(mondayDate.getDate() - dayOffset);
         const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
         const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
+        let hasScheduleToday = false;
         if (schedule) {
           const days = await storage.getScheduleDays(schedule.id);
           const todaySchedule = days.find(d => d.dayOfWeek === weekDay);
           if (todaySchedule && !todaySchedule.isDayOff && todaySchedule.startTime) {
+            hasScheduleToday = true;
             const [h, m] = todaySchedule.startTime.split(":").map(Number);
             scheduledStartAt = new Date(now);
             scheduledStartAt.setHours(h, m, 0, 0);
@@ -672,6 +674,10 @@ export async function registerRoutes(
           }
         }
 
+        if (!hasScheduleToday && !req.body.confirmNoSchedule) {
+          return res.json({ requireConfirm: true, message: "No tiene horario hoy. Ingrese su código nuevamente para confirmar." });
+        }
+
         const punch = await storage.createTimePunch({
           employeeId,
           businessDate,
@@ -685,10 +691,11 @@ export async function registerRoutes(
           clockinGeoVerified: geoVerified,
         });
 
+        const auditAction = hasScheduleToday ? "CLOCK_IN" : "CLOCK_IN_NO_SCHEDULE_CONFIRMED";
         await storage.createAuditEvent({
           actorType: "USER", actorUserId: employeeId,
-          action: "CLOCK_IN", entityType: "HR_PUNCH", entityId: punch.id,
-          metadata: { lateMinutes, geoVerified, viaPin: true },
+          action: auditAction, entityType: "HR_PUNCH", entityId: punch.id,
+          metadata: { lateMinutes, geoVerified, viaPin: true, hasScheduleToday },
         });
 
         broadcast("hr_punch_update", { employeeId, type: "clock_in" });
@@ -4909,7 +4916,7 @@ export async function registerRoutes(
   app.post("/api/hr/clock-in", requirePermission("HR_CLOCK_IN_OUT_ALLOW"), async (req, res) => {
     try {
       const employeeId = req.session.userId!;
-      const { lat, lng, accuracy } = req.body;
+      const { lat, lng, accuracy, confirmNoSchedule } = req.body;
       
       const openPunch = await storage.getOpenPunchForEmployee(employeeId);
       if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta. Marque salida primero." });
@@ -4931,23 +4938,23 @@ export async function registerRoutes(
         geoVerified = true;
       }
       
-      // Find today's schedule to compute lateness
-      const weekDay = now.getDay(); // 0=Sunday
+      const weekDay = now.getDay();
       let lateMinutes = 0;
       let scheduledStartAt: Date | undefined;
       let scheduledEndAt: Date | undefined;
       
-      // Get the Monday of this week
       const dayOffset = weekDay === 0 ? 6 : weekDay - 1;
       const mondayDate = new Date(now);
       mondayDate.setDate(mondayDate.getDate() - dayOffset);
       const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
       
+      let hasScheduleToday = false;
       const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
       if (schedule) {
         const days = await storage.getScheduleDays(schedule.id);
         const todaySchedule = days.find(d => d.dayOfWeek === weekDay);
         if (todaySchedule && !todaySchedule.isDayOff && todaySchedule.startTime) {
+          hasScheduleToday = true;
           const [h, m] = todaySchedule.startTime.split(":").map(Number);
           scheduledStartAt = new Date(now);
           scheduledStartAt.setHours(h, m, 0, 0);
@@ -4967,6 +4974,10 @@ export async function registerRoutes(
         }
       }
       
+      if (!hasScheduleToday && !confirmNoSchedule) {
+        return res.json({ requireConfirm: true, message: "No tiene horario hoy. Confirme para continuar." });
+      }
+      
       const punch = await storage.createTimePunch({
         employeeId,
         businessDate,
@@ -4980,13 +4991,14 @@ export async function registerRoutes(
         clockinGeoVerified: geoVerified,
       });
       
+      const auditAction = hasScheduleToday ? "CLOCK_IN" : "CLOCK_IN_NO_SCHEDULE_CONFIRMED";
       await storage.createAuditEvent({
         actorType: "USER",
         actorUserId: employeeId,
-        action: "CLOCK_IN",
+        action: auditAction,
         entityType: "HR_PUNCH",
         entityId: punch.id,
-        metadata: { lateMinutes, geoVerified },
+        metadata: { lateMinutes, geoVerified, hasScheduleToday },
       });
       
       if (lateMinutes > 0) {
@@ -5344,6 +5356,21 @@ export async function registerRoutes(
 
       if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom/dateTo or weekStart required" });
 
+      let serviceFrom = req.query.serviceFrom as string || "";
+      let serviceTo = req.query.serviceTo as string || "";
+      if (!serviceFrom || !serviceTo) {
+        const sfDate = new Date(dateFrom + "T12:00:00");
+        sfDate.setDate(sfDate.getDate() - 14);
+        serviceFrom = sfDate.toISOString().slice(0, 10);
+        const stDate = new Date(serviceFrom + "T12:00:00");
+        stDate.setDate(stDate.getDate() + 6);
+        serviceTo = stDate.toISOString().slice(0, 10);
+      } else {
+        if (serviceFrom > serviceTo) return res.status(400).json({ message: "serviceFrom must be <= serviceTo" });
+        const diffDays = Math.round((new Date(serviceTo + "T12:00:00").getTime() - new Date(serviceFrom + "T12:00:00").getTime()) / 86400000);
+        if (diffDays > 31) return res.status(400).json({ message: "Service range cannot exceed 31 days" });
+      }
+
       const settings = await storage.getHrSettings();
       const hrConfig: HrConfig = {
         overtimeDailyThresholdHours: settings?.overtimeDailyThresholdHours || "8",
@@ -5354,11 +5381,20 @@ export async function registerRoutes(
 
       const employees = await storage.getAllUsers();
       const activeEmployees = employees.filter(e => e.active !== false);
-      const punches = await storage.getPunchesForDateRange(dateFrom, dateTo);
-      const scheduleDays = await storage.getAllSchedulesForDateRange(dateFrom, dateTo);
-      const extras = await storage.getPayrollExtrasByRange(dateFrom, dateTo);
-      const serviceLedger = await storage.getServiceChargeLedgerByDates(dateFrom, dateTo);
-      const extraTypes = await storage.getExtraTypes();
+      const empData = activeEmployees.map(e => ({
+        id: e.id,
+        displayName: e.displayName || e.username,
+        role: e.role,
+        dailyRate: e.dailyRate,
+      }));
+
+      const [punches, scheduleDays, extras, serviceLedger, extraTypes] = await Promise.all([
+        storage.getPunchesForDateRange(dateFrom, dateTo),
+        storage.getAllSchedulesForDateRange(dateFrom, dateTo),
+        storage.getPayrollExtrasByRange(dateFrom, dateTo),
+        storage.getServiceChargeLedgerByDates(serviceFrom, serviceTo),
+        storage.getExtraTypes(),
+      ]);
 
       const extraTypesKindMap: Record<string, string> = {};
       for (const t of extraTypes) extraTypesKindMap[t.typeCode] = t.kind;
@@ -5393,32 +5429,71 @@ export async function registerRoutes(
         } as unknown as ExtraRecord);
       }
 
-      const servicePoolMap: Record<string, number> = {};
-      for (const entry of serviceLedger) {
-        const d = entry.businessDate;
-        servicePoolMap[d] = (servicePoolMap[d] || 0) + Number(entry.serviceAmount);
-      }
-
-      const empData = activeEmployees.map(e => ({
-        id: e.id,
-        displayName: e.displayName || e.username,
-        role: e.role,
-        dailyRate: e.dailyRate,
-      }));
-
-      const result = computeRangePayroll({
+      const emptyServicePool: Record<string, number> = {};
+      const payrollResult = computeRangePayroll({
         employees: empData,
         schedulesMap,
         punchesMap,
         extrasMap,
-        servicePoolMap,
+        servicePoolMap: emptyServicePool,
         extraTypesKindMap,
         dateFrom,
         dateTo,
         hrConfig,
       });
 
+      const servicePoolMap: Record<string, number> = {};
+      for (const entry of serviceLedger) {
+        const d = entry.businessDate;
+        servicePoolMap[d] = (servicePoolMap[d] || 0) + Number(entry.serviceAmount);
+      }
+
+      let servicePunchesMap: Record<string, PunchRecord[]> = punchesMap;
+      let serviceSchedulesMap: Record<string, ScheduleDay> = schedulesMap;
+      const serviceOverlaps = serviceFrom >= dateFrom && serviceTo <= dateTo;
+      if (!serviceOverlaps) {
+        const [servicePunches, serviceSchedDays] = await Promise.all([
+          storage.getPunchesForDateRange(serviceFrom, serviceTo),
+          storage.getAllSchedulesForDateRange(serviceFrom, serviceTo),
+        ]);
+        servicePunchesMap = {};
+        for (const p of servicePunches) {
+          const key = `${p.employeeId}_${p.businessDate}`;
+          if (!servicePunchesMap[key]) servicePunchesMap[key] = [];
+          servicePunchesMap[key].push(p as unknown as PunchRecord);
+        }
+        serviceSchedulesMap = {};
+        for (const sd of serviceSchedDays) {
+          const weekMonday = new Date(sd.weekStartDate + "T12:00:00");
+          let dayOffset = sd.dayOfWeek === 0 ? 6 : sd.dayOfWeek - 1;
+          const actualDate = new Date(weekMonday);
+          actualDate.setDate(actualDate.getDate() + dayOffset);
+          const dateStr = actualDate.toISOString().slice(0, 10);
+          if (dateStr >= serviceFrom && dateStr <= serviceTo) {
+            serviceSchedulesMap[`${sd.employeeId}_${dateStr}`] = sd as ScheduleDay;
+          }
+        }
+      }
+
+      const serviceByEmployee = computeServiceForRange({
+        servicePoolMap,
+        employees: empData,
+        punchesMap: servicePunchesMap,
+        schedulesMap: serviceSchedulesMap,
+        hrConfig,
+        serviceFrom,
+        serviceTo,
+      });
+
+      for (const emp of payrollResult) {
+        const svcPay = serviceByEmployee[emp.employeeId] || 0;
+        emp.servicePayTotal = svcPay;
+        emp.grandTotalPay = round2(emp.basePayTotal + emp.extrasNet + svcPay);
+      }
+
       res.json({
+        planillaRange: { from: dateFrom, to: dateTo },
+        serviceRange: { from: serviceFrom, to: serviceTo },
         hrConfigSnapshot: {
           jornadaOrdinariaHorasPorDia: Number(hrConfig.overtimeDailyThresholdHours),
           multiplicadorHoraExtra: Number(hrConfig.overtimeMultiplier),
@@ -5426,7 +5501,7 @@ export async function registerRoutes(
           latenessGraceMinutes: hrConfig.latenessGraceMinutes,
           roundingRule: "EXACT_MINUTE",
         },
-        employees: result,
+        employees: payrollResult,
       });
     } catch (err: any) {
       console.error("[payroll-report] Error:", err);

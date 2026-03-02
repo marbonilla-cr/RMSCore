@@ -132,12 +132,19 @@ export default function Schedules() {
     return map;
   }, [schedules]);
 
+  const invalidatePayroll = () => {
+    queryClient.invalidateQueries({
+      predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "/api/hr/payroll-report",
+    });
+  };
+
   const createMutation = useMutation({
     mutationFn: async (body: { employeeId: number; weekStartDate: string; days: any[] }) => {
       await apiRequest("POST", "/api/hr/schedules", body);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/schedules"] });
+      invalidatePayroll();
       toast({ title: "Horario creado" });
       setDialogOpen(false);
     },
@@ -152,6 +159,7 @@ export default function Schedules() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/schedules"] });
+      invalidatePayroll();
       toast({ title: "Horario actualizado" });
       setDialogOpen(false);
     },
@@ -166,6 +174,7 @@ export default function Schedules() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/schedules"] });
+      invalidatePayroll();
       toast({ title: "Horario eliminado" });
     },
     onError: (err: Error) => {
@@ -196,6 +205,7 @@ export default function Schedules() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/schedules"] });
+      invalidatePayroll();
       toast({ title: "Semana anterior copiada" });
     },
     onError: (err: Error) => {

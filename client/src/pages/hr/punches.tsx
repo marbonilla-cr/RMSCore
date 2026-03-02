@@ -223,6 +223,12 @@ export default function PunchesPage() {
     return nameA.localeCompare(nameB);
   });
 
+  const invalidatePayroll = () => {
+    queryClient.invalidateQueries({
+      predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "/api/hr/payroll-report",
+    });
+  };
+
   const editMutation = useMutation({
     mutationFn: async (data: { id: number; clockInAt: string; clockOutAt: string; reason: string }) => {
       await apiRequest("PATCH", `/api/hr/punches/${data.id}`, {
@@ -234,6 +240,7 @@ export default function PunchesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/punches"] });
       queryClient.invalidateQueries({ queryKey: ["/api/hr/open-punches"] });
+      invalidatePayroll();
       toast({ title: "Marca actualizada" });
       setEditingPunch(null);
     },
@@ -249,6 +256,7 @@ export default function PunchesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/punches"] });
       queryClient.invalidateQueries({ queryKey: ["/api/hr/open-punches"] });
+      invalidatePayroll();
       toast({ title: "Marca manual aplicada" });
       setOverrideReason("");
     },
