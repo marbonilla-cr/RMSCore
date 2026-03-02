@@ -6960,5 +6960,25 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/setup/create-manager-marbonilla", async (_req, res) => {
+    try {
+      const existing = await storage.getUserByUsername("marbonilla");
+      if (existing) return res.json({ message: "Ya existe", id: existing.id });
+      const user = await storage.createUser({
+        username: "marbonilla",
+        password: "marbonilla2024",
+        displayName: "Marcelo Bonilla",
+        role: "MANAGER",
+        active: true,
+        email: null,
+        dailyRate: null,
+      });
+      await storage.enrollPin(user.id, "8098");
+      res.json({ message: "Usuario creado", id: user.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }
