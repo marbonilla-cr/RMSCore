@@ -5405,13 +5405,25 @@ export async function registerRoutes(
         dailyRate: e.dailyRate,
       }));
 
-      const [punches, scheduleDays, extras, serviceLedger, extraTypes] = await Promise.all([
+      const [punches, scheduleDays, extras, serviceLedger, extraTypes, waiterIdsFromSalesRows, waiterIdsFromServiceRows] = await Promise.all([
         storage.getPunchesForDateRange(dateFrom, dateTo),
         storage.getAllSchedulesForDateRange(dateFrom, dateTo),
         storage.getPayrollExtrasByRange(dateFrom, dateTo),
         storage.getServiceChargeLedgerByDates(serviceFrom, serviceTo),
         storage.getExtraTypes(),
+        db.execute(sql`SELECT DISTINCT responsible_waiter_id AS id FROM sales_ledger_items WHERE business_date >= ${dateFrom} AND business_date <= ${dateTo} AND responsible_waiter_id IS NOT NULL`),
+        db.execute(sql`SELECT DISTINCT responsible_waiter_employee_id AS id FROM service_charge_ledger WHERE business_date >= ${serviceFrom} AND business_date <= ${serviceTo} AND responsible_waiter_employee_id IS NOT NULL`),
       ]);
+
+      const operationalWaiterIds = new Set<number>();
+      for (const row of waiterIdsFromSalesRows.rows as any[]) {
+        const id = Number(row.id);
+        if (id > 0) operationalWaiterIds.add(id);
+      }
+      for (const row of waiterIdsFromServiceRows.rows as any[]) {
+        const id = Number(row.id);
+        if (id > 0) operationalWaiterIds.add(id);
+      }
 
       const extraTypesKindMap: Record<string, string> = {};
       for (const t of extraTypes) extraTypesKindMap[t.typeCode] = t.kind;
@@ -5496,7 +5508,7 @@ export async function registerRoutes(
         }
       }
 
-      const { result: serviceByEmployee, serviceUnassignedTotal } = computeServiceForRange({
+      const { result: serviceByEmployee, serviceUnassignedTotal, allocationModeByDate } = computeServiceForRange({
         servicePoolMap,
         employees: empData,
         punchesMap: servicePunchesMap,
@@ -5507,16 +5519,21 @@ export async function registerRoutes(
         serviceLedgerByEmployee,
       });
 
-      for (const emp of payrollResult) {
+      const enrichedEmployees = payrollResult.map(emp => {
         const svcPay = serviceByEmployee[emp.employeeId] || 0;
-        emp.servicePayTotal = svcPay;
-        emp.grandTotalPay = round2(emp.basePayTotal + emp.extrasNet + svcPay);
-      }
+        return {
+          ...emp,
+          servicePayTotal: svcPay,
+          grandTotalPay: round2(emp.basePayTotal + emp.extrasNet + svcPay),
+          operatedAsWaiter: operationalWaiterIds.has(emp.employeeId),
+        };
+      });
 
       res.json({
         planillaRange: { from: dateFrom, to: dateTo },
         serviceRange: { from: serviceFrom, to: serviceTo },
         serviceUnassignedTotal,
+        allocationModeByDate,
         hrConfigSnapshot: {
           jornadaOrdinariaHorasPorDia: Number(hrConfig.overtimeDailyThresholdHours),
           multiplicadorHoraExtra: Number(hrConfig.overtimeMultiplier),
@@ -5524,7 +5541,7 @@ export async function registerRoutes(
           latenessGraceMinutes: hrConfig.latenessGraceMinutes,
           roundingRule: "EXACT_MINUTE",
         },
-        employees: payrollResult,
+        employees: enrichedEmployees,
       });
     } catch (err: any) {
       console.error("[payroll-report] Error:", err);

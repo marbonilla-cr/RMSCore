@@ -148,6 +148,7 @@ interface PayrollEmployee {
   extrasNet: number;
   servicePayTotal: number;
   grandTotalPay: number;
+  operatedAsWaiter?: boolean;
   dailyBreakdown: {
     date: string;
     workedMinutes: number;
@@ -384,7 +385,12 @@ function PayrollTab() {
                         <TableCell className="w-8">{isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</TableCell>
                         <TableCell>
                           <div className="font-medium">{emp.name}</div>
-                          <div className="text-xs text-muted-foreground">{emp.role}</div>
+                          <div className="text-xs text-muted-foreground flex items-center gap-1">
+                            {emp.role}
+                            {emp.operatedAsWaiter && emp.role !== "WAITER" && emp.role !== "SALONERO" && (
+                              <Badge variant="outline" className="text-[10px] px-1 py-0 leading-tight" data-testid={`badge-waiter-${emp.employeeId}`}>Mesero</Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-center">{emp.daysScheduled}</TableCell>
                         <TableCell className="text-center">{emp.daysPresent}</TableCell>
@@ -396,7 +402,7 @@ function PayrollTab() {
                         <TableCell className="text-right">{emp.totalLateMin > 0 ? formatMinutes(emp.totalLateMin) : "00:00"}</TableCell>
                         <TableCell className="text-right">{formatColones(emp.basePayTotal)}</TableCell>
                         <TableCell className="text-right">{emp.extrasNet !== 0 ? <span className={emp.extrasNet > 0 ? "text-green-600" : "text-red-600"}>{formatColones(emp.extrasNet)}</span> : "—"}</TableCell>
-                        <TableCell className="text-right">{emp.role === "WAITER" || emp.role === "SALONERO" ? formatColones(emp.servicePayTotal) : "—"}</TableCell>
+                        <TableCell className="text-right">{emp.servicePayTotal > 0 || emp.operatedAsWaiter ? formatColones(emp.servicePayTotal) : "—"}</TableCell>
                         <TableCell className="text-right font-bold">{formatColones(emp.grandTotalPay)}</TableCell>
                       </TableRow>
                       {isExpanded && (
@@ -471,7 +477,7 @@ function PayrollTab() {
                                           )}
                                         </div>
                                       </TableCell>
-                                      <TableCell className="text-right">{(emp.role === "WAITER" || emp.role === "SALONERO") ? formatColones(day.servicePayDay) : "—"}</TableCell>
+                                      <TableCell className="text-right">{(emp.servicePayTotal > 0 || emp.operatedAsWaiter) ? formatColones(day.servicePayDay) : "—"}</TableCell>
                                       <TableCell>
                                         <div className="flex gap-1 flex-wrap">
                                           {day.flags.noShow && <Badge variant="destructive" className="text-[10px] px-1">No Show</Badge>}

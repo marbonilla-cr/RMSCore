@@ -75,7 +75,7 @@ function getGroupSelect(key: GroupKey): { selectExpr: SQL; alias: string } {
     case "origin":
       return { selectExpr: sql`${salesLedgerItems.origin}`, alias: "origin" };
     case "waiter":
-      return { selectExpr: sql`COALESCE(${users.displayName}, ${users.username})`, alias: "waiter_name" };
+      return { selectExpr: sql`COALESCE(${users.displayName}, ${users.username}, 'Usuario eliminado (#' || ${salesLedgerItems.responsibleWaiterId} || ')')`, alias: "waiter_name" };
     case "table":
       return { selectExpr: sql`${salesLedgerItems.tableNameSnapshot}`, alias: "table_name" };
   }
@@ -228,7 +228,7 @@ export function registerSalesCubeRoutes(app: Express) {
         categories: categories.map(c => c.value).filter(Boolean).sort(),
         origins: origins.map(o => o.value).filter(Boolean).sort(),
         products: products.filter(p => p.name),
-        waiters: waiters.filter(w => w.id).map(w => ({ id: w.id, name: w.name || `Waiter #${w.id}` })),
+        waiters: waiters.filter(w => w.id).map(w => ({ id: w.id, name: w.name || `Usuario eliminado (#${w.id})` })),
         dateRange: dateRange[0] || { minDate: null, maxDate: null },
       });
     } catch (err) {
