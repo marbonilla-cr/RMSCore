@@ -8,8 +8,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Save, Building2, Loader2, Trash2, AlertTriangle } from "lucide-react";
+
+interface TaxCategory {
+  id: number;
+  name: string;
+  rate: string;
+  inclusive: boolean;
+  active: boolean;
+}
 
 interface BusinessConfigData {
   id?: number;
@@ -20,6 +29,7 @@ interface BusinessConfigData {
   phone: string;
   email: string;
   legalNote: string;
+  serviceTaxCategoryId?: number | null;
 }
 
 export default function AdminBusinessConfigPage() {
@@ -45,10 +55,15 @@ export default function AdminBusinessConfigPage() {
     phone: "",
     email: "",
     legalNote: "",
+    serviceTaxCategoryId: null,
   });
 
   const { data: config, isLoading } = useQuery<BusinessConfigData>({
     queryKey: ["/api/admin/business-config"],
+  });
+
+  const { data: taxCategories } = useQuery<TaxCategory[]>({
+    queryKey: ["/api/admin/tax-categories"],
   });
 
   useEffect(() => {
@@ -61,6 +76,7 @@ export default function AdminBusinessConfigPage() {
         phone: config.phone || "",
         email: config.email || "",
         legalNote: config.legalNote || "",
+        serviceTaxCategoryId: config.serviceTaxCategoryId || null,
       });
     }
   }, [config]);
@@ -171,6 +187,28 @@ export default function AdminBusinessConfigPage() {
                 placeholder="Dirección completa del negocio"
                 rows={2}
               />
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="serviceTaxCategory">Impuesto de Servicio</Label>
+              <Select
+                value={form.serviceTaxCategoryId ? String(form.serviceTaxCategoryId) : ""}
+                onValueChange={(val) => setForm({ ...form, serviceTaxCategoryId: val ? Number(val) : null })}
+              >
+                <SelectTrigger data-testid="select-service-tax-category">
+                  <SelectValue placeholder="Seleccionar categoría de impuesto..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {(taxCategories || []).filter(tc => tc.active).map(tc => (
+                    <SelectItem key={tc.id} value={String(tc.id)}>
+                      {tc.name} — {tc.rate}% {tc.inclusive ? "(incluido)" : "(adicional)"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Define la categoría de impuesto que se usa para calcular el cargo por servicio en cada venta.
+              </p>
             </div>
 
             <div className="space-y-1">
