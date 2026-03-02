@@ -1,0 +1,153 @@
+Fix: Saloneros con rol CASHIER — no podían tomar órdenes, servicio mal atribuido (PROMPT FINAL COPY/PASTE)
+
+Actúa como ingeniero senior full-stack + QA + seguridad. Implementa este plan en RMS sin romper flujos existentes. No teoría: cambios concretos, archivos tocados, y pruebas reproducibles.
+
+────────────────────────────────────────
+DIAGNÓSTICO CONFIRMADO
+Causa raíz:
+1) Acceso bloqueado: endpoints /api/waiter/* usan requireRole("WAITER","MANAGER"). Saloneros tenían rol CASHIER → no podían usar interfaz mesero → órdenes creadas por user 1/2 → responsible_waiter_id incorrecto.
+2) Servicio excluido: computeServiceForRange filtra por rol (WAITER/SALONERO) → empleados CASHIER quedan fuera aunque tengan entradas en ledger.
+
+Datos actuales:
+- LOYVERSE (Jul 2024–Feb 14): responsible_waiter_id NULL
+- Feb 15 (primer día RMS): responsible_waiter_id=2 (María Salonera) ~1,177 items
+- Feb 17+: responsible_waiter_id=1 (Carlos Gerente) en todo
+- Feb 22: 1 orden con responsible_waiter_id=13 (usuario eliminado)
+- Maria Lorenza (user 9): 0 órdenes atribuidas
+- Denise Guevara: no existe (users 12/13 eliminados)
+
+OBJETIVO
+A) Permitir que “saloneros” con rol CASHIER puedan usar interfaz de mesero SIN abrir permisos peligrosos.
+B) Servicio en planilla NO debe depender del rol: debe depender del ledger (service_charge_ledger), y prorratearse por horas solo entre elegibles del día.
+C) Crear cuentas faltantes con permisos correctos.
+D) Re-atribución histórica solo si hay evidencia; no adivinar.
+
+RESTRICCIONES
+- No tocar hr_settings.
+- Mantener auditoría: todo acceso/acciones relevantes deben generar audit_event.
+- Preferir permisos (capabilities) sobre roles para /api/waiter/*.
+
+────────────────────────────────────────
+T001: Cambiar /api/waiter/* de requireRole a requirePermission (permisos mínimos por endpoint)
+FILES: shared/schema.ts (permissions), server/routes.ts, server/storage.ts (si aplica), seed/roles init (si existe)
+
+A) Definir permisos nuevos (shared/schema.ts o donde estén permisos):
+Crear al menos:
+- WAITER_VIEW          (ver mesas/órdenes)
+- WAITER_TAKE_ORDERS   (crear/enviar órdenes a cocina)
+- WAITER_EDIT_ORDERS   (editar órdenes antes de enviar)  // si hay endpoints de edición
+- (opcionales solo si existen endpoints): WAITER_TRANSFER_TABLE, WAITER_CLOSE_TABLE
+
+B) Reemplazar requireRole en todos los /api/waiter/*:
+- Endpoints “read” (ej /api/waiter/tables, /api/waiter/orders GET):
+  requirePermission("WAITER_VIEW")
+- Endpoints “write” (crear/enviar a cocina/aceptar/editar):
+  requirePermission("WAITER_TAKE_ORDERS") o ("WAITER_EDIT_ORDERS") según corresponda
+- Mantener MANAGER con bypass (MANAGER siempre pasa por permisos existentes o rol admin).
+
+C) Asignación por defecto (IMPORTANTE: seguridad)
+NO dar WAITER_TAKE_ORDERS a CASHIER por defecto.
+- Role WAITER: asignar WAITER_VIEW + WAITER_TAKE_ORDERS (+ EDIT si aplica)
+- Role CASHIER: asignar SOLO WAITER_VIEW (si quieres que vean mesas) PERO NO TAKE_ORDERS
+Luego, a los saloneros específicos que hoy están como CASHIER, se les asigna WAITER_TAKE_ORDERS explícitamente (por admin UI o script).
+
+D) Auditoría
+- Cuando alguien llama endpoints de “write” waiter (take orders / send / edit), registrar audit_event con actorId, endpoint, tableId, orderId.
+
+ACCEPTANCE T001
+- Un usuario CASHIER SIN permisos NO puede tomar órdenes.
+- Un usuario CASHIER CON permiso WAITER_TAKE_ORDERS sí puede acceder a /api/waiter/tables y tomar órdenes.
+- WAITER sigue funcionando igual o mejor.
+- No se abrió acceso indiscriminado.
+
+────────────────────────────────────────
+T002: Servicio en planilla — eligibilidad basada en ledger (NO por rol)
+FILES: server/payroll.ts
+
+Problema: filtrar por rol excluye CASHIER aunque sea mesero real. Solución: usar ledger como fuente de elegibilidad.
+
+Cambios:
+A) En computeServiceForRange:
+- Dejar de filtrar por roles (quitar if emp.role !== ... continue).
+- Construir set de elegibles por día desde service_charge_ledger:
+  eligibleIdsByDate[dateStr] = unique responsibleWaiterEmployeeId donde businessDate=dateStr y serviceAmount>0.
+- Para cada día:
+  1) servicePoolDay = SUM(serviceAmount) del día
+  2) eligibleIds = eligibleIdsByDate[dateStr]
+  3) Si eligibleIds está vacío => servicio 0 (y reportar unassigned si hay entries null)
+  4) Si hay punches/minutos:
+     - prorratear SOLO entre eligibleIds que tengan paidWorkedMinutes>0
+     - weight = paidWorkedMinutes(emp)/sum(paidWorkedMinutes(eligible))
+     - pay = round2(servicePoolDay * weight)
+     - mode = "HOURS_PRORATED"
+  5) Si NO hay punches o sumMinutes==0:
+     - fallback LEDGER_DIRECT:
+       pay(emp) = SUM(serviceAmount) por empId desde ledger para ese día
+       mode = "LEDGER_DIRECT"
+- Manejar responsibleWaiterEmployeeId null:
+  - acumular unassignedServiceByDate y serviceUnassignedTotal.
+
+ACCEPTANCE T002
+- Un empleado con rol CASHIER pero con entries en service_charge_ledger recibe su servicio.
+- Prorrateo por horas solo entre elegibles del ledger del día.
+- Sin punches => ledger direct.
+- Se reporta servicio “no asignado”.
+
+────────────────────────────────────────
+T003: Crear cuentas faltantes (Denise Guevara y otros) + PIN + permisos waiter
+FILES: admin panel (si existe) o SQL/script + seed
+
+- Confirmar lista de saloneros reales (si ya la tienes, úsala; si no, crear cuentas para los mencionados: Denise Guevara, etc.)
+- Crear usuarios individuales (NO cuentas genéricas).
+- Asignar rol según operación:
+  - Si van a tomar órdenes: WAITER o CASHIER + permiso WAITER_TAKE_ORDERS
+- Configurar PIN para cada uno.
+- (Recomendado) evitar borrado físico de usuarios: usar soft delete si existe.
+
+ACCEPTANCE T003
+- Todos los saloneros reales tienen cuenta individual + PIN + permisos correctos para operar.
+
+────────────────────────────────────────
+T004: Re-atribuir datos históricos (solo si hay evidencia confiable)
+FILES: investigación + SQL directo (si aplica)
+
+- Investigar fuentes:
+  - audit_events (quién aceptó/creó órdenes)
+  - payments.created_by / cashier_id
+  - logs de sesión de POS
+  - cualquier campo “accepted_by / responsible_waiter” alterno
+- Reglas:
+  - Si NO hay evidencia confiable por orden/ítem → NO reasignar (documentar).
+  - Si sí hay evidencia:
+    - actualizar sales_ledger_items.responsible_waiter_id
+    - actualizar service_charge_ledger.responsible_waiter_employee_id
+- Caso “usuario eliminado” (id 13):
+  - No dejar referencias rotas. Política:
+    - preferir soft-delete, o crear “tombstone user” / mostrar “Usuario eliminado”
+    - si ya está eliminado, no reasignar sin evidencia.
+
+ACCEPTANCE T004
+- Solo se corrige lo que se puede probar.
+- Lo que no se puede, queda documentado (no inventar).
+
+────────────────────────────────────────
+GUARDRAILS (RECOMENDADO, NO BLOQUEANTE)
+Agregar checks (job o dashboard):
+- % órdenes con responsible_waiter_id in (1,2) > umbral => alerta
+- service_charge_ledger con responsibleWaiterEmployeeId null > 0 => alerta
+- listar usuarios CASHIER con WAITER_TAKE_ORDERS (para control)
+
+────────────────────────────────────────
+ORDEN DE EJECUCIÓN
+Fase 1 (paralelo):
+- T001 (permisos waiter endpoints)
+- T002 (servicio por ledger, no rol)
+Fase 2:
+- T003 (crear cuentas + permisos)
+Fase 3:
+- T004 (reatribución histórica si procede)
+
+ENTREGABLE FINAL
+- Archivos tocados y resumen
+- Pruebas: CASHIER sin permiso bloqueado / con permiso habilitado; servicio asignado por ledger aunque rol sea CASHIER
+- Evidencia: planilla muestra servicio para meseros correctos, y ya no todo cae en user 1/2

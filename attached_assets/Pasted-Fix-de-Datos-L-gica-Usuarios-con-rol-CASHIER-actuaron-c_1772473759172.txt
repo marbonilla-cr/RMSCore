@@ -1,0 +1,91 @@
+Fix de Datos + Lógica: Usuarios con rol CASHIER actuaron como SALONEROS — servicio/analytics no debe depender del role
+
+Actúa como ingeniero senior full-stack + data engineer + QA. Este NO es un bug de acceso. Los saloneros trabajaron usando su usuario con rol CASHIER, pero tenían permisos de mesero y operaron como meseros. El sistema debe interpretar y reportar correctamente sin requerir cambiar roles históricos en masa.
+
+OBJETIVO
+1) Servicio en planilla: NO usar role para elegibilidad. Usar ledger como fuente de verdad (responsibleWaiterEmployeeId).
+2) Interfaz/acciones de mesero: seguir basadas en permisos (ya existe fallback MODULE_TABLES_VIEW). No tocar acceso.
+3) Reportes/analytics/cubo: mostrar “Mesero” por responsible_waiter_id y nombre, NO por role.
+4) Opcional vendible: “Operó como mesero” (flag derivado) basado en permisos o actividad en ledger, sin cambiar role.
+
+RESTRICCIONES
+- No cambiar roles históricos en DB como “fix” principal.
+- No tocar hr_settings.
+- No inventar: usar tablas existentes: service_charge_ledger, sales_ledger_items, users, role_permissions/permissions.
+
+────────────────────────────────────────
+T001: Planilla servicio — elegibilidad por ledger (no por role)
+FILES: server/payroll.ts, server/routes.ts
+
+A) server/payroll.ts computeServiceForRange:
+- ELIMINAR filtro actual por rol:
+  if (emp.role !== "WAITER" && emp.role !== "SALONERO") continue  // QUITAR
+- Elegibilidad por día:
+  eligibleIdsByDate[dateStr] = Set(employeeId) de quienes tengan entries en serviceLedgerByEmployee[dateStr]
+  (o construir desde service_charge_ledger directamente si ya llega crudo)
+- Por día:
+  - Si hay punches/minutos: prorratear SOLO entre eligibleIds con paidWorkedMinutes>0
+  - Si no hay punches: fallback LEDGER_DIRECT (sumas por employeeId desde ledger)
+- Manejar employeeId inválidos:
+  - Si ledger trae employeeId null o que no existe en users: acumular en unassignedServiceByDate, no asignar a nadie.
+- Incluir en respuesta:
+  - serviceAllocationModeByDate: HOURS_PRORATED | LEDGER_DIRECT
+  - serviceUnassignedTotal y serviceUnassignedByDate
+
+B) server/routes.ts payroll-report:
+- Ya construye serviceLedgerByEmployee por businessDate/employeeId; asegurar que:
+  - Filtra employeeId null a unassignedServiceByDate
+  - Pasa ambos al engine
+
+ACCEPTANCE T001
+- Un usuario con rol CASHIER pero con entries en ledger recibe servicio.
+- Con punches: prorrateo solo entre quienes aparecen en ledger ese día.
+- Sin punches: ledger direct.
+- Servicio no asignado se reporta.
+
+────────────────────────────────────────
+T002: Cubo de ventas — “Mesero” por responsible_waiter_id (nombre), no por role
+FILES: server/sales-cube-routes.ts, client/src/pages/sales-cube.tsx
+
+- getGroupSelect "waiter":
+  - JOIN users por sales_ledger_items.responsible_waiter_id
+  - waiter_name = COALESCE(users.display_name, users.username)
+- Filter options: devolver {id, name} desde JOIN users
+- UI: mostrar waiter_name siempre; no usar role para label.
+
+ACCEPTANCE T002
+- Cubo muestra nombres reales por responsible_waiter_id, independientemente del role del usuario.
+
+────────────────────────────────────────
+T003 (Opcional vendible): Flag “Operó como Mesero” (sin cambiar role)
+FILES: server/routes.ts (admin endpoint), client admin UI opcional
+
+- Crear un cálculo derivado (NO columna persistida inicialmente):
+  isWaiterOperational(employeeId, dateFrom, dateTo) =
+    (tiene permiso WAITER_TAKE_ORDERS o WAITER_MANAGE_QR o MODULE_TABLES_VIEW)
+    OR (aparece como responsible_waiter_id en sales_ledger_items en el rango)
+    OR (aparece en service_charge_ledger como responsibleWaiterEmployeeId en el rango)
+- Exponerlo en payroll-report y/o en un endpoint admin:
+  GET /api/admin/staff-operational-flags?dateFrom&dateTo
+- UI: mostrar badge “Operó como Mesero” en listados/planilla.
+
+ACCEPTANCE T003
+- Sin tocar roles, el sistema puede etiquetar a usuarios CASHIER que actuaron como meseros.
+
+────────────────────────────────────────
+T004 (Opcional): Script de limpieza de “rol histórico” (solo si el usuario lo pide)
+NO ejecutar por defecto.
+- Si Marcelo decide: convertir role CASHIER -> WAITER para ciertos usuarios desde cierta fecha,
+  hacerlo con auditoría y lista blanca, pero NO es necesario para corregir servicio/analytics.
+
+PRUEBAS
+1) Usuario role=CASHIER con ledger entries => recibe servicio.
+2) Prorrateo solo entre eligibleIdsByDate (ledger).
+3) Cubo agrupa por responsible_waiter_id y muestra nombre.
+4) ServicioUnassigned aparece si employeeId null/no existe.
+
+ENTREGABLE FINAL
+- Archivos tocados, cambios exactos
+- Ejemplos de respuesta de payroll-report mostrando:
+  serviceRange, servicePayTotal, allocationMode, unassigned
+- Evidencia en cubo mostrando waiter_name

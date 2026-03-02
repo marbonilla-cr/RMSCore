@@ -1,0 +1,106 @@
+Fix: Servicio/analytics no debe depender del role — usar ledger como fuente de verdad (SPEC FINAL)
+
+Actúa como ingeniero senior full-stack + QA. Implementa estos cambios sin tocar el acceso waiter (ya funciona por MODULE_TABLES_VIEW fallback). Entrega: archivos tocados, pruebas/queries de verificación y evidencia.
+
+OBJETIVO
+1) Planilla servicio: elegibilidad por ledger (responsibleWaiterEmployeeId), NO por role
+2) Acceso waiter: NO tocar
+3) Cubo: ya usa responsible_waiter_id con JOIN users — verificar que funciona
+4) Opcional: flag "Operó como Mesero" derivado (sin cambiar role)
+
+ESTADO ACTUAL
+- payroll.ts computeServiceForRange filtra roles WAITER/SALONERO => excluye CASHIER
+- fallback LEDGER_DIRECT existe, pero prorrateo sigue excluyendo CASHIER por el filtro de rol
+- cubo ya implementó LEFT JOIN users para waiter_name
+- routes.ts ya construye serviceLedgerByEmployee y lo pasa a computeServiceForRange
+
+────────────────────────────────────────
+T001: Planilla servicio — elegibilidad por ledger, no por rol
+FILES: server/payroll.ts, server/routes.ts
+
+A) server/payroll.ts computeServiceForRange:
+1) ELIMINAR filtro de rol:
+   - borrar: if (emp.role !== "WAITER" && emp.role !== "SALONERO") continue
+
+2) Construir eligibleIdsByDate desde serviceLedgerByEmployee:
+   - serviceLedgerByEmployee: Record<dateStr, Record<employeeId, amount>>
+   - eligibleIdsByDate[dateStr] = Set<number>(
+       Object.keys(serviceLedgerByEmployee[dateStr]).map(Number).filter(id => id > 0)
+     )
+   - NO incluir 0 (null/no asignado)
+
+3) Para cada dateStr del rango:
+   - eligibleIds = eligibleIdsByDate[dateStr] (puede ser empty)
+   - unassignedDay = serviceLedgerByEmployee[dateStr]?.[0] ?? 0 (si routes lo usa), o parámetro unassigned separado
+   - poolDay = sum(amounts de empId>0) + unassignedDay
+
+   Reglas de asignación:
+   a) Si poolDay <= 0 => allocationModeByDate[dateStr] = "UNASSIGNED" (no hay servicio ese día)
+   b) Si eligibleIds vacío y poolDay > 0:
+      - todo queda como no asignado (no repartir)
+      - allocationModeByDate[dateStr] = "UNASSIGNED"
+      - acumular serviceUnassignedTotal += poolDay
+   c) Si hay punches/minutos:
+      - calcular paidWorkedMinutes por empId (ya existe en engine)
+      - eligiblesConMin = eligibleIds con paidWorkedMinutes>0
+      - si sumMin > 0:
+          repartir SOLO entre eligiblesConMin:
+            weight = paidMin(emp)/sumMin
+            pay = round2(poolDay * weight)
+          allocationModeByDate[dateStr] = "HOURS_PRORATED"
+        else:
+          fallback ledger direct (d)
+   d) Fallback LEDGER_DIRECT (si no hay punches o sumMin==0):
+      - para cada empId en eligibleIds:
+          result[empId] += serviceLedgerByEmployee[dateStr][empId]
+      - allocationModeByDate[dateStr] = "LEDGER_DIRECT"
+      - además, acumular serviceUnassignedTotal += unassignedDay (si existe)
+
+4) Retornar allocationModeByDate: Record<string, "HOURS_PRORATED"|"LEDGER_DIRECT"|"UNASSIGNED">
+   y serviceUnassignedTotal (ya existe o agregarlo si falta).
+
+B) server/routes.ts payroll-report endpoint:
+- Verificar construcción de serviceLedgerByEmployee:
+  - employeeId null => NO crear key string "null"; acumular como key 0 o a unassigned separado.
+  - preferido: serviceLedgerByEmployee[dateStr][0] += amount para null/invalid
+- Incluir allocationModeByDate en response JSON.
+
+ACCEPTANCE T001
+- CASHIER con entries en ledger recibe servicio.
+- Con punches: prorrateo solo entre elegibles del ledger con minutos > 0.
+- Sin punches: LEDGER_DIRECT.
+- Servicio no asignado se reporta.
+- allocationModeByDate presente en response.
+
+────────────────────────────────────────
+T002: Verificar cubo de ventas (ya implementado)
+FILES: server/sales-cube-routes.ts (solo si hay fix), client/src/pages/sales-cube.tsx (solo si hay fix)
+
+- Confirmar:
+  - getGroupSelect("waiter") usa COALESCE(users.displayName, users.username) con LEFT JOIN users
+  - filter-options retorna { id, name }[]
+- Agregar fallback UI/SQL: si waiter_name null => mostrar "Usuario eliminado"
+- Evidencia: ejecutar cubo y confirmar nombres.
+
+ACCEPTANCE T002
+- Cubo muestra nombres reales por responsible_waiter_id.
+
+────────────────────────────────────────
+T003: Flag "Operó como Mesero" (derivado, barato, sin cambiar role)
+FILES: server/routes.ts, client/src/pages/hr/reports.tsx
+
+Implementación eficiente (NO N queries por empleado):
+- En payroll-report, para el rango planilla:
+  1) waiterIdsFromSales = SELECT DISTINCT responsible_waiter_id FROM sales_ledger_items WHERE business_date BETWEEN ...
+  2) waiterIdsFromService = SELECT DISTINCT responsible_waiter_employee_id FROM service_charge_ledger WHERE business_date BETWEEN ...
+  3) unionSet = waiterIdsFromSales ∪ waiterIdsFromService (filtrar null/0)
+- Para cada empleado en response:
+  operatedAsWaiter = unionSet.has(employeeId) OR (tiene MODULE_TABLES_VIEW y WAITER_TAKE_ORDERS si existe)
+- Frontend: mostrar badge “Operó como Mesero” en la planilla.
+
+ACCEPTANCE T003
+- Sin tocar roles, identifica usuarios CASHIER que actuaron como meseros y lo muestra en UI.
+
+ORDEN
+Fase 1 (paralelo): T001 + T002
+Fase 2: T003
