@@ -3753,9 +3753,16 @@ export async function registerRoutes(
       const assignedItemIds = splitsWithItems.flatMap(s => s.items.map(si => si.orderItemId));
       const unassignedActive = allOrderItems.filter(i => !assignedItemIds.includes(i.id) && i.status !== "VOIDED" && i.status !== "PAID");
 
-      const parentDailyNumber = order.dailyNumber || 0;
+      const rootParentId = order.parentOrderId || orderId;
+      const rootParent = order.parentOrderId ? await storage.getOrder(order.parentOrderId) : order;
+      const parentDailyNumber = rootParent?.dailyNumber || order.dailyNumber || 0;
+      const parentGlobalNumber = rootParent?.globalNumber || order.globalNumber;
+
+      const existingSiblings = await storage.getChildOrders(rootParentId);
+      const maxExistingSplitIdx = existingSiblings.reduce((max, s) => Math.max(max, s.splitIndex || 0), 0);
+
       const createdOrderIds: number[] = [];
-      let splitIdx = 1;
+      let splitIdx = maxExistingSplitIdx + 1;
 
       for (const sp of splitsWithItems) {
         const childOrder = await storage.createChildOrder({
@@ -3764,10 +3771,10 @@ export async function registerRoutes(
           responsibleWaiterId: order.responsibleWaiterId,
           businessDate: order.businessDate,
           totalAmount: "0",
-          parentOrderId: orderId,
+          parentOrderId: rootParentId,
           splitIndex: splitIdx,
           dailyNumber: parentDailyNumber,
-          globalNumber: order.globalNumber,
+          globalNumber: parentGlobalNumber,
         });
 
         for (const si of sp.items) {
