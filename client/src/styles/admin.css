@@ -10,6 +10,9 @@
   max-width: 1200px;
   margin: 0 auto;
 }
+.admin-page.full-width {
+  max-width: 100%;
+}
 @media (max-width: 640px) {
   .admin-page { padding: 14px 16px; }
 }

@@ -78,7 +78,7 @@ export default function HrReportsPage() {
   const [activeTab, setActiveTab] = useState<"payroll" | "overtime" | "service">("payroll");
 
   return (
-    <div className="admin-page">
+    <div className="admin-page full-width">
       <h1 className="admin-page-title" data-testid="text-reports-title">Reportes HR</h1>
 
       <div className="flex gap-2 flex-wrap">
@@ -356,20 +356,20 @@ function PayrollTab() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead></TableHead>
-                  <TableHead>Empleado</TableHead>
-                  <TableHead className="text-center">Días Prog</TableHead>
-                  <TableHead className="text-center">Días Pres</TableHead>
-                  <TableHead className="text-center">No Show</TableHead>
-                  <TableHead className="text-right">Hrs Normal</TableHead>
-                  <TableHead className="text-right">Hrs Extra</TableHead>
-                  <TableHead className="text-right">Desc.</TableHead>
-                  <TableHead className="text-center">Tardías</TableHead>
-                  <TableHead className="text-right">Min Tarde</TableHead>
-                  <TableHead className="text-right">Pago Base</TableHead>
-                  <TableHead className="text-right">Extras</TableHead>
-                  <TableHead className="text-right">Servicio</TableHead>
-                  <TableHead className="text-right font-bold">Total</TableHead>
+                  <TableHead className="w-8"></TableHead>
+                  <TableHead className="whitespace-nowrap">Empleado</TableHead>
+                  <TableHead className="text-center whitespace-nowrap">D.Prog</TableHead>
+                  <TableHead className="text-center whitespace-nowrap">D.Pres</TableHead>
+                  <TableHead className="text-center whitespace-nowrap">No Show</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Hrs Norm</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Hrs Extra</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Desc.</TableHead>
+                  <TableHead className="text-center whitespace-nowrap">Tardías</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Min Tarde</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Pago Base</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Extras</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Servicio</TableHead>
+                  <TableHead className="text-right whitespace-nowrap font-bold">Total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -395,15 +395,15 @@ function PayrollTab() {
                         <TableCell className="text-center">{emp.daysScheduled}</TableCell>
                         <TableCell className="text-center">{emp.daysPresent}</TableCell>
                         <TableCell className="text-center">{emp.daysNoShow > 0 ? <Badge variant="destructive" className="text-xs">{emp.daysNoShow}</Badge> : "0"}</TableCell>
-                        <TableCell className="text-right">{formatMinutes(emp.totalNormalMin)}</TableCell>
-                        <TableCell className="text-right">{emp.totalOvertimeMin > 0 ? <span className="text-amber-600 font-medium">{formatMinutes(emp.totalOvertimeMin)}</span> : "00:00"}</TableCell>
-                        <TableCell className="text-right">{(emp.totalUnpaidBreakMin || 0) > 0 ? <span className="text-orange-500">{formatMinutes(emp.totalUnpaidBreakMin || 0)}</span> : "—"}</TableCell>
-                        <TableCell className="text-center">{emp.lateCount > 0 ? <Badge variant="secondary" className="text-xs">{emp.lateCount}</Badge> : "0"}</TableCell>
-                        <TableCell className="text-right">{emp.totalLateMin > 0 ? formatMinutes(emp.totalLateMin) : "00:00"}</TableCell>
-                        <TableCell className="text-right">{formatColones(emp.basePayTotal)}</TableCell>
-                        <TableCell className="text-right">{emp.extrasNet !== 0 ? <span className={emp.extrasNet > 0 ? "text-green-600" : "text-red-600"}>{formatColones(emp.extrasNet)}</span> : "—"}</TableCell>
-                        <TableCell className="text-right">{emp.servicePayTotal > 0 || emp.operatedAsWaiter ? formatColones(emp.servicePayTotal) : "—"}</TableCell>
-                        <TableCell className="text-right font-bold">{formatColones(emp.grandTotalPay)}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{formatMinutes(emp.totalNormalMin)}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{emp.totalOvertimeMin > 0 ? <span className="text-amber-600 font-medium">{formatMinutes(emp.totalOvertimeMin)}</span> : "00:00"}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{(emp.totalUnpaidBreakMin || 0) > 0 ? <span className="text-orange-500">{formatMinutes(emp.totalUnpaidBreakMin || 0)}</span> : "—"}</TableCell>
+                        <TableCell className="text-center whitespace-nowrap">{emp.lateCount > 0 ? <Badge variant="secondary" className="text-xs">{emp.lateCount}</Badge> : "0"}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{emp.totalLateMin > 0 ? formatMinutes(emp.totalLateMin) : "00:00"}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{formatColones(emp.basePayTotal)}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{emp.extrasNet !== 0 ? <span className={emp.extrasNet > 0 ? "text-green-600" : "text-red-600"}>{formatColones(emp.extrasNet)}</span> : "—"}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{emp.servicePayTotal > 0 || emp.operatedAsWaiter ? formatColones(emp.servicePayTotal) : "—"}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap font-bold">{formatColones(emp.grandTotalPay)}</TableCell>
                       </TableRow>
                       {isExpanded && (
                         <TableRow key={`${emp.employeeId}-detail`}>
@@ -499,11 +499,11 @@ function PayrollTab() {
                 })}
                 {totals && (
                   <TableRow className="font-bold border-t-2" data-testid="row-payroll-totals">
-                    <TableCell colSpan={9} className="text-right">TOTALES</TableCell>
-                    <TableCell className="text-right">{formatColones(totals.basePayTotal)}</TableCell>
-                    <TableCell className="text-right">{totals.extrasNet !== 0 ? formatColones(totals.extrasNet) : "—"}</TableCell>
-                    <TableCell className="text-right">{formatColones(totals.servicePayTotal)}</TableCell>
-                    <TableCell className="text-right">{formatColones(totals.grandTotalPay)}</TableCell>
+                    <TableCell colSpan={10} className="text-right">TOTALES</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{formatColones(totals.basePayTotal)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{totals.extrasNet !== 0 ? formatColones(totals.extrasNet) : "—"}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{formatColones(totals.servicePayTotal)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{formatColones(totals.grandTotalPay)}</TableCell>
                   </TableRow>
                 )}
               </TableBody>
