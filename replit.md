@@ -1,7 +1,7 @@
 # Sistema Restaurante - MVP v1
 
 ## Overview
-This project is a Progressive Web Application (PWA) designed as a comprehensive restaurant management system for small to medium-sized restaurants, capable of handling 20-30 concurrent orders. It aims to streamline restaurant workflows, enhance customer experience through self-ordering, and provide management with real-time insights and control. Key capabilities include order management, a QR-code based client ordering system, a Kitchen Display System (KDS), a Point of Sale (POS), an inventory management system, a shortages tracking module, and a manager dashboard. The system focuses on robust financial accuracy, real-time updates, and an intuitive user experience across devices.
+This project is a Progressive Web Application (PWA) designed as a comprehensive restaurant management system. It aims to streamline restaurant workflows, enhance customer experience through self-ordering, and provide management with real-time insights and control. Key capabilities include order management, a QR-code based client ordering system, a Kitchen Display System (KDS), a Point of Sale (POS), an inventory management system, a shortages tracking module, a manager dashboard, and a reservation system. The system focuses on robust financial accuracy, real-time updates, and an intuitive user experience across devices for small to medium-sized restaurants.
 
 ## User Preferences
 I prefer simple language. I want iterative development. Ask before making major changes.
@@ -11,59 +11,46 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 
 **Frontend:**
 -   **Framework:** React with Vite.
--   **Styling:** Tailwind CSS and shadcn/ui for a modern, responsive interface.
+-   **Styling:** Tailwind CSS and shadcn/ui.
 -   **Routing:** wouter.
--   **UI/UX Decisions:** Responsive layouts, accessible touch targets, intuitive navigation (accordion menus, card-based lists), and a global dark mode toggle. Features like the POS dialogs are custom-designed for responsiveness across mobile, tablet, and desktop, using pure CSS for styling and animations.
+-   **UI/UX Decisions:** Responsive layouts, accessible touch targets, intuitive navigation, and a global dark mode toggle. Custom-designed, responsive POS dialogs using pure CSS.
 -   **PWA Support:** `manifest.json`, service worker, and meta tags for installability.
 
 **Backend:**
 -   **Framework:** Express.js with TypeScript.
 -   **Database:** PostgreSQL managed with Drizzle ORM.
 -   **Real-time Communication:** WebSocket (`ws` library) for live updates.
--   **Authentication:** Dual-mode session auth: cookie-based (primary, for PWA/direct browser) + token-based fallback (for iframe/embedded contexts like Replit preview where cookies are blocked). Login endpoints return `sessionToken` + `permissions` in the response. Frontend stores token in memory and injects `X-Session-Token` header via global fetch override (`main.tsx`). Server middleware (`routes.ts`) checks header and loads session from PostgreSQL store when cookies are absent. PIN-based login, RBAC with configurable permissions, Helmet for HTTP headers, login rate limiting, secure session handling, and body limits.
+-   **Authentication:** Dual-mode session auth (cookie-based primary, token-based fallback for embedded contexts). Includes PIN-based login, RBAC, Helmet for HTTP headers, login rate limiting, and secure session handling.
 -   **Core Business Logic:**
     -   **Timezone Management:** All business date calculations use `America/Costa_Rica` (UTC-6).
-    -   **Payment Integrity:** Robust payment validation, voiding, cash session management, and tax snapshotting for accuracy.
+    -   **Payment Integrity:** Robust payment validation, voiding, cash session management, and tax snapshotting.
     -   **Order Consecutives:** Daily and global order numbering.
-    -   **Multi-Printer Support:** Configurable for different printer types with auto-printing.
+    -   **Multi-Printer Support:** Configurable auto-printing.
     -   **HTML Sanitization:** Global middleware to strip HTML tags from request bodies.
-    -   **Performance:** DB pool: max 20, idleTimeout 30s, connTimeout 5s. Single shared pool (`server/db.ts`). Inventory deduction uses batch transactions (1 per lote, not per item). Hot endpoints (`/api/pos/tables`, `/api/kds/tickets/active`, `/api/tables/:id/current`) use `Promise.all` for parallel queries. Accept-v2 pre-fetches products/modifiers/taxes in batch. `[PERF]` logging for requests >200ms on all hot endpoints. 22+ database indexes on FK columns and hot filters (composite indexes: `order_items(order_id,status)`, `orders(table_id,status)`, `kitchen_ticket_items(order_item_id)`).
-    -   **POS Tables Snapshot:** `GET /api/pos/tables` returns lightweight snapshots (no items/mods/taxes/discounts); full detail loaded on-demand via `GET /api/pos/table-detail/:orderId` when a table is selected. Payload ~80% smaller.
-    -   **Payment Optimization:** `POST /api/pos/pay` uses transactional double-pay guard (SELECT FOR UPDATE + status check). `pay-multi` uses batch insert for N payments. `pay-split` eliminates N+1 queries with batch mods/discounts/taxes fetch. `finalizePaymentTx()` helper encapsulates idempotent payment finalization. `buildServiceChargeOps()` helper for batch service charge inserts.
-    -   **Add-Items Optimization:** `POST /api/pos/orders/:orderId/add-items` pre-fetches products/taxCategories/allTaxCats in batch before loop (0 queries inside loop).
-    -   **Dynamic Polling:** `useWsConnected()` hook (`client/src/hooks/use-ws-connected.ts`). WS connected → 60s polling (safety net); WS disconnected → 5-10s polling (fallback). Applied to KDS, POS, table-detail, tables pages. Reduces ~6-12 req/min/client → ~1/min/client with active WS.
+    -   **Performance Optimizations:** Database connection pooling, batch transactions for inventory deduction, parallel queries for hot endpoints, specialized API endpoints for reduced payload sizes (e.g., POS tables snapshot), and optimized payment/item addition flows. Extensive database indexing.
+    -   **Dynamic Polling:** Uses WebSocket connectivity to adjust polling frequency for real-time data.
 
 **Key Features:**
 -   **Order Management:** Waiter interface for table management and QR order acceptance.
--   **QR Client Ordering:** Subaccount-based ordering with dual-mode interface, modifier selection, and rate limiting. Uses HMAC-SHA256 tokens for security.
--   **Kitchen Display System (KDS):** Real-time display for kitchen staff to manage orders.
+-   **QR Client Ordering:** Subaccount-based ordering with modifier selection and rate limiting, secured with HMAC-SHA256 tokens.
+-   **Kitchen Display System (KDS):** Real-time order display for kitchen staff, with individual item tracking and status management.
 -   **Point of Sale (POS):** Cash register with payment processing, order splitting, voiding, cash session management, item-level discounts, and receipt generation.
--   **Manager Dashboard & Admin Panel:** Comprehensive overview, user/role/product management, 2-level category system (TOP → Subcategory), and business configuration.
--   **Inventory Module:** Full inventory management with AP→EP conversions, production batches, recipes, auto-deduction, physical counts, and purchase orders.
-    -   **Basic Inventory Control Panel** (`/inventory/basic`): Admin panel to manage product portion availability. Supports Set, +/- Adjust, Clear (→Ilimitado), Enable/Disable, and Set Reorder Point actions. Idempotent deduction system prevents double-counting via `audit_events` guards. Auto-disable broadcasts `product_availability_changed` WebSocket event. **SENT-only deduction rule**: portions only deduct when item status becomes SENT (POS with sendToKds=true, Waiter, QR). POS items with sendToKds=false stay OPEN and do NOT deduct. **Reorder Point**: nullable `reorderPoint` integer on products table; when `availablePortions <= reorderPoint`, API returns `reorderAlert=true` and UI shows amber "Reponer" badge. Status filter includes "Reponer" option. Audit actions: `BASIC_STOCK_SET`, `BASIC_STOCK_CLEAR`, `BASIC_STOCK_ADJUST`, `BASIC_STOCK_DEDUCT`, `BASIC_STOCK_RESTORE`, `BASIC_AUTO_DISABLE`, `BASIC_MANUAL_ENABLE`, `BASIC_MANUAL_DISABLE`, `BASIC_REORDER_SET`.
-    -   **Full Inventory (AP/EP):** Dual-type items (`inv_items.itemType` = 'AP'|'EP'), AP→EP conversions with merma/cook/loss factors and server-side cost calculation (Forma A: `epUnitCost = apCostPerBaseUom / epQtySmall`), production batches with transactional stock updates (FOR UPDATE locks), recipes referencing EP/AP items, and dedicated stock tables (`inv_stock_ap`, `inv_stock_ep`). Cost fields (`lastCostPerBaseUom`, `avgCostPerBaseUom`, `unitWeightG`) editable in item create (items.tsx) and item detail edit (item-detail.tsx) forms. Backend coerces numeric JSON values to strings for Drizzle numeric columns via `coerceNumericFields()` in inventory-routes.ts.
-    -   **UOM System** (`server/uom-helpers.ts`): Allowed UOMs: KG, G, L, ML, UNIT, PORTION. `normalizeUom()` maps aliases and rejects unknown values. `toSmallUnit()` converts KG→G, L→ML. Cross-UOM UNIT→G uses `unitWeightG` field on `inv_items`. Quick-EP endpoint: `POST /api/inv/items/quick-ep` creates EP items inline from conversions page.
-    -   **Auto-Deduction on SENT** (`server/inventory-deduction.ts`): FULL-first-then-BASIC strategy. On SENT: resolves active recipe, deducts EP/AP stock via DB transaction with row locks (ordered by itemType ASC, invItemId ASC), then runs BASIC decrement. If FULL fails (insufficient stock), SENT is blocked. Idempotency via `inventory_deductions` table (unique orderItemId). Void reverses FULL (from consumptionPayload snapshot) then BASIC. REVERSED deductions never reprocessed. Canonical movement types: CONSUME_AP, CONSUME_EP, PRODUCE_EP, ADJUST_AP, ADJUST_EP, RECEIVE_AP, REVERSE_CONSUME_AP, REVERSE_CONSUME_EP.
-    -   **Physical Counts (AP/EP):** Scope selector (AP/EP/ALL/Category), system qty from `inv_stock_ap`/`inv_stock_ep`, finalization creates ADJUST_AP/ADJUST_EP movements with refType='PHYSICAL_COUNT'.
-    -   **Purchase Orders:** Reorder suggestions for AP items below reorder point, PO receipt updates `inv_stock_ap` via transactional stock increment + RECEIVE_AP movement with refType='PO_RECEIPT'.
--   **Shortages Module:** Manages item shortages with lifecycle tracking, severity levels, and real-time alerts.
--   **Reservations Module:** Complete table reservation system with public booking, staff management, conflict detection, duration configuration, email confirmations, and capacity-based availability. Supports multi-table assignment.
--   **Smart Delete System:** Both inventory items (inv_items) and products support smart deletion: if no related records exist → hard delete (removed from DB); if related records exist (orders, movements, conversions, etc.) → soft delete (marked inactive, hidden from UI). Inventory items: `DELETE /api/inv/items/:id` with `smartDeleteInvItem()`. Products: `DELETE /api/admin/products/:id` with `smartDeleteProduct()`. Both return `{ item/product, hardDeleted }` for appropriate UI feedback.
--   **Public Menu Page** (`/menu`): Public-facing informational menu page showing TOP Category → Subcategory → Products hierarchy. No login required. Products display name, description, price (Colones), and optional image. Rate limited (30 req/min per IP) with 60s cache. API: `GET /api/public/menu`.
-    -   **Product Images:** `imageUrl` field on products table. Upload via `POST /api/admin/products/:id/image` (base64, max 2MB, JPG/PNG/WebP). Delete via `DELETE /api/admin/products/:id/image`. Images stored in `client/public/product-images/` and `dist/public/product-images/`.
--   **Item Voiding System:** Soft-voids with manager PIN authorization for items sent to kitchen. Hard-deletes blocked for items already sent to cocina. `VOID_AUTHORIZE` permission controls who can approve voids. Rate-limited PIN verification (5 attempts/5min). Audit trails record requester + authorizer. Items not yet sent to kitchen can be voided without authorization.
--   **KDS Individual Items:** Items with qty > 1 are expanded into individual lines in KDS (e.g., 3x Hamburguesa → 3 separate lines with independent status). `kitchenItemGroupId` and `seqInGroup` columns on `kitchen_ticket_items`. Each line progresses independently (NEW→PREPARING→READY). Order item marked READY only when all group lines are READY. Voided items display in red with strikethrough and Ban icon, remain visible in KDS.
--   **QR Order Editing:** Waiter sees QR submissions in direct edit mode (no intermediate step). +/- qty controls, X to remove, and "+Menu" button to add products from the menu before accepting. Products added via inline product picker with search.
--   **QuickBooks Online Integration:** OAuth flow for connection, encrypted token storage, asynchronous fire-and-forget sync strategy for payments, and a retry queue for failed syncs. Mapping of RMS categories to QBO items and deposit accounts per payment method. TaxCodeRef is environment-aware: omitted in sandbox (US doesn't support CR tax codes), sent in production when configured. `createSalesReceipt` uses `payment.orderId` as source of truth (resilient to DB restores). Empty-lines validation prevents invalid API requests.
--   **HR Payroll Engine** (`server/payroll.ts`):
-    -   **Clock-in without schedule:** Requires double confirmation (`confirmNoSchedule: true`). Backend returns `{ requireConfirm: true }` if no schedule today. Audit action `CLOCK_IN_NO_SCHEDULE_CONFIRMED`. Applies to both PIN-clock (`/api/auth/pin-clock`) and session clock-in (`/api/hr/clock-in`).
-    -   **Auto clock-out** (`server/hr-jobs.ts`): Runs every 5min. Punches WITH `scheduledEndAt` close at scheduled end (type=AUTO). Punches WITHOUT `scheduledEndAt` close after `overtimeDailyThresholdHours` hours (type=AUTO_NO_SCHEDULE, overtime=0).
-    -   **Break deduction:** `workedMinutes >= 540 (9h)` → 60min unpaid break deducted from normal minutes only. Overtime minutes NOT reduced. Fields: `unpaidBreakMinutes`, `paidWorkedMinutes` = normalMinutes + overtimeMinutes.
-    -   **Overtime rule:** ONLY if `clockOutType=MANUAL` AND `scheduledEndAt` exists AND `clockOut > scheduledEnd`. AUTO and AUTO_NO_SCHEDULE never generate overtime.
-    -   **Service charge proration:** Uses `paidWorkedMinutes` (not raw workedMinutes) as weight for WAITER/SALONERO employees.
-    -   **Independent service range:** `GET /api/hr/payroll-report` accepts `serviceFrom`/`serviceTo` params. Default: planillaFrom-14days to serviceFrom+6days (2 weeks back). Service computed via `computeServiceForRange()` with dedicated punches/schedules loaded for the service date range.
-    -   **Role permissions:** Single "Guardar Todo" button saves all dirty roles at once (no per-role save buttons).
-    -   **Cross-invalidation:** Editing schedules or punches auto-refreshes payroll report queries.
+-   **Manager Dashboard & Admin Panel:** Overview, user/role/product management, 2-level category system, and business configuration.
+-   **Inventory Module:**
+    -   **Basic Inventory Control:** Manages product portion availability, reorder points, and auto-disabling with idempotent deduction logic.
+    -   **Full Inventory (AP/EP):** Supports dual-type items (AP/EP), AP→EP conversions with factors, production batches, recipes, and dedicated stock tables with transactional updates.
+    -   **UOM System:** Standardized unit of measurement conversions.
+    -   **Auto-Deduction:** FULL-first-then-BASIC strategy on item `SENT` status, with transactional and idempotent stock updates.
+    -   **Physical Counts:** Supports AP/EP/ALL/Category scope with finalization creating inventory adjustments.
+    -   **Purchase Orders:** Reorder suggestions and PO receipt processing.
+-   **Shortages Module:** Manages item shortages with lifecycle tracking and alerts.
+-   **Reservations Module:** Comprehensive table reservation system with public booking, staff management, conflict detection, and email confirmations.
+-   **Smart Delete System:** Implements soft or hard deletion for inventory items and products based on related records.
+-   **Public Menu Page:** Informational, public-facing menu showing product hierarchy, descriptions, prices, and images. Rate-limited and cached.
+-   **Item Voiding System:** Soft-voids requiring manager PIN authorization for sent items, with audit trails.
+-   **QR Order Editing:** Waiter can directly edit QR submissions, adding/removing products before acceptance.
+-   **HR Payroll Engine:** Manages clock-in/out (including auto clock-out and no-schedule confirmations), break deductions, overtime calculations, and service charge proration.
+-   **QuickBooks Online Integration:** OAuth-based integration for asynchronous payment syncs with retry mechanisms, mapping RMS categories to QBO items, and environment-aware tax code handling.
 
 ## External Dependencies
 -   **PostgreSQL:** Primary database.
@@ -78,5 +65,5 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 -   **express-session:** Session management middleware.
 -   **connect-pg-simple:** PostgreSQL session store.
 -   **helmet:** HTTP security headers middleware.
--   **Nodemailer:** For email receipts (requires SMTP setup).
+-   **Nodemailer:** For email receipts.
 -   **QuickBooks Online:** Accounting software integration.
