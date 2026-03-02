@@ -1,0 +1,175 @@
+Fix CRÍTICO: Servicio duplicado/errado en ledger, planilla sin servicio (sin punches), snapshot “incluye servicio” desde producto, nombre mesero en cubo
+
+Actúa como ingeniero senior full-stack + data-fix lead + QA. Debes corregir el cálculo y registro de servicio (service_charge_ledger) y reparar planilla/cubo. No teoría. Quiero cambios concretos, scripts seguros, y verificaciones.
+
+DIAGNÓSTICO CONFIRMADO
+- sales_ledger_items antes de Feb 15: LOYVERSE_POS (no RMS)
+- sales_ledger_items desde Feb 15: RMS (WAITER/QR)
+- service_charge_ledger Feb 15: 1,478 entradas pero 441 items únicos -> 1,037 duplicados
+- total servicio inflado: ₡1,043,105 (incorrecto)
+- hr_time_punches: 0 registros (nadie marca entrada aún)
+Bugs:
+1) buildServiceChargeOps se llama en pay/pay-multi/pay-split sin idempotencia => duplicados masivos
+2) fórmula incorrecta: hoy calcula base*rate aunque el precio incluye servicio
+3) planilla servicio=0: computeServiceForRange depende de punches, pero hoy no hay punches; requiere fallback a ledger directo
+
+FUENTE DE VERDAD: “INCLUYE SERVICIO”
+- Existe en la página de producto como toggle (activated).
+- Ese flag define si el precio del producto incluye servicio o no.
+- Regla de negocio:
+  - Si producto incluye servicio => extraer servicio desde precio bruto: service = gross * rate/(1+rate)
+  - Si NO incluye servicio (ej: para llevar) => servicio = 0 y NO se debe registrar servicio para ese ítem.
+
+OBJETIVO FINAL
+- Desde el fix en adelante: cero duplicados, fórmula correcta, servicio solo donde producto incluye servicio.
+- Histórico limpio: duplicados eliminados y montos recalculados con fórmula correcta (solo ítems que incluyen servicio).
+- Planilla muestra servicio aunque no haya punches (fallback ledger directo).
+- Cubo muestra nombre del mesero (no id).
+
+────────────────────────────────────────────────────────
+T001: Fix buildServiceChargeOps — Idempotencia + fórmula correcta + snapshot includeService por ítem
+FILES: server/routes.ts (+ shared/schema.ts si se agrega snapshot al ledger)
+
+A) IDempotencia (obligatorio)
+En server/routes.ts función buildServiceChargeOps (~line 3166):
+- Antes de construir inserts, consultar si YA existen filas PAID para este orderId en service_charge_ledger.
+  - Si existen => return early (NO insertar nada). Esto previene duplicados cuando la función se llama desde pay/pay-multi/pay-split.
+- NOTA: si hay escenarios reales de pagos parciales por ítem, la idempotencia debe ser por (order_id, order_item_id, status='PAID') y solo crear ledger al momento en que el ítem quede pagado. Implementa el criterio correcto según tu modelo actual de pago.
+
+B) Aplicar servicio SOLO si el producto incluye servicio
+- Para cada order item:
+  - Determinar includeService del PRODUCTO (toggle en página de producto).
+  - Congelar snapshot en el ledger (para auditoría).
+  - Si includeService == false:
+      - NO insertar entrada de service_charge_ledger (preferido)
+      - o insertar con service_amount=0 (solo si la UI/reportes requieren fila; preferido no insertar)
+  - Si includeService == true:
+      gross = productPrice * qty  (precio bruto que incluye servicio)
+      scRate = hrSettings.serviceChargeRate (snapshot rate_snapshot)
+      serviceAmount = round2(gross * scRate / (1 + scRate))
+      baseAmountSnapshot = gross (se mantiene como bruto)
+      rateSnapshot = scRate
+
+C) Snapshot en ledger (recomendado, vendible y auditable)
+Si service_charge_ledger no tiene campo para snapshot del flag:
+- Agregar en shared/schema.ts a service_charge_ledger:
+  - includesServiceSnapshot boolean notNull default true
+Esto NO toca hr_settings (permitido). Es para auditoría de ledger.
+
+Acceptance T001
+- Un pago NO genera duplicados aunque se ejecute pay/pay-multi/pay-split.
+- El servicio se calcula correctamente extrayéndolo del precio bruto (rate/(1+rate)).
+- Ítems con includeService=false no generan servicio.
+- rate_snapshot y base_amount_snapshot quedan consistentes.
+
+────────────────────────────────────────────────────────
+T002: Limpiar datos históricos — eliminar duplicados + recalcular montos (one-time SQL seguro)
+BLOCKED BY: T001
+FILES: SQL script (one-time)
+
+ANTES DE BORRAR: BACKUP
+- Crear tabla backup:
+  CREATE TABLE service_charge_ledger_backup_YYYYMMDD AS SELECT * FROM service_charge_ledger;
+
+A) Eliminar duplicados PAID
+- Definición duplicado: mismas claves de item pagado. Usar (order_id, order_item_id, status='PAID').
+- Mantener una sola fila canonical por par (order_id, order_item_id):
+  - preferir la de mayor id (si todas equivalentes) o mayor created_at
+  - y borrar el resto
+- Guardar auditoría del dedupe (opcional pero recomendado):
+  - Crear tabla service_charge_ledger_dedupe_audit con order_id, order_item_id, kept_id, deleted_ids[], run_at.
+
+B) Recalcular service_amount con fórmula correcta SOLO para ítems includeService=true
+- UPDATE service_charge_ledger
+  SET service_amount = ROUND(base_amount_snapshot::numeric * rate_snapshot::numeric / (1 + rate_snapshot::numeric), 2)
+  WHERE status='PAID'
+    AND (includes_service_snapshot IS TRUE OR includes_service_snapshot IS NULL);  -- según exista el campo
+- Para filas que correspondan a includeService=false:
+  - service_amount=0 (o borrar filas si no deberían existir)
+
+C) Verificación post-script (obligatoria)
+1) Unicidad:
+   SELECT COUNT(*) AS total,
+          COUNT(DISTINCT (order_id, order_item_id)) AS distinct_items
+   FROM service_charge_ledger
+   WHERE status='PAID' AND business_date='2025-02-15';
+   => deben ser iguales (441 vs 441)
+2) Duplicados cero:
+   SELECT order_id, order_item_id, COUNT(*)
+   FROM service_charge_ledger
+   WHERE status='PAID'
+   GROUP BY 1,2
+   HAVING COUNT(*)>1;
+   => 0 filas
+3) Servicio no existe donde includeService=false:
+   SELECT COUNT(*)
+   FROM service_charge_ledger
+   WHERE status='PAID' AND includes_service_snapshot=FALSE AND service_amount>0;
+   => 0
+4) Total razonable (no inflado):
+   - Comparar sum(service_amount) antes y después (guardar ambos).
+
+Acceptance T002
+- Duplicados eliminados, montos recalculados, Feb 15 queda con 441 items únicos y total servicio razonable.
+
+────────────────────────────────────────────────────────
+T003: Planilla: fallback a asignación directa de servicio desde ledger (cuando no hay punches)
+BLOCKED BY: T002
+FILES: server/routes.ts, server/payroll.ts
+
+Problema: hr_time_punches=0, no hay minutos para prorratear, planilla muestra 0.
+
+A) server/routes.ts (payroll-report)
+- Cargar service_charge_ledger por [serviceFrom/serviceTo] (o rango actual si no existe serviceRange aún).
+- Construir serviceLedgerByEmployeeByDate:
+  serviceLedgerByEmployeeByDate[dateStr][employeeId] = SUM(serviceAmount)
+  agrupado por businessDate y responsibleWaiterEmployeeId.
+
+B) server/payroll.ts (computeServiceForRange)
+- Agregar parámetro opcional: serviceLedgerByEmployeeByDate
+- Para cada fecha:
+  - Intentar prorrateo por minutos (si hay elegibles con paidWorkedMinutes>0)
+  - SI NO hay elegibles con minutos > 0 y existe serviceLedgerByEmployeeByDate[date]:
+      - Asignación directa:
+        servicePay(employeeId, date) = serviceLedgerByEmployeeByDate[date][employeeId] (sum)
+  - Registrar en resultado por día el mode: "HOURS_PRORATED" o "LEDGER_DIRECT"
+- Esto asegura que HOY (sin punches) la planilla igual pague servicio correctamente basado en ledger limpio.
+- Cuando ya existan punches, prorrateo vuelve automáticamente.
+
+Acceptance T003
+- Planilla muestra servicio correcto aunque no existan punches, usando responsibleWaiterEmployeeId.
+- Cuando existan punches, usa prorrateo por horas.
+
+────────────────────────────────────────────────────────
+T004: Cubo de ventas — mostrar nombre del mesero (no id)
+FILES: server/sales-cube-routes.ts, client/src/pages/sales-cube.tsx
+
+Backend:
+- getGroupSelect caso "waiter" (~line 77):
+  - Hacer JOIN a users para traer waiter_name = COALESCE(display_name, username)
+  - Evitar subquery por fila si es posible (mejor performance)
+- filter-options (~line 214):
+  - devolver { id, name } con JOIN users
+
+Frontend:
+- Ajustar filtro/typing para usar {id,name}
+- Mostrar waiter_name en vez de id
+
+Acceptance T004
+- Cubo muestra nombres “María Salonera”, etc.
+
+────────────────────────────────────────────────────────
+ORDEN DE EJECUCIÓN
+Fase 1 (paralelo):
+- T001 (routes.ts + opcional schema ledger snapshot)
+- T004 (cubo nombres)
+Fase 2:
+- T002 (SQL one-time con backup + verificación)
+Fase 3:
+- T003 (fallback planilla servicio sin punches)
+
+ENTREGABLE FINAL
+- Archivos tocados y resumen
+- Script SQL + evidencias (queries de verificación)
+- Confirmación: nuevos pagos no duplican, servicio correcto solo cuando includeService=true
+- Planilla muestra servicio hoy (ledger direct) y mañana (hours prorated)
