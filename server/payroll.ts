@@ -207,6 +207,7 @@ export function computeServiceForRange(args: {
   serviceLedgerByEmployee?: Record<string, Record<number, number>>;
 }): { result: Record<number, number>; serviceUnassignedTotal: number; allocationModeByDate: Record<string, "HOURS_PRORATED" | "LEDGER_DIRECT" | "UNASSIGNED"> } {
   const { employees, punchesMap, schedulesMap, hrConfig, serviceFrom, serviceTo, serviceLedgerByEmployee } = args;
+  const employeeRate = Number(hrConfig.serviceChargeRate) || 0;
   const dates = getDateRange(serviceFrom, serviceTo);
   const result: Record<number, number> = {};
   let serviceUnassignedTotal = 0;
@@ -261,21 +262,24 @@ export function computeServiceForRange(args: {
 
     const sumMin = eligiblesConMin.reduce((s, e) => s + e.paidWorkedMinutes, 0);
 
-    if (payablePool > 0 && sumMin > 0) {
+    const employeePool = round2(payablePool * employeeRate);
+    const employeeUnassigned = round2(unassignedDay * employeeRate);
+
+    if (employeePool > 0 && sumMin > 0) {
       for (const e of eligiblesConMin) {
         const weight = e.paidWorkedMinutes / sumMin;
-        result[e.employeeId] = round2((result[e.employeeId] || 0) + round2(payablePool * weight));
+        result[e.employeeId] = round2((result[e.employeeId] || 0) + round2(employeePool * weight));
       }
-      serviceUnassignedTotal = round2(serviceUnassignedTotal + unassignedDay);
+      serviceUnassignedTotal = round2(serviceUnassignedTotal + employeeUnassigned);
       allocationModeByDate[dateStr] = "HOURS_PRORATED";
     } else {
       for (const empId of eligibleIds) {
-        const amt = Number(ledgerDay[empId] || 0);
+        const amt = round2(Number(ledgerDay[empId] || 0) * employeeRate);
         if (amt > 0) {
           result[empId] = round2((result[empId] || 0) + amt);
         }
       }
-      serviceUnassignedTotal = round2(serviceUnassignedTotal + unassignedDay);
+      serviceUnassignedTotal = round2(serviceUnassignedTotal + employeeUnassigned);
       allocationModeByDate[dateStr] = "LEDGER_DIRECT";
     }
   }

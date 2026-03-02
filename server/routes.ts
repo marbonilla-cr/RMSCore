@@ -4799,15 +4799,6 @@ export async function registerRoutes(
     res.json({ ...data, ledgerDetails, paymentMethodTotals });
   });
 
-  app.post("/api/admin/truncate-transactions", requireRole("MANAGER"), async (req, res) => {
-    try {
-      await storage.truncateTransactionalData();
-      res.json({ ok: true, message: "Datos transaccionales eliminados" });
-    } catch (err: any) {
-      res.status(500).json({ message: err.message });
-    }
-  });
-
   app.get("/api/dashboard/orders/:id", requireRole("MANAGER"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.id as string);
@@ -6965,46 +6956,6 @@ export async function registerRoutes(
 
       res.json({ ok: true, availablePortions: newPortions, active: newActive });
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/admin/fix-service-ledger", requireRole("MANAGER"), async (_req, res) => {
-    try {
-      const insertResult = await db.execute(sql`
-        INSERT INTO service_charge_ledger 
-          (business_date, order_id, order_item_id, table_id, table_name_snapshot,
-           responsible_waiter_employee_id, rate_snapshot, base_amount_snapshot,
-           service_amount, status, includes_service_snapshot)
-        SELECT 
-          sli.business_date, sli.order_id, sli.order_item_id, sli.table_id, 
-          sli.table_name_snapshot, sli.responsible_waiter_id,
-          0.1000, sli.line_subtotal,
-          ROUND(sli.line_subtotal * 0.10 / 1.10, 2),
-          'PAID', true
-        FROM sales_ledger_items sli
-        WHERE sli.business_date >= '2026-02-11' AND sli.business_date <= '2026-02-15'
-          AND sli.origin IN ('WAITER', 'POS', 'QR')
-          AND NOT EXISTS (
-            SELECT 1 FROM service_charge_ledger scl
-            WHERE scl.order_id = sli.order_id AND scl.order_item_id = sli.order_item_id
-          )
-      `);
-
-      const updateResult = await db.execute(sql`
-        UPDATE service_charge_ledger
-        SET rate_snapshot = 0.1000,
-            service_amount = ROUND(base_amount_snapshot * 0.10 / 1.10, 2)
-        WHERE rate_snapshot != '0.1000'
-      `);
-
-      res.json({
-        message: "Service ledger fix applied",
-        inserted: insertResult.rowCount,
-        updated: updateResult.rowCount,
-      });
-    } catch (err: any) {
-      console.error("[fix-service-ledger] Error:", err);
       res.status(500).json({ message: err.message });
     }
   });
