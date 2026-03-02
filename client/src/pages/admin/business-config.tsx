@@ -35,6 +35,21 @@ interface BusinessConfigData {
 export default function AdminBusinessConfigPage() {
   const { toast } = useToast();
   const [confirmTruncate, setConfirmTruncate] = useState(false);
+  const [fixResult, setFixResult] = useState<{ inserted: number; updated: number } | null>(null);
+
+  const fixServiceMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/fix-service-ledger");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setFixResult({ inserted: data.inserted, updated: data.updated });
+      toast({ title: "Corrección aplicada", description: `Insertados: ${data.inserted}, Corregidos: ${data.updated}` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
 
   const truncateMutation = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/admin/truncate-transactions"),
@@ -239,6 +254,34 @@ export default function AdminBusinessConfigPage() {
           </Button>
         </div>
       </form>
+
+      <Card className="mt-6 border-amber-500">
+        <CardHeader>
+          <h3 className="text-base font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            Corrección de Servicio (Feb 11-15 + tasa 10%)
+          </h3>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground mb-3">
+            Inserta los registros de servicio faltantes del 11-15 de febrero y corrige la tasa de 8% a 10% en todos los registros que tengan tasa incorrecta. Solo se ejecuta una vez.
+          </p>
+          {fixResult && (
+            <div className="mb-3 p-2 rounded bg-muted text-sm" data-testid="text-fix-result">
+              Insertados: {fixResult.inserted} — Corregidos: {fixResult.updated}
+            </div>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => fixServiceMutation.mutate()}
+            disabled={fixServiceMutation.isPending}
+            data-testid="button-fix-service-ledger"
+          >
+            {fixServiceMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+            Ejecutar corrección de servicio
+          </Button>
+        </CardContent>
+      </Card>
 
       <Card className="mt-6" style={{ borderColor: 'var(--red-m)' }}>
         <CardHeader>
