@@ -1,0 +1,202 @@
+FEATURE CRÍTICO: HR “Legal Engine” Costa Rica — Jornadas (diurna/nocturna/mixta) + horas extra + rebajo automático >9h + planilla por rango + trazabilidad
+
+Actúa como arquitecto senior + backend lead + QA. Quiero que implementes un “motor legal de jornada” para Costa Rica en el módulo de RRHH, totalmente configurable y con trazabilidad, para que el sistema se venda como “cumple Código de Trabajo CR”. Entrega código listo, migraciones, endpoints, UI mínima de configuración, y pruebas automatizadas con casos legales. NO me des teoría; implementa.
+
+OBJETIVO GENERAL
+1) El sistema debe manejar tipos de jornada: DIURNA, NOCTURNA, MIXTA (según reglas configurables).
+2) Debe calcular pago por minutos trabajados, separando:
+   - tiempo ordinario (según límite legal/config)
+   - tiempo extraordinario (horas extra) con multiplicador
+3) Debe aplicar rebajo automático (no remunerado) SOLO cuando el empleado supere 9 horas trabajadas:
+   - Si workedMinutes >= 540 => rebajar automáticamente 60 min (almuerzo+café)
+   - Si workedMinutes < 540 => NO rebajar nada
+4) Debe soportar planilla por rango y semanal, con reportes, auditoría y “config snapshot” (qué reglas aplicaron).
+5) Debe soportar jornadas MIXTAS (parte diurna y parte nocturna) y calcular correctamente límites ordinarios y extra.
+
+RESTRICCIÓN IMPORTANTE
+- No romper el flujo actual de marcas, POS, KDS, etc.
+- Ajustes a marcas solo en validación (no permitir salida sin entrada / entrada con entrada abierta).
+- No inventar nombres: usa la configuración existente (hr_settings) y extiéndela con campos nuevos SOLO si es necesario para jornadas. Documenta cada campo nuevo.
+
+FUENTE DE VERDAD EXISTENTE (CONFIRMADA)
+- hr_settings ya existe. Ya tiene:
+  - overtimeDailyThresholdHours (hoy se usa como “8”) => NO usar como “overtime threshold” para extra; puede reutilizarse como “límite diurno ordinario” si aplica.
+  - overtimeMultiplier (1.5)
+  - latenessGraceMinutes
+  - autoLogoutAfterShiftHours
+  - serviceChargeRate
+- service_charge_ledger ya existe (pool diario por businessDate, serviceAmount, responsable).
+
+NUEVO: CONFIGURACIÓN LEGAL DE JORNADAS (DEBE QUEDAR CONFIGURABLE)
+Agregar configuración explícita para “Costa Rica Labor Rules” (si ya existe, úsala; si no, crear en hr_settings o tabla hr_labor_rules).
+Debe permitir:
+A) Definición de franjas (por default Costa Rica):
+   - dayShiftStart = "05:00"
+   - dayShiftEnd   = "19:00"
+   - nightShiftStart = "19:00"
+   - nightShiftEnd   = "05:00" (cruza medianoche)
+B) Límites ordinarios diarios por tipo:
+   - ordinaryDailyHoursDay = 8
+   - ordinaryDailyHoursNight = 6
+   - ordinaryDailyHoursMixed = 7 (configurable)
+C) Límites semanales por tipo (para futura extensión; mínimo guardarlos):
+   - ordinaryWeeklyHoursDay = 48
+   - ordinaryWeeklyHoursNight = 36
+   - ordinaryWeeklyHoursMixed = 42 (configurable)
+D) Multiplicador de extra:
+   - overtimeMultiplier = hr_settings.overtimeMultiplier (ya existe)
+E) Regla rebajo automático:
+   - breakDeductThresholdMinutes = 540 (9h)
+   - breakDeductMinutes = 60 (1h)
+   - breakPolicy = "DEDUCT_IF_GE_9H" (v1)
+F) Regla de redondeo:
+   - roundingRule = "EXACT_MINUTE" (v1), y dejar campo para futuro.
+G) Clasificación de jornada por empleado:
+   - employeeWorkdayType: DAY | NIGHT | MIXED | AUTO
+   - Si AUTO: clasificar por distribución real del punch (minutos diurnos/nocturnos) usando las franjas.
+
+IMPORTANTE SOBRE LEGALIDAD
+- Todo cálculo debe quedar “registrado” (documentado y verificable):
+  - Guardar en el reporte un hrConfigSnapshot con TODOS los parámetros usados.
+  - Guardar en audit_events: cambios de configuración, cambios de horarios, overrides de punches, y ejecución de auto-clockout.
+
+MARCA SEGURA (VALIDACIÓN EN BACKEND)
+- Bloquear clock-out sin openPunch => 400 "No puede marcar salida si no ha marcado entrada primero."
+- Mantener bloqueo de clock-in con openPunch => 409 (ya existe)
+- No crear punches fantasma.
+
+AUTO CLOCK-OUT (CRÍTICO)
+- Para punches con scheduledEndAt: mantener cierre al fin del turno (actual).
+- Para punches sin scheduledEndAt:
+  - cerrar automáticamente a clockInAt + ordinaryDailyHoursDay (o parámetro “autoCloseNoScheduleHours” configurable; default 8)
+  - clockOutType = "AUTO_NO_SCHEDULE"
+  - audit_event con nota
+- Evitar punches eternos.
+
+MOTOR DE CÁLCULO LEGAL (server/payroll.ts) — FUNCIONES PURAS
+Crear/actualizar server/payroll.ts con estas funciones puras:
+
+1) splitDayNightMinutes({ startAt, endAt, laborRules }) -> { dayMinutes, nightMinutes, totalMinutes }
+- Debe funcionar cruzando medianoche.
+- Debe calcular cuántos minutos caen en franja diurna vs nocturna según reglas.
+
+2) classifyWorkdayType({ dayMinutes, nightMinutes, employeeWorkdayType }) -> finalType
+- Si employeeWorkdayType = DAY/NIGHT/MIXED => usarlo tal cual.
+- Si AUTO => clasificar:
+  - Si nightMinutes == 0 => DAY
+  - Si dayMinutes == 0 => NIGHT
+  - Si hay ambos => MIXED
+
+3) computeDailyPayrollLegal({ punchesForDay, scheduleForDay, employee, hrSettings, laborRules }) =>
+Retorna:
+{
+  workedMinutesRaw,
+  breakDeductMinutes,
+  workedMinutesPaid,
+  dayMinutesPaid,
+  nightMinutesPaid,
+  workdayTypeFinal,                 // DAY/NIGHT/MIXED
+  ordinaryMinutesAllowed,           // según tipo (8h/6h/7h configurable)
+  ordinaryMinutesPaid,              // min(workedPaid, ordinaryAllowed)
+  overtimeMinutesPaid,              // max(0, workedPaid - ordinaryAllowed)
+  tardyMinutes,
+  normalPay,
+  overtimePay,
+  baseTotalPayDay,
+  flags: { late, noShow, autoCheckout, midnightShift, hasMultiplePunches, noScheduleConfirmed? }
+}
+
+Reglas dentro de computeDailyPayrollLegal:
+- Obtener workedStart/workedEnd de punches:
+  - multiple punches: first in + last out, auditar intermedios
+  - workedEnd AUTO/missing => scheduledEndAt; si no hay schedule => aplicar auto policy (clockIn+8h) solo para reporte si el job aún no corrió (pero NO escribir DB aquí).
+- workedMinutesRaw = diff minutos
+- REBAJO AUTOMÁTICO:
+  - breakDeductMinutes = (workedMinutesRaw >= breakDeductThresholdMinutes) ? breakDeductMinutes : 0
+  - workedMinutesPaid = workedMinutesRaw - breakDeductMinutes
+- Distribución día/noche:
+  - splitDayNightMinutes sobre el intervalo trabajado, pero usar workedMinutesPaid:
+    - Regla v1: aplicar el rebajo al final del turno (o prorratear). Elige 1 y DOCUMENTA.
+    - Recomendación v1 simple: restar el rebajo de los últimos minutos del intervalo (para no inflar nocturno por error). Documentar.
+- Clasificar workdayTypeFinal con classifyWorkdayType.
+- ordinaryMinutesAllowed:
+  - DAY => ordinaryDailyHoursDay*60
+  - NIGHT => ordinaryDailyHoursNight*60
+  - MIXED => ordinaryDailyHoursMixed*60
+- ordinaryMinutesPaid = min(workedMinutesPaid, ordinaryMinutesAllowed)
+- overtimeMinutesPaid = max(0, workedMinutesPaid - ordinaryMinutesAllowed)
+- Pago:
+  - hourlyRate = employee.dailyRate / ordinaryDailyHoursDay
+    (Nota: mantener compatibilidad con tu regla actual para tarifa. Documentar que dailyRate se interpreta con base diurna de 8h salvo que definan otra. Si quieres tarifa distinta por tipo, dejar configurable futuro.)
+  - normalPay = round2((ordinaryMinutesPaid/60)*hourlyRate)
+  - overtimePay = round2((overtimeMinutesPaid/60)*hourlyRate*overtimeMultiplier)
+- Tardía:
+  - usar scheduleStartAt + latenessGraceMinutes como umbral de “late”
+  - tardyMinutes = diff completa si supera gracia (no restar gracia)
+
+4) computeServiceForDay({ businessDate, serviceLedgerRows, eligibleWaitersWorkedMinutesMap }) =>
+- servicePool = SUM(serviceAmount) del ledger para esa fecha
+- prorratear por workedMinutesPaid (no por raw) de saloneros
+- devolver map employeeId => servicePayDay (round2)
+
+5) computeRangePayrollLegal({ dateFrom, dateTo, employees, schedulesMap, punchesMap, extrasMap, serviceLedgerMap, hrSettings, laborRules }) =>
+- Iterar días y empleados
+- daily = computeDailyPayrollLegal
+- extras por día: sum signed; separar earnings vs deductions por kind del catálogo
+- servicio: solo WAITER (por roles/perms), usando computeServiceForDay
+- Aggregates por empleado + dailyBreakdown
+- grandTotalPay = basePayTotal + extrasNet + servicePayTotal
+
+EXTRAS (CATÁLOGO + AUDITORÍA)
+Implementar hr_extra_types + hr_payroll_extras:
+- Seed idempotente tipos: BONO, VIATICO, REEMBOLSO, PRESTAMO_DEDUCCION, AJUSTE_POSITIVO, AJUSTE_NEGATIVO
+- CRUD endpoints con validaciones:
+  - type activo
+  - note obligatoria en AJUSTE_* y PRESTAMO_DEDUCCION
+  - soft-delete
+  - audit_event
+
+ENDPOINTS
+1) GET /api/hr/payroll-report?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+   - y soporte ?weekStart=YYYY-MM-DD
+   - retorna:
+     { hrConfigSnapshot: {...laborRules + hrSettings}, employees:[...] }
+
+2) GET/POST/PATCH/DELETE /api/hr/payroll-extras (HR_VIEW_TEAM)
+3) GET /api/hr/extra-types
+4) (Opcional recomendado) GET/PATCH /api/hr/labor-rules o /api/hr/settings-legal
+   - para configurar jornadas y rebajo desde UI admin
+
+UI
+- Tab “Planilla” con modo Semanal/Rango
+- Mostrar columnas:
+  Empleado | Tipo Jornada (final) | Días Pres | No Show | Min Trab | Desc (min) | Min Pag | Ord (hrs) | Extra (hrs) | Pago Base | Extras | Servicio | Total
+- Expandible: breakdown diario con flags (AUTO, NO SHOW, LATE, MIXED, etc.)
+- Editor inline de Extras por día
+- Panel de Config Snapshot (jornada day/night/mixed, % servicio, rebajo 9h, overtimeMultiplier)
+
+PRUEBAS AUTOMATIZADAS (OBLIGATORIO)
+Crear tests para:
+1) Jornada diurna 8h exactas => no rebajo, no extra
+2) 9h exactas => rebajo 60, paid=8h, no extra
+3) 10h => rebajo 60, paid=9h, extra=1h (si límite ordinario 8h para DAY)
+4) Nocturna 6h límite => validar ordinaryAllowed=6h, extra después de 6h
+5) Mixta (ej 18:00–02:00) => split day/night, tipo MIXED, ordinaryAllowed=7h (config), extra si excede
+6) Cruza medianoche sin schedule => auto-close 8h para job y reporte
+7) Tardía con grace: llega 3 min tarde con grace 5 => no late; llega 10 min tarde => late y tardy=10
+8) Servicio prorrateado: 2 saloneros, workedPaid distinto, pool diario => reparto proporcional
+9) Extras: bono + deducción, net correcto, auditoría registrada
+10) Validación marcas: salida sin entrada bloqueada, entrada con punch abierto bloqueada
+
+ENTREGABLE FINAL
+- Archivos tocados (lista)
+- Migraciones y seeds
+- Nuevos endpoints + permisos
+- Capturas de respuesta de /api/hr/payroll-report con hrConfigSnapshot
+- Resultados de tests (expected vs actual)
+- Documento corto (README interno) “CR Labor Rules Engine”: cómo funciona, qué es configurable, qué NO está implementado aún (mixta/nocturna semanal, etc.)
+
+PRIORIZACIÓN
+- Primero: validación marcas + auto-close sin schedule
+- Segundo: motor legal (split y jornada) + rebajo >9h + cálculo extra
+- Tercero: servicio ledger + extras + UI

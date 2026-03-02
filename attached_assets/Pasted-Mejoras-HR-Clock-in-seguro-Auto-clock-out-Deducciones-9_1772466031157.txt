@@ -1,0 +1,186 @@
+Mejoras HR: Clock-in seguro, Auto clock-out, Deducciones >9h, Permisos, Refresco Planilla — SPEC FINAL (COPY/PASTE)
+
+Actúa como ingeniero senior full-stack + QA. Implementa estas mejoras en RMS. No teoría. Entrega: lista de archivos tocados, cambios exactos, y pruebas/casos reproducibles. Respeta “Reglas clave (NO romper)” y “Estado actual”.
+
+────────────────────────────────────────────────────────
+ESTADO ACTUAL (NO CAMBIAR)
+- hr_settings ya tiene: overtimeDailyThresholdHours (8), overtimeMultiplier (1.5), latenessGraceMinutes, autoLogoutAfterShiftHours (4)
+- Clock-out sin openPunch ya bloqueado (400) — OK, no tocar
+- Clock-in con openPunch ya bloqueado (409) — OK, no tocar
+- Clock-in sin horario → hoy se permite sin confirmación → implementar T001
+- Auto clock-out solo cierra si tiene scheduledEndAt → implementar T002
+- payroll.ts computeDailyPayroll: no aplica rebajo, overtime es simple → implementar T003
+- Permisos UI: botón por rol → implementar T004
+- Planilla refresh: no invalida al editar schedules/punches → implementar T005
+- NO agregar nuevos campos a hr_settings salvo que se indique explícitamente.
+- Para T002 usar overtimeDailyThresholdHours como autoCloseHours (fallback 8).
+
+────────────────────────────────────────────────────────
+REGLAS CLAVE (NO ROMPER)
+1) Overtime = max(0, clockOut - scheduledEndAt) SOLO si clockOutType=MANUAL (datetime completo).
+2) AUTO y AUTO_NO_SCHEDULE NO generan overtime.
+3) Deducción: workedMinutes >= 540 → 60min. Si <540 → 0.
+4) Deducción descuenta de normalMinutes, NO de overtimeMinutes.
+5) NO crear punches fantasma.
+6) Si hay params en planilla, el refresh debe invalidar todas las variantes del query.
+
+────────────────────────────────────────────────────────
+T001: Clock-in sin horario requiere doble confirmación
+FILES: server/routes.ts, client/src/pages/pin-login.tsx, client/src/pages/hr/mi-turno.tsx
+
+BACKEND (server/routes.ts)
+En POST /api/auth/pin-clock (línea ~630) y POST /api/hr/clock-in (línea ~4909):
+1) Determinar si el empleado tiene horario programado para “hoy”.
+   - “No hay horario” significa:
+     a) No existe schedule del día, o
+     b) Existe pero es día libre / sin horas (si hay isDayOff o equivalente), o
+     c) No tiene scheduledStartAt/scheduledEndAt válidos.
+2) Si NO hay horario y request NO trae confirmNoSchedule: true:
+   - Responder 200 con:
+     { requireConfirm: true, message: "No tiene horario hoy. Ingrese su código nuevamente para confirmar." }
+   - NO crear punch.
+3) Si NO hay horario y request trae confirmNoSchedule: true:
+   - Permitir clock-in normal.
+   - Registrar audit_event: action="CLOCK_IN_NO_SCHEDULE_CONFIRMED" con employeeId, date, metadata.
+4) Si SÍ hay horario:
+   - Clock-in normal (sin confirmación).
+
+FRONTEND
+- pin-login.tsx y mi-turno.tsx:
+  - Si respuesta contiene requireConfirm=true:
+    - Mostrar modal/dialog con el message.
+    - Si usuario confirma: reenviar el mismo request con confirmNoSchedule=true.
+    - Si cancela: no reenviar (opcional: NO auditar cancelación).
+  - Asegurar que confirmNoSchedule solo aplica a ese intento; no persistir globalmente.
+
+ACCEPTANCE
+- Clock-in sin horario pide confirmación; sin confirmación no marca.
+- Con confirmNoSchedule=true marca + audit_event.
+- Con horario funciona normal.
+
+────────────────────────────────────────────────────────
+T002: Auto clock-out para punches sin scheduledEndAt usando overtimeDailyThresholdHours
+FILES: server/hr-jobs.ts
+
+En autoClockOutJob:
+- Mantener lógica existente para punches CON scheduledEndAt intacta.
+- NUEVO para punches SIN scheduledEndAt:
+  1) Leer hrSettings una vez (source of truth).
+  2) autoCloseHours = Number(hrSettings.overtimeDailyThresholdHours || 8)
+  3) Para cada punch sin scheduledEndAt:
+     - Si now - clockInAt > autoCloseHours * 3600000:
+       - clockOutAt = clockInAt + autoCloseHours horas
+       - clockOutType = "AUTO_NO_SCHEDULE" (distinguible)
+       - overtimeMinutesDaily = 0
+       - Registrar audit_event action="AUTO_CLOCK_OUT_NO_SCHEDULE" con nota:
+         "AUTO clock-out (no schedule) after {autoCloseHours}h"
+- IMPORTANTE:
+  - No escribir/actualizar campos que no existan en tabla punches.
+  - Si existe campo workedMinutesDaily u otro, se puede setear; si NO existe, NO inventar. El payroll calcula minutos igual.
+- Idempotencia: no cerrar si ya está cerrado.
+
+ACCEPTANCE
+- Punch sin horario se cierra a autoCloseHours (default 8).
+- clockOutType distinguible.
+- overtime=0 siempre.
+- audit_event creado.
+
+────────────────────────────────────────────────────────
+T003: Deducción automática almuerzo/café (>= 9h) sin tocar overtime
+FILES: server/payroll.ts, client/src/pages/hr/reports.tsx
+
+En server/payroll.ts computeDailyPayroll (o función equivalente usada por reportes):
+PASOS (orden obligatorio):
+1) Calcular workedMinutes (RAW) como hoy (clockIn->workedEnd). workedEnd:
+   - MANUAL: clockOutAt
+   - AUTO/missing: scheduledEndAt (si existe); si no existe, asumir que el job T002 lo cerrará (para reporte, si aún está abierto, tratar como “hasta now” solo si ya existe esa conducta; si no, dejar 0 y flag).
+2) Calcular overtimeMinutes por horario (NO umbral):
+   - SOLO si clockOutType=MANUAL y scheduledEndAt existe:
+     overtimeMinutes = max(0, clockOutAt - scheduledEndAt)
+   - si AUTO o clockOutAt <= scheduledEndAt => 0
+3) normalMinutesRaw = max(0, workedMinutes - overtimeMinutes)
+4) unpaidBreakMinutes = (workedMinutes >= 540) ? 60 : 0
+5) Aplicar descuento SOLO al ordinario:
+   - normalMinutesPaid = max(0, normalMinutesRaw - unpaidBreakMinutes)
+   - overtimeMinutesPaid = overtimeMinutes (NO se reduce)
+6) Definir paidWorkedMinutes = normalMinutesPaid + overtimeMinutesPaid (para servicio y UI).
+7) Calcular pagos:
+   - hourlyRate = dailyRate / Number(hrConfig.overtimeDailyThresholdHours || 8)
+   - multiplier = Number(hrConfig.overtimeMultiplier || 1.5)
+   - normalPay = round2((normalMinutesPaid/60) * hourlyRate)
+   - overtimePay = round2((overtimeMinutesPaid/60) * hourlyRate * multiplier)
+8) Exponer unpaidBreakMinutes y paidWorkedMinutes en DailyPayrollResult.
+9) Actualizar tipos/DTOS:
+   - DailyBreakdownEntry: incluir unpaidBreakMinutes, paidWorkedMinutes
+   - EmployeePayrollResult: incluir totalUnpaidBreakMinutes (acumulado)
+10) Actualizar computeRangePayroll:
+   - acumular totalUnpaidBreakMinutes
+11) Actualizar computeServiceForDay:
+   - usar paidWorkedMinutes como peso de prorrateo (no raw).
+
+UI (client/src/pages/hr/reports.tsx):
+- Agregar columna "Desc." (minutos) en tabla principal y breakdown diario.
+- Mostrar como HH:mm (ej: 60 => "01:00").
+- Totales incluyen suma de descuentos.
+- Asegurar que “Servicio” usa paidWorkedMinutes (para que descansos no pagados reduzcan peso).
+
+ACCEPTANCE
+- workedMinutes >= 540 => unpaidBreakMinutes=60
+- workedMinutes < 540 => unpaidBreakMinutes=0
+- Deducción afecta solo ordinario, overtime intacto.
+- UI muestra descuento y totales correctos.
+
+────────────────────────────────────────────────────────
+T004: Botón único "Guardar Todo" para permisos por roles
+FILES: client/src/pages/admin/roles.tsx
+
+- Remover botones individuales por rol/columna.
+- Agregar botón global arriba: "Guardar Todo"
+  - Solo habilitado si dirtyRoles.size > 0
+  - Al click:
+    - iterar dirtyRoles y enviar PUT /api/admin/role-permissions/:role por cada uno (secuencial)
+    - mostrar toast éxito/error
+    - limpiar dirtyRoles al completar exitosamente (si hay errores, mantener los fallidos como dirty para reintento)
+
+ACCEPTANCE
+- Un solo botón guarda roles modificados.
+- Botones individuales eliminados.
+
+────────────────────────────────────────────────────────
+T005: Refresco automático de planilla al editar schedules/punches (invalidate robusto)
+FILES: client/src/pages/hr/schedules.tsx, client/src/pages/hr/punches.tsx
+
+- El reporte usa /api/hr/payroll-report con parámetros (weekStart o dateFrom/dateTo).
+- Por tanto, invalidar por prefijo (no exact match) para refrescar cualquier variante:
+
+En TODAS las mutaciones de schedules.tsx y punches.tsx:
+- queryClient.invalidateQueries({
+    predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "/api/hr/payroll-report"
+  })
+
+(si tu versión no soporta predicate, usar exact:false con queryKey base)
+
+ACCEPTANCE
+- Editar schedule o punch refresca planilla automáticamente sin recargar.
+- Funciona en modo semanal y rango.
+
+────────────────────────────────────────────────────────
+PRUEBAS / CASOS REPRODUCIBLES (mínimo)
+1) Clock-in sin horario:
+   - primer intento => requireConfirm=true (sin punch)
+   - segundo con confirmNoSchedule=true => punch + audit_event
+2) Auto clock-out sin schedule:
+   - punch abierto > autoCloseHours => cierra, type AUTO_NO_SCHEDULE, overtime=0, audit_event
+3) Deducción:
+   a) 8h59 => 0 descuento
+   b) 9h00 => 60 descuento
+   c) 10h con overtime => descuento solo ordinario, overtime intacto
+4) Permisos:
+   - editar 2 roles => Guardar Todo => ambos persisten
+5) Refresh:
+   - editar schedule/punch => planilla actual se actualiza
+
+ENTREGABLE FINAL
+- Lista de archivos tocados y resumen de cambios por task
+- Evidencia pruebas (logs o screenshots)
+- Confirmación: clock-out sin openPunch sigue bloqueado (400) y no se crearon punches fantasma

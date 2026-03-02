@@ -1,0 +1,107 @@
+EXTENSIÓN PLANILLA: Rango independiente para cálculo de SERVICIO (con “2 semanas de fondo”)
+
+Actúa como ingeniero senior full-stack + QA. Implementa esta mejora SIN romper lo ya definido en el plan HR (T001–T005). El objetivo es que la planilla permita calcular y pagar el SERVICIO usando un rango de fechas DIFERENTE al rango de salarios/horas, porque el servicio se paga con rezago (ej: se paga esta semana el salario del 23 feb–1 mar, pero el servicio del 9 feb–15 feb). Hoy no está claro qué semana está usando el sistema para servicio; esto debe quedar explícito y controlable.
+
+REQUERIMIENTO FUNCIONAL
+1) La planilla tendrá DOS rangos:
+   A) Rango de PLANILLA (salarios): weekStart o dateFrom/dateTo (ya existe)
+   B) Rango de SERVICIO A PAGAR: serviceFrom/serviceTo (nuevo, independiente)
+2) Por defecto, cuando el usuario elige weekStart (lunes):
+   - planillaFrom = weekStart
+   - planillaTo = weekStart + 6 días
+   - serviceFrom = weekStart - 14 días
+   - serviceTo = serviceFrom + 6 días
+   (esto implementa “dos semanas de fondo” por defecto)
+3) El usuario puede modificar manualmente serviceFrom/serviceTo en la UI.
+4) El reporte debe mostrar claramente:
+   - “Planilla (salarios)”: FROM–TO
+   - “Servicio pagado corresponde a”: serviceFrom–serviceTo
+   para que nunca haya duda.
+5) El cálculo de servicio SIEMPRE se basa en service_charge_ledger.businessDate dentro de [serviceFrom, serviceTo] (inclusive), no en el rango de planilla.
+6) El salario/horas/extras siguen usando el rango de planilla normal (no cambia).
+
+CAMBIOS BACKEND
+A) Endpoint payroll report debe aceptar parámetros extra:
+GET /api/hr/payroll-report?weekStart=YYYY-MM-DD
+Opcionalmente:
+  &serviceFrom=YYYY-MM-DD&serviceTo=YYYY-MM-DD
+o si se usa rango:
+  ?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&serviceFrom=...&serviceTo=...
+
+B) Reglas del backend:
+1) Determinar rango planilla:
+   - Si weekStart => planillaFrom=weekStart, planillaTo=weekStart+6
+   - Si dateFrom/dateTo => planillaFrom/dateTo
+2) Determinar rango servicio:
+   - Si vienen serviceFrom/serviceTo => usarlos (validar que serviceFrom<=serviceTo y rango máximo 31 días para evitar queries enormes; si excede, 400 con mensaje)
+   - Si NO vienen:
+     - default “2 semanas de fondo” basado en planillaFrom:
+       serviceFrom = planillaFrom - 14 días
+       serviceTo = serviceFrom + 6 días
+3) Cargar service_charge_ledger SOLO para [serviceFrom, serviceTo], y construir servicePoolMap por businessDate.
+4) computeServiceForDay debe usar el POOL del service range y asignarlo a empleados ELEGIBLES del día.
+   IMPORTANTE: el prorrateo de servicio debe usar workedMinutesPaid del rango de SERVICIO, no del rango de planilla, porque el pool es de esos días.
+   - Por lo tanto, para calcular servicio, se necesita también computar “workedMinutesPaid” de los saloneros en cada día del service range.
+   - Implementación recomendada:
+     - Ejecutar computeDailyPayroll para el rango de servicio también (solo para eligibles) para obtener paidWorkedMinutes por día.
+     - O un modo ligero en payroll.ts: computeWorkedMinutesPaidForDateRange(employees, punches, schedules, dateRange).
+
+5) Respuesta del endpoint debe incluir:
+{
+  planillaRange: { from, to },
+  serviceRange: { from, to, lagWeeks: 2 },
+  hrConfigSnapshot: {...},
+  employees: [
+    {
+      ...payrollTotalsForPlanillaRange,
+      servicePayTotalForServiceRange,
+      // opcional para trazabilidad:
+      serviceBreakdown: [{ date: businessDate, poolDay, paidMinutesEmployee, weight, servicePayDay }]
+    }
+  ]
+}
+
+CAMBIOS EN payroll.ts (motor)
+- Separar claramente:
+  - computeRangePayroll(planillaRange) -> salarios/extras
+  - computeServiceRange(serviceRange) -> servicio
+- Luego combinar en el response final:
+  totalPay = basePayTotal(planillaRange) + extrasNet(planillaRange) + servicePayTotal(serviceRange)
+
+CAMBIOS UI (client/src/pages/hr/reports.tsx)
+1) En la pestaña Planilla:
+   - Mantener selector Semanal (weekStart) y/o Rango (dateFrom/dateTo)
+2) Agregar sección “Servicio a pagar”:
+   - Checkbox “Usar default 2 semanas de fondo” (ON por defecto)
+   - DatePickers: serviceFrom y serviceTo
+     - Si checkbox ON: se autocalculan y quedan readonly o editable con aviso
+     - Si checkbox OFF: usuario elige manualmente
+3) Mostrar en pantalla, SIEMPRE visible:
+   - “Salarios calculados: planillaFrom → planillaTo”
+   - “Servicio pagado corresponde a: serviceFrom → serviceTo”
+4) Al consultar el API:
+   - Enviar weekStart/dateFrom/dateTo + serviceFrom/serviceTo
+5) En la tabla:
+   - Columna “Servicio” debe reflejar el servicio del serviceRange (NO el del planillaRange).
+6) Agregar tooltip/leyenda:
+   - “Servicio se paga con rezago de 2 semanas (configurable)”
+
+VALIDACIONES
+- serviceFrom/serviceTo obligatorios si checkbox OFF
+- serviceRange debe ser exactamente 7 días cuando se usa modo semanal (opcional pero recomendado para consistencia de “semanas de servicio”)
+- Si usuario pone serviceRange diferente a 7 días, permitir pero mostrar warning “Rango no semanal”.
+
+PRUEBAS / CASOS
+1) weekStart=2026-02-23:
+   - planillaRange = 2026-02-23..2026-03-01
+   - serviceRange default = 2026-02-09..2026-02-15
+   - Verificar que el endpoint devuelve ambos rangos en response.
+2) Override manual:
+   - serviceFrom/serviceTo distintos al default => servicio cambia, salarios no cambian.
+3) Confirmar que hoy el sistema NO use “planillaRange” para servicio (regresión).
+4) Validar que el servicio pool se arma desde service_charge_ledger por businessDate del serviceRange.
+
+ENTREGABLE FINAL
+- Archivos tocados (routes.ts, payroll.ts, storage.ts si aplica, reports.tsx)
+- Evidencia en UI mostrando ambos rangos claramente
+- Logs/pruebas confirmando que el servicio usa serviceRange y no planillaRange

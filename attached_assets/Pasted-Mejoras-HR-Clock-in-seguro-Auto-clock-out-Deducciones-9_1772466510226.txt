@@ -1,0 +1,188 @@
+Mejoras HR: Clock-in seguro, Auto clock-out, Deducciones >9h, Permisos, Refresco Planilla, Rango Servicio — SPEC FINAL
+
+Actúa como ingeniero senior full-stack + QA. Implementa estas mejoras en RMS. No teoría. Entrega: lista de archivos tocados, cambios exactos, y pruebas/casos reproducibles. Respeta “Reglas clave (NO romper)” y “Estado actual”.
+
+────────────────────────────────────────
+ESTADO ACTUAL (NO CAMBIAR)
+- hr_settings ya tiene: overtimeDailyThresholdHours (8), overtimeMultiplier (1.5), latenessGraceMinutes, autoLogoutAfterShiftHours (4), serviceChargeRate — NO agregar nuevos campos
+- Clock-out sin openPunch: ya bloqueado (400) + audit_event CLOCK_OUT_BLOCKED_NO_ENTRY — no tocar
+- Clock-in con openPunch: ya bloqueado (409) — no tocar
+- Clock-in sin horario: hoy se permite sin confirmación
+- Auto clock-out (hr-jobs.ts): solo cierra con scheduledEndAt; ignora punches sin horario
+- payroll.ts: computeDailyPayroll no aplica rebajo; overtime = threshold simple (incorrecto)
+- Servicio: usa mismo rango que planilla (dateFrom/dateTo); no existe serviceFrom/serviceTo
+- UI planilla (reports.tsx): modo weekly/range; envía dateFrom+dateTo al API; sin serviceFrom/serviceTo
+- Permisos (roles.tsx): botón "Guardar" por rol/columna
+
+────────────────────────────────────────
+REGLAS CLAVE (NO ROMPER)
+1) Overtime = max(0, clockOut - scheduledEndAt) SOLO si clockOutType=MANUAL (datetime completo).
+2) AUTO y AUTO_NO_SCHEDULE NO generan overtime.
+3) Deducción: workedMinutes >= 540 → 60min; si <540 → 0.
+4) Deducción descuenta de normalMinutes, NO de overtimeMinutes.
+5) NO crear punches fantasma.
+6) NO agregar campos a hr_settings.
+
+────────────────────────────────────────
+T001: Clock-in sin horario requiere doble confirmación
+FILES: server/routes.ts, client/src/pages/pin-login.tsx, client/src/pages/hr/mi-turno.tsx
+
+Backend (server/routes.ts)
+POST /api/auth/pin-clock (~630) y POST /api/hr/clock-in (~4909):
+- Determinar si hay horario para hoy.
+  “No hay horario” = no existe schedule, o isDayOff, o sin start/end válidos.
+- Si NO hay horario y NO viene confirmNoSchedule=true:
+  responder 200 { requireConfirm:true, message:"No tiene horario hoy. Ingrese su código nuevamente para confirmar." }
+  NO crear punch.
+- Si NO hay horario y viene confirmNoSchedule=true:
+  clock-in normal + audit_event CLOCK_IN_NO_SCHEDULE_CONFIRMED.
+- Si SÍ hay horario: clock-in normal.
+
+Frontend
+- Si requireConfirm=true: modal con message; al confirmar reenviar con confirmNoSchedule=true.
+
+Acceptance
+- Sin horario pide confirmación; con confirmación marca + audit; con horario funciona normal.
+
+────────────────────────────────────────
+T002: Auto clock-out para punches sin scheduledEndAt
+FILES: server/hr-jobs.ts
+
+En autoClockOutJob:
+- Leer hrSettings una vez.
+- autoCloseHours = Number(hrSettings.overtimeDailyThresholdHours || 8)
+- Para punch SIN scheduledEndAt:
+  si now - clockInAt > autoCloseHours * 3600000:
+    clockOutAt = clockInAt + autoCloseHours horas
+    clockOutType = "AUTO_NO_SCHEDULE"
+    overtimeMinutesDaily = 0
+    (IMPORTANTE: setear workedMinutes SOLO si el campo existe; si no existe, NO setearlo)
+    audit_event AUTO_CLOCK_OUT_NO_SCHEDULE con nota
+- Mantener lógica existente para punches CON scheduledEndAt intacta
+- Idempotencia: no cerrar si ya clockOutAt != null
+
+Acceptance
+- Se cierran a autoCloseHours; type distinguible; overtime=0; audit.
+
+────────────────────────────────────────
+T003: Deducción automática almuerzo/café (>= 9h) sin tocar overtime
+FILES: server/payroll.ts, client/src/pages/hr/reports.tsx
+
+En computeDailyPayroll:
+1) workedMinutes RAW como hoy.
+2) overtimeMinutes:
+   SOLO si clockOutType=MANUAL y scheduledEndAt existe y clockOutAt>scheduledEndAt:
+     overtimeMinutes=max(0, clockOutAt - scheduledEndAt)
+   sino 0
+   (IMPORTANTE: scheduledEndAt debe ser datetime correcto del turno; si schedule guarda solo hora, construir datetime con fecha del día y si end<start entonces end=+1 día)
+3) normalMinutesRaw = max(0, workedMinutes - overtimeMinutes)
+4) unpaidBreakMinutes = (workedMinutes >= 540) ? 60 : 0
+5) normalMinutesPaid = max(0, normalMinutesRaw - unpaidBreakMinutes)
+6) overtimeMinutesPaid = overtimeMinutes
+7) paidWorkedMinutes = normalMinutesPaid + overtimeMinutesPaid
+8) Pagos:
+   hourlyRate = dailyRate / Number(hrConfig.overtimeDailyThresholdHours || 8)
+   multiplier = Number(hrConfig.overtimeMultiplier || 1.5)
+   normalPay = round2((normalMinutesPaid/60)*hourlyRate)
+   overtimePay = round2((overtimeMinutesPaid/60)*hourlyRate*multiplier)
+9) Exponer unpaidBreakMinutes y paidWorkedMinutes en resultados.
+10) computeRangePayroll acumula totalUnpaidBreakMin.
+11) computeServiceForDay usa paidWorkedMinutes como peso (no raw).
+
+UI reports.tsx:
+- Columna "Desc." (min) en resumen y breakdown (HH:mm).
+- Totales suman descuentos.
+
+Acceptance
+- >=540 => 60 desc del ordinario; <540 => 0; overtime intacto; UI muestra.
+
+────────────────────────────────────────
+T004: Botón único "Guardar Todo" permisos
+FILES: client/src/pages/admin/roles.tsx
+
+- Quitar botones individuales.
+- Botón global “Guardar Todo” (enabled solo si dirtyRoles>0).
+- Click: iterar dirtyRoles secuencialmente PUT /api/admin/role-permissions/:role
+- Si un rol falla: mantenerlo dirty para reintento.
+
+Acceptance
+- Un solo botón guarda todos; individuales eliminados.
+
+────────────────────────────────────────
+T005: Refresco automático planilla al editar schedules/punches
+FILES: client/src/pages/hr/schedules.tsx, client/src/pages/hr/punches.tsx
+
+En todas las mutaciones:
+- invalidateQueries por prefijo:
+  queryClient.invalidateQueries({
+    predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "/api/hr/payroll-report"
+  })
+
+Acceptance
+- Cambios refrescan planilla en semanal y rango.
+
+────────────────────────────────────────
+T006: Rango independiente para servicio (2 semanas de fondo)
+FILES: server/routes.ts, server/payroll.ts, client/src/pages/hr/reports.tsx
+
+Backend (server/routes.ts):
+- GET /api/hr/payroll-report acepta serviceFrom/serviceTo opcionales.
+- Determinar planillaRange:
+  - si weekStart => planillaFrom=weekStart; planillaTo=weekStart+6
+  - si dateFrom/dateTo => planillaFrom/dateTo
+- Determinar serviceRange:
+  - si vienen params: validar serviceFrom<=serviceTo y rango<=31 días
+  - si no vienen: default = planillaFrom - 14 días hasta serviceFrom + 6
+- Cargar service_charge_ledger SOLO en [serviceFrom, serviceTo] y construir pool por businessDate.
+- IMPORTANTE elegibilidad servicio:
+  - Solo WAITER (rol/permiso)
+  - Se prorratea por día usando paidWorkedMinutes del MISMO día del serviceRange.
+  - Para calcular paidWorkedMinutes en serviceRange: cargar punches+schedules de ese serviceRange y correr computeDailyPayroll “ligero”.
+  - NO excluir por falta de schedule: si hay punch y paidWorkedMinutes>0, cuenta (schedule solo respalda workedEnd si falta salida).
+
+Response:
+{
+  planillaRange:{from,to},
+  serviceRange:{from,to},
+  hrConfigSnapshot:{...},
+  employees:[ { ...payrollTotals(planillaRange), servicePayTotal(serviceRange), (opcional) serviceBreakdown } ]
+}
+- serviceBreakdown debe ser OPCIONAL para no inflar payload:
+  solo incluir si includeServiceBreakdown=true.
+
+payroll.ts:
+- Separar:
+  computeRangePayroll(planillaRange) -> salarios/extras
+  computeServiceForRange(serviceRange) -> servicio
+- grandTotalPay = basePayTotal(planilla) + extrasNet(planilla) + servicePayTotal(service)
+
+UI reports.tsx:
+- Sección “Servicio a pagar”
+  - Checkbox “Usar default 2 semanas de fondo” ON por defecto
+  - DatePickers serviceFrom/serviceTo (readonly si ON; editable si OFF)
+  - Weekly default: serviceFrom=weekStart-14; serviceTo=serviceFrom+6
+- Mostrar siempre:
+  “Salarios: planillaFrom → planillaTo”
+  “Servicio corresponde a: serviceFrom → serviceTo”
+- Columna “Servicio” usa serviceRange (no planillaRange)
+- Si serviceRange != 7 días: warning “Rango no semanal”.
+
+Acceptance
+- Servicio calculado con serviceRange independiente.
+- Default 2 semanas de fondo funciona.
+- UI deja claro qué rangos se usan.
+- Override manual cambia servicio sin afectar salario.
+
+────────────────────────────────────────
+ORDEN DE EJECUCIÓN
+Fase 1 (paralelo):
+T001, T002, T004, T005
+Fase 2 (secuencial):
+T003
+Fase 3:
+T006 (probar con refresh de T005 activo)
+
+ENTREGABLE FINAL
+- Archivos tocados y resumen por tarea
+- Evidencia de pruebas (logs/screens)
+- Verificación: servicio usa serviceRange (pool ledger) y pesos paidWorkedMinutes del serviceRange
