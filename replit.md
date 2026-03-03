@@ -49,7 +49,13 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 -   **Public Menu Page:** Informational, public-facing menu showing product hierarchy, descriptions, prices, and images. Rate-limited and cached.
 -   **Item Voiding System:** Soft-voids requiring manager PIN authorization for sent items, with audit trails.
 -   **QR Order Editing:** Waiter can directly edit QR submissions, adding/removing products before acceptance.
--   **HR Payroll Engine:** Manages clock-in/out (including auto clock-out and no-schedule confirmations), break deductions, overtime calculations, and service charge proration.
+-   **HR Payroll Engine V2 (Phase A Complete):** Retroactive, deterministic payroll recalculation from raw punches. Features:
+    -   `normalizePunches()`: Filters zero-duration/corrupt punches, merges overlapping and adjacent (≤1min gap) intervals.
+    -   `computeDailyPayroll()`: Paid-start policy (SCHEDULE_START_CAP or ACTUAL), overtime only on MANUAL clock-out past scheduled end (AUTO/GEO_AUTO → 0), break deduction (configurable threshold/amount), tardiness tracking, flags array.
+    -   `overtimeRequiresApproval`: When true, calculated overtime shows as "Pendiente" with `overtimePaidMinutes=0`.
+    -   CCSS social charges: Configurable employee/employer rates, optional service charge inclusion.
+    -   UI: Planilla report with Extra (Calc) vs Extra (Pag) columns, per-day schedule display, flag badges, CCSS columns (conditional), delete/manual punch management.
+    -   HR Settings UI: Paid start policy, overtime approval toggle, break config, CCSS config.
 -   **QuickBooks Online Integration:** OAuth-based integration for asynchronous payment syncs with retry mechanisms, mapping RMS categories to QBO items, and environment-aware tax code handling.
 
 ## External Dependencies

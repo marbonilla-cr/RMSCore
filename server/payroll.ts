@@ -13,6 +13,17 @@ export interface HrConfig {
   overtimeMultiplier: string | number;
   latenessGraceMinutes: number;
   serviceChargeRate: string | number;
+  paidStartPolicy?: string;
+  overtimeRequiresApproval?: boolean;
+  ignoreZeroDurationPunches?: boolean;
+  mergeOverlappingPunches?: boolean;
+  breakDeductEnabled?: boolean;
+  breakThresholdMinutes?: number;
+  breakDeductMinutes?: number;
+  socialChargesEnabled?: boolean;
+  ccssEmployeeRate?: string | number;
+  ccssEmployerRate?: string | number;
+  ccssIncludeService?: boolean;
 }
 
 export interface PunchRecord {
@@ -38,23 +49,98 @@ export interface ScheduleDay {
   weekStartDate: string;
 }
 
+export interface NormalizedInterval {
+  start: Date;
+  end: Date;
+  clockOutType: string;
+}
+
+export interface NormalizePunchesResult {
+  intervals: NormalizedInterval[];
+  flags: string[];
+}
+
+export function normalizePunches(
+  punches: PunchRecord[],
+  hrConfig: HrConfig
+): NormalizePunchesResult {
+  const ignoreZero = hrConfig.ignoreZeroDurationPunches !== false;
+  const mergeOverlaps = hrConfig.mergeOverlappingPunches !== false;
+  const flags: string[] = [];
+
+  let intervals: NormalizedInterval[] = [];
+  for (const p of punches) {
+    const start = toDate(p.clockInAt);
+    const end = toDate(p.clockOutAt);
+    if (!start) continue;
+    if (!end) {
+      intervals.push({ start, end: start, clockOutType: p.clockOutType || "OPEN" });
+      continue;
+    }
+    if (ignoreZero && start.getTime() === end.getTime()) {
+      flags.push("PUNCH_FILTRADO_CERO", "PUNCH_BASURA_FILTRADO");
+      continue;
+    }
+    if (end.getTime() < start.getTime()) {
+      flags.push("PUNCH_FILTRADO_CORRUPTO", "PUNCH_BASURA_FILTRADO");
+      continue;
+    }
+    intervals.push({ start, end, clockOutType: p.clockOutType || "MANUAL" });
+  }
+
+  intervals.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  if (mergeOverlaps && intervals.length > 1) {
+    const merged: NormalizedInterval[] = [intervals[0]];
+    for (let i = 1; i < intervals.length; i++) {
+      const prev = merged[merged.length - 1];
+      const curr = intervals[i];
+      const gapMs = curr.start.getTime() - prev.end.getTime();
+
+      if (gapMs <= 0) {
+        if (curr.end.getTime() > prev.end.getTime()) {
+          prev.end = curr.end;
+          prev.clockOutType = curr.clockOutType;
+        }
+        flags.push("PUNCH_FUSIONADO_OVERLAP", "PUNCH_BASURA_FILTRADO");
+      } else if (gapMs <= 60000) {
+        prev.end = curr.end;
+        prev.clockOutType = curr.clockOutType;
+        flags.push("PUNCH_FUSIONADO_ADYACENTE", "PUNCH_BASURA_FILTRADO");
+      } else {
+        merged.push(curr);
+      }
+    }
+    intervals = merged;
+  }
+
+  return { intervals, flags };
+}
+
 export interface DailyPayrollResult {
-  workedMinutes: number;
-  normalMinutes: number;
-  overtimeMinutes: number;
+  normalMinutesRaw: number;
+  normalMinutesPaid: number;
+  overtimeCalculatedMinutes: number;
+  overtimePaidMinutes: number;
   unpaidBreakMinutes: number;
   paidWorkedMinutes: number;
   tardyMinutes: number;
   normalPay: number;
   overtimePay: number;
+  basePay: number;
+  hourlyRate: number;
+  scheduledStartTime: string | null;
+  scheduledEndTime: string | null;
+  flags: string[];
+  late: boolean;
+  noShow: boolean;
+  autoCheckout: boolean;
+  midnightShift: boolean;
+  hasMultiplePunches: boolean;
+  workedMinutes: number;
+  normalMinutes: number;
+  overtimeMinutes: number;
   baseTotalPayDay: number;
-  flags: {
-    late: boolean;
-    noShow: boolean;
-    autoCheckout: boolean;
-    midnightShift: boolean;
-    hasMultiplePunches: boolean;
-  };
 }
 
 function toDate(v: Date | string | null): Date | null {
@@ -84,6 +170,13 @@ function getScheduleTimesForDate(
   return { scheduledStart, scheduledEnd };
 }
 
+function formatTimeStr(d: Date | null): string | null {
+  if (!d) return null;
+  const h = d.getHours().toString().padStart(2, "0");
+  const m = d.getMinutes().toString().padStart(2, "0");
+  return `${h}:${m}`;
+}
+
 export function computeDailyPayroll(args: {
   punchesForDay: PunchRecord[];
   scheduleForDay: ScheduleDay | null;
@@ -96,93 +189,178 @@ export function computeDailyPayroll(args: {
   const multiplier = Number(hrConfig.overtimeMultiplier) || 1.5;
   const graceMinutes = hrConfig.latenessGraceMinutes || 0;
   const hourlyRate = dailyRate / jornadaHoras;
+  const paidStartPolicy = hrConfig.paidStartPolicy || "SCHEDULE_START_CAP";
+  const overtimeRequiresApproval = hrConfig.overtimeRequiresApproval !== false;
+  const breakDeductEnabled = hrConfig.breakDeductEnabled !== false;
+  const breakThresholdMin = hrConfig.breakThresholdMinutes ?? 540;
+  const breakDeductMin = hrConfig.breakDeductMinutes ?? 60;
 
   const hasSchedule = scheduleForDay && !scheduleForDay.isDayOff && scheduleForDay.startTime && scheduleForDay.endTime;
+  const isDayOff = scheduleForDay?.isDayOff === true;
 
   const { scheduledStart, scheduledEnd } = getScheduleTimesForDate(dateStr, scheduleForDay || null);
 
-  if (punchesForDay.length === 0) {
+  const schedStartStr = scheduledStart ? formatTimeStr(scheduledStart) : null;
+  const schedEndStr = scheduledEnd ? formatTimeStr(scheduledEnd) : null;
+
+  const emptyResult = (extraFlags: string[] = [], noShow = false): DailyPayrollResult => ({
+    normalMinutesRaw: 0, normalMinutesPaid: 0,
+    overtimeCalculatedMinutes: 0, overtimePaidMinutes: 0,
+    unpaidBreakMinutes: 0, paidWorkedMinutes: 0, tardyMinutes: 0,
+    normalPay: 0, overtimePay: 0, basePay: 0, hourlyRate,
+    scheduledStartTime: schedStartStr, scheduledEndTime: schedEndStr,
+    flags: noShow ? [...extraFlags, "NO_SHOW"] : extraFlags,
+    late: false, noShow, autoCheckout: false, midnightShift: false, hasMultiplePunches: false,
+    workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0, baseTotalPayDay: 0,
+  });
+
+  const { intervals, flags: normalizeFlags } = normalizePunches(punchesForDay, hrConfig);
+  const rawPunchCount = punchesForDay.length;
+
+  if (intervals.length === 0) {
+    return emptyResult(normalizeFlags, !!hasSchedule);
+  }
+
+  const flags: string[] = [...normalizeFlags];
+  if (rawPunchCount > 1) {
+    flags.push("PUNCHES_MULTIPLES");
+  }
+
+  const firstClockIn = intervals[0].start;
+  const lastInterval = intervals[intervals.length - 1];
+  let lastClockOut = lastInterval.end;
+  let lastClockOutType = lastInterval.clockOutType;
+  const hasMultiplePunches = intervals.length > 1;
+  let autoCheckout = false;
+
+  const isCase1 = !hasSchedule || isDayOff;
+
+  if (isCase1) {
+    if (isDayOff) flags.push("DIA_LIBRE");
+    flags.push("SIN_HORARIO");
+
+    const paidStart = firstClockIn;
+    let ordinaryEnd: Date;
+
+    if (lastClockOutType === "OPEN" || lastClockOut.getTime() === firstClockIn.getTime()) {
+      ordinaryEnd = new Date(firstClockIn.getTime() + jornadaHoras * 3600000);
+      flags.push("AUTO_NO_SCHEDULE");
+      lastClockOutType = "AUTO_NO_SCHEDULE";
+      autoCheckout = true;
+    } else {
+      ordinaryEnd = lastClockOut;
+      autoCheckout = lastClockOutType === "AUTO" || lastClockOutType === "AUTO_NO_SCHEDULE" || lastClockOutType === "GEO_AUTO";
+    }
+
+    const normalMinutesRaw = Math.max(0, diffMinutes(paidStart, ordinaryEnd));
+    const overtimeCalculatedMinutes = 0;
+    const overtimePaidMinutes = 0;
+    const unpaidBreakMinutes = 0;
+    const normalMinutesPaid = normalMinutesRaw;
+    const paidWorkedMinutes = normalMinutesPaid;
+
+    const normalPay = round2((normalMinutesPaid / 60) * hourlyRate);
+    const overtimePay = 0;
+    const basePay = normalPay;
+
+    if (autoCheckout && !flags.includes("AUTO_OUT") && !flags.includes("AUTO_NO_SCHEDULE")) {
+      flags.push("AUTO_OUT");
+    }
+
     return {
-      workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0,
-      unpaidBreakMinutes: 0, paidWorkedMinutes: 0, tardyMinutes: 0,
-      normalPay: 0, overtimePay: 0, baseTotalPayDay: 0,
-      flags: { late: false, noShow: !!hasSchedule, autoCheckout: false, midnightShift: false, hasMultiplePunches: false },
+      normalMinutesRaw, normalMinutesPaid,
+      overtimeCalculatedMinutes, overtimePaidMinutes,
+      unpaidBreakMinutes, paidWorkedMinutes, tardyMinutes: 0,
+      normalPay, overtimePay, basePay, hourlyRate,
+      scheduledStartTime: schedStartStr, scheduledEndTime: schedEndStr,
+      flags,
+      late: false, noShow: false, autoCheckout, midnightShift: false, hasMultiplePunches,
+      workedMinutes: normalMinutesRaw, normalMinutes: normalMinutesPaid, overtimeMinutes: 0, baseTotalPayDay: basePay,
     };
   }
 
-  const hasMultiplePunches = punchesForDay.length > 1;
-  const sorted = [...punchesForDay].sort((a, b) => toDate(a.clockInAt)!.getTime() - toDate(b.clockInAt)!.getTime());
-  const firstPunch = sorted[0];
+  let paidStart: Date;
+  if (paidStartPolicy === "SCHEDULE_START_CAP" && scheduledStart) {
+    paidStart = firstClockIn.getTime() > scheduledStart.getTime() ? firstClockIn : scheduledStart;
+  } else {
+    paidStart = firstClockIn;
+  }
 
-  const clockIn = toDate(firstPunch.clockInAt)!;
-  const firstClockOut = toDate(firstPunch.clockOutAt);
-  const firstClockOutType = firstPunch.clockOutType;
+  if (lastClockOutType === "OPEN" || (lastClockOut.getTime() === lastInterval.start.getTime() && lastInterval.start.getTime() === lastInterval.end.getTime())) {
+    if (scheduledEnd) {
+      lastClockOut = scheduledEnd;
+      flags.push("AUTO_OUT");
+      lastClockOutType = "AUTO";
+      autoCheckout = true;
+    } else {
+      lastClockOut = new Date(firstClockIn.getTime() + jornadaHoras * 3600000);
+      flags.push("AUTO_NO_SCHEDULE");
+      lastClockOutType = "AUTO_NO_SCHEDULE";
+      autoCheckout = true;
+    }
+  } else {
+    autoCheckout = lastClockOutType === "AUTO" || lastClockOutType === "AUTO_NO_SCHEDULE" || lastClockOutType === "GEO_AUTO";
+    if (autoCheckout) flags.push("AUTO_OUT");
+  }
+
+  const ordinaryEnd = scheduledEnd && lastClockOut.getTime() > scheduledEnd.getTime()
+    ? scheduledEnd : lastClockOut;
+
+  const normalMinutesRaw = Math.max(0, diffMinutes(paidStart, ordinaryEnd));
+
+  let overtimeCalculatedMinutes = 0;
+  if (scheduledEnd && lastClockOutType === "MANUAL" && lastClockOut.getTime() > scheduledEnd.getTime()) {
+    overtimeCalculatedMinutes = diffMinutes(scheduledEnd, lastClockOut);
+  }
+
+  let overtimePaidMinutes = overtimeCalculatedMinutes;
+  if (overtimeRequiresApproval && overtimeCalculatedMinutes > 0) {
+    overtimePaidMinutes = 0;
+    flags.push("OVERTIME_PENDIENTE_APROBACION");
+  }
+
+  let unpaidBreakMinutes = 0;
+  if (breakDeductEnabled) {
+    const payableWindow = normalMinutesRaw + overtimeCalculatedMinutes;
+    if (payableWindow >= breakThresholdMin) {
+      unpaidBreakMinutes = breakDeductMin;
+    }
+  }
+  const normalMinutesPaid = Math.max(0, normalMinutesRaw - unpaidBreakMinutes);
 
   let tardyMinutes = 0;
   let late = false;
-  if (scheduledStart) {
-    const diff = diffMinutes(scheduledStart, clockIn);
+  if (scheduledStart && firstClockIn.getTime() > scheduledStart.getTime()) {
+    const diff = diffMinutes(scheduledStart, firstClockIn);
     if (diff > graceMinutes) {
       tardyMinutes = diff;
       late = true;
+      flags.push("TARDE");
     }
   }
 
-  const effectiveStart = scheduledStart && clockIn.getTime() < scheduledStart.getTime()
-    ? scheduledStart : clockIn;
-
-  let normalEnd: Date;
-  let autoCheckout = false;
-  if (firstClockOut) {
-    if (scheduledEnd && firstClockOut.getTime() > scheduledEnd.getTime()) {
-      normalEnd = scheduledEnd;
-    } else {
-      normalEnd = firstClockOut;
-    }
-    autoCheckout = firstClockOutType === "AUTO" || firstClockOutType === "AUTO_NO_SCHEDULE";
-  } else if (scheduledEnd) {
-    normalEnd = scheduledEnd;
-    autoCheckout = true;
-  } else {
-    return {
-      workedMinutes: 0, normalMinutes: 0, overtimeMinutes: 0,
-      unpaidBreakMinutes: 0, paidWorkedMinutes: 0, tardyMinutes,
-      normalPay: 0, overtimePay: 0, baseTotalPayDay: 0,
-      flags: { late, noShow: false, autoCheckout: true, midnightShift: false, hasMultiplePunches },
-    };
-  }
-
-  const normalWorkedMinutes = Math.max(0, diffMinutes(effectiveStart, normalEnd));
-
-  let overtimeMinutes = 0;
-  if (hasMultiplePunches) {
-    for (let i = 1; i < sorted.length; i++) {
-      const pIn = toDate(sorted[i].clockInAt);
-      const pOut = toDate(sorted[i].clockOutAt);
-      if (pIn && pOut) {
-        overtimeMinutes += Math.max(0, diffMinutes(pIn, pOut));
-      }
-    }
-  }
-
-  const totalWorkedMinutes = normalWorkedMinutes + overtimeMinutes;
-  const unpaidBreakMinutes = normalWorkedMinutes >= 540 ? 60 : 0;
-  const normalMinutes = Math.max(0, normalWorkedMinutes - unpaidBreakMinutes);
-  const paidWorkedMinutes = normalMinutes + overtimeMinutes;
+  const paidWorkedMinutes = normalMinutesPaid + overtimePaidMinutes;
 
   const midnightShift = scheduledStart && scheduledEnd
     ? scheduledEnd.getDate() !== scheduledStart.getDate()
     : false;
 
-  const normalPay = round2((normalMinutes / 60) * hourlyRate);
-  const overtimePay = round2((overtimeMinutes / 60) * hourlyRate * multiplier);
-  const baseTotalPayDay = round2(normalPay + overtimePay);
+  const normalPay = round2((normalMinutesPaid / 60) * hourlyRate);
+  const overtimePay = round2((overtimePaidMinutes / 60) * hourlyRate * multiplier);
+  const basePay = round2(normalPay + overtimePay);
 
   return {
-    workedMinutes: totalWorkedMinutes, normalMinutes, overtimeMinutes,
+    normalMinutesRaw, normalMinutesPaid,
+    overtimeCalculatedMinutes, overtimePaidMinutes,
     unpaidBreakMinutes, paidWorkedMinutes, tardyMinutes,
-    normalPay, overtimePay, baseTotalPayDay,
-    flags: { late, noShow: false, autoCheckout, midnightShift, hasMultiplePunches },
+    normalPay, overtimePay, basePay, hourlyRate,
+    scheduledStartTime: schedStartStr, scheduledEndTime: schedEndStr,
+    flags,
+    late, noShow: false, autoCheckout, midnightShift, hasMultiplePunches,
+    workedMinutes: normalMinutesRaw + overtimeCalculatedMinutes,
+    normalMinutes: normalMinutesPaid,
+    overtimeMinutes: overtimePaidMinutes,
+    baseTotalPayDay: basePay,
   };
 }
 
@@ -310,10 +488,13 @@ export interface EmployeePayrollResult {
   employeeId: number;
   name: string;
   role: string;
+  hourlyRate: number;
   daysScheduled: number;
   daysPresent: number;
   daysNoShow: number;
   totalNormalMin: number;
+  totalOvertimeCalcMin: number;
+  totalOvertimePaidMin: number;
   totalOvertimeMin: number;
   totalUnpaidBreakMin: number;
   totalLateMin: number;
@@ -325,6 +506,12 @@ export interface EmployeePayrollResult {
   extrasDeductions: number;
   extrasNet: number;
   servicePayTotal: number;
+  ccssBase: number;
+  ccssEmployee: number;
+  ccssEmployer: number;
+  grossPay: number;
+  netPay: number;
+  employerCost: number;
   grandTotalPay: number;
   dailyBreakdown: DailyBreakdownEntry[];
 }
@@ -334,12 +521,16 @@ export interface DailyBreakdownEntry {
   workedMinutes: number;
   normalMinutes: number;
   overtimeMinutes: number;
+  overtimeCalculatedMinutes: number;
+  overtimePaidMinutes: number;
   unpaidBreakMinutes: number;
   tardyMinutes: number;
   basePay: number;
   extras: { id: number; typeCode: string; amount: number; note: string | null; kind: string }[];
   servicePayDay: number;
-  flags: DailyPayrollResult["flags"];
+  scheduledStartTime: string | null;
+  scheduledEndTime: string | null;
+  flags: string[];
 }
 
 function getDateRange(dateFrom: string, dateTo: string): string[] {
@@ -371,6 +562,11 @@ export function computeRangePayroll(args: {
 }): EmployeePayrollResult[] {
   const { employees, schedulesMap, punchesMap, extrasMap, servicePoolMap, extraTypesKindMap, dateFrom, dateTo, hrConfig } = args;
   const dates = getDateRange(dateFrom, dateTo);
+
+  const socialChargesEnabled = hrConfig.socialChargesEnabled === true;
+  const ccssEmployeeRate = Number(hrConfig.ccssEmployeeRate) || 10.67;
+  const ccssEmployerRate = Number(hrConfig.ccssEmployerRate) || 26.33;
+  const ccssIncludeService = hrConfig.ccssIncludeService === true;
 
   const dailyCache: Record<string, DailyPayrollResult> = {};
   function getDailyResult(empId: number, dateStr: string, dailyRate: number): DailyPayrollResult {
@@ -412,10 +608,12 @@ export function computeRangePayroll(args: {
 
   for (const emp of employees) {
     const dailyRate = Number(emp.dailyRate) || 0;
+    const jornadaHoras = Number(hrConfig.overtimeDailyThresholdHours) || 8;
+    const empHourlyRate = dailyRate / jornadaHoras;
     const isWaiter = emp.role === "WAITER" || emp.role === "SALONERO";
 
     let daysScheduled = 0, daysPresent = 0, daysNoShow = 0;
-    let totalNormalMin = 0, totalOvertimeMin = 0, totalUnpaidBreakMin = 0, totalLateMin = 0, lateCount = 0;
+    let totalNormalMin = 0, totalOvertimeCalcMin = 0, totalOvertimePaidMin = 0, totalUnpaidBreakMin = 0, totalLateMin = 0, lateCount = 0;
     let normalPay = 0, overtimePay = 0, basePayTotal = 0;
     let extrasEarnings = 0, extrasDeductions = 0;
     let servicePayTotal = 0;
@@ -434,17 +632,18 @@ export function computeRangePayroll(args: {
       const daily = getDailyResult(emp.id, dateStr, dailyRate);
 
       if (punches.length > 0) daysPresent++;
-      if (daily.flags.noShow) daysNoShow++;
-      totalNormalMin += daily.normalMinutes;
-      totalOvertimeMin += daily.overtimeMinutes;
+      if (daily.noShow) daysNoShow++;
+      totalNormalMin += daily.normalMinutesPaid;
+      totalOvertimeCalcMin += daily.overtimeCalculatedMinutes;
+      totalOvertimePaidMin += daily.overtimePaidMinutes;
       totalUnpaidBreakMin += daily.unpaidBreakMinutes;
-      if (daily.flags.late) {
+      if (daily.late) {
         lateCount++;
         totalLateMin += daily.tardyMinutes;
       }
       normalPay += daily.normalPay;
       overtimePay += daily.overtimePay;
-      basePayTotal += daily.baseTotalPayDay;
+      basePayTotal += daily.basePay;
 
       const extrasFormatted: DailyBreakdownEntry["extras"] = [];
       for (const ex of dayExtras) {
@@ -465,29 +664,54 @@ export function computeRangePayroll(args: {
       dailyBreakdown.push({
         date: dateStr,
         workedMinutes: daily.workedMinutes,
-        normalMinutes: daily.normalMinutes,
-        overtimeMinutes: daily.overtimeMinutes,
+        normalMinutes: daily.normalMinutesPaid,
+        overtimeMinutes: daily.overtimePaidMinutes,
+        overtimeCalculatedMinutes: daily.overtimeCalculatedMinutes,
+        overtimePaidMinutes: daily.overtimePaidMinutes,
         unpaidBreakMinutes: daily.unpaidBreakMinutes,
         tardyMinutes: daily.tardyMinutes,
-        basePay: daily.baseTotalPayDay,
+        basePay: daily.basePay,
         extras: extrasFormatted,
         servicePayDay,
+        scheduledStartTime: daily.scheduledStartTime,
+        scheduledEndTime: daily.scheduledEndTime,
         flags: daily.flags,
       });
     }
 
     const extrasNet = round2(extrasEarnings - extrasDeductions);
-    const grandTotalPay = round2(basePayTotal + extrasNet + servicePayTotal);
+    normalPay = round2(normalPay);
+    overtimePay = round2(overtimePay);
+    basePayTotal = round2(basePayTotal);
+    servicePayTotal = round2(servicePayTotal);
+
+    const grossPay = round2(basePayTotal + extrasNet + servicePayTotal);
+
+    let ccssBase = 0, ccssEmployee = 0, ccssEmployer = 0;
+    if (socialChargesEnabled) {
+      ccssBase = round2(basePayTotal + (ccssIncludeService ? servicePayTotal : 0));
+      ccssEmployee = round2(ccssBase * ccssEmployeeRate / 100);
+      ccssEmployer = round2(ccssBase * ccssEmployerRate / 100);
+    }
+
+    const netPay = round2(grossPay - ccssEmployee);
+    const employerCost = round2(grossPay + ccssEmployer);
+    const grandTotalPay = grossPay;
 
     results.push({
       employeeId: emp.id,
       name: emp.displayName,
       role: emp.role,
+      hourlyRate: empHourlyRate,
       daysScheduled, daysPresent, daysNoShow,
-      totalNormalMin, totalOvertimeMin, totalUnpaidBreakMin, totalLateMin, lateCount,
-      normalPay: round2(normalPay), overtimePay: round2(overtimePay), basePayTotal: round2(basePayTotal),
+      totalNormalMin, totalOvertimeCalcMin, totalOvertimePaidMin,
+      totalOvertimeMin: totalOvertimePaidMin,
+      totalUnpaidBreakMin, totalLateMin, lateCount,
+      normalPay, overtimePay, basePayTotal,
       extrasEarnings: round2(extrasEarnings), extrasDeductions: round2(extrasDeductions), extrasNet,
-      servicePayTotal: round2(servicePayTotal),
+      servicePayTotal,
+      ccssBase, ccssEmployee, ccssEmployer,
+      grossPay, netPay, employerCost,
       grandTotalPay,
       dailyBreakdown,
     });

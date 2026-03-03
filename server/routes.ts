@@ -5173,6 +5173,59 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/hr/manual-punch", requirePermission("HR_EDIT_PUNCHES"), async (req, res) => {
+    try {
+      const { employeeId, date, clockInTime, clockOutTime, reason, notes } = req.body;
+      if (!employeeId || !date || !clockInTime || !reason) {
+        return res.status(400).json({ message: "Empleado, fecha, hora de entrada y razón son obligatorios" });
+      }
+
+      const clockInAt = new Date(`${date}T${clockInTime}:00`);
+      if (isNaN(clockInAt.getTime())) {
+        return res.status(400).json({ message: "Fecha/hora de entrada inválida" });
+      }
+
+      let clockOutAt: Date | undefined;
+      let workedMinutes: number | undefined;
+      if (clockOutTime) {
+        clockOutAt = new Date(`${date}T${clockOutTime}:00`);
+        if (isNaN(clockOutAt.getTime())) {
+          return res.status(400).json({ message: "Hora de salida inválida" });
+        }
+        if (clockOutAt <= clockInAt) {
+          return res.status(400).json({ message: "La hora de salida debe ser posterior a la entrada" });
+        }
+        workedMinutes = Math.floor((clockOutAt.getTime() - clockInAt.getTime()) / 60000);
+      }
+
+      const punch = await storage.createTimePunch({
+        employeeId: Number(employeeId),
+        businessDate: date,
+        clockInAt,
+        clockOutAt: clockOutAt || null,
+        clockOutType: clockOutAt ? "MANUAL" : undefined,
+        workedMinutes: workedMinutes ?? undefined,
+        clockinGeoVerified: false,
+        clockoutGeoVerified: clockOutAt ? false : undefined,
+        notes: `Marca manual: ${reason}${notes ? ` - ${notes}` : ""}`,
+      });
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "MANUAL_PUNCH_CREATE",
+        entityType: "HR_PUNCH",
+        entityId: punch.id,
+        metadata: { targetEmployeeId: employeeId, date, clockInTime, clockOutTime, reason, notes },
+      });
+
+      broadcast("hr_punch_update", { employeeId, type: "manual" });
+      res.json(punch);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   // -- My current punch status --
   app.get("/api/hr/my-punch", requireAuth, async (req, res) => {
     const punch = await storage.getOpenPunchForEmployee(req.session.userId!);
@@ -5252,6 +5305,39 @@ export async function registerRoutes(
       
       broadcast("hr_punch_update", { employeeId: existing.employeeId, type: "edited" });
       res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/hr/punches/:id", requirePermission("HR_EDIT_PUNCHES"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const existing = await storage.getTimePunch(id);
+      if (!existing) return res.status(404).json({ message: "Marca no encontrada" });
+
+      await storage.deleteTimePunch(id);
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: req.session.userId!,
+        action: "PUNCH_DELETED",
+        entityType: "HR_PUNCH",
+        entityId: id,
+        metadata: {
+          deletedPunch: {
+            employeeId: existing.employeeId,
+            businessDate: existing.businessDate,
+            clockInAt: existing.clockInAt,
+            clockOutAt: existing.clockOutAt,
+            clockOutType: existing.clockOutType,
+            workedMinutes: existing.workedMinutes,
+          },
+        },
+      });
+
+      broadcast("hr_punch_update", { employeeId: existing.employeeId, type: "deleted" });
+      res.json({ message: "Marca eliminada." });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
@@ -5391,6 +5477,17 @@ export async function registerRoutes(
         overtimeMultiplier: settings?.overtimeMultiplier || "1.5",
         latenessGraceMinutes: settings?.latenessGraceMinutes || 0,
         serviceChargeRate: settings?.serviceChargeRate || "0.10",
+        paidStartPolicy: settings?.paidStartPolicy || "SCHEDULE_START_CAP",
+        overtimeRequiresApproval: settings?.overtimeRequiresApproval !== false,
+        ignoreZeroDurationPunches: settings?.ignoreZeroDurationPunches !== false,
+        mergeOverlappingPunches: settings?.mergeOverlappingPunches !== false,
+        breakDeductEnabled: settings?.breakDeductEnabled !== false,
+        breakThresholdMinutes: settings?.breakThresholdMinutes ?? 540,
+        breakDeductMinutes: settings?.breakDeductMinutes ?? 60,
+        socialChargesEnabled: settings?.socialChargesEnabled === true,
+        ccssEmployeeRate: settings?.ccssEmployeeRate || "10.67",
+        ccssEmployerRate: settings?.ccssEmployerRate || "26.33",
+        ccssIncludeService: settings?.ccssIncludeService === true,
       };
 
       const employees = await storage.getAllUsers();
@@ -5518,13 +5615,33 @@ export async function registerRoutes(
 
       const enrichedEmployees = payrollResult.map(emp => {
         const svcPay = serviceByEmployee[emp.employeeId] || 0;
+        const grossPay = round2(emp.basePayTotal + emp.extrasNet + svcPay);
+
+        let ccssBase = 0, ccssEmployee = 0, ccssEmployer = 0;
+        if (hrConfig.socialChargesEnabled) {
+          ccssBase = round2(emp.basePayTotal + (hrConfig.ccssIncludeService ? svcPay : 0));
+          ccssEmployee = round2(ccssBase * Number(hrConfig.ccssEmployeeRate) / 100);
+          ccssEmployer = round2(ccssBase * Number(hrConfig.ccssEmployerRate) / 100);
+        }
+
         return {
           ...emp,
           servicePayTotal: svcPay,
-          grandTotalPay: round2(emp.basePayTotal + emp.extrasNet + svcPay),
+          grossPay,
+          ccssBase,
+          ccssEmployee,
+          ccssEmployer,
+          netPay: round2(grossPay - ccssEmployee),
+          employerCost: round2(grossPay + ccssEmployer),
+          grandTotalPay: grossPay,
           operatedAsWaiter: operationalWaiterIds.has(emp.employeeId),
         };
       });
+
+      const hrConfigSnapshotWarnings: string[] = [];
+      if (hrConfig.ccssIncludeService && hrConfig.socialChargesEnabled) {
+        hrConfigSnapshotWarnings.push("CCSS incluye servicio en base — verificar que servicePay está integrado correctamente.");
+      }
 
       res.json({
         planillaRange: { from: dateFrom, to: dateTo },
@@ -5536,8 +5653,18 @@ export async function registerRoutes(
           multiplicadorHoraExtra: Number(hrConfig.overtimeMultiplier),
           servicePercentDefault: Number(hrConfig.serviceChargeRate),
           latenessGraceMinutes: hrConfig.latenessGraceMinutes,
+          paidStartPolicy: hrConfig.paidStartPolicy,
+          overtimeRequiresApproval: hrConfig.overtimeRequiresApproval,
+          breakDeductEnabled: hrConfig.breakDeductEnabled,
+          breakThresholdMinutes: hrConfig.breakThresholdMinutes,
+          breakDeductMinutes: hrConfig.breakDeductMinutes,
+          socialChargesEnabled: hrConfig.socialChargesEnabled,
+          ccssEmployeeRate: Number(hrConfig.ccssEmployeeRate),
+          ccssEmployerRate: Number(hrConfig.ccssEmployerRate),
+          ccssIncludeService: hrConfig.ccssIncludeService,
           roundingRule: "EXACT_MINUTE",
         },
+        hrConfigSnapshotWarnings,
         employees: enrichedEmployees,
       });
     } catch (err: any) {
@@ -6955,46 +7082,6 @@ export async function registerRoutes(
       });
 
       res.json({ ok: true, availablePortions: newPortions, active: newActive });
-    } catch (err: any) {
-      res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/setup/create-manager-marbonilla", async (_req, res) => {
-    try {
-      const results: any[] = [];
-
-      const gerente = await storage.getUserByUsername("gerente");
-      if (gerente && !gerente.active) {
-        await storage.updateUser(gerente.id, { active: true });
-        results.push({ action: "reactivated", username: "gerente", id: gerente.id });
-      } else if (gerente) {
-        results.push({ action: "already_active", username: "gerente", id: gerente.id });
-      }
-
-      const existing = await storage.getUserByUsername("marbonilla");
-      if (existing) {
-        if (!existing.active) {
-          await storage.updateUser(existing.id, { active: true });
-          results.push({ action: "reactivated", username: "marbonilla", id: existing.id });
-        } else {
-          results.push({ action: "already_exists", username: "marbonilla", id: existing.id });
-        }
-      } else {
-        const user = await storage.createUser({
-          username: "marbonilla",
-          password: "marbonilla2024",
-          displayName: "Marcelo Bonilla",
-          role: "MANAGER",
-          active: true,
-          email: null,
-          dailyRate: null,
-        });
-        await storage.enrollPin(user.id, "8098");
-        results.push({ action: "created", username: "marbonilla", id: user.id });
-      }
-
-      res.json({ ok: true, results });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

@@ -8,12 +8,23 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Select,
   SelectContent,
@@ -29,7 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2, Edit, Clock, MapPin, ChevronDown, Users, Calendar } from "lucide-react";
+import { Loader2, Edit, Clock, MapPin, ChevronDown, Users, Calendar, Trash2, Plus } from "lucide-react";
 
 interface Punch {
   id: number;
@@ -54,6 +65,15 @@ interface Employee {
   displayName: string;
 }
 
+const MANUAL_PUNCH_REASONS = [
+  { value: "olvido_marcar", label: "Olvidó marcar" },
+  { value: "fallo_sistema", label: "Fallo del sistema" },
+  { value: "correccion_horario", label: "Corrección de horario" },
+  { value: "dia_libre_trabajado", label: "Día libre trabajado" },
+  { value: "capacitacion", label: "Capacitación" },
+  { value: "otro", label: "Otro" },
+];
+
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -66,6 +86,11 @@ function formatTime(dateStr: string): string {
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
   return d.toLocaleDateString("es-CR", { day: "2-digit", month: "2-digit" });
+}
+
+function formatFullDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("es-CR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 function formatWorked(minutes: number | null | undefined): string {
@@ -181,8 +206,14 @@ export default function PunchesPage() {
   const [editClockOut, setEditClockOut] = useState("");
   const [editReason, setEditReason] = useState("");
 
-  const [overrideEmployeeId, setOverrideEmployeeId] = useState("");
-  const [overrideReason, setOverrideReason] = useState("");
+  const [deletingPunch, setDeletingPunch] = useState<Punch | null>(null);
+
+  const [manualEmployeeId, setManualEmployeeId] = useState("");
+  const [manualDate, setManualDate] = useState(todayStr());
+  const [manualClockIn, setManualClockIn] = useState("");
+  const [manualClockOut, setManualClockOut] = useState("");
+  const [manualReason, setManualReason] = useState("");
+  const [manualNotes, setManualNotes] = useState("");
 
   const isRange = dateFrom !== dateTo;
   const queryParams = isRange
@@ -223,7 +254,9 @@ export default function PunchesPage() {
     return nameA.localeCompare(nameB);
   });
 
-  const invalidatePayroll = () => {
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/hr/punches"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/hr/open-punches"] });
     queryClient.invalidateQueries({
       predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "/api/hr/payroll-report",
     });
@@ -238,9 +271,7 @@ export default function PunchesPage() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/punches"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/open-punches"] });
-      invalidatePayroll();
+      invalidateAll();
       toast({ title: "Marca actualizada" });
       setEditingPunch(null);
     },
@@ -249,19 +280,42 @@ export default function PunchesPage() {
     },
   });
 
-  const overrideMutation = useMutation({
-    mutationFn: async (data: { employeeId: number; action: "clock_in" | "clock_out"; reason: string }) => {
-      await apiRequest("POST", "/api/hr/override-clock", data);
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/hr/punches/${id}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/punches"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/open-punches"] });
-      invalidatePayroll();
-      toast({ title: "Marca manual aplicada" });
-      setOverrideReason("");
+      invalidateAll();
+      toast({ title: "Marca eliminada" });
+      setDeletingPunch(null);
     },
     onError: (err: Error) => {
-      toast({ title: "Error en marca manual", description: err.message, variant: "destructive" });
+      toast({ title: "Error al eliminar marca", description: err.message, variant: "destructive" });
+      setDeletingPunch(null);
+    },
+  });
+
+  const manualPunchMutation = useMutation({
+    mutationFn: async (data: {
+      employeeId: number;
+      date: string;
+      clockInTime: string;
+      clockOutTime?: string;
+      reason: string;
+      notes?: string;
+    }) => {
+      await apiRequest("POST", "/api/hr/manual-punch", data);
+    },
+    onSuccess: () => {
+      invalidateAll();
+      toast({ title: "Marca manual creada" });
+      setManualClockIn("");
+      setManualClockOut("");
+      setManualReason("");
+      setManualNotes("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error al crear marca manual", description: err.message, variant: "destructive" });
     },
   });
 
@@ -286,19 +340,26 @@ export default function PunchesPage() {
     });
   }
 
-  function handleOverride(action: "clock_in" | "clock_out") {
-    if (!overrideEmployeeId) {
+  function handleManualPunchSubmit() {
+    if (!manualEmployeeId) {
       toast({ title: "Seleccione empleado", variant: "destructive" });
       return;
     }
-    if (!overrideReason.trim()) {
-      toast({ title: "Razón requerida", description: "Debe indicar una razón para la marca manual.", variant: "destructive" });
+    if (!manualClockIn) {
+      toast({ title: "Hora de entrada requerida", variant: "destructive" });
       return;
     }
-    overrideMutation.mutate({
-      employeeId: parseInt(overrideEmployeeId),
-      action,
-      reason: overrideReason.trim(),
+    if (!manualReason) {
+      toast({ title: "Razón requerida", description: "Debe seleccionar una razón para la marca manual.", variant: "destructive" });
+      return;
+    }
+    manualPunchMutation.mutate({
+      employeeId: parseInt(manualEmployeeId),
+      date: manualDate,
+      clockInTime: manualClockIn,
+      clockOutTime: manualClockOut || undefined,
+      reason: MANUAL_PUNCH_REASONS.find(r => r.value === manualReason)?.label || manualReason,
+      notes: manualNotes.trim() || undefined,
     });
   }
 
@@ -353,56 +414,99 @@ export default function PunchesPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Marca Manual</CardTitle>
+          <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
+            <Plus className="h-5 w-5" />
+            Marca Manual
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex gap-3 flex-wrap items-end">
             <div className="space-y-1 min-w-[180px]">
-              <Label htmlFor="override-employee">Empleado</Label>
+              <Label>Empleado *</Label>
               <Select
-                value={overrideEmployeeId}
-                onValueChange={setOverrideEmployeeId}
+                value={manualEmployeeId}
+                onValueChange={setManualEmployeeId}
               >
-                <SelectTrigger data-testid="select-override-employee">
+                <SelectTrigger data-testid="select-manual-employee">
                   <SelectValue placeholder="Seleccionar empleado" />
                 </SelectTrigger>
                 <SelectContent>
                   {employees?.map((emp) => (
-                    <SelectItem key={emp.id} value={String(emp.id)} data-testid={`option-employee-${emp.id}`}>
+                    <SelectItem key={emp.id} value={String(emp.id)} data-testid={`option-manual-employee-${emp.id}`}>
                       {emp.displayName}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1 flex-1 min-w-[200px]">
-              <Label htmlFor="override-reason">Razón</Label>
+            <div className="space-y-1">
+              <Label>Fecha *</Label>
               <Input
-                id="override-reason"
-                data-testid="input-override-reason"
-                value={overrideReason}
-                onChange={(e) => setOverrideReason(e.target.value)}
-                placeholder="Razón de la marca manual"
+                data-testid="input-manual-date"
+                type="date"
+                value={manualDate}
+                onChange={(e) => setManualDate(e.target.value)}
+                className="w-[150px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Entrada *</Label>
+              <Input
+                data-testid="input-manual-clockin"
+                type="time"
+                value={manualClockIn}
+                onChange={(e) => setManualClockIn(e.target.value)}
+                className="w-[130px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Salida (opcional)</Label>
+              <Input
+                data-testid="input-manual-clockout"
+                type="time"
+                value={manualClockOut}
+                onChange={(e) => setManualClockOut(e.target.value)}
+                className="w-[130px]"
+              />
+            </div>
+          </div>
+          <div className="flex gap-3 flex-wrap items-end">
+            <div className="space-y-1 min-w-[200px]">
+              <Label>Razón *</Label>
+              <Select
+                value={manualReason}
+                onValueChange={setManualReason}
+              >
+                <SelectTrigger data-testid="select-manual-reason">
+                  <SelectValue placeholder="Seleccionar razón" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MANUAL_PUNCH_REASONS.map((r) => (
+                    <SelectItem key={r.value} value={r.value} data-testid={`option-reason-${r.value}`}>
+                      {r.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1 flex-1 min-w-[200px]">
+              <Label>Nota (opcional)</Label>
+              <Input
+                data-testid="input-manual-notes"
+                value={manualNotes}
+                onChange={(e) => setManualNotes(e.target.value)}
+                placeholder="Nota adicional..."
               />
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
             <Button
-              data-testid="button-override-clockin"
-              onClick={() => handleOverride("clock_in")}
-              disabled={overrideMutation.isPending}
+              data-testid="button-manual-punch-submit"
+              onClick={handleManualPunchSubmit}
+              disabled={manualPunchMutation.isPending}
             >
-              {overrideMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Marcar Entrada
-            </Button>
-            <Button
-              variant="outline"
-              data-testid="button-override-clockout"
-              onClick={() => handleOverride("clock_out")}
-              disabled={overrideMutation.isPending}
-            >
-              {overrideMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Marcar Salida
+              {manualPunchMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Crear Marca Manual
             </Button>
           </div>
         </CardContent>
@@ -473,6 +577,7 @@ export default function PunchesPage() {
                     <TableHead>Tardía (min)</TableHead>
                     <TableHead>Tipo Salida</TableHead>
                     <TableHead>Geo</TableHead>
+                    <TableHead>Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -480,8 +585,6 @@ export default function PunchesPage() {
                     <TableRow
                       key={punch.id}
                       data-testid={`row-punch-${punch.id}`}
-                      className="cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => openEditDialog(punch)}
                     >
                       {isRange && (
                         <TableCell className="text-xs text-muted-foreground" data-testid={`text-punch-date-${punch.id}`}>
@@ -515,6 +618,26 @@ export default function PunchesPage() {
                         ) : (
                           "-"
                         )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            data-testid={`button-edit-punch-${punch.id}`}
+                            onClick={() => openEditDialog(punch)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            data-testid={`button-delete-punch-${punch.id}`}
+                            onClick={() => setDeletingPunch(punch)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -588,6 +711,40 @@ export default function PunchesPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!deletingPunch} onOpenChange={(open) => { if (!open) setDeletingPunch(null); }}>
+        <AlertDialogContent data-testid="dialog-delete-punch">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar marca</AlertDialogTitle>
+            <AlertDialogDescription data-testid="text-delete-confirmation">
+              {deletingPunch && (
+                <>
+                  ¿Eliminar esta marca de{" "}
+                  <strong>{employeeMap.get(deletingPunch.employeeId) || `ID ${deletingPunch.employeeId}`}</strong>{" "}
+                  del <strong>{formatFullDate(deletingPunch.clockInAt)}</strong>?
+                  <br />
+                  Esta acción no se puede deshacer.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="button-confirm-delete"
+              onClick={() => {
+                if (deletingPunch) {
+                  deleteMutation.mutate(deletingPunch.id);
+                }
+              }}
+              className="bg-destructive text-destructive-foreground"
+            >
+              {deleteMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

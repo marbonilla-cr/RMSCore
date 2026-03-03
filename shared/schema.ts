@@ -408,6 +408,17 @@ export const hrSettings = pgTable("hr_settings", {
   geoOverrideRoleCode: text("geo_override_role_code").notNull().default("GERENTE"),
   geoRequiredForClockin: boolean("geo_required_for_clockin").notNull().default(true),
   geoRequiredForClockout: boolean("geo_required_for_clockout").notNull().default(true),
+  paidStartPolicy: text("paid_start_policy").notNull().default("SCHEDULE_START_CAP"),
+  overtimeRequiresApproval: boolean("overtime_requires_approval").notNull().default(true),
+  ignoreZeroDurationPunches: boolean("ignore_zero_duration_punches").notNull().default(true),
+  mergeOverlappingPunches: boolean("merge_overlapping_punches").notNull().default(true),
+  breakDeductEnabled: boolean("break_deduct_enabled").notNull().default(true),
+  breakThresholdMinutes: integer("break_threshold_minutes").notNull().default(540),
+  breakDeductMinutes: integer("break_deduct_minutes").notNull().default(60),
+  socialChargesEnabled: boolean("social_charges_enabled").notNull().default(false),
+  ccssEmployeeRate: numeric("ccss_employee_rate", { precision: 5, scale: 2 }).notNull().default("10.67"),
+  ccssEmployerRate: numeric("ccss_employer_rate", { precision: 5, scale: 2 }).notNull().default("26.33"),
+  ccssIncludeService: boolean("ccss_include_service").notNull().default(false),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 

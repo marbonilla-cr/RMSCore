@@ -23,12 +23,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, ChevronDown, ChevronRight, Plus, Trash2, Info, AlertTriangle } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Loader2, ChevronDown, ChevronRight, Plus, Trash2, Info, AlertTriangle, Clock } from "lucide-react";
 
 function formatMinutes(totalMinutes: number): string {
   const h = Math.floor(Math.abs(totalMinutes) / 60);
   const m = Math.abs(totalMinutes) % 60;
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+}
+
+function fmtMin(min: number): string {
+  return min > 0 ? `${min} min` : "—";
+}
+
+function fmtHrsOrDash(min: number): string {
+  return min > 0 ? formatMinutes(min) : "—";
 }
 
 function todayStr(): string {
@@ -132,10 +141,13 @@ interface PayrollEmployee {
   employeeId: number;
   name: string;
   role: string;
+  hourlyRate: number;
   daysScheduled: number;
   daysPresent: number;
   daysNoShow: number;
   totalNormalMin: number;
+  totalOvertimeCalcMin: number;
+  totalOvertimePaidMin: number;
   totalOvertimeMin: number;
   totalUnpaidBreakMin?: number;
   totalLateMin: number;
@@ -147,6 +159,12 @@ interface PayrollEmployee {
   extrasDeductions: number;
   extrasNet: number;
   servicePayTotal: number;
+  ccssBase: number;
+  ccssEmployee: number;
+  ccssEmployer: number;
+  grossPay: number;
+  netPay: number;
+  employerCost: number;
   grandTotalPay: number;
   operatedAsWaiter?: boolean;
   dailyBreakdown: {
@@ -154,12 +172,16 @@ interface PayrollEmployee {
     workedMinutes: number;
     normalMinutes: number;
     overtimeMinutes: number;
+    overtimeCalculatedMinutes: number;
+    overtimePaidMinutes: number;
     unpaidBreakMinutes?: number;
     tardyMinutes: number;
     basePay: number;
     extras: { id: number; typeCode: string; amount: number; note: string | null; kind: string }[];
     servicePayDay: number;
-    flags: { late: boolean; noShow: boolean; autoCheckout: boolean; midnightShift: boolean; hasMultiplePunches: boolean };
+    scheduledStartTime: string | null;
+    scheduledEndTime: string | null;
+    flags: string[];
   }[];
 }
 
@@ -171,8 +193,18 @@ interface PayrollReport {
     multiplicadorHoraExtra: number;
     servicePercentDefault: number;
     latenessGraceMinutes: number;
+    paidStartPolicy?: string;
+    overtimeRequiresApproval?: boolean;
+    breakDeductEnabled?: boolean;
+    breakThresholdMinutes?: number;
+    breakDeductMinutes?: number;
+    socialChargesEnabled?: boolean;
+    ccssEmployeeRate?: number;
+    ccssEmployerRate?: number;
+    ccssIncludeService?: boolean;
     roundingRule: string;
   };
+  hrConfigSnapshotWarnings?: string[];
   employees: PayrollEmployee[];
 }
 
@@ -251,6 +283,8 @@ function PayrollTab() {
 
   const needsNote = ["AJUSTE_POSITIVO", "AJUSTE_NEGATIVO", "PRESTAMO_DEDUCCION"].includes(newExtraType);
 
+  const showCCSS = data?.hrConfigSnapshot?.socialChargesEnabled === true;
+
   const totals = useMemo(() => {
     if (!data?.employees) return null;
     return data.employees.reduce(
@@ -258,9 +292,14 @@ function PayrollTab() {
         basePayTotal: acc.basePayTotal + e.basePayTotal,
         extrasNet: acc.extrasNet + e.extrasNet,
         servicePayTotal: acc.servicePayTotal + e.servicePayTotal,
+        ccssEmployee: acc.ccssEmployee + (e.ccssEmployee || 0),
+        ccssEmployer: acc.ccssEmployer + (e.ccssEmployer || 0),
+        grossPay: acc.grossPay + (e.grossPay || 0),
+        netPay: acc.netPay + (e.netPay || 0),
+        employerCost: acc.employerCost + (e.employerCost || 0),
         grandTotalPay: acc.grandTotalPay + e.grandTotalPay,
       }),
-      { basePayTotal: 0, extrasNet: 0, servicePayTotal: 0, grandTotalPay: 0 }
+      { basePayTotal: 0, extrasNet: 0, servicePayTotal: 0, ccssEmployee: 0, ccssEmployer: 0, grossPay: 0, netPay: 0, employerCost: 0, grandTotalPay: 0 }
     );
   }, [data]);
 
@@ -273,7 +312,10 @@ function PayrollTab() {
             <div className="flex items-center gap-1" data-testid="badge-hr-config">
               <Info className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground font-normal">
-                Jornada: {data.hrConfigSnapshot.jornadaOrdinariaHorasPorDia}h | Extra: ×{data.hrConfigSnapshot.multiplicadorHoraExtra} | Servicio: {(data.hrConfigSnapshot.servicePercentDefault * 100).toFixed(0)}% | Gracia: {data.hrConfigSnapshot.latenessGraceMinutes}min
+                Jornada: {data.hrConfigSnapshot.jornadaOrdinariaHorasPorDia}h | Extra: ×{data.hrConfigSnapshot.multiplicadorHoraExtra}
+                {data.hrConfigSnapshot.overtimeRequiresApproval ? " (req. aprob.)" : ""}
+                {" | "}Servicio: {(data.hrConfigSnapshot.servicePercentDefault * 100).toFixed(0)}% | Gracia: {data.hrConfigSnapshot.latenessGraceMinutes}min
+                {showCCSS && ` | CCSS: ${data.hrConfigSnapshot.ccssEmployeeRate}%/${data.hrConfigSnapshot.ccssEmployerRate}%`}
               </span>
             </div>
           )}
@@ -358,18 +400,22 @@ function PayrollTab() {
                 <TableRow>
                   <TableHead className="w-8"></TableHead>
                   <TableHead className="whitespace-nowrap">Empleado</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">₡/hr</TableHead>
                   <TableHead className="text-center whitespace-nowrap">D.Prog</TableHead>
                   <TableHead className="text-center whitespace-nowrap">D.Pres</TableHead>
                   <TableHead className="text-center whitespace-nowrap">No Show</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Hrs Norm</TableHead>
-                  <TableHead className="text-right whitespace-nowrap">Hrs Extra</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Extra (Calc)</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Extra (Pag)</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Desc.</TableHead>
                   <TableHead className="text-center whitespace-nowrap">Tardías</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Min Tarde</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Pago Base</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Extras</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Servicio</TableHead>
-                  <TableHead className="text-right whitespace-nowrap font-bold">Total</TableHead>
+                  {showCCSS && <TableHead className="text-right whitespace-nowrap">CCSS Empl.</TableHead>}
+                  {showCCSS && <TableHead className="text-right whitespace-nowrap">CCSS Patr.</TableHead>}
+                  <TableHead className="text-right whitespace-nowrap font-bold">{showCCSS ? "Neto" : "Total"}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -392,30 +438,59 @@ function PayrollTab() {
                             )}
                           </div>
                         </TableCell>
+                        <TableCell className="text-right whitespace-nowrap text-xs text-muted-foreground">{formatColones(emp.hourlyRate)}</TableCell>
                         <TableCell className="text-center">{emp.daysScheduled}</TableCell>
                         <TableCell className="text-center">{emp.daysPresent}</TableCell>
                         <TableCell className="text-center">{emp.daysNoShow > 0 ? <Badge variant="destructive" className="text-xs">{emp.daysNoShow}</Badge> : "0"}</TableCell>
-                        <TableCell className="text-right whitespace-nowrap">{formatMinutes(emp.totalNormalMin)}</TableCell>
-                        <TableCell className="text-right whitespace-nowrap">{emp.totalOvertimeMin > 0 ? <span className="text-amber-600 font-medium">{formatMinutes(emp.totalOvertimeMin)}</span> : "00:00"}</TableCell>
-                        <TableCell className="text-right whitespace-nowrap">{(emp.totalUnpaidBreakMin || 0) > 0 ? <span className="text-orange-500">{formatMinutes(emp.totalUnpaidBreakMin || 0)}</span> : "—"}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{fmtHrsOrDash(emp.totalNormalMin)}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          {(emp.totalOvertimeCalcMin || 0) > 0 ? (
+                            <span className="text-amber-600 font-medium">
+                              {formatMinutes(emp.totalOvertimeCalcMin)}
+                              {emp.totalOvertimeCalcMin > 0 && emp.totalOvertimePaidMin === 0 && (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1 text-amber-600 border-amber-300">Pendiente</Badge>
+                              )}
+                            </span>
+                          ) : "—"}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          {(emp.totalOvertimePaidMin || 0) > 0 ? (
+                            <span className="text-green-600 font-medium">{formatMinutes(emp.totalOvertimePaidMin)}</span>
+                          ) : "—"}
+                        </TableCell>
+                        <TooltipProvider>
+                          <TableCell className="text-right whitespace-nowrap">
+                            {(emp.totalUnpaidBreakMin || 0) > 0 ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="text-orange-500 cursor-help">{fmtMin(emp.totalUnpaidBreakMin || 0)}</span>
+                                </TooltipTrigger>
+                                <TooltipContent>Descanso no pagado aplicado</TooltipContent>
+                              </Tooltip>
+                            ) : "—"}
+                          </TableCell>
+                        </TooltipProvider>
                         <TableCell className="text-center whitespace-nowrap">{emp.lateCount > 0 ? <Badge variant="secondary" className="text-xs">{emp.lateCount}</Badge> : "0"}</TableCell>
-                        <TableCell className="text-right whitespace-nowrap">{emp.totalLateMin > 0 ? formatMinutes(emp.totalLateMin) : "00:00"}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{fmtMin(emp.totalLateMin)}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">{formatColones(emp.basePayTotal)}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">{emp.extrasNet !== 0 ? <span className={emp.extrasNet > 0 ? "text-green-600" : "text-red-600"}>{formatColones(emp.extrasNet)}</span> : "—"}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">{emp.servicePayTotal > 0 || emp.operatedAsWaiter ? formatColones(emp.servicePayTotal) : "—"}</TableCell>
-                        <TableCell className="text-right whitespace-nowrap font-bold">{formatColones(emp.grandTotalPay)}</TableCell>
+                        {showCCSS && <TableCell className="text-right whitespace-nowrap text-xs">{emp.ccssEmployee > 0 ? formatColones(emp.ccssEmployee) : "—"}</TableCell>}
+                        {showCCSS && <TableCell className="text-right whitespace-nowrap text-xs">{emp.ccssEmployer > 0 ? formatColones(emp.ccssEmployer) : "—"}</TableCell>}
+                        <TableCell className="text-right whitespace-nowrap font-bold">{formatColones(showCCSS ? emp.netPay : emp.grandTotalPay)}</TableCell>
                       </TableRow>
                       {isExpanded && (
                         <TableRow key={`${emp.employeeId}-detail`}>
-                          <TableCell colSpan={14} className="p-0">
+                          <TableCell colSpan={showCCSS ? 20 : 18} className="p-0">
                             <div className="bg-muted/30 p-3">
                               <Table>
                                 <TableHeader>
                                   <TableRow>
                                     <TableHead>Fecha</TableHead>
-                                    <TableHead className="text-right">Hrs Trab</TableHead>
+                                    <TableHead>Horario</TableHead>
                                     <TableHead className="text-right">Normal</TableHead>
-                                    <TableHead className="text-right">Extra</TableHead>
+                                    <TableHead className="text-right">Extra (Calc)</TableHead>
+                                    <TableHead className="text-right">Extra (Pag)</TableHead>
                                     <TableHead className="text-right">Desc.</TableHead>
                                     <TableHead className="text-right">Tardía</TableHead>
                                     <TableHead className="text-right">Pago Base</TableHead>
@@ -425,14 +500,43 @@ function PayrollTab() {
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                  {emp.dailyBreakdown.filter(d => d.workedMinutes > 0 || d.flags.noShow || d.extras.length > 0).map((day) => (
+                                  {emp.dailyBreakdown.filter(d => d.workedMinutes > 0 || (d.flags && d.flags.includes("NO_SHOW")) || d.extras.length > 0).map((day) => (
                                     <TableRow key={day.date} data-testid={`row-daily-${emp.employeeId}-${day.date}`}>
                                       <TableCell className="font-mono text-sm">{day.date}</TableCell>
-                                      <TableCell className="text-right">{formatMinutes(day.workedMinutes)}</TableCell>
-                                      <TableCell className="text-right">{formatMinutes(day.normalMinutes)}</TableCell>
-                                      <TableCell className="text-right">{day.overtimeMinutes > 0 ? <span className="text-amber-600">{formatMinutes(day.overtimeMinutes)}</span> : "—"}</TableCell>
-                                      <TableCell className="text-right">{(day.unpaidBreakMinutes || 0) > 0 ? <span className="text-orange-500">{formatMinutes(day.unpaidBreakMinutes || 0)}</span> : "—"}</TableCell>
-                                      <TableCell className="text-right">{day.tardyMinutes > 0 ? <span className="text-red-500">{day.tardyMinutes} min</span> : "—"}</TableCell>
+                                      <TableCell className="text-xs whitespace-nowrap">
+                                        {day.scheduledStartTime && day.scheduledEndTime
+                                          ? `${day.scheduledStartTime}–${day.scheduledEndTime}`
+                                          : <span className="text-muted-foreground">—</span>}
+                                      </TableCell>
+                                      <TableCell className="text-right">{fmtHrsOrDash(day.normalMinutes)}</TableCell>
+                                      <TableCell className="text-right">
+                                        {(day.overtimeCalculatedMinutes || 0) > 0 ? (
+                                          <span className="text-amber-600">
+                                            {formatMinutes(day.overtimeCalculatedMinutes)}
+                                            {day.overtimeCalculatedMinutes > 0 && (day.overtimePaidMinutes || 0) === 0 && (
+                                              <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1 text-amber-600 border-amber-300">Pend.</Badge>
+                                            )}
+                                          </span>
+                                        ) : "—"}
+                                      </TableCell>
+                                      <TableCell className="text-right">
+                                        {(day.overtimePaidMinutes || 0) > 0 ? (
+                                          <span className="text-green-600">{formatMinutes(day.overtimePaidMinutes)}</span>
+                                        ) : "—"}
+                                      </TableCell>
+                                      <TooltipProvider>
+                                        <TableCell className="text-right">
+                                          {(day.unpaidBreakMinutes || 0) > 0 ? (
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <span className="text-orange-500 cursor-help">{fmtMin(day.unpaidBreakMinutes || 0)}</span>
+                                              </TooltipTrigger>
+                                              <TooltipContent>Descanso no pagado aplicado</TooltipContent>
+                                            </Tooltip>
+                                          ) : "—"}
+                                        </TableCell>
+                                      </TooltipProvider>
+                                      <TableCell className="text-right">{day.tardyMinutes > 0 ? <span className="text-red-500">{fmtMin(day.tardyMinutes)}</span> : "—"}</TableCell>
                                       <TableCell className="text-right">{formatColones(day.basePay)}</TableCell>
                                       <TableCell>
                                         <div className="space-y-1">
@@ -480,10 +584,25 @@ function PayrollTab() {
                                       <TableCell className="text-right">{(emp.servicePayTotal > 0 || emp.operatedAsWaiter) ? formatColones(day.servicePayDay) : "—"}</TableCell>
                                       <TableCell>
                                         <div className="flex gap-1 flex-wrap">
-                                          {day.flags.noShow && <Badge variant="destructive" className="text-[10px] px-1">No Show</Badge>}
-                                          {day.flags.late && <Badge variant="secondary" className="text-[10px] px-1">Tarde</Badge>}
-                                          {day.flags.autoCheckout && <Badge variant="outline" className="text-[10px] px-1">Auto</Badge>}
-                                          {day.flags.midnightShift && <Badge variant="outline" className="text-[10px] px-1">Nocturno</Badge>}
+                                          {Array.isArray(day.flags) ? (
+                                            <>
+                                              {day.flags.includes("NO_SHOW") && <Badge variant="destructive" className="text-[10px] px-1">No Show</Badge>}
+                                              {day.flags.includes("TARDE") && <Badge variant="secondary" className="text-[10px] px-1">Tarde</Badge>}
+                                              {day.flags.includes("AUTO_OUT") && <Badge variant="outline" className="text-[10px] px-1">Auto</Badge>}
+                                              {day.flags.includes("AUTO_NO_SCHEDULE") && <Badge variant="outline" className="text-[10px] px-1">Auto (sin horario)</Badge>}
+                                              {day.flags.includes("SIN_HORARIO") && <Badge variant="outline" className="text-[10px] px-1">Sin horario</Badge>}
+                                              {day.flags.includes("DIA_LIBRE") && <Badge variant="outline" className="text-[10px] px-1">Día libre</Badge>}
+                                              {day.flags.includes("PUNCH_BASURA_FILTRADO") && <Badge variant="outline" className="text-[10px] px-1 text-orange-500 border-orange-300">Basura filtrada</Badge>}
+                                              {day.flags.includes("OVERTIME_PENDIENTE_APROBACION") && <Badge variant="outline" className="text-[10px] px-1 text-amber-600 border-amber-300">OT pendiente</Badge>}
+                                              {day.flags.includes("PUNCHES_MULTIPLES") && <Badge variant="outline" className="text-[10px] px-1">Múlt. marcas</Badge>}
+                                            </>
+                                          ) : (
+                                            <>
+                                              {(day.flags as any)?.noShow && <Badge variant="destructive" className="text-[10px] px-1">No Show</Badge>}
+                                              {(day.flags as any)?.late && <Badge variant="secondary" className="text-[10px] px-1">Tarde</Badge>}
+                                              {(day.flags as any)?.autoCheckout && <Badge variant="outline" className="text-[10px] px-1">Auto</Badge>}
+                                            </>
+                                          )}
                                         </div>
                                       </TableCell>
                                     </TableRow>
@@ -499,11 +618,13 @@ function PayrollTab() {
                 })}
                 {totals && (
                   <TableRow className="font-bold border-t-2" data-testid="row-payroll-totals">
-                    <TableCell colSpan={10} className="text-right">TOTALES</TableCell>
+                    <TableCell colSpan={12} className="text-right">TOTALES</TableCell>
                     <TableCell className="text-right whitespace-nowrap">{formatColones(totals.basePayTotal)}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">{totals.extrasNet !== 0 ? formatColones(totals.extrasNet) : "—"}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">{formatColones(totals.servicePayTotal)}</TableCell>
-                    <TableCell className="text-right whitespace-nowrap">{formatColones(totals.grandTotalPay)}</TableCell>
+                    {showCCSS && <TableCell className="text-right whitespace-nowrap">{formatColones(totals.ccssEmployee)}</TableCell>}
+                    {showCCSS && <TableCell className="text-right whitespace-nowrap">{formatColones(totals.ccssEmployer)}</TableCell>}
+                    <TableCell className="text-right whitespace-nowrap">{formatColones(showCCSS ? totals.netPay : totals.grandTotalPay)}</TableCell>
                   </TableRow>
                 )}
               </TableBody>

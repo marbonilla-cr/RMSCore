@@ -1958,6 +1958,10 @@ export async function getOpenPunchForEmployee(employeeId: number): Promise<HrTim
   return p;
 }
 
+export async function deleteTimePunch(id: number): Promise<void> {
+  await db.delete(hrTimePunches).where(eq(hrTimePunches.id, id));
+}
+
 export async function getTimePunchesByDate(businessDate: string): Promise<HrTimePunch[]> {
   return db.select().from(hrTimePunches)
     .where(eq(hrTimePunches.businessDate, businessDate))

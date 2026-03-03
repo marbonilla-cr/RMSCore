@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, MapPin } from "lucide-react";
 
 interface HrSettings {
@@ -24,6 +25,17 @@ interface HrSettings {
   autoLogoutAfterShiftHours: number;
   serviceChargeRate: number;
   lateAlertEmailTo: string;
+  paidStartPolicy: string;
+  overtimeRequiresApproval: boolean;
+  ignoreZeroDurationPunches: boolean;
+  mergeOverlappingPunches: boolean;
+  breakDeductEnabled: boolean;
+  breakThresholdMinutes: number;
+  breakDeductMinutes: number;
+  socialChargesEnabled: boolean;
+  ccssEmployeeRate: number;
+  ccssEmployerRate: number;
+  ccssIncludeService: boolean;
 }
 
 const defaultSettings: HrSettings = {
@@ -41,6 +53,17 @@ const defaultSettings: HrSettings = {
   autoLogoutAfterShiftHours: 12,
   serviceChargeRate: 0.1,
   lateAlertEmailTo: "",
+  paidStartPolicy: "SCHEDULE_START_CAP",
+  overtimeRequiresApproval: true,
+  ignoreZeroDurationPunches: true,
+  mergeOverlappingPunches: true,
+  breakDeductEnabled: true,
+  breakThresholdMinutes: 540,
+  breakDeductMinutes: 60,
+  socialChargesEnabled: false,
+  ccssEmployeeRate: 10.67,
+  ccssEmployerRate: 26.33,
+  ccssIncludeService: false,
 };
 
 export default function HrSettingsPage() {
@@ -294,6 +317,175 @@ export default function HrSettingsPage() {
               onChange={(e) => handleChange("lateAlertEmailTo", e.target.value)}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cálculo de Planilla</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1">
+            <Label htmlFor="paidStartPolicy">Política de inicio pagado</Label>
+            <Select
+              value={values.paidStartPolicy}
+              onValueChange={(v) => handleChange("paidStartPolicy", v)}
+            >
+              <SelectTrigger data-testid="select-paidStartPolicy">
+                <SelectValue placeholder="Seleccionar política..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="SCHEDULE_START_CAP">Tope al inicio del horario</SelectItem>
+                <SelectItem value="ACTUAL_CLOCKIN">Hora real de entrada</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {values.paidStartPolicy === "SCHEDULE_START_CAP"
+                ? "Si el empleado llega antes del horario, el pago inicia desde la hora programada (no antes)."
+                : "El pago inicia desde la hora real de entrada del empleado, incluso si llega antes del horario."}
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="space-y-0.5">
+              <Label htmlFor="overtimeRequiresApproval">Extras requieren aprobación</Label>
+              <p className="text-xs text-muted-foreground">Si está activo, las horas extra calculadas no se pagan hasta ser aprobadas.</p>
+            </div>
+            <Switch
+              id="overtimeRequiresApproval"
+              data-testid="switch-overtimeRequiresApproval"
+              checked={values.overtimeRequiresApproval}
+              onCheckedChange={(v) => handleChange("overtimeRequiresApproval", v)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="space-y-0.5">
+              <Label htmlFor="ignoreZeroDurationPunches">Filtrar marcas de 0 duración</Label>
+              <p className="text-xs text-muted-foreground">Ignora punches donde entrada y salida son iguales (punches basura).</p>
+            </div>
+            <Switch
+              id="ignoreZeroDurationPunches"
+              data-testid="switch-ignoreZeroDurationPunches"
+              checked={values.ignoreZeroDurationPunches}
+              onCheckedChange={(v) => handleChange("ignoreZeroDurationPunches", v)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="space-y-0.5">
+              <Label htmlFor="mergeOverlappingPunches">Fusionar marcas traslapadas</Label>
+              <p className="text-xs text-muted-foreground">Combina punches que se superponen o tienen gap menor a 1 minuto.</p>
+            </div>
+            <Switch
+              id="mergeOverlappingPunches"
+              data-testid="switch-mergeOverlappingPunches"
+              checked={values.mergeOverlappingPunches}
+              onCheckedChange={(v) => handleChange("mergeOverlappingPunches", v)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="space-y-0.5">
+              <Label htmlFor="breakDeductEnabled">Descanso no pagado</Label>
+              <p className="text-xs text-muted-foreground">Descuenta tiempo de descanso del ordinario cuando el turno supera el umbral.</p>
+            </div>
+            <Switch
+              id="breakDeductEnabled"
+              data-testid="switch-breakDeductEnabled"
+              checked={values.breakDeductEnabled}
+              onCheckedChange={(v) => handleChange("breakDeductEnabled", v)}
+            />
+          </div>
+
+          {values.breakDeductEnabled && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 border-l-2 border-muted">
+              <div className="space-y-1">
+                <Label htmlFor="breakThresholdMinutes">Umbral para descanso (minutos)</Label>
+                <Input
+                  id="breakThresholdMinutes"
+                  data-testid="input-breakThresholdMinutes"
+                  type="number"
+                  value={values.breakThresholdMinutes}
+                  onChange={(e) => handleNumberChange("breakThresholdMinutes", e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Si el turno total supera estos minutos, se descuenta el descanso. (540 = 9 horas)</p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="breakDeductMinutes">Minutos de descanso a descontar</Label>
+                <Input
+                  id="breakDeductMinutes"
+                  data-testid="input-breakDeductMinutes"
+                  type="number"
+                  value={values.breakDeductMinutes}
+                  onChange={(e) => handleNumberChange("breakDeductMinutes", e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>CCSS / Cargas Sociales</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="space-y-0.5">
+              <Label htmlFor="socialChargesEnabled">Cargas sociales habilitadas</Label>
+              <p className="text-xs text-muted-foreground">Calcula CCSS (empleado y patrono) en la planilla.</p>
+            </div>
+            <Switch
+              id="socialChargesEnabled"
+              data-testid="switch-socialChargesEnabled"
+              checked={values.socialChargesEnabled}
+              onCheckedChange={(v) => handleChange("socialChargesEnabled", v)}
+            />
+          </div>
+
+          {values.socialChargesEnabled && (
+            <div className="space-y-4 pl-4 border-l-2 border-muted">
+              <div className="space-y-1">
+                <Label htmlFor="ccssEmployeeRate">Tasa CCSS empleado (%)</Label>
+                <Input
+                  id="ccssEmployeeRate"
+                  data-testid="input-ccssEmployeeRate"
+                  type="number"
+                  step="0.01"
+                  value={values.ccssEmployeeRate}
+                  onChange={(e) => handleNumberChange("ccssEmployeeRate", e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Porcentaje que se deduce del salario bruto del empleado.</p>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="ccssEmployerRate">Tasa CCSS patrono (%)</Label>
+                <Input
+                  id="ccssEmployerRate"
+                  data-testid="input-ccssEmployerRate"
+                  type="number"
+                  step="0.01"
+                  value={values.ccssEmployerRate}
+                  onChange={(e) => handleNumberChange("ccssEmployerRate", e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Porcentaje de carga patronal sobre el salario bruto.</p>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="space-y-0.5">
+                  <Label htmlFor="ccssIncludeService">Incluir servicio en base CCSS</Label>
+                  <p className="text-xs text-muted-foreground">Se aplicará cuando el cargo por servicio esté integrado en la planilla.</p>
+                </div>
+                <Switch
+                  id="ccssIncludeService"
+                  data-testid="switch-ccssIncludeService"
+                  checked={values.ccssIncludeService}
+                  onCheckedChange={(v) => handleChange("ccssIncludeService", v)}
+                />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
