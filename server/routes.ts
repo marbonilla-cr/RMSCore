@@ -438,7 +438,10 @@ export async function registerRoutes(
       await storage.createAuditEvent({ actorType: "USER", actorUserId: user.id, action: "LOGIN_PASSWORD", entityType: "USER", entityId: user.id, metadata: {} });
       const { password: _, pin: _p, ...safeUser } = user;
       req.session.save(async (err) => {
-        if (err) return res.status(500).json({ message: "Error de sesión" });
+        if (err) {
+          console.error("[SESSION] save error (password login):", err);
+          return res.status(500).json({ message: "Error de sesión" });
+        }
         const perms = await storage.getPermissionKeysForRole(user.role);
         res.json({ user: { ...safeUser, hasPin: !!user.pin }, permissions: perms, sessionToken: req.sessionID });
       });
@@ -489,6 +492,7 @@ export async function registerRoutes(
           const { password: _, pin: _p, ...safeUser } = fullUser;
           return req.session.save(async (err) => {
             if (err) {
+              console.error("[SESSION] save error (PIN login):", err);
               return res.status(500).json({ message: "Error de sesión" });
             }
             const perms = await storage.getPermissionKeysForRole(fullUser.role);
