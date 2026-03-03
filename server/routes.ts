@@ -385,11 +385,21 @@ export async function registerRoutes(
 
   const isProduction = process.env.NODE_ENV === "production";
 
+  const { pool } = await import("./db");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "session" (
+      "sid" varchar NOT NULL COLLATE "default",
+      "sess" json NOT NULL,
+      "expire" timestamp(6) NOT NULL,
+      CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE
+    ) WITH (OIDS=FALSE);
+    CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+  `);
+
   const sessionStore = new pgSession({
     conString: process.env.DATABASE_URL,
     tableName: "session",
     pruneSessionInterval: 60 * 15,
-    createTableIfMissing: true,
   });
 
   const sessionMiddleware = session({
