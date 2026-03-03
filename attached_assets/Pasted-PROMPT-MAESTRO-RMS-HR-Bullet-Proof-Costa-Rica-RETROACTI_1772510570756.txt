@@ -1,0 +1,285 @@
+PROMPT MAESTRO RMS — HR “Bullet Proof” Costa Rica (RETROACTIVO)
+Planilla + Nuevo Cálculo (retroactivo) + Aprobación de Extra por empleado + CCSS mensual + Geofence multi-local + Export CSV/XLSX
+
+Actúa como arquitecto senior + full-stack lead + QA. Implementa end-to-end este feature crítico de RRHH en RMS. No teoría: cambios concretos, migraciones, endpoints, UI, pruebas. TODO el cálculo debe ser RETROACTIVO: al generar Planilla para un rango pasado, se recalcula desde cero con las reglas nuevas (NO depender de valores guardados previamente).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+0) PRINCIPIOS / NO ROMPER
+- Mensajes y UI en ESPAÑOL claro (sin jerga).
+- El cálculo de Planilla debe ser RETROACTIVO: recalcular con datos históricos (punches, schedules, extras, ledger de servicio) sin editar registros pasados.
+- Overtime NO se paga automáticamente: SOLO si (a) salida MANUAL, (b) excede horario, y (c) aprobado (si está activado).
+- AUTO / AUTO_NO_SCHEDULE / GEO_AUTO nunca generan overtime.
+- Deducción >9h: si workedTotalRaw >= 540 min => descontar 60 min SOLO del ordinario (no del overtime).
+- Filtrar punches basura: intervalos 0 min, datos corruptos y overlaps.
+- Geofence obligatorio para clock-in si está activado.
+- No tocar lógica de POS/KDS; solo HR.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1) ESTADO ACTUAL A CONSIDERAR (en código actual)
+- computeDailyPayroll actual tiene errores:
+  - overtime por punches 2+ (incorrecto)
+  - punches 0-min generan overtime fantasma
+  - tardanza se registra pero el pago puede quedar inconsistente
+- hr_settings ya existe y contiene:
+  overtimeDailyThresholdHours, overtimeMultiplier, latenessGraceMinutes, autoLogoutAfterShiftHours, serviceChargeRate
+- service_charge_ledger existe y es fuente de servicio; planilla ya usa rango diferido en versiones recientes.
+- Clock-out sin openPunch ya bloqueado y auditado; no tocar esa validación.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2) SCHEMA / CONFIG HR (shared/schema.ts) — NUEVAS CONFIGURACIONES
+NO crear tablas/fields innecesarios. Agregar lo mínimo vendible y ordenado.
+
+2.1 hr_settings (agregar campos)
+A) Cálculo de Planilla
+- paidStartPolicy enum: 'SCHEDULE_START_CAP' | 'CLOCK_IN'  (default 'SCHEDULE_START_CAP')
+  *SCHEDULE_START_CAP = no pagar antes del horario; CLOCK_IN = pagar desde que llega aunque sea temprano
+- overtimePolicy enum: 'BY_SCHEDULE_END_MANUAL_ONLY' (default 'BY_SCHEDULE_END_MANUAL_ONLY')  // fijo v1
+- overtimeRequiresApproval boolean default true
+- ignoreZeroDurationPunches boolean default true
+- mergeOverlappingPunches boolean default true
+- breakDeductEnabled boolean default true
+- breakThresholdMinutes int default 540
+- breakDeductMinutes int default 60
+- breakApplyTo enum: 'NORMAL_ONLY' default 'NORMAL_ONLY'
+
+B) CCSS / Cargas sociales
+- socialChargesEnabled boolean default false
+- ccssEmployeeRate numeric default 10.67
+- ccssEmployerRate numeric default 26.33
+- ccssIncludeService boolean default false
+
+C) Geofence
+- geofenceEnabled boolean default true
+- geofenceAccuracyMaxMeters int default 50
+- geofenceOutsideConfirmSeconds int default 60
+
+2.2 Nuevas tablas
+A) Locations / Geofences multi-zona
+- locations: id, name, isActive
+- location_geofences: id, locationId, name, centerLat, centerLng, radiusMeters, isActive
+
+B) Asignación empleado -> local
+- users (o employees): agregar locationId nullable (FK locations.id)
+- Agregar también (si no existe): cedula (text), puesto (text) para CCSS.
+
+C) Aprobación de horas extra por empleado (retroactiva por rango)
+- payroll_overtime_approvals:
+  id, employeeId, rangeFrom (text YYYY-MM-DD), rangeTo (text YYYY-MM-DD),
+  approved boolean, approvedBy int, approvedAt timestamp, note text nullable
+
+D) (Opcional recomendado) Auditoría geofence en punches
+Si hr_time_punches ya existe, agregar campos:
+- clockInLat, clockInLng, clockInAccuracyM, clockInGeofenceId
+- clockOutLat, clockOutLng, clockOutAccuracyM, clockOutGeofenceId
+- clockOutGeoStatus enum/text: 'DENTRO'|'FUERA'|null
+- clockOutType ya debe soportar: MANUAL | AUTO | AUTO_NO_SCHEDULE | GEO_AUTO | MANUAL_OUTSIDE
+(Si no existe clockOutType, agregarlo; si existe, extender enum.)
+
+Correr npm run db:push.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3) BACKEND — GEOFENCE OBLIGATORIO (clock-in) + clock-out flexible
+FILES: server/routes.ts, server/storage.ts (helpers), server/hr-jobs.ts
+
+3.1 Helpers
+- storage.getActiveGeofencesForLocation(locationId)
+- function isInsideAnyGeofence(lat,lng,accuracy,geofences,accuracyMaxMeters) -> { ok, geofenceId, reason }
+
+3.2 Clock-in (PIN y HR mi turno)
+En POST /api/auth/pin-clock y POST /api/hr/clock-in:
+- Si hrSettings.geofenceEnabled:
+  - Si usuario no tiene locationId => 400 "No tiene un local asignado. Contacte al administrador."
+  - Requerir lat/lng/accuracy en request
+    - Si faltan: 400 "No se pudo verificar su ubicación. Active el GPS e intente de nuevo."
+  - Si accuracy > geofenceAccuracyMaxMeters: 400 "No se puede verificar la ubicación. Intente de nuevo en un lugar abierto."
+  - Si fuera de cualquier geofence activo: 400 "Está fuera del perímetro del local. No puede marcar entrada."
+  - Si dentro: permitir clock-in y guardar clockInLat/Lng/Accuracy/GeofenceId
+- Mantener bloqueos existentes (openPunch 409, etc.)
+- Mensajes en español.
+
+3.3 Clock-out
+- Permitir clock-out aunque esté fuera (sin PIN manager):
+  - Si geofenceEnabled y request trae ubicación:
+    - si fuera: guardar clockOutGeoStatus='FUERA' y clockOutType='MANUAL_OUTSIDE'
+      audit_event "SALIDA_FUERA_DEL_PERIMETRO"
+    - si dentro: clockOutGeoStatus='DENTRO' y clockOutType='MANUAL'
+  - Si no trae ubicación: permitir pero audit_event "SALIDA_SIN_UBICACION" (según política)
+- Recordatorio: MANUAL_OUTSIDE NO genera overtime a menos que exista aprobación y política lo permita (v1: tratar como MANUAL para cálculo, pero aun así requiere aprobación; si quieres más duro: MANUAL_OUTSIDE => overtimeCalculated=0; documenta decisión).
+
+3.4 Auto clock-out job (sin horario)
+En server/hr-jobs.ts:
+- Para punches sin scheduledEndAt:
+  autoCloseHours = hrSettings.overtimeDailyThresholdHours (fallback 8)
+  Si abierto > autoCloseHours: cerrar a clockIn+autoCloseHours con clockOutType='AUTO_NO_SCHEDULE', overtime=0, audit_event.
+- Para punches con scheduledEndAt: mantener cierre al fin del turno con clockOutType='AUTO', overtime=0.
+- Si geofence auto logout existe, usar clockOutType='GEO_AUTO' y overtime=0.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4) NUEVO MOTOR RETROACTIVO DE PLANILLA (server/payroll.ts)
+FILES: server/payroll.ts (refactor), server/routes.ts (payroll-report), server/storage.ts
+
+4.1 Requisito clave: RETROACTIVO
+- payroll-report debe recalcular SIEMPRE desde:
+  punches + schedules + extras + service_charge_ledger + approvals + hr_settings snapshot
+- NO depender de overtimeMinutesDaily guardado en punch, ni de cálculos históricos.
+
+4.2 Normalización de punches (OBLIGATORIA)
+Implementar normalizePunches(punches, hrSettings):
+- Si ignoreZeroDurationPunches: eliminar clockIn==clockOut
+- Eliminar corruptos (clockOut<clockIn)
+- Ordenar por clockIn
+- Si mergeOverlappingPunches: fusionar intervalos solapados/adyacentes para evitar doble conteo
+- Resultado: lista limpia de intervalos
+
+4.3 computeDailyPayrollV2 (reemplaza la lógica antigua)
+Inputs:
+{ punchesForDay, scheduleForDay, employee(dailyRate, role, locationId...), hrSettings, overtimeApprovedForRange(boolean) }
+Outputs:
+{ normalMinutesRaw, overtimeCalculatedMinutes, unpaidBreakMinutes, normalMinutesPaid, overtimeMinutesPaid,
+  paidWorkedMinutes, tardyMinutes, normalPay, overtimePay, basePay,
+  flags: [ 'TARDE', 'AUTO_OUT', 'GEO_AUTO', 'SIN_HORARIO', 'PUNCH_BASURA_FILTRADO', ... ],
+  clockInType/clockOutType resumidos }
+
+Reglas:
+A) Determinar scheduledStartAt / scheduledEndAt (si existe y no dayOff)
+B) Determinar clockIn/clockOut efectivos:
+- Usar primer clockIn y último clockOut de punches normalizados del día
+- Si falta clockOut:
+  - si hay scheduledEndAt: workedEnd=scheduledEndAt, flag AUTO_OUT
+  - si no hay schedule: workedEnd = min(now, clockIn+autoCloseHours) SOLO para vista; idealmente el job lo cerrará, pero el reporte debe ser estable (no usar now si es reporte histórico; si fecha pasada y sigue abierto, cerrar virtualmente a clockIn+autoCloseHours).
+  - clockOutType virtual = AUTO_NO_SCHEDULE
+
+C) paidStartPolicy:
+- if SCHEDULE_START_CAP and scheduleStart exists:
+    paidStart = max(clockIn, scheduledStartAt)
+- else:
+    paidStart = clockIn
+Esto hace que tardanza descuente pago.
+
+D) Fin ordinario:
+- if scheduleEnd exists:
+    ordinaryEnd = min(clockOut, scheduledEndAt)
+  else:
+    ordinaryEnd = clockOut
+- normalMinutesRaw = max(0, ordinaryEnd - paidStart)
+
+E) Overtime calculado (solo por horario y solo salida MANUAL real)
+- overtimeCalculatedMinutes = 0
+- if scheduleEnd exists and clockOutType in ['MANUAL','MANUAL_OUTSIDE'] and clockOut > scheduledEndAt:
+    overtimeCalculatedMinutes = clockOut - scheduledEndAt
+- if clockOutType in ['AUTO','AUTO_NO_SCHEDULE','GEO_AUTO']: overtimeCalculatedMinutes = 0
+
+F) Break deduction (>9h) (si breakDeductEnabled)
+- workedTotalRaw = normalMinutesRaw + overtimeCalculatedMinutes
+- unpaidBreakMinutes = (workedTotalRaw >= breakThresholdMinutes) ? breakDeductMinutes : 0
+- if breakApplyTo='NORMAL_ONLY':
+    normalMinutesPaid = max(0, normalMinutesRaw - unpaidBreakMinutes)
+    overtimePaidCandidate = overtimeCalculatedMinutes
+  else:
+    (no implementar otros modos en v1)
+- Overtime pagado depende de aprobación:
+  - if overtimeRequiresApproval:
+      overtimeMinutesPaid = overtimeApprovedForRange ? overtimePaidCandidate : 0
+    else:
+      overtimeMinutesPaid = overtimePaidCandidate
+
+G) Tardanza (indicador)
+- if scheduleStart exists and clockIn > scheduledStartAt + latenessGraceMinutes:
+    tardyMinutes = clockIn - scheduledStartAt
+  else 0
+
+H) Pago
+- hourlyRate = dailyRate / hrSettings.overtimeDailyThresholdHours
+- normalPay = round2((normalMinutesPaid/60)*hourlyRate)
+- overtimePay = round2((overtimeMinutesPaid/60)*hourlyRate*hrSettings.overtimeMultiplier)
+- basePay = normalPay + overtimePay
+- paidWorkedMinutes = normalMinutesPaid + overtimeMinutesPaid
+
+4.4 Servicio (service_charge_ledger) con rango diferido
+- El endpoint payroll-report debe aceptar:
+  planillaFrom/planillaTo (salarios) y serviceFrom/serviceTo (servicio)
+  default: serviceFrom = planillaFrom - 14 días, serviceTo = serviceFrom + 6
+- Servicio:
+  - Pool por día: SUM(serviceAmount) en service_charge_ledger por businessDate
+  - Si hay punches en ese día y hay elegibles => HOURS_PRORATED por paidWorkedMinutes
+  - Si no hay punches => LEDGER_DIRECT por responsibleWaiterEmployeeId
+  - Reportar mode por día
+
+4.5 CCSS / Cargas sociales (retroactivo)
+Por día o por rango (mejor por rango):
+- baseCCSS = basePay
+- if ccssIncludeService: baseCCSS += servicePay
+- (v1) no incluir extras manuales en base CCSS
+- ccssEmployee = round2(baseCCSS * ccssEmployeeRate/100) si socialChargesEnabled
+- ccssEmployer = round2(baseCCSS * ccssEmployerRate/100) si socialChargesEnabled
+- grossPay = basePay + servicePay + extrasNet
+- netPay = grossPay - ccssEmployee
+- employerCost = grossPay + ccssEmployer
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5) ENDPOINTS
+FILES: server/routes.ts, server/storage.ts
+
+5.1 Planilla (antes payroll-report) — renombrar en UI como “Planilla”
+GET /api/hr/payroll-report?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+Opcionales:
+&serviceFrom=YYYY-MM-DD&serviceTo=YYYY-MM-DD
+&includeServiceBreakdown=true/false
+
+Debe retornar:
+{
+  planillaRange:{from,to},
+  serviceRange:{from,to},
+  hrConfigSnapshot:{...todos los settings usados...},
+  employees:[
+    {
+      employeeId, nombre, rol, cedula, puesto, locationName,
+      daysScheduled, daysPresent, daysNoShow,
+      hrsNormal, hrsExtraCalculated, hrsExtraPaid, descMinutes, tardyCount, tardyMinutes,
+      hourlyRate,
+      basePay, extrasNet, servicePay,
+      ccssEmployee, ccssEmployer,
+      grossPay, netPay, employerCost,
+      overtimeApproved:boolean,
+      dailyBreakdown:[ ... ],
+      flagsSummary:[...]
+    }
+  ],
+  totals:{ basePay, servicePay, extrasNet, ccssEmployee, ccssEmployer, grossPay, netPay, employerCost },
+  serviceUnassignedTotal
+}
+
+5.2 Aprobación horas extra (por empleado, por rango)
+POST /api/hr/overtime-approval  (permiso HR_APPROVE_OVERTIME)
+body: { employeeId, rangeFrom, rangeTo, approved:true, note? }
+POST /api/hr/overtime-approval/revert (permiso HR_APPROVE_OVERTIME)
+body: { employeeId, rangeFrom, rangeTo }
+Auditar.
+
+5.3 CCSS mensual
+GET /api/hr/ccss?month=YYYY-MM
+- Construir rango del mes
+- Reusar motor retroactivo para sumar baseCCSS/ccssEmployee/ccssEmployer por empleado
+Return:
+{
+  month,
+  hrConfigSnapshot:{socialChargesEnabled, rates, includeService},
+  employerTotals:{ baseCCSS, ccssEmployee, ccssEmployer, totalToPay },
+  employees:[ { employeeId, nombre, cedula, puesto, baseCCSS, ccssEmployee, ccssEmployer } ]
+}
+
+5.4 Locations/Geofences admin (mínimo CRUD)
+- GET/POST/PATCH locations
+- GET/POST/PATCH location_geofences
+- En admin empleados: asignar locationId
+
+5.5 Export
+- GET /api/hr/payroll-report/export?format=csv|xlsx&dateFrom..&dateTo..&serviceFrom..&serviceTo..
+- GET /api/hr/ccss/export?format=csv|xlsx&month=YYYY-MM
+(Implementar server-side para xlsx o client-side si ya hay util.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6) UI
+FILES: client/src/pages/hr/reports.tsx (Planilla), client/src/pages/hr/ccss.tsx (nuevo), HR config page, admin employees page, pin-login.tsx, mi-turno.tsx
+
+6.1 Planilla (renombrar

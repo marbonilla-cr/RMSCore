@@ -1,0 +1,233 @@
+PHASE A (COMPLETA) — HR “Bullet Proof” Costa Rica (Solo motor Planilla + punches + CCSS schema + UI)
+Objetivo: Dejar el cálculo de PLANILLA 100% correcto y retroactivo para pagar salarios hoy. Corregir overtime fantasma por punches basura, tardanza que descuenta pago, y mostrar CCSS (si está activado). Sin geofence, sin export, sin CCSS mensual, sin approvals persistentes (Phase B).
+
+PRINCIPIOS
+- Retroactivo: cada consulta a /api/hr/payroll-report recalcula desde cero con datos crudos.
+- Punches basura (0 min, corruptos, overlaps) NO deben generar overtime ni minutos duplicados.
+- Overtime SOLO por horario (scheduledEnd) y SOLO con clockOutType MANUAL. AUTO/AUTO_NO_SCHEDULE/GEO_AUTO => overtime=0.
+- Deducción >9h: descuenta 60 min SOLO del ordinario.
+- Mensajes UI en español.
+- Sin mezclar features de Phase B/C.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+T001: Agregar nuevos campos a hr_settings (schema)
+FILES: shared/schema.ts
+Agregar a hrSettings:
+- paidStartPolicy text default 'SCHEDULE_START_CAP' (SCHEDULE_START_CAP | CLOCK_IN)
+- overtimeRequiresApproval boolean default true
+- ignoreZeroDurationPunches boolean default true
+- mergeOverlappingPunches boolean default true
+- breakDeductEnabled boolean default true
+- breakThresholdMinutes integer default 540
+- breakDeductMinutes integer default 60
+- socialChargesEnabled boolean default false
+- ccssEmployeeRate numeric(5,2) default 10.67
+- ccssEmployerRate numeric(5,2) default 26.33
+- ccssIncludeService boolean default false
+Run: npm run db:push
+Acceptance: columnas existen en producción.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+T002: Reescribir computeDailyPayroll → computeDailyPayrollV2 + normalizePunches (retroactivo)
+BLOCKED BY: T001
+FILES: server/payroll.ts
+
+A) normalizePunches(punches, hrSettings) => { intervals, flags }
+Reglas:
+1) Filtrar 0 duración (clockIn == clockOut) si ignoreZeroDurationPunches:
+   - remover y flags += ["PUNCH_FILTRADO_CERO","PUNCH_BASURA_FILTRADO"]
+2) Filtrar corruptos (clockOut < clockIn):
+   - remover y flags += ["PUNCH_FILTRADO_CORRUPTO","PUNCH_BASURA_FILTRADO"]
+3) Sort por clockIn
+4) Merge overlapping si mergeOverlappingPunches:
+   - unir intervalos solapados y flags += ["PUNCH_FUSIONADO_OVERLAP","PUNCH_BASURA_FILTRADO"]
+5) Merge adyacentes SOLO si gap <= 1 minuto:
+   - unir y flags += ["PUNCH_FUSIONADO_ADYACENTE","PUNCH_BASURA_FILTRADO"]
+   - Si gap > 1 min NO merge.
+
+B) computeDailyPayrollV2 reemplaza lógica antigua
+Inputs:
+{ punchesForDay, scheduleForDay, dailyRate, hrConfig, dateStr }
+(Phase A NO incluye aprobación persistente todavía. Si overtimeRequiresApproval=true, overtimePaid=0)
+
+Caso 1: No schedule (o dayOff) pero punch existe:
+- paidStart = firstClockIn
+- ordinaryEnd = lastClockOut (si falta, aplicar autocierre determinista: firstClockIn + overtimeDailyThresholdHours horas)
+- normalMinutesRaw = max(0, ordinaryEnd - paidStart)
+- overtimeCalculatedMinutes = 0
+- flags += ["SIN_HORARIO"]
+
+Caso 2: Schedule existe:
+- paidStart:
+  if paidStartPolicy == 'SCHEDULE_START_CAP':
+    paidStart = max(firstClockIn, scheduledStart)
+  else:
+    paidStart = firstClockIn
+- ordinaryEnd = min(lastClockOut, scheduledEnd)
+- normalMinutesRaw = max(0, ordinaryEnd - paidStart)
+
+Overtime:
+- overtimeCalculatedMinutes = 0
+- SOLO si lastClockOutType == MANUAL y lastClockOut > scheduledEnd:
+    overtimeCalculatedMinutes = lastClockOut - scheduledEnd
+- Si lastClockOutType in [AUTO, AUTO_NO_SCHEDULE, GEO_AUTO] => overtimeCalculatedMinutes = 0 siempre
+
+Overtime pagado (Phase A):
+- if overtimeRequiresApproval AND overtimeCalculatedMinutes > 0:
+    overtimePaidMinutes = 0
+    flags += ["OVERTIME_PENDIENTE_APROBACION"]
+  else:
+    overtimePaidMinutes = overtimeCalculatedMinutes
+
+Break deduction:
+- if breakDeductEnabled:
+    payableWindow = normalMinutesRaw + overtimeCalculatedMinutes
+    if payableWindow >= breakThresholdMinutes:
+        unpaidBreakMinutes = breakDeductMinutes
+    else 0
+  else unpaidBreakMinutes=0
+- Aplicar solo a ordinario:
+  normalMinutesPaid = max(0, normalMinutesRaw - unpaidBreakMinutes)
+  overtimePaidMinutes se mantiene igual (no se descuenta)
+
+Tardiness:
+- if scheduledStart exists AND firstClockIn > scheduledStart + latenessGraceMinutes:
+    tardyMinutes = firstClockIn - scheduledStart
+    flags += ["TARDE"]
+- (descuento de pago por tardanza ya queda reflejado por paidStart=max(clockIn,schedStart) cuando llega tarde)
+
+Pay:
+- hourlyRate = dailyRate / overtimeDailyThresholdHours
+- normalPay = round2((normalMinutesPaid/60) * hourlyRate)
+- overtimePay = round2((overtimePaidMinutes/60) * hourlyRate * overtimeMultiplier)
+- basePay = normalPay + overtimePay
+- paidWorkedMinutes = normalMinutesPaid + overtimePaidMinutes
+
+Return DailyPayrollResult con:
+normalMinutesRaw, normalMinutesPaid,
+overtimeCalculatedMinutes, overtimePaidMinutes,
+unpaidBreakMinutes, paidWorkedMinutes, tardyMinutes,
+normalPay, overtimePay, basePay, hourlyRate,
+scheduledStartTime, scheduledEndTime,
+flags: string[],
+booleans legacy: autoCheckout, noShow, late, hasMultiplePunches
+
+Notas obligatorias:
+- Retroactivo determinista: si punch abierto en fecha pasada, NO usar now. Autocerrar virtualmente a scheduledEnd o clockIn+autoCloseHours según corresponda y marcar flag AUTO_OUT/AUTO_NO_SCHEDULE.
+- lastClockOutType debe tomarse del último punch real; si no existe, inferir AUTO.
+
+Acceptance:
+- Carmen Feb 27: punch 9:11→9:11 filtrado; punch 9:11→4:11 válido; schedule 9:30→4:11 => normal=6h41m, overtime=0.
+- Caso overlap merge probado.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+T003: Quitar endpoint temporal + agregar DELETE punch
+FILES: server/routes.ts
+- Eliminar /api/setup/create-manager-marbonilla
+- Agregar DELETE /api/hr/punches/:id (permiso HR_EDIT_PUNCHES)
+  - validar existe
+  - borrar (hard delete) + audit_event con snapshot antes
+  - response 200: "Marca eliminada."
+Acceptance: endpoint temporal eliminado, delete funcional con auditoría.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+T004: Actualizar /api/hr/payroll-report para V2 + CCSS
+BLOCKED BY: T002
+FILES: server/routes.ts (+ storage helpers si hace falta)
+
+- Usar computeDailyPayrollV2
+- Retornar por empleado:
+  hourlyRate
+  overtimeCalculatedMinutes vs overtimePaidMinutes
+  grossPay, netPay, employerCost (para que UI no calcule)
+- DailyBreakdown debe incluir:
+  scheduledStartTime, scheduledEndTime, flags[], overtimeCalculatedMinutes, overtimePaidMinutes, unpaidBreakMinutes
+
+CCSS (Phase A):
+- Si socialChargesEnabled:
+  ccssBase = basePay + (ccssIncludeService ? servicePay : 0)
+  Nota: en Phase A, si servicePay no está integrado aquí todavía, usar 0 y agregar warning.
+  ccssEmployee = round2(ccssBase * ccssEmployeeRate / 100)
+  ccssEmployer = round2(ccssBase * ccssEmployerRate / 100)
+- Si no, 0.
+- grossPay = basePay (+ extrasNet si existiera; esta semana no hay extras)
+- netPay = grossPay - ccssEmployee
+- employerCost = grossPay + ccssEmployer
+
+Retornar:
+- hrConfigSnapshot con todos los settings usados
+- hrConfigSnapshotWarnings[] si ccssIncludeService=true pero servicePay=0 en Phase A
+- totals con sumas (basePay, ccssEmployee, ccssEmployer, netPay, employerCost)
+
+Acceptance: API devuelve campos nuevos y CCSS correcto.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+T005: UI punches — botón borrar + marca manual con fecha
+BLOCKED BY: T003
+FILES: client/src/pages/hr/punches.tsx
+- Botón basurero por fila con confirmación:
+  “¿Eliminar esta marca de [Empleado] del [Fecha]?”
+- Llamar DELETE /api/hr/punches/:id y refrescar
+- “Marca Manual”:
+  - date picker (cualquier fecha)
+  - hora entrada
+  - hora salida opcional
+  - razón (dropdown) + nota opcional
+  - enviar al endpoint existente de override o crear endpoint manual (si no existe)
+- Mensajes en español.
+Acceptance: se pueden borrar marcas basura y crear marcas manuales retroactivas.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+T006: UI Planilla (reports.tsx) — columnas claras y overtime calc vs pag
+BLOCKED BY: T004
+FILES: client/src/pages/hr/reports.tsx
+- Renombrar visualmente “Reporte Planilla” a “Planilla”
+- Tabla resumen:
+  - Agregar “₡/hr”
+  - Dividir Extra en: “Extra (Calc)” y “Extra (Pag)”
+  - Si overtimeCalculated>0 y overtimePaid==0 => badge “Pendiente aprobación”
+  - “Desc.” como “X min” con tooltip “Descanso no pagado aplicado”
+  - “Min tarde” como “X min”
+  - CCSS Empl / CCSS Patr / Neto (solo si socialChargesEnabled)
+  - Mostrar “—” en ceros
+- Daily breakdown:
+  - Columna “Horario” (start-end)
+  - Mostrar flags como badges
+  - Mostrar Extra calc/pag y descuento/tardía en minutos
+- Totals row: incluir CCSS totals
+Acceptance: Planilla se entiende y muestra overtime calculado vs pagado claramente.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+T007: UI Config HR — nuevos settings (ordenado)
+BLOCKED BY: T001
+FILES: client/src/pages/admin/business-config.tsx (o donde esté HR settings)
+Agregar secciones:
+1) “Cálculo de Planilla”
+- paidStartPolicy selector con explicación corta
+- overtimeRequiresApproval toggle
+- Break deduction: toggle enabled + threshold + deduct minutes
+2) “CCSS / Cargas Sociales”
+- socialChargesEnabled toggle
+- employeeRate input %
+- employerRate input %
+- ccssIncludeService toggle (si Phase A no integra servicePay, mostrar nota “Se aplicará cuando servicio esté integrado”)
+Acceptance: se pueden modificar settings.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+T008: Pruebas / verificación
+BLOCKED BY: T005,T006,T007
+- Compilar limpio
+- Probar casos:
+  1) 0-min punch filtrado
+  2) corrupt punch filtrado
+  3) overlap merge (9-12 y 11:30-14 => 9-14)
+  4) adjacent merge con gap<=1min (merge) y gap>1min (no merge)
+  5) tardanza descuenta (paidStart=max(clockIn,schedStart))
+  6) overtime MANUAL > schedEnd calcula; AUTO no calcula
+  7) break >=9h descuenta 60 solo ordinario
+  8) retroactivo determinista: punch abierto en fecha pasada no usa now; cierra virtual
+- Verificar delete punch y manual punch
+Acceptance: todo funcionando para pagar salarios hoy sin overtime fantasma.
+
+NOTA IMPORTANTE (para pagar HOY)
+- Si necesitas pagar overtime HOY sin sistema de aprobación aún, temporalmente pon overtimeRequiresApproval=false en HR settings. Si lo dejas true, “Extra (Pag)” será 0 y quedará “Pendiente aprobación”.
