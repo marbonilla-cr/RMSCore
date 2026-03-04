@@ -65,13 +65,18 @@ function formatWorked(minutes: number | null | undefined): string {
   return `${h}h ${m}m`;
 }
 
-function getWeekStartDate(): string {
+function getWeekRange(): { start: string; end: string } {
   const now = new Date();
   const day = now.getDay();
   const diff = day === 0 ? 6 : day - 1;
   const monday = new Date(now);
   monday.setDate(now.getDate() - diff);
-  return monday.toISOString().slice(0, 10);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return {
+    start: monday.toISOString().slice(0, 10),
+    end: sunday.toISOString().slice(0, 10),
+  };
 }
 
 function formatScheduleTime(time: string): string {
@@ -91,7 +96,7 @@ export default function MiTurno() {
   const [elapsed, setElapsed] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; coords: any } | null>(null);
 
-  const weekStart = getWeekStartDate();
+  const { start: weekStart, end: weekEnd } = getWeekRange();
   const todayDow = new Date().getDay();
 
   const { data: status, isLoading: statusLoading } = useQuery<PunchStatus>({
@@ -100,7 +105,12 @@ export default function MiTurno() {
   });
 
   const { data: punches, isLoading: punchesLoading } = useQuery<PunchRecord[]>({
-    queryKey: ["/api/hr/punches/my"],
+    queryKey: ["/api/hr/punches/my", weekStart, weekEnd],
+    queryFn: async () => {
+      const res = await fetch(`/api/hr/punches/my?dateFrom=${weekStart}&dateTo=${weekEnd}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
   });
 
   const { data: schedule } = useQuery<WeeklySchedule>({
@@ -332,7 +342,7 @@ export default function MiTurno() {
         <CardHeader className="pb-2">
           <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
             <Clock className="h-5 w-5" />
-            Registros de Hoy
+            Registros de la Semana
           </CardTitle>
         </CardHeader>
         <CardContent>
