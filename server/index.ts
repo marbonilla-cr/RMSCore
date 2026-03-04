@@ -7,7 +7,7 @@ import { ensureSystemPermissions, seedExtraTypes } from "./storage";
 import { startHrBackgroundJobs } from "./hr-jobs";
 import { retryPendingSync } from "./quickbooks";
 import { runTenantLifecycleCheck } from "./provision/provision-service";
-import { ensurePublicTables } from "./provision/provision-routes";
+import { ensurePublicTables } from "./provision/seed-own-tenant";
 
 const app = express();
 const httpServer = createServer(app);
@@ -132,7 +132,9 @@ app.use((req, res, next) => {
 (async () => {
   await ensureSystemPermissions();
   await seedExtraTypes();
-  await ensurePublicTables();
+  ensurePublicTables().catch(err => {
+    console.error("[startup] Error en tenant seed:", err.message);
+  });
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
