@@ -3,7 +3,7 @@ import compression from "compression";
 import helmet from "helmet";
 import { createServer } from "http";
 import { registerRoutes } from "./routes";
-import { ensureSystemPermissions, seedExtraTypes } from "./storage";
+import { ensureSystemPermissions, seedExtraTypes, seedDefaultRolePermissions } from "./storage";
 import { startHrBackgroundJobs } from "./hr-jobs";
 import { retryPendingSync } from "./quickbooks";
 import { runTenantLifecycleCheck } from "./provision/provision-service";
@@ -131,6 +131,7 @@ app.use((req, res, next) => {
 
 (async () => {
   await ensureSystemPermissions();
+  await seedDefaultRolePermissions();
   await seedExtraTypes();
   ensurePublicTables().catch(err => {
     console.error("[startup] Error en tenant seed:", err.message);

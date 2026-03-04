@@ -228,6 +228,50 @@ export async function ensureSystemPermissions() {
   }
 }
 
+const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
+  MANAGER: SYSTEM_PERMISSIONS.map(p => p.key),
+  WAITER: [
+    "MODULE_TABLES_VIEW", "MODULE_POS_VIEW", "MODULE_KDS_VIEW", "MODULE_HR_VIEW",
+    "POS_VIEW", "ORDER_CREATE", "ORDER_EDIT", "QR_MANAGE",
+    "KDS_VIEW", "HR_VIEW_SELF", "HR_CLOCK_IN_OUT_ALLOW",
+    "SHORTAGES_VIEW", "SHORTAGES_REPORT",
+    "MENU_TOGGLE_AVAILABILITY",
+  ],
+  CASHIER: [
+    "MODULE_POS_VIEW", "MODULE_HR_VIEW",
+    "POS_VIEW", "POS_PAY", "POS_PRINT", "POS_EMAIL_TICKET", "POS_SPLIT",
+    "POS_VIEW_CASH_REPORT", "POS_EDIT_CUSTOMER_PREPAY",
+    "CASH_OPEN", "CASH_CLOSE",
+    "HR_VIEW_SELF", "HR_CLOCK_IN_OUT_ALLOW",
+    "SHORTAGES_VIEW", "SHORTAGES_REPORT",
+  ],
+  COOK: [
+    "MODULE_KDS_VIEW", "MODULE_HR_VIEW",
+    "KDS_VIEW",
+    "HR_VIEW_SELF", "HR_CLOCK_IN_OUT_ALLOW",
+    "SHORTAGES_VIEW", "SHORTAGES_REPORT",
+  ],
+};
+
+export async function seedDefaultRolePermissions() {
+  let totalInserted = 0;
+  for (const [role, keys] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+    const existing = await db.select({ key: rolePermissions.permissionKey })
+      .from(rolePermissions).where(eq(rolePermissions.role, role));
+    const existingKeys = new Set(existing.map(r => r.key));
+    const missing = keys.filter(k => !existingKeys.has(k));
+    if (missing.length > 0) {
+      await db.insert(rolePermissions).values(missing.map(key => ({ role, permissionKey: key })));
+      totalInserted += missing.length;
+    }
+  }
+  if (totalInserted > 0) {
+    console.log(`[permissions] Seeded ${totalInserted} default role permissions`);
+  } else {
+    console.log(`[permissions] Default role permissions already set`);
+  }
+}
+
 // Permissions
 export async function getAllPermissions() {
   return db.select().from(permissions).orderBy(asc(permissions.key));

@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Save, Building2, Loader2 } from "lucide-react";
+import { Save, Building2, Loader2, Upload, Package } from "lucide-react";
 
 interface TaxCategory {
   id: number;
@@ -227,6 +227,74 @@ export default function AdminBusinessConfigPage() {
         </div>
       </form>
 
+      <ImportInventorySection />
+
     </div>
+  );
+}
+
+function ImportInventorySection() {
+  const { toast } = useToast();
+  const [result, setResult] = useState<{ created: number; skipped: number; errors: string[] } | null>(null);
+
+  const importMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/import-initial-inventory");
+      return res.json();
+    },
+    onSuccess: (data: { created: number; skipped: number; errors: string[] }) => {
+      setResult(data);
+      if (data.created > 0) {
+        toast({ title: "Importación completada", description: `${data.created} insumos creados, ${data.skipped} omitidos` });
+        queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+      } else {
+        toast({ title: "Sin cambios", description: `${data.skipped} insumos ya existían`, variant: "default" });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error en importación", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Package className="w-5 h-5 text-muted-foreground" />
+          <div>
+            <h3 className="font-semibold text-base">Importación Inicial de Inventario</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Carga los 143 insumos base del sistema (Abarrotes, Verduras, Carnes, Porciones). Operación segura — si ya existen, se omiten.
+            </p>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Button
+          onClick={() => importMutation.mutate()}
+          disabled={importMutation.isPending}
+          variant="outline"
+          data-testid="button-import-inventory"
+        >
+          {importMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
+          {importMutation.isPending ? "Importando..." : "Importar Insumos Iniciales"}
+        </Button>
+
+        {result && (
+          <div className="mt-4 p-3 rounded-md bg-muted text-sm space-y-1">
+            <p><strong>{result.created}</strong> insumos creados</p>
+            <p><strong>{result.skipped}</strong> omitidos (ya existían)</p>
+            {result.errors.length > 0 && (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-destructive font-medium">{result.errors.length} errores</summary>
+                <ul className="mt-1 text-xs space-y-0.5 text-destructive">
+                  {result.errors.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

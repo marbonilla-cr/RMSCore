@@ -18,6 +18,8 @@ import {
 import { db } from "./db";
 import { invItems, products } from "@shared/schema";
 import { eq, and, lt, asc } from "drizzle-orm";
+import * as fs from "fs";
+import * as path from "path";
 
 function requirePermission(...permissionKeys: string[]) {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -1098,6 +1100,107 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       if (!result) return res.status(404).json({ message: "Conversión no encontrada" });
       broadcast(wss, result.hardDeleted ? "INV_CONVERSION_DELETED" : "INV_CONVERSION_DEACTIVATED", result.conversion);
       res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  const CATEGORY_MAP: Record<string, string> = {
+    "ZAbarrotesInv": "Abarrotes",
+    "ZVerdurasInv": "Verduras",
+    "ZCarnesInv": "Carnes",
+    "ZPorcionesInv": "Porciones",
+  };
+
+  function parseCSVNumber(val: string): string {
+    if (!val || val.trim() === "") return "0";
+    const cleaned = val.trim().replace(/\./g, "").replace(",", ".");
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? "0" : String(num);
+  }
+
+  app.post("/api/admin/import-initial-inventory", requirePermission("INV_MANAGE_ITEMS"), async (_req, res) => {
+    try {
+      const csvPath = path.join(process.cwd(), "server", "data", "initial-inventory.csv");
+      if (!fs.existsSync(csvPath)) {
+        return res.status(404).json({ message: "Archivo CSV no encontrado en server/data/" });
+      }
+
+      const rawBuffer = fs.readFileSync(csvPath);
+      let csvText: string;
+      try {
+        csvText = rawBuffer.toString("latin1");
+      } catch {
+        csvText = rawBuffer.toString("utf-8");
+      }
+
+      const lines = csvText.split("\n").filter(l => l.trim().length > 0);
+      if (lines.length < 2) {
+        return res.status(400).json({ message: "CSV vacío o sin datos" });
+      }
+
+      const results = { created: 0, skipped: 0, errors: [] as string[] };
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(";");
+        if (cols.length < 4) continue;
+
+        const handle = (cols[0] || "").trim();
+        const name = (cols[2] || "").trim().replace(/<[^>]*>/g, "");
+        const rawCategory = (cols[3] || "").trim();
+        const supplier = (cols[5] || "").trim();
+        const cost = (cols[6] || "").trim();
+        const purchaseUnit = (cols[7] || "").trim().toLowerCase();
+        const unitsPerPurchase = (cols[8] || "").trim();
+        const presentationUnit = (cols[9] || "").trim().toLowerCase();
+        const reorderPoint = (cols[10] || "").trim();
+        const parLevel = (cols[11] || "").trim();
+
+        if (!handle || !name) {
+          results.errors.push(`Fila ${i + 1}: sin handle o nombre`);
+          results.skipped++;
+          continue;
+        }
+
+        const sku = `AP-${handle}`.toUpperCase();
+        const category = CATEGORY_MAP[rawCategory] || rawCategory || "General";
+
+        let baseUom = "UNIT";
+        if (presentationUnit === "gramos" || purchaseUnit === "kilo") baseUom = "KG";
+        else if (presentationUnit === "mililitros" || purchaseUnit === "botella") baseUom = "L";
+        else if (presentationUnit === "metros") baseUom = "UNIT";
+
+        try {
+          const existing = await invStorage.getInvItemBySku(sku);
+          if (existing) {
+            results.skipped++;
+            continue;
+          }
+
+          const parsed = insertInvItemSchema.parse({
+            sku,
+            name,
+            itemType: "AP",
+            category,
+            baseUom,
+            onHandQtyBase: "0",
+            reorderPointQtyBase: parseCSVNumber(reorderPoint),
+            parLevelQtyBase: parseCSVNumber(parLevel),
+            isPerishable: category === "Carnes" || category === "Verduras",
+            notes: supplier ? `Proveedor: ${supplier}` : null,
+            lastCostPerBaseUom: cost ? parseCSVNumber(cost) : null,
+          });
+
+          await invStorage.createInvItem(parsed);
+          results.created++;
+        } catch (itemErr: any) {
+          results.errors.push(`SKU ${sku}: ${itemErr.message}`);
+          results.skipped++;
+        }
+      }
+
+      broadcast(wss, "INV_ITEMS_BULK_IMPORTED", { count: results.created });
+      res.json(results);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
