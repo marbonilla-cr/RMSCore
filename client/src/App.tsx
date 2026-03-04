@@ -9,7 +9,7 @@ import { useShortageAlerts } from "@/hooks/use-shortage-alerts";
 import { AppSidebar, DrawerProvider, DrawerTrigger } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { usePreventPullRefresh } from "@/hooks/use-prevent-pull-refresh";
-import { Loader2, LogOut, RefreshCw, Grid3x3, CreditCard, ChefHat, Wine, AlertTriangle, Clock } from "lucide-react";
+import { Loader2, LogOut, RefreshCw, Grid3x3, CreditCard, ChefHat, Wine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PinLoginPage from "@/pages/pin-login";
 import LoginPage from "@/pages/login";
@@ -175,9 +175,6 @@ function QuickNavButtons() {
   const showTables = hasPermission("MODULE_TABLES_VIEW");
   const showPOS = hasPermission("MODULE_POS_VIEW");
   const showKDS = hasPermission("MODULE_KDS_VIEW");
-  const showShortages = hasPermission("SHORTAGES_VIEW");
-  const showHR = hasPermission("MODULE_HR_VIEW");
-
   const navItems = [
     ...(showTables ? [{ url: "/tables", label: "Mesas", icon: Grid3x3 }] : []),
     ...(showPOS ? [{ url: "/pos", label: "Caja", icon: CreditCard }] : []),
@@ -185,8 +182,6 @@ function QuickNavButtons() {
       { url: "/kds", label: "Cocina", icon: ChefHat },
       { url: "/kds-bar", label: "Bar", icon: Wine },
     ] : []),
-    ...(showShortages ? [{ url: "/shortages/report", label: "Faltantes", icon: AlertTriangle }] : []),
-    ...(showHR ? [{ url: "/hr/mi-turno", label: "Mi Turno", icon: Clock }] : []),
   ];
 
   if (navItems.length === 0) return null;

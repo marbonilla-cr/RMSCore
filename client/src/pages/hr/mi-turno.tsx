@@ -82,6 +82,7 @@ function formatScheduleTime(time: string): string {
 }
 
 const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
 export default function MiTurno() {
   const { toast } = useToast();
@@ -110,8 +111,6 @@ export default function MiTurno() {
       return res.json();
     },
   });
-
-  const todaySchedule = schedule?.days?.find((d: ScheduleDay) => d.dayOfWeek === todayDow);
 
   useEffect(() => {
     if (!status?.clockedIn || !status.clockInTime) {
@@ -223,21 +222,43 @@ export default function MiTurno() {
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="rounded-lg border bg-muted/50 p-3 text-center" data-testid="schedule-today">
-            <div className="flex items-center justify-center gap-2 text-sm font-medium mb-1">
+          <div className="rounded-lg border bg-muted/50 p-3" data-testid="schedule-week">
+            <div className="flex items-center justify-center gap-2 text-sm font-medium mb-2">
               <CalendarDays className="h-4 w-4" />
-              <span>{DAY_NAMES[todayDow]}</span>
+              <span>Horario Semanal</span>
             </div>
-            {todaySchedule ? (
-              todaySchedule.isDayOff ? (
-                <p className="text-sm text-muted-foreground">Día libre</p>
-              ) : (
-                <p className="text-lg font-semibold" data-testid="text-schedule-hours">
-                  {formatScheduleTime(todaySchedule.startTime)} — {formatScheduleTime(todaySchedule.endTime)}
-                </p>
-              )
+            {schedule?.days && schedule.days.length > 0 ? (
+              <div className="space-y-1">
+                {WEEK_ORDER.map(dow => {
+                  const day = schedule.days.find((d: ScheduleDay) => d.dayOfWeek === dow);
+                  const isToday = dow === todayDow;
+                  return (
+                    <div
+                      key={dow}
+                      className={`flex items-center justify-between px-3 py-1.5 rounded text-sm ${isToday ? "bg-primary/10 font-semibold" : ""}`}
+                      data-testid={`schedule-day-${dow}`}
+                    >
+                      <span className={isToday ? "text-primary" : "text-muted-foreground"}>
+                        {DAY_NAMES[dow].slice(0, 3)}
+                        {isToday && " (Hoy)"}
+                      </span>
+                      <span>
+                        {day ? (
+                          day.isDayOff ? (
+                            <span className="text-muted-foreground italic">Libre</span>
+                          ) : (
+                            `${formatScheduleTime(day.startTime)} — ${formatScheduleTime(day.endTime)}`
+                          )
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Sin horario asignado</p>
+              <p className="text-sm text-muted-foreground text-center">Sin horario asignado</p>
             )}
           </div>
 
