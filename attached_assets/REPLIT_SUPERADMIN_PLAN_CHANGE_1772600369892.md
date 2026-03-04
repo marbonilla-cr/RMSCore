@@ -1,3 +1,14 @@
+# RMSCore — Superadmin: Fix blank screen + Cambio de plan funcional
+
+## QUÉ HACE ESTE PROMPT
+1. Corrige la pantalla en blanco (los estilos Linen se inyectan embebidos, sin depender del layout)
+2. Agrega cambio de plan completamente funcional desde el modal de detalle
+3. Al cambiar de plan, los módulos se actualizan automáticamente en la base de datos
+
+## ACCIÓN ÚNICA
+Reemplazar COMPLETAMENTE el contenido de `client/src/pages/superadmin.tsx` con el siguiente código:
+
+```tsx
 import { useState, useEffect, useCallback } from "react";
 
 // ─── ESTILOS EMBEBIDOS (independientes del layout principal) ──────────────────
@@ -830,3 +841,27 @@ export default function SuperadminPage() {
     </div>
   );
 }
+```
+
+---
+
+## VERIFICACIÓN
+
+Después de guardar el archivo, Vite recompila automáticamente. Verificar:
+
+1. `/superadmin` muestra la pantalla de login con fondo oscuro y logo coral — **blank screen resuelto**
+2. Al ingresar el token → lista de tenants visible con columna de Plan
+3. En la columna Plan de cada fila hay un botón ↑ (flecha arriba) para cambiar el plan
+4. Al hacer clic en ese botón → se abre el modal de cambio de plan con:
+   - Plan actual destacado con badge "ACTUAL"
+   - Cards de los 3 planes pagos (Básico, Pro, Empresarial) con módulos listados
+   - Aviso en amarillo si el cambio desactiva módulos
+   - Botón "Confirmar cambio" desactivado si no hay cambio
+5. En el modal de detalle (botón "Ver") también aparece botón "Cambiar plan"
+6. Al confirmar un cambio → toast de éxito y la tabla se actualiza
+
+## NO TOCAR
+- `App.tsx` — la ruta ya debe estar registrada
+- `server/provision/provision-routes.ts` — el endpoint `PATCH /api/superadmin/tenants/:id/plan` ya existe
+- `server/provision/provision-service.ts` — `changeTenantPlan()` ya existe
+```
