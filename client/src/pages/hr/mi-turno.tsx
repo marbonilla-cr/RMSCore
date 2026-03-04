@@ -16,15 +16,24 @@ interface PunchStatus {
 
 interface PunchRecord {
   id: number;
-  clockIn: string;
-  clockOut?: string | null;
+  clockInAt: string;
+  clockOutAt?: string | null;
   workedMinutes?: number | null;
   late?: boolean;
 }
 
-function formatTime(dateStr: string): string {
+function formatTime(dateStr: string | undefined | null): string {
+  if (!dateStr) return "-";
   const d = new Date(dateStr);
-  return d.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
+  if (isNaN(d.getTime())) return "-";
+  return d.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+function formatDay(dateStr: string | undefined | null): string {
+  if (!dateStr) return "-";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "-";
+  return d.toLocaleDateString("es-CR", { weekday: "short", day: "numeric", month: "short" });
 }
 
 function formatElapsed(startStr: string): string {
@@ -257,6 +266,7 @@ export default function MiTurno() {
               <table className="w-full text-sm" data-testid="table-punches">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-2 pr-2 font-medium">Día</th>
                     <th className="pb-2 pr-2 font-medium">Entrada</th>
                     <th className="pb-2 pr-2 font-medium">Salida</th>
                     <th className="pb-2 pr-2 font-medium">Trabajado</th>
@@ -266,8 +276,9 @@ export default function MiTurno() {
                 <tbody>
                   {punches.map((punch, idx) => (
                     <tr key={punch.id} className="border-b last:border-0" data-testid={`row-punch-${idx}`}>
-                      <td className="py-2 pr-2">{formatTime(punch.clockIn)}</td>
-                      <td className="py-2 pr-2">{punch.clockOut ? formatTime(punch.clockOut) : "-"}</td>
+                      <td className="py-2 pr-2 text-muted-foreground">{formatDay(punch.clockInAt)}</td>
+                      <td className="py-2 pr-2">{formatTime(punch.clockInAt)}</td>
+                      <td className="py-2 pr-2">{punch.clockOutAt ? formatTime(punch.clockOutAt) : "-"}</td>
                       <td className="py-2 pr-2">{formatWorked(punch.workedMinutes)}</td>
                       <td className="py-2">
                         {punch.late ? (

@@ -232,6 +232,7 @@ export function AppSidebar() {
   const showHRManage = hasPermission("HR_MANAGE_SCHEDULES") || hasPermission("HR_VIEW_TEAM") || hasPermission("HR_MANAGE_SETTINGS");
   const showINV = hasPermission("MODULE_INV_VIEW");
   const showShortages = hasPermission("SHORTAGES_VIEW");
+  const showShortagesManage = hasPermission("SHORTAGES_CLOSE");
 
   const initials = user?.displayName
     ? user.displayName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
@@ -283,6 +284,16 @@ export function AppSidebar() {
             )}
             {showINV && (
               <NavGroup label="Inventario" labelIcon={Package} items={invItems} location={location} onNav={close} checkPrefix />
+            )}
+            {showShortages && (
+              <NavGroup
+                label="Faltantes"
+                labelIcon={AlertTriangle}
+                items={showShortagesManage ? shortageItems : [shortageItems[0]]}
+                location={location}
+                onNav={close}
+                checkPrefix
+              />
             )}
             {showHR && (
               <NavGroup

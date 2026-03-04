@@ -184,7 +184,7 @@ function QuickNavButtons() {
       { url: "/kds", label: "Cocina", icon: ChefHat },
       { url: "/kds-bar", label: "Bar", icon: Wine },
     ] : []),
-    ...(showShortages ? [{ url: "/shortages/active", label: "Faltantes", icon: AlertTriangle }] : []),
+    ...(showShortages ? [{ url: "/shortages/report", label: "Faltantes", icon: AlertTriangle }] : []),
   ];
 
   if (navItems.length === 0) return null;
