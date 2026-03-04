@@ -6,6 +6,8 @@ import { registerRoutes } from "./routes";
 import { ensureSystemPermissions, seedExtraTypes } from "./storage";
 import { startHrBackgroundJobs } from "./hr-jobs";
 import { retryPendingSync } from "./quickbooks";
+import { runTenantLifecycleCheck } from "./provision/provision-service";
+import { ensurePublicTables } from "./provision/provision-routes";
 
 const app = express();
 const httpServer = createServer(app);
@@ -130,6 +132,7 @@ app.use((req, res, next) => {
 (async () => {
   await ensureSystemPermissions();
   await seedExtraTypes();
+  await ensurePublicTables();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -165,5 +168,9 @@ app.use((req, res, next) => {
     setInterval(() => {
       retryPendingSync().catch(err => console.error("[QBO] Retry queue error:", err.message));
     }, 5 * 60 * 1000);
+
+    setInterval(() => {
+      runTenantLifecycleCheck().catch(err => console.error("[lifecycle] Error:", err.message));
+    }, 60 * 60 * 1000);
   });
 })();

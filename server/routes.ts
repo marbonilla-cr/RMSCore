@@ -15,6 +15,9 @@ import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import * as qbo from "./quickbooks";
+import { tenantMiddleware } from "./middleware/tenant";
+import { registerDispatchRoutes, registerDispatchSession, notifyDispatchReady } from "./dispatch-routes";
+import { registerProvisionRoutes } from "./provision/provision-routes";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
@@ -417,6 +420,7 @@ export async function registerRoutes(
   });
   app.use(sessionMiddleware);
   app.set("sessionMiddleware", sessionMiddleware);
+  app.use(tenantMiddleware);
 
   app.use((req, _res, next) => {
     if (req.session.userId) return next();
@@ -3115,6 +3119,22 @@ export async function registerRoutes(
 
       if (ticket) {
         await recalcOrderStatusFromItems(ticket.orderId);
+
+        try {
+          const [ord] = await db.select().from(orders).where(eq(orders.id, ticket.orderId));
+          if (ord) {
+            const ordItems = await db.select().from(orderItems).where(eq(orderItems.orderId, ord.id));
+            notifyDispatchReady(ord.id, {
+              orderId: ord.id,
+              customerName: ordItems[0]?.customerNameSnapshot || "Cliente",
+              tableCode: ticket.tableNameSnapshot || "",
+              items: ordItems.map((i: any) => ({ name: i.productNameSnapshot, qty: i.qty })),
+              readyAt: new Date().toISOString(),
+            });
+          }
+        } catch (dispatchErr: any) {
+          console.error("[dispatch-notify]", dispatchErr.message);
+        }
       }
 
       broadcast("kitchen_item_status_changed", { ticketId, status: "READY" });
@@ -5840,7 +5860,7 @@ export async function registerRoutes(
   });
 
   // ==================== INVENTORY MODULE ====================
-  registerInventoryRoutes(app, null);
+  registerInventoryRoutes(app, broadcast);
 
   // ==================== SHORTAGES MODULE ====================
   registerShortageRoutes(app, broadcast);
@@ -5943,6 +5963,13 @@ export async function registerRoutes(
           printBridges.set(bridgeId, ws);
           console.log(`[PrintBridge] Registrado: ${bridgeId}`);
           ws.send(JSON.stringify({ type: "pong" }));
+        }
+        if (msg.type === "dispatch_register") {
+          const orderId = msg.payload?.orderId;
+          if (orderId) {
+            registerDispatchSession(orderId, ws);
+            ws.send(JSON.stringify({ type: "dispatch_registered", payload: { orderId } }));
+          }
         }
       } catch {}
     });
@@ -7100,6 +7127,9 @@ export async function registerRoutes(
       res.status(500).json({ message: err.message });
     }
   });
+
+  registerDispatchRoutes(app, broadcast);
+  registerProvisionRoutes(app);
 
   return httpServer;
 }

@@ -57,6 +57,9 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
     -   UI: Planilla report with Extra (Calc) vs Extra (Pag) columns, per-day schedule display, flag badges, CCSS columns (conditional), delete/manual punch management.
     -   HR Settings UI: Paid start policy, overtime approval toggle, break config, CCSS config.
 -   **QuickBooks Online Integration:** OAuth-based integration for asynchronous payment syncs with retry mechanisms, mapping RMS categories to QBO items, and environment-aware tax code handling.
+-   **Multi-Tenant Layer (RMSCore):** Dormant multi-tenant architecture. Tenant resolution via subdomain (production) or `TENANT_SCHEMA` env var (development). Per-tenant DB pool cache (`server/db-tenant.ts`), tenant middleware (`server/middleware/tenant.ts`), `requireModule()` guard. Public schema tables: `tenants`, `tenant_modules`, `superadmin_users`, `provision_log`, `billing_events`. Schema defined in `shared/schema-public.ts`.
+-   **Provision Module (Superadmin API):** `/api/superadmin/*` routes secured by `X-Superadmin-Token` header. Full tenant lifecycle: create (with schema cloning, admin user, seed data), suspend, reactivate, plan change, addon activation. Hourly lifecycle check for trial expiration. Files: `server/provision/provision-service.ts`, `server/provision/provision-routes.ts`.
+-   **Dispatch Mode (Modelo 3):** QR→kitchen→customer notification flow. Client submits order via `/api/dispatch/:tableCode/submit`, order goes directly to kitchen. WebSocket-based real-time notification when ticket is marked READY in KDS. `dispatch_register` WS message type for client session registration. File: `server/dispatch-routes.ts`.
 
 ## External Dependencies
 -   **PostgreSQL:** Primary database.
