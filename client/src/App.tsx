@@ -22,6 +22,7 @@ import DashboardPage from "@/pages/dashboard";
 import QRClientPage from "@/pages/qr-client";
 import PublicReservePage from "@/pages/reserve";
 import PublicMenuPage from "@/pages/public-menu";
+import SuperadminPage from "@/pages/superadmin";
 import AdminTablesPage from "@/pages/admin/tables";
 import AdminCategoriesPage from "@/pages/admin/categories";
 import AdminProductsPage from "@/pages/admin/products";
@@ -314,6 +315,7 @@ function AppRouter() {
       <Route path="/qr/:tableCode" component={QRClientPage} />
       <Route path="/reserve" component={PublicReservePage} />
       <Route path="/menu" component={PublicMenuPage} />
+      <Route path="/superadmin" component={SuperadminPage} />
       <Route component={AppContent} />
     </Switch>
   );
