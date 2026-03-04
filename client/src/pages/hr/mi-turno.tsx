@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Loader2, Clock, LogIn, LogOut, MapPin, AlertCircle } from "lucide-react";
+import { Loader2, Clock, LogIn, LogOut, MapPin, AlertCircle, CalendarDays } from "lucide-react";
 
 interface PunchStatus {
   clockedIn: boolean;
@@ -20,6 +20,18 @@ interface PunchRecord {
   clockOutAt?: string | null;
   workedMinutes?: number | null;
   late?: boolean;
+}
+
+interface ScheduleDay {
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  isDayOff: boolean;
+}
+
+interface WeeklySchedule {
+  id: number;
+  days: ScheduleDay[];
 }
 
 function formatTime(dateStr: string | undefined | null): string {
@@ -53,12 +65,33 @@ function formatWorked(minutes: number | null | undefined): string {
   return `${h}h ${m}m`;
 }
 
+function getWeekStartDate(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - diff);
+  return monday.toISOString().slice(0, 10);
+}
+
+function formatScheduleTime(time: string): string {
+  const [h, m] = time.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+
 export default function MiTurno() {
   const { toast } = useToast();
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; coords: any } | null>(null);
+
+  const weekStart = getWeekStartDate();
+  const todayDow = new Date().getDay();
 
   const { data: status, isLoading: statusLoading } = useQuery<PunchStatus>({
     queryKey: ["/api/hr/my-punch"],
@@ -68,6 +101,17 @@ export default function MiTurno() {
   const { data: punches, isLoading: punchesLoading } = useQuery<PunchRecord[]>({
     queryKey: ["/api/hr/punches/my"],
   });
+
+  const { data: schedule } = useQuery<WeeklySchedule>({
+    queryKey: ["/api/hr/schedules/my", weekStart],
+    queryFn: async () => {
+      const res = await fetch(`/api/hr/schedules/my?weekStartDate=${weekStart}`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+  });
+
+  const todaySchedule = schedule?.days?.find((d: ScheduleDay) => d.dayOfWeek === todayDow);
 
   useEffect(() => {
     if (!status?.clockedIn || !status.clockInTime) {
@@ -179,6 +223,24 @@ export default function MiTurno() {
           )}
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="rounded-lg border bg-muted/50 p-3 text-center" data-testid="schedule-today">
+            <div className="flex items-center justify-center gap-2 text-sm font-medium mb-1">
+              <CalendarDays className="h-4 w-4" />
+              <span>{DAY_NAMES[todayDow]}</span>
+            </div>
+            {todaySchedule ? (
+              todaySchedule.isDayOff ? (
+                <p className="text-sm text-muted-foreground">Día libre</p>
+              ) : (
+                <p className="text-lg font-semibold" data-testid="text-schedule-hours">
+                  {formatScheduleTime(todaySchedule.startTime)} — {formatScheduleTime(todaySchedule.endTime)}
+                </p>
+              )
+            ) : (
+              <p className="text-sm text-muted-foreground">Sin horario asignado</p>
+            )}
+          </div>
+
           <div className="text-center space-y-2">
             {status?.clockedIn && status.clockInTime ? (
               <>
