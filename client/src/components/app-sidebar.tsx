@@ -276,6 +276,15 @@ export function AppSidebar() {
             {showDashboard && (
               <NavGroup label="Gerencia" items={dashboardItems} location={location} onNav={close} />
             )}
+            {showTables && (
+              <NavGroup label="Mesas" labelIcon={Grid3x3} items={tablesItems} location={location} onNav={close} />
+            )}
+            {showPOS && (
+              <NavGroup label="Caja" labelIcon={CreditCard} items={cashierItems} location={location} onNav={close} />
+            )}
+            {showKDS && (
+              <NavGroup label="Cocina / Bar" labelIcon={ChefHat} items={kitchenItems} location={location} onNav={close} />
+            )}
             {showProducts && !showAdmin && (
               <NavGroup label="Menú" items={[productsItem]} location={location} onNav={close} />
             )}
