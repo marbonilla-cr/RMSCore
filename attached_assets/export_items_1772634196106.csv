@@ -1,0 +1,145 @@
+Handle;REF;Nombre;Categoria;Descripcion;Proveedor;Costo de compra;Unida de Compra;Unidades por unidad de compra;Presentacion Unidad de compra;Existencias bajas [Restaurante La Antigua Lecheria];Stock óptimo [Restaurante La Antigua Lecheria]
+aceite-(dorofrit)-freidor-grd;10255;Aceite (Dorofrit) Freidor Grd;ZAbarrotesInv;;Joyca;15550;;;;1.000;2.000
+aceite-de-cocina;10219;Aceite de Cocina El Chef 5lt inv;ZAbarrotesInv;;Joyca;6150;;;;0.500;1.000
+aceite-de-oliva-2lt;10240;Aceite de Oliva 5000ml inv;ZAbarrotesInv;;Joyca;35000;;;;0.500;1.000
+ajo-en-polvo;10190;Ajo en Polvo kg inv;ZAbarrotesInv;;Joyca;32500;;;;1.000;
+alambrina-grande;10265;Alambrina Grande;ZAbarrotesInv;;Joyca;350;;;;3.000;5.000
+arroz-con-pollo-1;10276;Arroz con Pollo Inv;ZAbarrotesInv;;Interno;;;;;10.000;15.000
+arroz-bolsa-2kg;10183;Arroz Horizonte de Oro 95% Bolsa 5kg  inv;ZAbarrotesInv;;Joyca;3850;;;;8.000;21.600
+arroz-precocido-imperio-1kg;10277;Arroz Precocido Imperio 1kg;ZAbarrotesInv;;Joyca;1137;;;;;2.000
+azúcar-sustituto-inv;10293;Azucar Sustituto Inv;ZAbarrotesInv;;Joyca;125;bolsa;250;gramos;0.500;2.000
+azucar-en-sobres-bolsa-250-unds-inv;10295;Azucar en Sobres Bolsa 250 unds Inv;ZAbarrotesInv;;Joyca;;;;;0.500;2.000
+azucar-moreno-vigui-kg;10256;Azucar Moreno Vigui Kg;ZAbarrotesInv;;Joyca;1692;;;;1.000;1.000
+tortilla-de-harina;10133;Tortilla de Harina 26cm und Inv;ZAbarrotesInv;<p>Tortilla harina Grande Bimbo 15 und</p>;Mayca;1500;bolsa;12;unidad;10.000;20.000
+cafe-molido-1kg;10282;Cafe Molido 1kg;ZAbarrotesInv;;;;;;;0.500;1.000
+yuca-precocida-inv;10125;Yuca Precocida Paq Inv;ZAbarrotesInv;;Interno;3100;bolsa;15;unidad;20.000;
+cebolla-en-polvo;10191;Cebolla en Polvo inv;ZAbarrotesInv;;Joyca;1975;;;;;
+chocolate-1;10309;Chocolate en Polvo;ZAbarrotesInv;;Joyca;3590;;;;;
+sangria-peñalosa-litro;10284;Sangria Pe�alosa Litro;ZAbarrotesInv;;Interno;900;botella;1500;mililitros;3.000;6.000
+condimentos;10159;Condimentos Inv;ZAbarrotesInv;<p>Condimentos varios</p>;;;;;;;
+consome-de-pollo;10187;Consome de Pollo Kilo inv;ZAbarrotesInv;;Joyca;1664;;;;;
+papel-aluminio;10246;Papel Aluminio inv;ZAbarrotesInv;;Joyca;0;caja;100;metros;0.500;1.000
+crema-desinit;10271;Crema Desinit (1paq = 15 porciones);ZAbarrotesInv;<p>1 paquete de 500 gramos, rinde un galon y de un galon se sirven 15 porciones de 250 ml,</p>;Joyca;3161;;;;2.000;4.000
+crema-dulce;10364;Crema Dulce;ZAbarrotesInv;;;;;;;;
+crema-lavaplatos-1kg;10262;Crema Lavaplatos 1kg;ZAbarrotesInv;;Joyca;768;;;;2.000;6.000
+cucharita-plastica-peq-inv;10372;Cucharita Plastica Peq Inv;ZAbarrotesInv;;Joyca;;;;;;
+desengrasante-galon;10261;Desengrasante Galon;ZAbarrotesInv;;Joyca;1700;;;;1.000;2.000
+desifectante-limon-gl;10263;Desifectante Limon Gl;ZAbarrotesInv;;Joyca;785;;;;1.000;2.000
+dulce-en-polvo-kilo-inv;10294;Dulce en Polvo Kilo Inv;ZAbarrotesInv;;Joyca;931;;;;2.000;4.000
+esponja-alumine-verde-dp;10266;Esponja Alumine Verde DP;ZAbarrotesInv;;Joyca;231;;;;2.000;4.000
+plastico-adhesivo-rollo;10247;"Plastico Adhesivo Rollo 12"" inv";ZAbarrotesInv;;Joyca;0;caja;100;metros;0.500;1.000
+removedor-de-madera-mediano-inv;10296;Removedor de Madera Mediano Inv;ZAbarrotesInv;;Joyca;0;caja;1000;unidades;0.500;2.000
+salsa-de-tomate-sobre;10298;Salsa de Tomate Sobre;ZAbarrotesInv;;Joyca;90;caja;250;sobres;;
+gorro-maya;10267;Gorro Maya 100 und;ZAbarrotesInv;;Joyca;4060;;;;6.000;1.000
+guante-nitrilo-talla-l;10268;Guante Nitrilo Talla L Caja;ZAbarrotesInv;;Joyca;3416;;;;0.500;1.000
+guante-nitrilo-talla-m;10269;Guante Nitrilo Talla M Caja;ZAbarrotesInv;;Joyca;3416;;;;0.500;1.000
+harina-nacarina-bolsa-2.5kg;10257;Harina Nacarina Bolsa 2.5kg;ZAbarrotesInv;;Joyca;2690;;;;2.500;4.000
+helado-cubeta;10287;Helado Cubeta;ZAbarrotesInv;;Joyca;9963;;;;5.000;15.000
+horchata-desinit;10272;Horchata Desinit (1paq = 15 porciones);ZAbarrotesInv;;Joyca;3161;;;;2.000;4.000
+huevo;10305;Huevo Inv;ZAbarrotesInv;;Joyca;110;;;;15.000;60.000
+jabon-en-polvo-kilo-inv;10373;Jabon en Polvo kilo Inv;ZAbarrotesInv;;Joyca;;;;;;
+jamon/mortadela;10150;Jamon 450grs (Ham Toro);ZAbarrotesInv;<p>Jamon para hamburguesa toro</p>;Joyca;3400;;;;20.000;1.000
+jugo-de-naranja-dos-pinos-2.2lt;10258;Jugo de Naranja Dos Pinos 2.2lt;ZAbarrotesInv;;Joyca;1650;;;;1.000;2.000
+leche-condensada;10307;Leche Condensada;ZAbarrotesInv;;Joyca;1300;;;;1.000;2.000
+leche-de-coco-lata;10239;Leche de Coco Lata inv;ZAbarrotesInv;;Joyca;1975;;;;1.000;2.000
+leche-dos-pinos-galon;10308;Leche Dos Pinos Galon;ZAbarrotesInv;;Pali;2770;;;;;
+leche-foodie-semidesc-1-lt;10259;Leche Foodie Semidesc 1 lt;ZAbarrotesInv;;Joyca;825;;;;5.000;12.000
+mant-numar-barras;10236;Marg Numar Barras inv;ZAbarrotesInv;;Joyca;986;;;;2.000;1.000
+masa-p/tortilla-kg;10234;Masa Maseca 2,5 Kg inv;ZAbarrotesInv;;Joyca;7536;;;;3.000;5.000
+matcha-kilo-inv;10290;Matcha Kilo Inv;ZAbarrotesInv;;;;;;;0.300;1.000
+maxi-toalla-240m-belen;10146;Maxi Toalla 240m Belen;ZAbarrotesInv;;Joyca;2750;;;;2.000;6.000
+mayonesa-en-sobre-inv;10371;Mayonesa en Sobre Inv;ZAbarrotesInv;;Joyca;;;;;;
+natilla-foodie-galon;10270;Natilla Tarro Inv;ZAbarrotesInv;;Joyca;7646;;;;0.500;1.000
+pan-hamburguesa-adulto;10129;Pan Hamburguesa Adulto Inv;ZAbarrotesInv;<p>Pan Bimbo Grande para hamburguesa (paquete de 12 und</p>;Interno;350;;;;8.000;12.000
+pan-hamburguesa-pequeña;10131;Pan Hamburguesa Pequeña Inv;ZAbarrotesInv;;Interno;260;;;;12.000;12.000
+papa-frita-inv;10157;Papa Frita (Bolsa 2.5) p/150grs Inv;ZAbarrotesInv;;Joyca;180;;;;66.000;132.000
+papas-en-gajo;10153;Papas en Gajo Condi 125gr Inv;ZAbarrotesInv;;Joyca;1625;;;;5.000;10.000
+torta-adulto-fiesta-150gr;10367;Torta Adulto Fiesta 150gr;ZCarnesInv;;;350;kilo;1000;gramos;;
+papel-higienico-rollo-ind;10310;Papel Higienico Rollo Ind;ZAbarrotesInv;;Interno;830;;;;2.000;4.000
+azucar-doña-maria-2kg;10235;Azucar Do�a Maria 5kg inv;ZAbarrotesInv;;Joyca;1200;kilo;1000;gramos;4.000;6.000
+pasta-de-tomate-pan;10249;Pasta de Tomate Bolsa kg Inv;ZAbarrotesInv;;Interno;6020;;;;0.500;1.000
+canela-en-polvo;10237;Canela en Polvo inv;ZAbarrotesInv;;Joyca;2500;kilo;1000;gramos;0.500;
+condimento-chicharron;10188;Condimento Chicharron kilo inv;ZAbarrotesInv;;;2500;kilo;1000;gramos;.5;
+consome-de-res;10186;Consome de Res Kilo inv;ZAbarrotesInv;;Joyca;2500;kilo;1000;gramos;.5;
+queso-mozarella;10386;Queso Mozarella;ZAbarrotesInv;;Joyca;;;;;1.000;2.500
+fresa-kilo-inv;10289;Fresa kilo Inv;ZAbarrotesInv;;;2000;kilo;1000;gramos;2.000;5.000
+sal-paq-500gr;10185;Sal Paq 500gr inv;ZAbarrotesInv;;Joyca;168;;;;2.000;6.000
+salsa-bbq;10241;Salsa BBQ Heinz Galon inv;ZAbarrotesInv;;Joyca;5891;;;;0.500;1.000
+salsa-china-galon;10243;Salsa China Banquete Galon inv;ZAbarrotesInv;;Interno;5370;;;;0.500;1.000
+salsa-de-tomate-galon;10244;Salsa de Tomate Banquete Galon inv;ZAbarrotesInv;;Joyca;5557;;;;0.500;1.000
+frijol-negro-2kg;10230;Frijol Negro Kg Inv;ZAbarrotesInv;;Interno;2000;kilo;1000;gramos;6.000;10.000
+salsa-lizano-galon;10242;Salsa Lizano Galon inv;ZAbarrotesInv;;Joyca;9200;;;;0.500;1.000
+salsa-mostaza-1galon;10245;Salsa Mostaza Banquete Galon inv;ZAbarrotesInv;;Joyca;9275;;;;0.500;1.000
+queso-cheddar-liq;10147;Salsa Queso Cheddar Lt Inv;ZAbarrotesInv;;Joyca;4111;;;;1.000;2.000
+frutos-rojos;10288;Frutos Rojos;ZAbarrotesInv;;Mayca;0;kilo;1000;gramos;0.500;2.000
+servilleta-rectangular-inv;10299;Servilleta Rectangular Gardenia 1x24 inv;ZAbarrotesInv;;Joyca;4972;;;;1.000.000;5.000.000
+tocineta-prefo;10149;Tocineta Ahumada Paq 1kg Inv;ZAbarrotesInv;;Joyca;7662;;;;10.000;1.000
+torta-de-carne-niño;10208;Torta de Carne 75 grs Inv;ZAbarrotesInv;;Joyca;12810;;;;15.000;1.000
+tortiricas;10132;Tortilla Blanca Foodservice Inv;ZAbarrotesInv;<p>Paquete Tortiricas 50 und (Food Service)</p>;Interno;35;;;;100.000;300.000
+paprika;10189;Paprika Kilo inv;ZAbarrotesInv;;Joyca;1500;kilo;1000;gramos;0.500;1.000
+tortillas-tostadas-boca;10279;Tortillas Tostadas Boca Bolsa 1 Kg;ZAbarrotesInv;;Tortillas Ilusion;3642;;;;1.000;2.000
+verduras-varias;10148;Verduras Varios Inv;ZAbarrotesInv;;;;;;;;
+vinagra-de-manza-galon;10231;Vinagre Blanco Galon inv;ZAbarrotesInv;;Interno;972;;;;1.000;1.000
+pimienta;10184;Pimienta inv;ZAbarrotesInv;;Joyca;1500;kilo;1000;gramos;0.500;1.000
+queso-semiduro;10168;Queso Block P/Freir  p/80gr Inv;ZAbarrotesInv;<p>Porcion de 150gr</p>;Interno;4500;kilo;1000;gramos;12.000;3.000
+Entra�a;10155;B Entrania Argentina 200grs Inv;ZCarnesInv;;Interno;14500;kilo;1000;gramos;4.000;5.000
+Lomo-ancho-pf;10156;B Lomito 200grs inv;ZCarnesInv;;Interno;11000;kilo;1000;gramos;5.000;5.000
+carne-en-salsa;10139;Carne en Salsa Coc 150gr Inv;ZCarnesInv;<p>Porcion de 150 grs</p>;Interno;;;;;2.500;5.000
+lomo-ancho-pf;10143;Bistec Lomo Ancho 200grs c/Mariposa inv;ZCarnesInv;<p>Porcion lomo ancho 200grs</p>;Interno;8000;kilo;1000;gramos;5.000;5.000
+chicharron;10128;Chicharron P200grs Inv;ZCarnesInv;;Interno;;;;;15.000;40.000
+Tocineta con pellejo;10220;Chicharron de Panzada Inv;ZCarnesInv;;Ventanita de Jow;4500;kilo;1000;gramos;10.000;16.000
+chorizo;10134;Chorizo Porcion 150grs;ZCarnesInv;<p>Chorizo empacado</p>;Interno;3500;kilo;1000;gramos;2.000;5.000
+corte-de-chuleton;10152;Corte de Chuleton Inv;ZCarnesInv;;Interno;4500;kilo;1000;gramos;4.000;5.000
+costilla-entera;10154;Costilla PF 350grs Inv;ZCarnesInv;;;;;;;;
+fajitas-de-pollo-1;10130;Fajitas de Pollo 200 grs Inv;ZCarnesInv;<p>Porcion de fajitas de pollo de 200 grs</p>;Interno;720;;;;50.000;60.000
+posta-de-pecho-entera;10214;Hueso Pescuezo Kilo inv;ZCarnesInv;<p>Por cada 5 kilos se producen 32 porciones de carne para la olla de carne</p>;Interno;4850;;;;20.000;5.000
+costilla-de-cerdo-st-louis-inv;10142;Costilla de Cerdo St Louis Inv;ZCarnesInv;<p>Por costilla st louis sacamos 4 porciones de 3 huesitos</p>;;4500;kilo;1000;gramos;10.000;16.000
+manteca-de-cerdo-kg;10251;Manteca de Cerdo kg inv;ZCarnesInv;;Interno;2500;;;;3.000;7.000
+mano-de-piedra-iinv;10041;Mano de Piedra Iinv;ZCarnesInv;<p>Mano de Piedra para carne en Salsa</p>;Interno;5500;kilo;1000;gramos;3.000;5.000
+pechuga-deshuesada-entera;10213;Pechuga c/hueso Und inv;ZCarnesInv;;Interno;4000;kilo;1000;gramos;2.000;4.000
+salchicha-desayuno;10306;Salchicha Desayuno;ZCarnesInv;;Joyca;2353;;;;;
+ternero;10135;Ternero 125grInv;ZCarnesInv;<p>Carne de Ternero en Salsa, portion de 175 gas</p>;Interno;500;;;;20.000;5.000
+posta-de-cerdo-p/chicharron-en-trozos;10179;Posta de Cerdo p/chicharron en trozos;ZCarnesInv;;Interno;4500;kilo;1000;gramos;10.000;20.000
+brownie-gamu;10330;Brownie Gamu;ZPorcionesInv;;;800;;;;5.000;
+crocante-de-nuez-inv;10172;Crocante de Nuez Inv;ZPorcionesInv;;Interno;10000;;;;5.000;1.000
+frijol-molido;10222;Frijol Molido 125grs inv;ZPorcionesInv;;Interno;;;;;3.000;5.000
+frijoles-negros;10137;Frijoles Negros 100grs Cocinados Inv;ZPorcionesInv;;Interno;;;;;3.000;6.000
+frijoles-tiernos;10158;Frijoles Tiernos Coc 150grs Inv;ZPorcionesInv;;;;;;;10.000;
+olla-de-carne;10000;Olla de Carne porciones;ZPorcionesInv;;;;;;;;
+patacon-porción;10248;Patacon Porción Inv;ZPorcionesInv;;Interno;55;;;;15.000;50.000
+picadillo-de-chayote;10141;Picadillo de Chayote Coc Inv;ZPorcionesInv;;;;;;;;
+papa-con-chorizo;10140;Picadillo Papa c/Chorizo 200grs inv;ZPorcionesInv;;Interno;;;;;2.000;3.000
+aguacate-entero;10193;Aguacate Entero Kilo inv;ZVerdurasInv;;Verdurero;2500;kilo;1000;gramos;4.000;6.000
+torta-de-carne-grande;10145;Torta de Carne Angus 200grs Inv;ZPorcionesInv;;Interno;7400;;;;12.000;2.000
+cebolla-entera-kg;10228;Cebolla Entera Kg inv;ZVerdurasInv;;Verdurero;1200;kilo;1000;gramos;2.000;
+ajo-entero;10227;Ajo Entero kg inv;ZVerdurasInv;;Verdurero;2633;;;;0.500;
+apio-entero;10303;Apio Entero;ZVerdurasInv;;Verdurero;;;;;;
+camote-entero;10203;Camote Pequeño Kilo inv;ZVerdurasInv;;Verdurero;695;;;;30.000;
+cebollino-entero;10212;Cebollino Entero Rollo inv;ZVerdurasInv;;Verdurero;1100;kilo;1000;gramos;;
+chile-panameño-kg;10250;Chile Paname�o kg inv;ZVerdurasInv;;Verdurero;1200;kilo;1000;gramos;0.500;
+chayote-entero-salon;10197;Chayote Entero Blanco inv;ZVerdurasInv;;Verdurero;550;;;;5.000;
+frijol-tierno-kilo-inv;10253;Frijol Tierno kilo inv;ZVerdurasInv;;Verdurero;2200;kilo;1000;gramos;2.000;4.000
+maracuya;10046;Maracuya Inv;ZVerdurasInv;;;900;kilo;1000;gramos;24.000;36.000
+pepino-kg;10233;Pepino Kilo inv;ZVerdurasInv;;Verdurero;880;kilo;1000;gramos;1.000;2.000
+tomate-mediano-kilo;10278;Tomate Mediano Kilo;ZVerdurasInv;;Verdurero;900;kilo;1000;gramos;8.000;10.000
+elote-entero;10195;Elote Entero inv;ZVerdurasInv;;Verdurero;200;;;;4.000;
+zuquini;10225;Zuquini Kilo;ZVerdurasInv;;Verdurero;700;kilo;1000;gramos;2.000;3.000
+pie-de-manzana-gamu;10332;Pie de Manzana Gamu;ZPorcionesInv;;;800;pastel;8;porciones;;
+culantro-castilla;10210;Culantro Castilla Rollo inv;ZVerdurasInv;;Verdurero;230;rollo;10;ramas;5.000;5.000
+culantro-coyote-entero;10211;Culantro Coyote Rollo inv;ZVerdurasInv;;Verdurero;175;rollo;10;ramas;5.000;5.000
+oregano-1;10192;Oregano Rollo inv;ZVerdurasInv;;Verdurero;400;rollo;10;ramas;3.000;4.000
+tomillo;10224;Tomillo Rollo inv;ZVerdurasInv;;Verdurero;375;rollo;10;ramas;3.000;10.000
+papa-entera-mediana;10199;Papa Amarilla Mediana Kilo inv;ZVerdurasInv;;Verdurero;1400;;;;30.000;30.000
+chile-dulce-entero;10232;Chile Dulce Entero inv;ZVerdurasInv;;Verdurero;350;unidad;1;unidad;10.000;8.000
+perejil-rollo-inv;10283;Perejil Rollo Inv;ZVerdurasInv;;Verdurero;400;;;;6.000;10.000
+platano-maduro-en-miel-50grs-inv;10254;Platano Maduro en Miel 50grs inv;ZVerdurasInv;;Interno;;;;;50.000;100.000
+platano-maduro-negro-entero;10209;Platano Maduro Negro und inv;ZVerdurasInv;;Verdurero;200;;;;10.000;30.000
+platano-maduro;10138;Platano Maduro Pinton Und Inv;ZVerdurasInv;;Verdurero;200;;;;10.000;30.000
+platano-verde-entero;10207;Platano Verde Und inv;ZVerdurasInv;;Verdurero;200;;;;10.000;30.000
+elote-porcion;10196;Elote Porcion inv;ZVerdurasInv;;Interno;200;unidad;1;unidad;10.000;32.000
+tamarindo-empacado;10286;Tamarindo Empacado;ZVerdurasInv;;Verdurero;2520;;;;2.000;4.000
+lechuga;10226;Lechuga und inv;ZVerdurasInv;;Verdurero;250;unidad;1;unidad;10.000;10.000
+limones;10223;Limon und inv;ZVerdurasInv;;Verdurero;120;unidad;1;unidad;20.000;60.000
+yuca-entera-kilo;10274;Yuca Entera Kilo;ZVerdurasInv;;Verdurero;360;;;;4.000;10.000
+zanahoria-entera;10205;Zanahoria Grande Kg;ZVerdurasInv;;Verdurero;730;;;;5.000;10.000
+repollo-morado;10229;Repollo Morado und inv;ZVerdurasInv;;Verdurero;1200;unidad;1;unidad;1.000;3.000
