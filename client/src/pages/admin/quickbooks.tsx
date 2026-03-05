@@ -738,21 +738,31 @@ function SyncTab() {
           ) : logs.length === 0 ? (
             <p className="text-sm text-muted-foreground">Sin registros.</p>
           ) : (
-            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+            <div className="space-y-2 max-h-[500px] overflow-y-auto">
               {logs.map((log: any) => (
-                <div key={log.id} className="flex items-center gap-2 py-2 border-b text-sm" data-testid={`sync-log-${log.id}`}>
-                  <StatusBadge status={log.status} />
-                  <span className="text-muted-foreground">Pago #{log.paymentId}</span>
-                  <span className="text-muted-foreground">Orden #{log.orderId}</span>
-                  {log.qboReceiptId && <span className="text-xs font-mono">QBO:{log.qboReceiptId}</span>}
+                <div key={log.id} className="border rounded-lg p-3 text-sm space-y-1" data-testid={`sync-log-${log.id}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <StatusBadge status={log.status} />
+                    <span className="font-medium">Pago #{log.paymentId}</span>
+                    <span className="text-muted-foreground">Orden #{log.orderId}</span>
+                    {log.attempts > 0 && (
+                      <span className="text-xs bg-muted px-1.5 py-0.5 rounded">Intentos: {log.attempts}</span>
+                    )}
+                    {log.qboReceiptId && <span className="text-xs font-mono bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 rounded">QBO ID: {log.qboReceiptId}</span>}
+                    {log.qboReceiptNumber && <span className="text-xs font-mono bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 rounded">Doc: {log.qboReceiptNumber}</span>}
+                  </div>
                   {log.errorMessage && (
-                    <span className="text-xs text-red-500 truncate max-w-[200px]" title={log.errorMessage}>
+                    <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded break-words whitespace-pre-wrap">
                       {log.errorMessage}
-                    </span>
+                    </div>
                   )}
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {log.createdAt ? new Date(log.createdAt).toLocaleString() : ""}
-                  </span>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                    <span>Creado: {log.createdAt ? new Date(log.createdAt).toLocaleString() : "-"}</span>
+                    {log.syncedAt && <span>Sincronizado: {new Date(log.syncedAt).toLocaleString()}</span>}
+                    {log.nextRetryAt && log.status === "FAILED" && (
+                      <span>Próximo reintento: {new Date(log.nextRetryAt).toLocaleString()}</span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
