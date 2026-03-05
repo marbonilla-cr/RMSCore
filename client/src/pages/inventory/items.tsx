@@ -41,7 +41,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Plus, Search, Trash2, Upload, ArrowUp, ArrowDown, ArrowUpDown, Pencil, CheckCircle2, AlertCircle } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Loader2, Plus, Search, Trash2, Upload, ArrowUp, ArrowDown, ArrowUpDown, Pencil, CheckCircle2, AlertCircle, StickyNote } from "lucide-react";
 
 interface InvItem {
   id: number;
@@ -58,6 +59,7 @@ interface InvItem {
   notes: string | null;
   avgCostPerBaseUom: string;
   lastCostPerBaseUom: string;
+  unitWeightG: string | null;
   default_supplier_id: number | null;
   supplierName: string | null;
 }
@@ -324,6 +326,35 @@ function SortHeader({ label, sortKey, currentSort, onSort, className }: {
   );
 }
 
+function NotesPopover({ itemId, initialNotes, onSave }: { itemId: number; initialNotes: string; onSave: (val: string) => void }) {
+  const [draft, setDraft] = useState(initialNotes);
+  const committed = useRef(false);
+
+  useEffect(() => { setDraft(initialNotes); committed.current = false; }, [initialNotes]);
+
+  const commit = () => {
+    if (!committed.current && draft !== initialNotes) {
+      committed.current = true;
+      onSave(draft);
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium">Notas</label>
+      <Textarea
+        value={draft}
+        onChange={(e) => { setDraft(e.target.value); committed.current = false; }}
+        onBlur={commit}
+        rows={3}
+        className="text-sm"
+        placeholder="Observaciones..."
+        data-testid={`textarea-notes-${itemId}`}
+      />
+    </div>
+  );
+}
+
 export default function InventoryItems() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -440,6 +471,9 @@ export default function InventoryItems() {
           else if (field === "reorderPointQtyBase") updated.reorderPointQtyBase = value;
           else if (field === "parLevelQtyBase") updated.parLevelQtyBase = value;
           else if (field === "lastCostPerBaseUom") updated.lastCostPerBaseUom = value;
+          else if (field === "unitWeightG") updated.unitWeightG = value != null ? String(value) : null;
+          else if (field === "isPerishable") updated.isPerishable = value;
+          else if (field === "notes") updated.notes = value || null;
           return updated;
         });
       });
@@ -585,6 +619,7 @@ export default function InventoryItems() {
             <thead className="sticky top-0 z-10 bg-background border-b">
               <tr>
                 <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-left w-[100px]">SKU</th>
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-center w-[40px]">Tipo</th>
                 <SortHeader label="Nombre" sortKey="name" currentSort={sort} onSort={handleSort} className="text-left min-w-[160px]" />
                 <SortHeader label="Categoría" sortKey="category" currentSort={sort} onSort={handleSort} className="text-left w-[120px]" />
                 <SortHeader label="Proveedor" sortKey="supplierName" currentSort={sort} onSort={handleSort} className="text-left w-[130px]" />
@@ -593,8 +628,11 @@ export default function InventoryItems() {
                 <SortHeader label="Pto Reorden" sortKey="reorderPoint" currentSort={sort} onSort={handleSort} className="text-right w-[90px]" />
                 <SortHeader label="Nivel Par" sortKey="parLevel" currentSort={sort} onSort={handleSort} className="text-right w-[80px]" />
                 <SortHeader label="Costo ₡" sortKey="cost" currentSort={sort} onSort={handleSort} className="text-right w-[90px]" />
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-right w-[80px]">Costo Prom</th>
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-right w-[70px]">Peso (g)</th>
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-center w-[40px]">P</th>
                 <SortHeader label="Estado" sortKey="status" currentSort={sort} onSort={handleSort} className="text-center w-[80px]" />
-                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-center w-[40px]"></th>
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-center w-[50px]"></th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -606,6 +644,11 @@ export default function InventoryItems() {
                 >
                   <td className="px-2 py-1 font-mono text-xs text-muted-foreground truncate max-w-[100px]" title={item.sku} data-testid={`cell-sku-${item.id}`}>
                     {item.sku}
+                  </td>
+                  <td className="px-2 py-1 text-center" data-testid={`cell-type-${item.id}`}>
+                    <Badge variant={item.itemType === "EP" ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
+                      {item.itemType || "AP"}
+                    </Badge>
                   </td>
                   <td className="px-1 py-1">
                     <EditableTextCell
@@ -664,25 +707,66 @@ export default function InventoryItems() {
                       field="cost"
                     />
                   </td>
+                  <td className="px-2 py-1 text-right tabular-nums text-muted-foreground" data-testid={`cell-avgcost-${item.id}`}>
+                    {parseFloat(item.avgCostPerBaseUom || "0").toFixed(2)}
+                  </td>
+                  <td className="px-1 py-1">
+                    {item.baseUom === "UNIT" ? (
+                      <EditableNumberCell
+                        value={item.unitWeightG || "0"}
+                        onSave={(v) => patchItem(item.id, "unitWeightG", Number(v))}
+                        itemId={item.id}
+                        field="unitWeightG"
+                        step="0.01"
+                      />
+                    ) : (
+                      <span className="px-1 text-muted-foreground text-xs">—</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 text-center">
+                    <Switch
+                      checked={item.isPerishable}
+                      onCheckedChange={(v) => patchItem(item.id, "isPerishable", v)}
+                      className="scale-75"
+                      data-testid={`switch-perishable-${item.id}`}
+                    />
+                  </td>
                   <td className="px-2 py-1 text-center" data-testid={`cell-status-${item.id}`}>
                     {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
                   </td>
                   <td className="px-1 py-1 text-center">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                      onClick={() => setDeleteTarget(item)}
-                      data-testid={`button-delete-item-${item.id}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <div className="flex items-center justify-center gap-0.5">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className={`h-6 w-6 ${item.notes ? "text-amber-600" : "opacity-0 group-hover:opacity-60"}`}
+                            data-testid={`button-notes-${item.id}`}
+                          >
+                            <StickyNote className="h-3.5 w-3.5" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-2">
+                          <NotesPopover itemId={item.id} initialNotes={item.notes || ""} onSave={(v) => patchItem(item.id, "notes", v)} />
+                        </PopoverContent>
+                      </Popover>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                        onClick={() => setDeleteTarget(item)}
+                        data-testid={`button-delete-item-${item.id}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="text-center text-muted-foreground py-8">
+                  <td colSpan={15} className="text-center text-muted-foreground py-8">
                     No se encontraron insumos
                   </td>
                 </tr>
@@ -1034,6 +1118,9 @@ function MobileEditForm({ item, suppliers, categories }: {
   const [reorder, setReorder] = useState(item.reorderPointQtyBase);
   const [par, setPar] = useState(item.parLevelQtyBase);
   const [cost, setCost] = useState(item.lastCostPerBaseUom || "0");
+  const [unitWeight, setUnitWeight] = useState(item.unitWeightG || "");
+  const [isPerishable, setIsPerishable] = useState(item.isPerishable);
+  const [notes, setNotes] = useState(item.notes || "");
 
   const [isDirty, setIsDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -1086,7 +1173,13 @@ function MobileEditForm({ item, suppliers, categories }: {
 
   return (
     <div className="space-y-3">
-      <div className="text-xs text-muted-foreground">{item.sku} · {item.baseUom} · En mano: {parseFloat(item.onHandQtyBase).toFixed(2)}</div>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Badge variant={item.itemType === "EP" ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
+          {item.itemType || "AP"}
+        </Badge>
+        <span>{item.sku} · {item.baseUom} · En mano: {parseFloat(item.onHandQtyBase).toFixed(2)}</span>
+      </div>
+      <div className="text-xs text-muted-foreground">Costo Promedio: ₡{parseFloat(item.avgCostPerBaseUom || "0").toFixed(2)}/{item.baseUom}</div>
 
       <div className="space-y-1">
         <label className="text-sm font-medium">Nombre</label>
@@ -1151,6 +1244,46 @@ function MobileEditForm({ item, suppliers, categories }: {
           onChange={(e) => { setCost(e.target.value); markDirtyAndDebounce("lastCostPerBaseUom", Number(e.target.value)); }}
           onBlur={saveChanges}
           data-testid="input-mobile-cost"
+        />
+      </div>
+
+      {item.baseUom === "UNIT" && (
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Peso por unidad (g)</label>
+          <Input
+            type="number" step="0.01" value={unitWeight}
+            onChange={(e) => { setUnitWeight(e.target.value); markDirtyAndDebounce("unitWeightG", e.target.value ? Number(e.target.value) : null); }}
+            onBlur={saveChanges}
+            placeholder="Ej: 250"
+            data-testid="input-mobile-unit-weight"
+          />
+          {(!unitWeight || parseFloat(unitWeight) <= 0) && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">Sin peso por unidad, las conversiones UNIT→G no funcionarán</p>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <Switch
+          checked={isPerishable}
+          onCheckedChange={(v) => { setIsPerishable(v); markDirtyAndDebounce("isPerishable", v); }}
+          data-testid="switch-mobile-perishable"
+        />
+        <label className="text-sm font-medium">Perecedero</label>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-sm font-medium flex items-center gap-1.5">
+          <StickyNote className="h-3.5 w-3.5" />
+          Notas
+        </label>
+        <Textarea
+          value={notes}
+          onChange={(e) => { setNotes(e.target.value); markDirtyAndDebounce("notes", e.target.value); }}
+          onBlur={saveChanges}
+          rows={2}
+          placeholder="Observaciones..."
+          data-testid="textarea-mobile-notes"
         />
       </div>
 
