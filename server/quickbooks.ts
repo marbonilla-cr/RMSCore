@@ -424,14 +424,15 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
   const customerId = await findOrCreateCustomer("Cliente Mostrador");
   const depositAccount = pm ? getDepositAccountForMethod(config, pm.paymentCode) : null;
 
-  const orderNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `${order.id}`);
+  const baseNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `${order.id}`);
+  const docNumber = `${baseNum}-P${paymentId}`;
 
   const receiptBody: any = {
     Line: lines,
     CustomerRef: { value: customerId },
     TxnDate: order.businessDate || new Date().toISOString().split("T")[0],
-    DocNumber: orderNum,
-    PrivateNote: `RMS Order #${orderNum}`,
+    DocNumber: docNumber,
+    PrivateNote: `RMS Order #${baseNum} Payment #${paymentId}`,
   };
 
   if (depositAccount) {
@@ -499,6 +500,15 @@ export async function voidSalesReceipt(paymentId: number): Promise<void> {
 export async function retryPendingSync(): Promise<number> {
   const config = await getQboConfig();
   if (!config || !config.isConnected) return 0;
+
+  await db.update(qboSyncLog).set({
+    status: "PENDING",
+    attempts: 0,
+    errorMessage: null,
+    nextRetryAt: null,
+  }).where(
+    dsql`${qboSyncLog.status} = 'FAILED' AND ${qboSyncLog.errorMessage} LIKE '%documento duplicado%'`
+  );
 
   const now = new Date();
   const pendingLogs = await db.select().from(qboSyncLog)
