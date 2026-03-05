@@ -45,11 +45,20 @@ export async function getInvItemBySku(sku: string) {
 }
 
 export async function createInvItem(data: InsertInvItem) {
+  if (data.lastCostPerBaseUom && (!data.avgCostPerBaseUom || Number(data.avgCostPerBaseUom) === 0)) {
+    data.avgCostPerBaseUom = data.lastCostPerBaseUom;
+  }
   const [item] = await db.insert(invItems).values(data).returning();
   return item;
 }
 
 export async function updateInvItem(id: number, data: Partial<InsertInvItem>) {
+  if (data.lastCostPerBaseUom && !data.avgCostPerBaseUom) {
+    const current = await getInvItem(id);
+    if (current && Number(current.avgCostPerBaseUom) === 0) {
+      data.avgCostPerBaseUom = data.lastCostPerBaseUom;
+    }
+  }
   const [item] = await db.update(invItems).set({ ...data, updatedAt: new Date() }).where(eq(invItems.id, id)).returning();
   return item;
 }

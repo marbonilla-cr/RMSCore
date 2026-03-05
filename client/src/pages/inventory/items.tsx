@@ -60,7 +60,7 @@ interface InvItem {
   avgCostPerBaseUom: string;
   lastCostPerBaseUom: string;
   unitWeightG: string | null;
-  default_supplier_id: number | null;
+  defaultSupplierId: number | null;
   supplierName: string | null;
 }
 
@@ -465,7 +465,7 @@ export default function InventoryItems() {
           if (field === "name") updated.name = value;
           else if (field === "category") updated.category = value;
           else if (field === "defaultSupplierId") {
-            updated.default_supplier_id = value;
+            updated.defaultSupplierId = value;
             updated.supplierName = value ? (suppliers || []).find(s => s.id === value)?.name || null : null;
           }
           else if (field === "reorderPointQtyBase") updated.reorderPointQtyBase = value;
@@ -671,7 +671,7 @@ export default function InventoryItems() {
                   <td className="px-1 py-1">
                     <EditableSupplierCell
                       value={item.supplierName}
-                      supplierId={item.default_supplier_id}
+                      supplierId={item.defaultSupplierId}
                       suppliers={suppliers || []}
                       onSave={(id) => patchItem(item.id, "defaultSupplierId", id)}
                       itemId={item.id}
@@ -1114,7 +1114,7 @@ function MobileEditForm({ item, suppliers, categories }: {
   const { toast } = useToast();
   const [name, setName] = useState(item.name);
   const [category, setCategory] = useState(item.category);
-  const [supplierId, setSupplierId] = useState<number | null>(item.default_supplier_id);
+  const [supplierId, setSupplierId] = useState<number | null>(item.defaultSupplierId);
   const [reorder, setReorder] = useState(item.reorderPointQtyBase);
   const [par, setPar] = useState(item.parLevelQtyBase);
   const [cost, setCost] = useState(item.lastCostPerBaseUom || "0");
