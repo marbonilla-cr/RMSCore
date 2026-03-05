@@ -11,6 +11,7 @@ import {
   serial,
   date,
   time,
+  unique,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -519,6 +520,21 @@ export const serviceChargePayouts = pgTable("service_charge_payouts", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const hrOvertimeApprovals = pgTable("hr_overtime_approvals", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull(),
+  businessDate: text("business_date").notNull(),
+  overtimeMinutes: integer("overtime_minutes").notNull(),
+  status: text("status").notNull().default("PENDING"),
+  approvedBy: integer("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  rejectionReason: text("rejection_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => ({
+  uniqueEmployeeDate: unique().on(t.employeeId, t.businessDate),
+}));
+
 // ==================== INVENTORY MODULE ====================
 
 export const invItems = pgTable("inv_items", {
@@ -1021,6 +1037,7 @@ export type HrScheduleDay = typeof hrScheduleDays.$inferSelect;
 export type InsertHrScheduleDay = z.infer<typeof insertHrScheduleDaySchema>;
 export type HrTimePunch = typeof hrTimePunches.$inferSelect;
 export type InsertHrTimePunch = z.infer<typeof insertHrTimePunchSchema>;
+export type HrOvertimeApproval = typeof hrOvertimeApprovals.$inferSelect;
 export type ServiceChargeLedgerEntry = typeof serviceChargeLedger.$inferSelect;
 export type InsertServiceChargeLedgerEntry = z.infer<typeof insertServiceChargeLedgerSchema>;
 export type ServiceChargePayout = typeof serviceChargePayouts.$inferSelect;

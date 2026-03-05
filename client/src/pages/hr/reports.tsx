@@ -24,7 +24,14 @@ import {
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Loader2, ChevronDown, ChevronRight, Plus, Trash2, Info, AlertTriangle, Clock } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Loader2, ChevronDown, ChevronRight, Plus, Trash2, Info, AlertTriangle, Clock, Check, X, RotateCcw } from "lucide-react";
 
 function formatMinutes(totalMinutes: number): string {
   const h = Math.floor(Math.abs(totalMinutes) / 60);
@@ -249,6 +256,93 @@ function PayrollTab() {
   const { data: extraTypes } = useQuery<ExtraType[]>({
     queryKey: ["/api/hr/extra-types"],
   });
+
+  const { data: approvals, refetch: refetchApprovals } = useQuery<any[]>({
+    queryKey: ["/api/hr/overtime-approvals", actualFrom, actualTo],
+    queryFn: () =>
+      fetch(`/api/hr/overtime-approvals?dateFrom=${actualFrom}&dateTo=${actualTo}`, { credentials: "include" })
+        .then(r => r.json()),
+    enabled: !!actualFrom && !!actualTo,
+  });
+
+  const approvalsMap = useMemo(() => {
+    const map: Record<string, { status: string; rejectionReason?: string }> = {};
+    for (const a of (approvals || [])) {
+      map[`${a.employeeId}_${a.businessDate}`] = a;
+    }
+    return map;
+  }, [approvals]);
+
+  const [rejectDialog, setRejectDialog] = useState<{ employeeId: number; businessDate?: string; overtimeMinutes?: number; bulk?: boolean; days?: any[] } | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  async function handleApproveDay(employeeId: number, businessDate: string, overtimeMinutes: number) {
+    try {
+      await apiRequest("POST", "/api/hr/overtime-approvals", { employeeId, businessDate, status: "APPROVED", overtimeMinutes });
+      refetchApprovals();
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      toast({ title: "Horas extra aprobadas" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
+
+  async function handleRevertDay(employeeId: number, businessDate: string, overtimeMinutes: number) {
+    try {
+      await apiRequest("POST", "/api/hr/overtime-approvals", { employeeId, businessDate, status: "PENDING", overtimeMinutes });
+      refetchApprovals();
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      toast({ title: "Aprobación revertida" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
+
+  async function confirmReject() {
+    if (!rejectDialog || !rejectReason.trim()) return;
+    try {
+      if (rejectDialog.bulk && rejectDialog.days) {
+        await apiRequest("POST", "/api/hr/overtime-approvals/bulk", {
+          employeeId: rejectDialog.employeeId,
+          dateFrom: actualFrom, dateTo: actualTo,
+          status: "REJECTED",
+          rejectionReason: rejectReason.trim(),
+          days: rejectDialog.days,
+        });
+      } else {
+        await apiRequest("POST", "/api/hr/overtime-approvals", {
+          employeeId: rejectDialog.employeeId,
+          businessDate: rejectDialog.businessDate,
+          status: "REJECTED",
+          overtimeMinutes: rejectDialog.overtimeMinutes,
+          rejectionReason: rejectReason.trim(),
+        });
+      }
+      refetchApprovals();
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      toast({ title: "Horas extra rechazadas" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+    setRejectDialog(null);
+    setRejectReason("");
+  }
+
+  async function handleBulkApprove(employeeId: number, days: { businessDate: string; overtimeMinutes: number }[]) {
+    try {
+      await apiRequest("POST", "/api/hr/overtime-approvals/bulk", {
+        employeeId,
+        dateFrom: actualFrom, dateTo: actualTo,
+        status: "APPROVED",
+        days,
+      });
+      refetchApprovals();
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      toast({ title: `${days.length} días de extras aprobados` });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
 
   const [addingExtraFor, setAddingExtraFor] = useState<{ empId: number; date: string } | null>(null);
   const [newExtraType, setNewExtraType] = useState("");
@@ -479,10 +573,29 @@ function PayrollTab() {
                         {showCCSS && <TableCell className="text-right whitespace-nowrap text-xs">{emp.ccssEmployer > 0 ? formatColones(emp.ccssEmployer) : "—"}</TableCell>}
                         <TableCell className="text-right whitespace-nowrap font-bold">{formatColones(showCCSS ? emp.netPay : emp.grandTotalPay)}</TableCell>
                       </TableRow>
-                      {isExpanded && (
+                      {isExpanded && (() => {
+                        const pendingOvertimeDays = emp.dailyBreakdown
+                          .filter((d: any) => {
+                            if ((d.overtimeCalculatedMinutes || 0) <= 0) return false;
+                            const st = approvalsMap[`${emp.employeeId}_${d.date}`]?.status;
+                            return !st || st === "PENDING";
+                          })
+                          .map((d: any) => ({ businessDate: d.date, overtimeMinutes: d.overtimeCalculatedMinutes }));
+                        return (
                         <TableRow key={`${emp.employeeId}-detail`}>
                           <TableCell colSpan={showCCSS ? 20 : 18} className="p-0">
                             <div className="bg-muted/30 p-3">
+                              {pendingOvertimeDays.length > 0 && data.hrConfigSnapshot?.overtimeRequiresApproval && (
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-xs text-muted-foreground">Horas extra pendientes: {pendingOvertimeDays.length} día(s)</span>
+                                  <Button size="sm" variant="outline" className="h-6 text-xs text-green-600 border-green-300" onClick={(e) => { e.stopPropagation(); handleBulkApprove(emp.employeeId, pendingOvertimeDays); }} data-testid={`button-bulk-approve-${emp.employeeId}`}>
+                                    <Check className="h-3 w-3 mr-1" /> Aprobar todas ({pendingOvertimeDays.length})
+                                  </Button>
+                                  <Button size="sm" variant="outline" className="h-6 text-xs text-red-600 border-red-300" onClick={(e) => { e.stopPropagation(); setRejectDialog({ employeeId: emp.employeeId, bulk: true, days: pendingOvertimeDays }); }} data-testid={`button-bulk-reject-${emp.employeeId}`}>
+                                    <X className="h-3 w-3 mr-1" /> Rechazar todas
+                                  </Button>
+                                </div>
+                              )}
                               <Table>
                                 <TableHeader>
                                   <TableRow>
@@ -593,7 +706,45 @@ function PayrollTab() {
                                               {day.flags.includes("SIN_HORARIO") && <Badge variant="outline" className="text-[10px] px-1">Sin horario</Badge>}
                                               {day.flags.includes("DIA_LIBRE") && <Badge variant="outline" className="text-[10px] px-1">Día libre</Badge>}
                                               {day.flags.includes("PUNCH_BASURA_FILTRADO") && <Badge variant="outline" className="text-[10px] px-1 text-orange-500 border-orange-300">Basura filtrada</Badge>}
-                                              {day.flags.includes("OVERTIME_PENDIENTE_APROBACION") && <Badge variant="outline" className="text-[10px] px-1 text-amber-600 border-amber-300">OT pendiente</Badge>}
+                                              {day.flags.includes("OVERTIME_PENDIENTE_APROBACION") && (() => {
+                                                const approvalKey = `${emp.employeeId}_${day.date}`;
+                                                const approval = approvalsMap[approvalKey];
+                                                const st = approval?.status;
+                                                if (st === "APPROVED") return (
+                                                  <span className="inline-flex items-center gap-1">
+                                                    <Badge className="text-[10px] px-1 bg-green-600 text-white">OT Aprobada</Badge>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleRevertDay(emp.employeeId, day.date, day.overtimeCalculatedMinutes); }} className="text-muted-foreground hover:text-foreground" title="Revertir" data-testid={`button-revert-ot-${emp.employeeId}-${day.date}`}>
+                                                      <RotateCcw className="h-3 w-3" />
+                                                    </button>
+                                                  </span>
+                                                );
+                                                if (st === "REJECTED") return (
+                                                  <TooltipProvider>
+                                                    <span className="inline-flex items-center gap-1">
+                                                      <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                          <Badge variant="destructive" className="text-[10px] px-1 cursor-help">OT Rechazada</Badge>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent>{approval.rejectionReason || "Sin razón"}</TooltipContent>
+                                                      </Tooltip>
+                                                      <button onClick={(e) => { e.stopPropagation(); handleRevertDay(emp.employeeId, day.date, day.overtimeCalculatedMinutes); }} className="text-muted-foreground hover:text-foreground" title="Revertir" data-testid={`button-revert-ot-${emp.employeeId}-${day.date}`}>
+                                                        <RotateCcw className="h-3 w-3" />
+                                                      </button>
+                                                    </span>
+                                                  </TooltipProvider>
+                                                );
+                                                return (
+                                                  <span className="inline-flex items-center gap-1">
+                                                    <Badge variant="outline" className="text-[10px] px-1 text-amber-600 border-amber-300">OT pendiente</Badge>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleApproveDay(emp.employeeId, day.date, day.overtimeCalculatedMinutes); }} className="text-green-600 hover:text-green-800" title="Aprobar" data-testid={`button-approve-ot-${emp.employeeId}-${day.date}`}>
+                                                      <Check className="h-3.5 w-3.5" />
+                                                    </button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setRejectDialog({ employeeId: emp.employeeId, businessDate: day.date, overtimeMinutes: day.overtimeCalculatedMinutes }); }} className="text-red-600 hover:text-red-800" title="Rechazar" data-testid={`button-reject-ot-${emp.employeeId}-${day.date}`}>
+                                                      <X className="h-3.5 w-3.5" />
+                                                    </button>
+                                                  </span>
+                                                );
+                                              })()}
                                               {day.flags.includes("PUNCHES_MULTIPLES") && <Badge variant="outline" className="text-[10px] px-1">Múlt. marcas</Badge>}
                                             </>
                                           ) : (
@@ -612,7 +763,8 @@ function PayrollTab() {
                             </div>
                           </TableCell>
                         </TableRow>
-                      )}
+                        );
+                      })()}
                     </Fragment>
                   );
                 })}
@@ -634,6 +786,37 @@ function PayrollTab() {
           <p className="text-sm text-muted-foreground" data-testid="text-no-payroll-data">No hay datos para el rango seleccionado.</p>
         )}
       </CardContent>
+
+      <Dialog open={!!rejectDialog} onOpenChange={(open) => { if (!open) { setRejectDialog(null); setRejectReason(""); } }}>
+        <DialogContent className="max-w-md" onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle data-testid="text-reject-dialog-title">
+              {rejectDialog?.bulk
+                ? `Rechazar ${rejectDialog.days?.length || 0} día(s) de horas extra`
+                : `Rechazar horas extra del ${rejectDialog?.businessDate || ""}`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm font-medium">Razón del rechazo (obligatorio)</label>
+              <Textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Escriba la razón del rechazo..."
+                data-testid="input-reject-reason"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => { setRejectDialog(null); setRejectReason(""); }} data-testid="button-cancel-reject">
+                Cancelar
+              </Button>
+              <Button variant="destructive" disabled={!rejectReason.trim()} onClick={confirmReject} data-testid="button-confirm-reject">
+                Confirmar rechazo
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

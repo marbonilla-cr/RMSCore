@@ -315,6 +315,7 @@ export function computeDailyPayroll(args: {
 
   let overtimePaidMinutes = overtimeCalculatedMinutes;
   if (overtimeRequiresApproval && overtimeCalculatedMinutes > 0) {
+    overtimePaidMinutes = 0;
     flags.push("OVERTIME_PENDIENTE_APROBACION");
   }
 
@@ -569,6 +570,7 @@ export function computeRangePayroll(args: {
   dateFrom: string;
   dateTo: string;
   hrConfig: HrConfig;
+  overtimeApprovalsMap?: Record<string, "APPROVED" | "REJECTED" | "PENDING">;
 }): EmployeePayrollResult[] {
   const { employees, schedulesMap, punchesMap, extrasMap, servicePoolMap, extraTypesKindMap, dateFrom, dateTo, hrConfig } = args;
   const dates = getDateRange(dateFrom, dateTo);
@@ -645,15 +647,30 @@ export function computeRangePayroll(args: {
       if (daily.noShow) daysNoShow++;
       totalNormalMin += daily.normalMinutesPaid;
       totalOvertimeCalcMin += daily.overtimeCalculatedMinutes;
-      totalOvertimePaidMin += daily.overtimePaidMinutes;
+
+      let overtimePaidThisDay = daily.overtimePaidMinutes;
+      let overtimePayThisDay = daily.overtimePay;
+      if (args.overtimeApprovalsMap && daily.overtimeCalculatedMinutes > 0) {
+        const approvalKey = `${emp.id}_${dateStr}`;
+        const approvalStatus = args.overtimeApprovalsMap[approvalKey];
+        if (approvalStatus === "APPROVED") {
+          overtimePaidThisDay = daily.overtimeCalculatedMinutes;
+          overtimePayThisDay = round2((overtimePaidThisDay / 60) * empHourlyRate * (Number(hrConfig.overtimeMultiplier) || 1.5));
+        } else {
+          overtimePaidThisDay = 0;
+          overtimePayThisDay = 0;
+        }
+      }
+      totalOvertimePaidMin += overtimePaidThisDay;
+
       totalUnpaidBreakMin += daily.unpaidBreakMinutes;
       if (daily.late) {
         lateCount++;
         totalLateMin += daily.tardyMinutes;
       }
       normalPay += daily.normalPay;
-      overtimePay += daily.overtimePay;
-      basePayTotal += daily.basePay;
+      overtimePay += overtimePayThisDay;
+      basePayTotal += round2(daily.normalPay + overtimePayThisDay);
 
       const extrasFormatted: DailyBreakdownEntry["extras"] = [];
       for (const ex of dayExtras) {
@@ -675,12 +692,12 @@ export function computeRangePayroll(args: {
         date: dateStr,
         workedMinutes: daily.workedMinutes,
         normalMinutes: daily.normalMinutesPaid,
-        overtimeMinutes: daily.overtimePaidMinutes,
+        overtimeMinutes: overtimePaidThisDay,
         overtimeCalculatedMinutes: daily.overtimeCalculatedMinutes,
-        overtimePaidMinutes: daily.overtimePaidMinutes,
+        overtimePaidMinutes: overtimePaidThisDay,
         unpaidBreakMinutes: daily.unpaidBreakMinutes,
         tardyMinutes: daily.tardyMinutes,
-        basePay: daily.basePay,
+        basePay: round2(daily.normalPay + overtimePayThisDay),
         extras: extrasFormatted,
         servicePayDay,
         scheduledStartTime: daily.scheduledStartTime,

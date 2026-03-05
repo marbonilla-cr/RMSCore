@@ -53,9 +53,10 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 -   **HR Payroll Engine V2 (Phase A Complete):** Retroactive, deterministic payroll recalculation from raw punches. Features:
     -   `normalizePunches()`: Filters zero-duration/corrupt punches, merges overlapping and adjacent (≤1min gap) intervals.
     -   `computeDailyPayroll()`: Paid-start policy (SCHEDULE_START_CAP or ACTUAL), overtime only on MANUAL clock-out past scheduled end (AUTO/GEO_AUTO → 0), break deduction (configurable threshold/amount), tardiness tracking, flags array.
-    -   `overtimeRequiresApproval`: When true, calculated overtime shows as "Pendiente" with `overtimePaidMinutes=0`.
+    -   `overtimeRequiresApproval`: When true, calculated overtime shows as "Pendiente" with `overtimePaidMinutes=0` until manager approves.
+    -   **Overtime Approval Flow:** `hr_overtime_approvals` table (unique per employee+date). Manager can approve/reject/revert individual days or bulk. Rejected requires reason. Approved OT pays calculated minutes; rejected/pending pays 0. API: GET/POST `/api/hr/overtime-approvals`, POST `/api/hr/overtime-approvals/bulk`. UI controls in planilla daily breakdown with approve/reject/revert buttons and bulk actions per employee.
     -   CCSS social charges: Configurable employee/employer rates, optional service charge inclusion.
-    -   UI: Planilla report with Extra (Calc) vs Extra (Pag) columns, per-day schedule display, flag badges, CCSS columns (conditional), delete/manual punch management.
+    -   UI: Planilla report with Extra (Calc) vs Extra (Pag) columns, per-day schedule display, flag badges, CCSS columns (conditional), delete/manual punch management, overtime approval controls.
     -   HR Settings UI: Paid start policy, overtime approval toggle, break config, CCSS config.
 -   **QuickBooks Online Integration:** OAuth-based integration for asynchronous payment syncs with retry mechanisms, mapping RMS categories to QBO items, and environment-aware tax code handling.
 -   **Multi-Tenant Layer (RMSCore):** Dormant multi-tenant architecture. Tenant resolution via subdomain (production) or `TENANT_SCHEMA` env var (development). Per-tenant DB pool cache (`server/db-tenant.ts`), tenant middleware (`server/middleware/tenant.ts`), `requireModule()` guard. Public schema tables: `tenants`, `tenant_modules`, `superadmin_users`, `provision_log`, `billing_events`. Schema defined in `shared/schema-public.ts`.

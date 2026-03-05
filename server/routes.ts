@@ -18,7 +18,7 @@ import * as qbo from "./quickbooks";
 import { tenantMiddleware } from "./middleware/tenant";
 import { registerDispatchRoutes, registerDispatchSession, notifyDispatchReady } from "./dispatch-routes";
 import { registerProvisionRoutes } from "./provision/provision-routes";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
 declare module "express-session" {
@@ -5480,6 +5480,158 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== HR: OVERTIME APPROVALS ====================
+
+  app.get("/api/hr/overtime-approvals", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      const { dateFrom, dateTo, employeeId } = req.query;
+      if (!dateFrom || !dateTo) {
+        return res.status(400).json({ message: "dateFrom y dateTo son requeridos" });
+      }
+      const conditions = [
+        gte(hrOvertimeApprovals.businessDate, String(dateFrom)),
+        lte(hrOvertimeApprovals.businessDate, String(dateTo)),
+      ];
+      if (employeeId) {
+        conditions.push(eq(hrOvertimeApprovals.employeeId, Number(employeeId)) as any);
+      }
+      const rows = await db.select().from(hrOvertimeApprovals).where(and(...conditions));
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/hr/overtime-approvals", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      const { employeeId, businessDate, status, rejectionReason, overtimeMinutes } = req.body;
+      const managerId = req.session.userId!;
+
+      if (!employeeId || !businessDate || !status || !overtimeMinutes) {
+        return res.status(400).json({ message: "employeeId, businessDate, status y overtimeMinutes son requeridos" });
+      }
+      if (!["APPROVED", "REJECTED", "PENDING"].includes(status)) {
+        return res.status(400).json({ message: "status debe ser APPROVED, REJECTED o PENDING" });
+      }
+      if (status === "REJECTED" && !rejectionReason?.trim()) {
+        return res.status(400).json({ message: "La razón de rechazo es obligatoria" });
+      }
+
+      const existing = await db
+        .select()
+        .from(hrOvertimeApprovals)
+        .where(
+          and(
+            eq(hrOvertimeApprovals.employeeId, Number(employeeId)),
+            eq(hrOvertimeApprovals.businessDate, String(businessDate))
+          )
+        )
+        .limit(1);
+
+      if (existing.length > 0) {
+        if (status === "PENDING") {
+          await db.delete(hrOvertimeApprovals).where(eq(hrOvertimeApprovals.id, existing[0].id));
+        } else {
+          await db
+            .update(hrOvertimeApprovals)
+            .set({
+              status,
+              approvedBy: managerId,
+              approvedAt: new Date(),
+              rejectionReason: status === "REJECTED" ? rejectionReason.trim() : null,
+              overtimeMinutes: Number(overtimeMinutes),
+              updatedAt: new Date(),
+            })
+            .where(eq(hrOvertimeApprovals.id, existing[0].id));
+        }
+      } else {
+        if (status !== "PENDING") {
+          await db.insert(hrOvertimeApprovals).values({
+            employeeId: Number(employeeId),
+            businessDate: String(businessDate),
+            overtimeMinutes: Number(overtimeMinutes),
+            status,
+            approvedBy: managerId,
+            approvedAt: new Date(),
+            rejectionReason: status === "REJECTED" ? rejectionReason.trim() : null,
+          });
+        }
+      }
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: managerId,
+        action: status === "APPROVED" ? "OVERTIME_APPROVED" : status === "REJECTED" ? "OVERTIME_REJECTED" : "OVERTIME_REVERTED",
+        entityType: "hr_overtime_approval",
+        entityId: Number(employeeId),
+        metadata: { businessDate, overtimeMinutes, rejectionReason: rejectionReason || null },
+      });
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/hr/overtime-approvals/bulk", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      const { employeeId, dateFrom, dateTo, status, rejectionReason, days } = req.body;
+      const managerId = req.session.userId!;
+
+      if (!employeeId || !status || !days?.length) {
+        return res.status(400).json({ message: "employeeId, status y days son requeridos" });
+      }
+      if (status === "REJECTED" && !rejectionReason?.trim()) {
+        return res.status(400).json({ message: "La razón de rechazo es obligatoria para rechazos masivos" });
+      }
+
+      for (const day of days) {
+        const existing = await db
+          .select()
+          .from(hrOvertimeApprovals)
+          .where(
+            and(
+              eq(hrOvertimeApprovals.employeeId, Number(employeeId)),
+              eq(hrOvertimeApprovals.businessDate, String(day.businessDate))
+            )
+          )
+          .limit(1);
+
+        const values = {
+          status,
+          approvedBy: managerId,
+          approvedAt: new Date(),
+          rejectionReason: status === "REJECTED" ? rejectionReason.trim() : null,
+          overtimeMinutes: Number(day.overtimeMinutes),
+          updatedAt: new Date(),
+        };
+
+        if (existing.length > 0) {
+          await db.update(hrOvertimeApprovals).set(values).where(eq(hrOvertimeApprovals.id, existing[0].id));
+        } else {
+          await db.insert(hrOvertimeApprovals).values({
+            employeeId: Number(employeeId),
+            businessDate: String(day.businessDate),
+            ...values,
+          });
+        }
+      }
+
+      await storage.createAuditEvent({
+        actorType: "USER",
+        actorUserId: managerId,
+        action: status === "APPROVED" ? "OVERTIME_BULK_APPROVED" : "OVERTIME_BULK_REJECTED",
+        entityType: "hr_overtime_approval",
+        entityId: Number(employeeId),
+        metadata: { dateFrom, dateTo, count: days.length, rejectionReason: rejectionReason || null },
+      });
+
+      res.json({ ok: true, count: days.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // -- Payroll Report --
   app.get("/api/hr/payroll-report", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
     try {
@@ -5592,6 +5744,20 @@ export async function registerRoutes(
         } as unknown as ExtraRecord);
       }
 
+      const approvalRows = await db
+        .select()
+        .from(hrOvertimeApprovals)
+        .where(
+          and(
+            gte(hrOvertimeApprovals.businessDate, dateFrom),
+            lte(hrOvertimeApprovals.businessDate, dateTo)
+          )
+        );
+      const overtimeApprovalsMap: Record<string, "APPROVED" | "REJECTED" | "PENDING"> = {};
+      for (const row of approvalRows) {
+        overtimeApprovalsMap[`${row.employeeId}_${row.businessDate}`] = row.status as "APPROVED" | "REJECTED" | "PENDING";
+      }
+
       const emptyServicePool: Record<string, number> = {};
       const payrollResult = computeRangePayroll({
         employees: empData,
@@ -5603,6 +5769,7 @@ export async function registerRoutes(
         dateFrom,
         dateTo,
         hrConfig,
+        overtimeApprovalsMap,
       });
 
       const servicePoolMap: Record<string, number> = {};
