@@ -334,11 +334,29 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
   if (!config || !config.isConnected) throw new Error("QBO not connected");
 
   const payment = await storage.getPayment(paymentId);
-  if (!payment) throw new Error(`Payment ${paymentId} not found`);
+  if (!payment) {
+    const msg = `Pago #${paymentId} no encontrado en la base de datos — requiere revisión manual en QBO`;
+    console.error(`[QBO] ${msg}`);
+    await db.update(qboSyncLog).set({
+      status: "FAILED",
+      attempts: 5,
+      errorMessage: msg,
+    }).where(eq(qboSyncLog.paymentId, paymentId));
+    throw new Error(msg);
+  }
 
   const effectiveOrderId = payment.orderId;
   const order = await storage.getOrder(effectiveOrderId);
-  if (!order) throw new Error(`Order ${effectiveOrderId} not found (payment ${paymentId} references this order)`);
+  if (!order) {
+    const msg = `Orden #${effectiveOrderId} no encontrada en la base de datos (Pago #${paymentId}) — requiere revisión manual en QBO`;
+    console.error(`[QBO] ${msg}`);
+    await db.update(qboSyncLog).set({
+      status: "FAILED",
+      attempts: 5,
+      errorMessage: msg,
+    }).where(eq(qboSyncLog.paymentId, paymentId));
+    throw new Error(msg);
+  }
 
   const items = await storage.getOrderItems(effectiveOrderId);
   const activeItems = items.filter(i => i.status !== "VOIDED");
