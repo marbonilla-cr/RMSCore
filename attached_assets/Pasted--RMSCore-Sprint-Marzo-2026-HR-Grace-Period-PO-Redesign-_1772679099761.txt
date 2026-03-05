@@ -1,0 +1,623 @@
+# RMSCore — Sprint Marzo 2026
+## HR Grace Period · PO Redesign · Split Fix · Dashboard Fix · Dashboard UX
+
+---
+
+## REGLAS DEL AGENTE (leer antes de empezar)
+
+1. **Leer cada archivo completo antes de modificarlo** — identificar los nombres reales de variables y funciones
+2. **Si una tarea falla, detenerse** y reportar el error exacto — no continuar con tareas dependientes
+3. **No inventar nombres** de variables, funciones o tablas — usar solo los que existen en el código
+4. **T004 no ejecutar** — está marcada como operación manual
+5. Ejecutar en el orden indicado al final del documento
+
+---
+
+## T008 — Fix timezone: getToday() en dashboard
+
+**Por qué primero:** Es una sola línea, cero riesgo, y es el bug que hace que el dashboard muestre cero ventas después de las 6pm hora CR.
+
+**Archivo:** `client/src/pages/dashboard.tsx`
+
+Buscar la función `getToday()`. Probablemente luce así:
+```typescript
+const getToday = () => new Date().toISOString().slice(0, 10);
+```
+
+`toISOString()` siempre retorna fecha UTC. A las 6:00 pm en Costa Rica ya es medianoche UTC del día siguiente, por eso el dashboard pide datos para "mañana" y no hay ventas.
+
+Reemplazar con:
+```typescript
+const getToday = () =>
+  new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+```
+
+`"en-CA"` produce formato `YYYY-MM-DD`. Con el timezone de CR, a las 7pm el resultado sigue siendo "hoy".
+
+Si la misma expresión `new Date().toISOString().slice(0, 10)` aparece en otros lugares del mismo archivo (por ejemplo en el `useState` inicial de la fecha), reemplazarla también.
+
+**Criterio:** El dashboard muestra ventas del día correcto a cualquier hora CR.
+
+---
+
+## T009 — Dashboard UX: moneda, botón QBO, badge fecha
+
+**Archivo:** `client/src/pages/dashboard.tsx`
+
+### Fix A — Símbolo de moneda ₡
+
+En el screenshot se ven montos con `$` en "Totales por Método de Pago" (`$20.000`, `$3.500`). Buscar cómo se formatean los números en este archivo. Puede existir una función utilitaria o estar inline:
+
+```typescript
+// Posible forma actual:
+`$${amount.toLocaleString()}`
+// o una función:
+const fmt = (n: number) => `$${n.toLocaleString()}`
+```
+
+Reemplazar todas las ocurrencias para usar `₡` y locale `es-CR`:
+```typescript
+`₡${amount.toLocaleString("es-CR")}`
+// o si hay función:
+const fmt = (n: number) => `₡${n.toLocaleString("es-CR")}`
+```
+
+Verificar específicamente en: Totales por Método de Pago, Top Productos, Top Categorías, y las cards de resumen.
+
+### Fix B — Botón "Exportar a QBO"
+
+El botón actual tiene fondo azul eléctrico sólido (`bg-blue-600` o `background: "#1d4ed8"` o similar) que rompe el design system Linen. Cambiarlo a estilo secundario:
+
+```typescript
+// Si usa Tailwind clases:
+// Cambiar: className="... bg-blue-600 text-white ..."
+// Por:     className="... border border-border bg-background hover:bg-muted ..."
+
+// Si usa estilos inline, buscar el color azul y cambiarlo a:
+style={{
+  background: "transparent",
+  border: "1px solid var(--border)",
+  color: "var(--foreground)",
+  borderRadius: "var(--radius)",
+  padding: "10px 16px",
+  fontWeight: 600,
+  fontSize: 14,
+  cursor: "pointer",
+  width: "100%",
+}}
+```
+
+Usar las variables CSS o clases que ya usa el resto de botones secundarios en la misma página.
+
+### Fix C — Badge "Hoy"
+
+Junto al selector de fecha (donde están los botones "Hoy" / "Ayer"), agregar un badge que confirme visualmente cuando se está viendo el día actual. Buscar el nombre real de la variable que guarda la fecha seleccionada (puede llamarse `selectedDate`, `date`, `currentDate`, etc.):
+
+```tsx
+{/* Agregar junto al date picker, usando el nombre real de la variable */}
+{selectedDate === new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" }) && (
+  <span className="text-xs font-semibold px-2 py-0.5 rounded-full
+                   bg-green-50 text-green-700 border border-green-200">
+    Hoy
+  </span>
+)}
+```
+
+Si el proyecto usa variables CSS en lugar de Tailwind colors, usar:
+```tsx
+style={{
+  background: "rgba(74,124,89,0.09)", color: "#4a7c59",
+  border: "1px solid rgba(74,124,89,0.22)",
+  borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 600,
+}}
+```
+
+**Criterio:** Montos con ₡. Botón QBO con estilo secundario. Badge verde "Hoy" visible junto a la fecha.
+
+---
+
+## T007 — Fix split: volver al split view tras pago parcial
+
+**Archivo:** `client/src/pages/pos.tsx`
+
+**ANTES de hacer cualquier cambio**, leer el archivo completo e identificar y anotar:
+
+1. El nombre de la variable de estado que controla si el PayDialog está abierto
+   (buscar donde se renderiza `<PayDialog` o `<PayDialog.` y ver qué prop controla `open`)
+2. El nombre de la variable de estado que controla si el SplitDialog está abierto
+   (buscar donde se renderiza `<SplitDialog` y ver qué prop controla `open`)
+3. El nombre de la variable de estado que almacena el ID del split que se está pagando
+   (buscar donde se llama `POST /api/pos/pay-split` y qué variable se usa como identificador)
+4. El nombre de la función callback que se ejecuta cuando el PayDialog completa un pago exitosamente
+   (buscar la prop `onSuccess` o `onPaymentComplete` o similar en el JSX de PayDialog)
+
+Con esos nombres reales identificados, modificar el callback de éxito del pago:
+
+**Lógica a agregar** (adaptando los nombres reales):
+```typescript
+// En el callback que se ejecuta cuando el pago fue exitoso:
+
+// 1. Cerrar el PayDialog (ya existe este comportamiento)
+setPayDialogOpen(false);  // ← nombre real
+
+// 2. Invalidar queries (ya existe este comportamiento — mantener todo)
+queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedOrderId, "splits"] });
+// ... otras invalidaciones que ya estén, no tocarlas
+
+// 3. NUEVO: si el pago era de una subcuenta de split, volver al SplitDialog
+if (splitPaymentId) {   // ← nombre real de la variable que indica que era split
+  setSplitPaymentId(null);  // ← limpiar
+  setTimeout(() => {
+    setSplitDialogOpen(true);  // ← nombre real
+  }, 200);  // delay para que las queries se invaliden antes de reabrir
+}
+// Si NO era un split payment, NO agregar ningún else — mantener comportamiento actual
+```
+
+**Criterio:** Al pagar una subcuenta del split, el PayDialog se cierra y el SplitDialog se reabre automáticamente mostrando el estado actualizado (la subcuenta pagada y las restantes).
+
+---
+
+## T001 — Schema: columna grace period por día
+
+**Archivo:** `shared/schema.ts`
+
+Buscar la definición Drizzle de la tabla `hrSettings` (buscar el texto `hrSettings` o `"hr_settings"`). Agregar este campo dentro de esa definición:
+
+```typescript
+autoClockoutGraceByDay: jsonb("auto_clockout_grace_by_day")
+  .$type<{ mon:number; tue:number; wed:number; thu:number; fri:number; sat:number; sun:number }>()
+  .default({ mon:30, tue:30, wed:30, thu:30, fri:30, sat:30, sun:30 }),
+```
+
+Después de guardar, ejecutar en terminal:
+```bash
+npx drizzle-kit push
+```
+
+Si `drizzle-kit push` falla o no está disponible, ejecutar directamente en la base de datos:
+```sql
+ALTER TABLE hr_settings
+  ADD COLUMN IF NOT EXISTS auto_clockout_grace_by_day JSONB
+  DEFAULT '{"mon":30,"tue":30,"wed":30,"thu":30,"fri":30,"sat":30,"sun":30}'::jsonb;
+```
+
+**Criterio:** `SELECT auto_clockout_grace_by_day FROM hr_settings LIMIT 1;` retorna el objeto JSON con los 7 días.
+
+---
+
+## T002 — Backend: grace period por día en autoClockOutJob
+
+**Archivo:** `server/hr-jobs.ts`
+
+Leer el archivo completo antes de modificar. Localizar la función que hace auto clock-out (puede llamarse `autoClockOutJob`, `runAutoClockOut`, o similar).
+
+**Paso 1 — Agregar al inicio de la función:**
+```typescript
+// Leer configuración de grace period
+const settingsRow = await db.query.hrSettings.findFirst();
+const graceByDay: Record<string, number> =
+  (settingsRow?.autoClockoutGraceByDay as any) ??
+  { mon:30, tue:30, wed:30, thu:30, fri:30, sat:30, sun:30 };
+```
+
+**Paso 2 — Para cada punch CON `scheduledEndAt` no nulo:**
+
+Reemplazar la condición actual (`now >= scheduledEndAt`) con esta lógica. **Nota crítica:** no usar `new Date(scheduledEndAt).getDay()` — eso da el día en UTC y puede ser incorrecto a medianoche. Usar `toLocaleString` con timezone:
+
+```typescript
+// Obtener el día en timezone Costa Rica
+const crWeekday = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Costa_Rica",
+  weekday: "short",
+}).format(punch.scheduledEndAt).toLowerCase(); // "mon", "tue", "wed", ...
+
+const graceMinutes = graceByDay[crWeekday] ?? 30;
+const graceCutoff = new Date(
+  punch.scheduledEndAt.getTime() + graceMinutes * 60 * 1000
+);
+
+if (now >= graceCutoff) {
+  // clockOutAt = scheduledEndAt (se paga hasta el fin del turno, no hasta el grace)
+  const clockOutAt = punch.scheduledEndAt;
+  const note = `Auto clock-out (gracia de ${graceMinutes}min)`;
+  // ... aplicar el clock-out usando la lógica existente del archivo
+}
+```
+
+**Paso 3:** Para punches SIN `scheduledEndAt`, mantener la lógica existente sin ningún cambio.
+
+**Criterio:** Compila sin errores TypeScript. La función usa el día de semana correcto en timezone CR.
+
+---
+
+## T003 — Frontend: sección grace period en HR Settings
+
+**Archivo:** `client/src/pages/hr/settings.tsx`
+
+Leer el archivo completo. Identificar:
+- Cómo se cargan los settings actuales (probablemente `useQuery` con key `"/api/hr/settings"`)
+- Cómo se guardan (probablemente `useMutation` con `PUT /api/hr/settings`)
+- Los componentes de UI que usa (Card, Input, Button de shadcn, o estilos propios)
+
+**Estado local a agregar:**
+```typescript
+const [graceByDay, setGraceByDay] = useState<Record<string, number>>({
+  mon:30, tue:30, wed:30, thu:30, fri:30, sat:30, sun:30,
+});
+```
+
+**Pre-cargar desde la API:** En el mismo `useEffect` o callback que ya procesa la respuesta del GET settings, agregar:
+```typescript
+if (data?.autoClockoutGraceByDay) {
+  setGraceByDay(data.autoClockoutGraceByDay as any);
+}
+```
+
+**UI — nueva sección al final del formulario, antes del botón global de guardar si existe:**
+
+```typescript
+const DAYS_DISPLAY = [
+  { key: "mon", label: "Lunes"      },
+  { key: "tue", label: "Martes"     },
+  { key: "wed", label: "Miércoles"  },
+  { key: "thu", label: "Jueves"     },
+  { key: "fri", label: "Viernes"    },
+  { key: "sat", label: "Sábado"     },
+  { key: "sun", label: "Domingo"    },
+];
+```
+
+```tsx
+<Card>
+  <CardHeader>
+    <CardTitle>Auto-salida por día</CardTitle>
+    <CardDescription>
+      Minutos de gracia después del fin de turno antes del clock-out automático.
+    </CardDescription>
+  </CardHeader>
+  <CardContent>
+    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
+      {DAYS_DISPLAY.map(d => (
+        <div key={d.key} className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">{d.label}</label>
+          <div className="flex items-center gap-1">
+            <Input
+              type="number" min={0} max={240}
+              value={graceByDay[d.key] ?? 30}
+              onChange={e => setGraceByDay(p => ({
+                ...p, [d.key]: Math.max(0, parseInt(e.target.value) || 0)
+              }))}
+              className="w-full"
+            />
+            <span className="text-xs text-muted-foreground">min</span>
+          </div>
+        </div>
+      ))}
+    </div>
+    <Button
+      className="mt-4"
+      onClick={() => {
+        // Usar la misma mutación/función que guarda el resto de settings
+        // Incluir autoClockoutGraceByDay: graceByDay en el body
+        saveSettings({ ...currentSettings, autoClockoutGraceByDay: graceByDay });
+      }}
+    >
+      Guardar configuración de auto-salida
+    </Button>
+  </CardContent>
+</Card>
+```
+
+Adaptar los nombres de componentes y la función de guardar a lo que ya existe en el archivo.
+
+**Criterio:** Sección visible con 7 inputs. Valores se pre-cargan al entrar. Persisten al recargar.
+
+---
+
+## T004 — Limpiar punches duplicados de Alexa
+
+⛔ **NO EJECUTAR DESDE EL AGENTE.**
+
+Esta operación afecta datos de producción. Ejecutar manualmente desde el Query Console de Neon o Railway.
+
+**Paso 1 — Verificar ANTES de borrar (obligatorio):**
+```sql
+SELECT
+  id,
+  clock_in_at  AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica' AS clock_in_cr,
+  clock_out_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica' AS clock_out_cr,
+  worked_minutes,
+  (SELECT display_name FROM users WHERE id = hr_time_punches.employee_id) AS employee_name
+FROM hr_time_punches
+WHERE id IN (68, 70, 71)
+ORDER BY id;
+```
+
+Confirmar visualmente:
+- ID 68: `worked_minutes` > 0 — es el registro válido
+- IDs 70 y 71: `worked_minutes` = 0 o muy bajo (< 5) — son los duplicados
+
+**Paso 2 — Solo si la verificación confirma lo esperado:**
+```sql
+DELETE FROM hr_time_punches WHERE id IN (70, 71);
+```
+
+**Paso 3 — Confirmar resultado:**
+```sql
+SELECT id, clock_in_at, clock_out_at, worked_minutes
+FROM hr_time_punches
+WHERE employee_id = (
+  SELECT id FROM users WHERE display_name ILIKE '%alexa%' LIMIT 1
+)
+ORDER BY clock_in_at DESC
+LIMIT 5;
+```
+
+---
+
+## T005 — Backend: endpoint de items por proveedor
+
+**Archivo:** El archivo que registra las rutas de inventario (buscar `registerInventoryRoutes` o el archivo con rutas `/api/inventory/...`)
+
+**Primero verificar que la tabla `inv_supplier_items` existe:**
+```sql
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_name = 'inv_supplier_items'
+ORDER BY ordinal_position;
+```
+
+Si **no existe**, detenerse y reportar. No crearla — requiere revisión de schema.
+
+Si **existe**, agregar este endpoint. **IMPORTANTE:** usar la ruta `/api/inventory/suppliers/:id/items` (con `inventory` completo, consistente con todas las demás rutas del módulo):
+
+```typescript
+app.get("/api/inventory/suppliers/:id/items", requireAuth, async (req, res) => {
+  try {
+    const supplierId = parseInt(req.params.id);
+    if (isNaN(supplierId)) return res.status(400).json({ message: "ID inválido" });
+
+    const mode = (req.query.mode as string) || "all";
+    const categoriesParam = req.query.categories as string | undefined;
+    const categories = categoriesParam
+      ? categoriesParam.split(",").map((c: string) => c.trim()).filter(Boolean)
+      : [];
+
+    // Query principal
+    let q = `
+      SELECT
+        ii.id,
+        ii.sku,
+        ii.name,
+        ii.category,
+        ii.base_uom,
+        CAST(ii.on_hand_qty_base          AS FLOAT) AS on_hand_qty_base,
+        CAST(ii.reorder_point_qty_base     AS FLOAT) AS reorder_point_qty_base,
+        COALESCE(isi.purchase_uom, ii.base_uom)                    AS purchase_uom,
+        CAST(COALESCE(isi.last_price_per_purchase_uom, 0) AS FLOAT) AS last_price,
+        CAST(COALESCE(isi.units_per_purchase_uom, 1)      AS FLOAT) AS units_per_purchase_uom
+      FROM inv_items ii
+      JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id
+      WHERE isi.supplier_id = $1
+        AND ii.active = true
+    `;
+    const params: any[] = [supplierId];
+    let idx = 2;
+
+    if (mode === "low_stock") {
+      q += ` AND CAST(ii.on_hand_qty_base AS FLOAT) < CAST(ii.reorder_point_qty_base AS FLOAT)`;
+    }
+    if (categories.length > 0) {
+      q += ` AND ii.category = ANY($${idx})`;
+      params.push(categories);
+      idx++;
+    }
+    q += ` ORDER BY ii.category NULLS LAST, ii.name`;
+
+    // Categorías disponibles para este proveedor
+    const catsQ = `
+      SELECT DISTINCT ii.category
+      FROM inv_items ii
+      JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id
+      WHERE isi.supplier_id = $1
+        AND ii.active = true
+        AND ii.category IS NOT NULL
+      ORDER BY ii.category
+    `;
+
+    const [itemsRes, catsRes] = await Promise.all([
+      pool.query(q, params),
+      pool.query(catsQ, [supplierId]),
+    ]);
+
+    res.json({
+      items: itemsRes.rows,
+      categories: catsRes.rows.map((r: any) => r.category),
+    });
+  } catch (err: any) {
+    console.error("[supplier-items]", err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+**Criterio:** `GET /api/inventory/suppliers/1/items` retorna `{ items: [...], categories: [...] }`. `?mode=low_stock` filtra correctamente.
+
+---
+
+## T006 — Frontend: panel inline de creación de OC
+
+**Archivo:** `client/src/pages/inventory/purchase-orders.tsx`
+
+Leer el archivo completo. Identificar:
+- El nombre exacto del estado que controla el dialog de creación actual (el que se va a reemplazar)
+- La función/mutación que hace el `POST /api/inventory/purchase-orders`
+- Cómo se obtiene la lista de proveedores activos (query key, endpoint)
+
+**Patrón de implementación:** Un estado `creatingNew: boolean`. Cuando es `true`, el JSX retorna el panel de creación en lugar de la lista. No es una ruta nueva, no es un modal.
+
+**Estado a agregar:**
+```typescript
+const [creatingNew,     setCreatingNew]     = useState(false);
+const [poSupplierId,    setPOSupplierId]     = useState<number | null>(null);
+const [poDeliveryDate,  setPODeliveryDate]   = useState("");
+const [poMode,          setPOMode]           = useState<"all" | "low_stock">("low_stock");
+const [poSelectedCats,  setPOSelectedCats]   = useState<string[]>([]);
+const [poAvailableCats, setPOAvailableCats]  = useState<string[]>([]);
+const [poItems,         setPOItems]          = useState<any[]>([]);
+const [poItemsLoaded,   setPOItemsLoaded]    = useState(false);
+const [poLoadingItems,  setPOLoadingItems]   = useState(false);
+const [poCreating,      setPOCreating]       = useState(false);
+```
+
+**Función cargar items:**
+```typescript
+const loadPOItems = async () => {
+  if (!poSupplierId) return;
+  setPOLoadingItems(true);
+  setPOItemsLoaded(false);
+  try {
+    const cats = poSelectedCats.length > 0 ? `&categories=${poSelectedCats.join(",")}` : "";
+    const r = await fetch(
+      `/api/inventory/suppliers/${poSupplierId}/items?mode=${poMode}${cats}`,
+      { credentials: "include" }
+    );
+    if (!r.ok) throw new Error((await r.json()).message);
+    const data = await r.json();
+    setPOItems(data.items.map((item: any) => ({
+      ...item,
+      qtyOrdered: 0,
+      unitPrice: item.last_price || 0,
+    })));
+    setPOAvailableCats(data.categories || []);
+    setPOItemsLoaded(true);
+  } catch (e: any) {
+    toast({ title: "Error al cargar items", description: e.message, variant: "destructive" });
+  } finally {
+    setPOLoadingItems(false);
+  }
+};
+```
+
+**Función crear OC:**
+```typescript
+const submitCreatePO = async () => {
+  const lines = poItems.filter(i => i.qtyOrdered > 0);
+  if (!poSupplierId || !poDeliveryDate || lines.length === 0) return;
+  setPOCreating(true);
+  try {
+    // 1. Crear el header
+    const poRes = await fetch("/api/inventory/purchase-orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        supplierId: poSupplierId,
+        deliveryDate: poDeliveryDate,
+        notes: "",
+      }),
+    });
+    const po = await poRes.json();
+    if (!poRes.ok) throw new Error(po.message);
+
+    // 2. Crear las líneas en secuencia
+    for (const item of lines) {
+      const lineRes = await fetch(`/api/inventory/purchase-orders/${po.id}/lines`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          invItemId: item.id,
+          qtyOrdered: item.qtyOrdered,
+          purchaseUom: item.purchase_uom,
+          unitPrice: item.unitPrice,
+        }),
+      });
+      if (!lineRes.ok) {
+        const err = await lineRes.json();
+        throw new Error(`Línea ${item.name}: ${err.message}`);
+      }
+    }
+
+    toast({ title: "Orden de compra creada", description: `${lines.length} productos` });
+    setCreatingNew(false);
+    queryClient.invalidateQueries({ queryKey: ["/api/inventory/purchase-orders"] });
+  } catch (e: any) {
+    toast({ title: "Error al crear OC", description: e.message, variant: "destructive" });
+  } finally {
+    setPOCreating(false);
+  }
+};
+```
+
+**Layout del panel** (lo que se renderiza cuando `creatingNew === true`):
+
+```
+┌─────────────────────────────────────────────────┐
+│ [← Volver a Órdenes de Compra]  Nueva Orden     │  ← header sticky
+├─────────────────────────────────────────────────┤
+│ Fecha de entrega  [input type="date" required]  │
+│ Proveedor         [select — lista de suppliers] │
+├─────────────────────────────────────────────────┤
+│ [Solo visible si proveedor seleccionado]         │
+│                                                 │
+│ Mostrar:  ● Solo stock bajo  ○ Todos            │
+│                                                 │
+│ Categorías:  □ Carnes  □ Lácteos  □ Bebidas … │
+│              (checkboxes de poAvailableCats)    │
+│                                                 │
+│ [Botón "Cargar productos"]                      │
+├─────────────────────────────────────────────────┤
+│ [Solo visible si poItemsLoaded && items > 0]    │
+│                                                 │
+│ Tabla:                                          │
+│  Producto │ SKU │ Stock │ Reorden │ UOM │ Cant. │ Precio │
+│  [fila]    rows con inputs editables            │
+│  Filas con stock < reorder → fondo amber suave  │
+│                                                 │
+│ Footer: "X items · Total estimado: ₡xxx"        │
+│                                                 │
+│ [Crear Orden de Compra]                         │
+│  disabled si: !poDeliveryDate || lines===0      │
+└─────────────────────────────────────────────────┘
+```
+
+Total estimado en tiempo real: `poItems.reduce((s, i) => s + i.qtyOrdered * i.unitPrice, 0)`.
+
+Reemplazar el botón "Nueva OC" existente para que ejecute `setCreatingNew(true)` en lugar de abrir el dialog anterior.
+
+Si había un dialog de creación antes, puede eliminarse o dejarse muerto — no debe mostrarse más.
+
+**Criterio:** Flujo completo de inicio a fin sin errores. "← Volver" restaura la lista. La OC nueva aparece en la lista inmediatamente.
+
+---
+
+## ORDEN DE EJECUCIÓN
+
+```
+1. T008  — fix timezone (1 línea, cero riesgo)
+2. T009  — dashboard UX (visual, sin schema)
+3. T007  — fix split payment (leer pos.tsx primero)
+4. T001  — schema: nueva columna + drizzle push
+5. T002  — backend hr-jobs (depende de T001)
+6. T003  — frontend hr settings (depende de T001)
+7. T005  — backend endpoint (verificar tabla antes)
+8. T006  — frontend panel OC (depende de T005)
+```
+
+**T004 — NO ejecutar desde el agente. Es una operación manual en el Query Console.**
+
+---
+
+## CHECKLIST FINAL
+
+- [ ] `npm run build` sin errores TypeScript
+- [ ] Dashboard → montos con ₡, botón QBO estilo secundario, badge "Hoy"
+- [ ] Dashboard → fecha correcta a cualquier hora CR
+- [ ] POS → pagar subcuenta → SplitDialog se reabre automáticamente
+- [ ] HR Settings → sección "Auto-salida" con 7 inputs por día, valores persisten
+- [ ] `GET /api/inventory/suppliers/:id/items?mode=low_stock` retorna JSON válido
+- [ ] Nueva OC → panel inline funciona de inicio a fin
+- [ ] Resto de la app (Mesas, KDS, QR, POS general) sin regresiones
