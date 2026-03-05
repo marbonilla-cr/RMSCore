@@ -1,0 +1,569 @@
+# RMSCore — Mejoras Órdenes de Compra e Inventario
+
+## CONTEXTO CRÍTICO — LEER ANTES DE MODIFICAR
+
+- Todas las rutas de inventario usan el prefijo `/api/inv/` (NO `/api/inventory/`)
+- Rutas en: `server/inventory-routes.ts` dentro de `registerInventoryRoutes()`
+- Storage en: `server/inventory-storage.ts` (funciones exportadas, no clase)
+- Tabla de usuarios: `users` con campo `display_name` (schema: `users.displayName`)
+- Los campos numéricos de líneas de OC vienen como `string` (tipo `numeric` de Drizzle):
+  - Cantidad: `qtyPurchaseUom`
+  - Precio unitario: `unitPricePerPurchaseUom`
+  - Cantidad recibida (en base UOM): `qtyBaseReceived`
+- Nombre del artículo en líneas ya viene incluido como `invItemName` (join existente)
+- `invPoReceipts` usa `receivedByEmployeeId` (no `receivedByUserId`)
+- `invPoReceiptLines` usa `receiptId` (no `poReceiptId`) y `poLineId` (no `purchaseOrderLineId`)
+- El campo de nota en `invPoReceipts` es `note` (no `notes`)
+- Función de storage para líneas de recepción: `getPoReceiptLines(receiptId)` — ya hace
+  join con `invPurchaseOrderLines` e `invItems`, devuelve `invItemName` directamente
+- Función de storage para recepciones: `getPoReceipts(purchaseOrderId)` — existe pero
+  solo devuelve datos crudos de `inv_po_receipts`, SIN líneas ni nombre de empleado
+
+---
+
+## T001 — Fila de totales en tabla de líneas de OC
+
+**Archivo:** `client/src/pages/inventory/purchase-orders.tsx`
+
+Localizar la tabla que muestra las líneas de la OC seleccionada.
+Las líneas vienen del endpoint `GET /api/inv/purchase-orders/:id` que
+devuelve `{ ...po, lines }`. El campo de cantidad es `qtyPurchaseUom`
+y el precio es `unitPricePerPurchaseUom` — ambos son strings numéricos.
+
+Calcular el total así:
+```typescript
+const poTotal = (selectedPO?.lines ?? []).reduce((sum, line) => {
+  return sum + parseFloat(line.qtyPurchaseUom) * parseFloat(line.unitPricePerPurchaseUom);
+}, 0);
+```
+
+Agregar `<TableFooter>` inmediatamente después del cierre de `<TableBody>`:
+```tsx
+import { TableFooter } from "@/components/ui/table"; // agregar al import de table
+
+<TableFooter>
+  <TableRow>
+    <TableCell
+      colSpan={/* número de columnas menos 1 — ajustar al conteo real */}
+      className="text-right font-semibold text-sm"
+    >
+      Total de la orden
+    </TableCell>
+    <TableCell className="text-right font-bold">
+      ₡{poTotal.toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+    </TableCell>
+  </TableRow>
+</TableFooter>
+```
+
+NOTA: Contar las columnas reales de la tabla antes de asignar `colSpan`.
+
+**Aceptación:** La vista de detalle de OC muestra "Total de la orden: ₡X"
+al pie de la tabla. El monto coincide con la suma manual de las líneas.
+
+---
+
+## T002 — Descarga CSV de OC
+
+**Archivo:** `client/src/pages/inventory/purchase-orders.tsx`
+
+Agregar esta función dentro del componente, junto a los demás handlers:
+
+```typescript
+function handleDownloadCSV() {
+  if (!selectedPO) return;
+  const BOM = "\uFEFF";
+  const headers = [
+    "Artículo", "Cantidad", "UOM compra", "Precio Unitario",
+    "Subtotal", "Recibido (base UOM)", "Estado línea"
+  ].join(",");
+
+  const rows = (selectedPO.lines ?? []).map(line => {
+    const qty = parseFloat(line.qtyPurchaseUom);
+    const price = parseFloat(line.unitPricePerPurchaseUom);
+    const subtotal = qty * price;
+    return [
+      line.invItemName ?? "",
+      qty.toLocaleString("es-CR"),
+      line.purchaseUom,
+      price.toLocaleString("es-CR", { minimumFractionDigits: 2 }),
+      subtotal.toLocaleString("es-CR", { minimumFractionDigits: 2 }),
+      parseFloat(line.qtyBaseReceived).toLocaleString("es-CR"),
+      line.lineStatus,
+    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",");
+  });
+
+  const total = (selectedPO.lines ?? []).reduce(
+    (s, l) => s + parseFloat(l.qtyPurchaseUom) * parseFloat(l.unitPricePerPurchaseUom), 0
+  );
+  const totalRow = [
+    `"Total"`, `""`, `""`, `""`,
+    `"${total.toLocaleString("es-CR", { minimumFractionDigits: 2 })}"`,
+    `""`, `""`
+  ].join(",");
+
+  const csv = BOM + [headers, ...rows, totalRow].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `OC-${selectedPO.id}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+```
+
+Agregar botón en el área de acciones del detalle de la OC:
+```tsx
+<Button variant="outline" size="sm" onClick={handleDownloadCSV}>
+  Descargar CSV
+</Button>
+```
+
+**Aceptación:** El botón genera `OC-{id}.csv` con encabezados en español,
+todas las líneas y fila de total. Abre en Excel sin problemas de encoding.
+
+---
+
+## T003 — Descarga PDF de OC
+
+**Archivo:** `client/src/pages/inventory/purchase-orders.tsx`
+
+Agregar esta función junto a `handleDownloadCSV`:
+
+```typescript
+function handleDownloadPDF() {
+  if (!selectedPO) return;
+  const total = (selectedPO.lines ?? []).reduce(
+    (s, l) => s + parseFloat(l.qtyPurchaseUom) * parseFloat(l.unitPricePerPurchaseUom), 0
+  );
+
+  const linesHtml = (selectedPO.lines ?? []).map(line => {
+    const qty = parseFloat(line.qtyPurchaseUom);
+    const price = parseFloat(line.unitPricePerPurchaseUom);
+    const subtotal = qty * price;
+    const received = parseFloat(line.qtyBaseReceived);
+    return `<tr>
+      <td>${line.invItemName ?? "—"}</td>
+      <td style="text-align:center">${qty.toLocaleString("es-CR")}</td>
+      <td style="text-align:center">${line.purchaseUom}</td>
+      <td style="text-align:right">₡${price.toLocaleString("es-CR", { minimumFractionDigits: 2 })}</td>
+      <td style="text-align:right">₡${subtotal.toLocaleString("es-CR", { minimumFractionDigits: 2 })}</td>
+      <td style="text-align:center">${received.toLocaleString("es-CR")}</td>
+      <td style="text-align:center">${line.lineStatus}</td>
+    </tr>`;
+  }).join("");
+
+  const createdDate = selectedPO.createdAt
+    ? new Date(selectedPO.createdAt).toLocaleDateString("es-CR", {
+        day: "2-digit", month: "long", year: "numeric"
+      })
+    : "—";
+
+  const html = `<!DOCTYPE html><html lang="es"><head>
+    <meta charset="utf-8">
+    <title>OC-${selectedPO.id}</title>
+    <style>
+      body { font-family: Arial, sans-serif; font-size: 12px; margin: 32px; color: #111; }
+      h2 { margin: 0 0 4px 0; font-size: 18px; }
+      .meta { color: #555; margin-bottom: 20px; font-size: 11px; line-height: 1.8; }
+      table { width: 100%; border-collapse: collapse; }
+      th { background: #f3f4f6; padding: 7px 8px; text-align: left;
+           border-bottom: 2px solid #d1d5db; font-size: 11px; font-weight: 600; }
+      td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+      tfoot td { font-weight: bold; border-top: 2px solid #374151;
+                 border-bottom: none; background: #f9fafb; }
+      .print-btn { margin-top: 20px; padding: 8px 20px; background: #374151;
+                   color: white; border: none; border-radius: 4px;
+                   cursor: pointer; font-size: 13px; }
+      @media print { .print-btn { display: none; } }
+    </style>
+  </head><body>
+    <h2>Orden de Compra #${selectedPO.id}</h2>
+    <div class="meta">
+      <strong>Proveedor:</strong> ${selectedPO.supplierName ?? "—"}<br>
+      <strong>Fecha:</strong> ${createdDate}<br>
+      <strong>Estado:</strong> ${selectedPO.status ?? "—"}
+      ${selectedPO.notes ? `<br><strong>Notas:</strong> ${selectedPO.notes}` : ""}
+    </div>
+    <table>
+      <thead><tr>
+        <th>Artículo</th>
+        <th style="text-align:center">Cantidad</th>
+        <th style="text-align:center">UOM</th>
+        <th style="text-align:right">Precio Unit.</th>
+        <th style="text-align:right">Subtotal</th>
+        <th style="text-align:center">Recibido</th>
+        <th style="text-align:center">Estado</th>
+      </tr></thead>
+      <tbody>${linesHtml}</tbody>
+      <tfoot><tr>
+        <td colspan="4" style="text-align:right">Total de la orden</td>
+        <td style="text-align:right">
+          ₡${total.toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+        </td>
+        <td colspan="2"></td>
+      </tr></tfoot>
+    </table>
+    <button class="print-btn" onclick="window.print()">
+      Imprimir / Guardar como PDF
+    </button>
+  </body></html>`;
+
+  const win = window.open("", "_blank", "width=960,height=720");
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  }
+}
+```
+
+Agregar botón junto al de CSV:
+```tsx
+<Button variant="outline" size="sm" onClick={handleDownloadPDF}>
+  Descargar PDF
+</Button>
+```
+
+**Aceptación:** El botón abre una ventana con la OC formateada, incluyendo
+encabezado, tabla de líneas y total. El botón "Imprimir / Guardar como PDF"
+del navegador genera un PDF limpio.
+
+---
+
+## T004 — Historial de recepciones en detalle de OC
+
+### T004-A: Mejorar endpoint existente en `server/inventory-routes.ts`
+
+El endpoint `GET /api/inv/purchase-orders/:id/receipts` ya existe en
+la línea ~672 pero solo devuelve los datos crudos de `inv_po_receipts`
+sin las líneas ni el nombre del empleado.
+
+**Reemplazar** el handler existente (localizar por la ruta exacta):
+
+```typescript
+// ANTES (reemplazar este bloque completo):
+app.get("/api/inv/purchase-orders/:id/receipts", requirePermission("INV_MANAGE_PO"), async (req, res) => {
+  try {
+    res.json(await invStorage.getPoReceipts(parseInt(req.params.id)));
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// DESPUÉS:
+app.get("/api/inv/purchase-orders/:id/receipts", requirePermission("INV_MANAGE_PO"), async (req, res) => {
+  try {
+    const poId = parseInt(req.params.id);
+    const receipts = await invStorage.getPoReceipts(poId);
+
+    // Para cada recepción, cargar sus líneas y el nombre del empleado
+    const result = await Promise.all(receipts.map(async (receipt) => {
+      const lines = await invStorage.getPoReceiptLines(receipt.id);
+
+      // Buscar el displayName del empleado en la tabla users
+      let receivedByName = "—";
+      try {
+        const { db } = await import("./db");
+        const { users } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const [user] = await db
+          .select({ displayName: users.displayName })
+          .from(users)
+          .where(eq(users.id, receipt.receivedByEmployeeId))
+          .limit(1);
+        if (user) receivedByName = user.displayName;
+      } catch (_) {}
+
+      return {
+        id: receipt.id,
+        receivedAt: receipt.receivedAt,
+        receivedByName,
+        note: receipt.note ?? null,
+        lines,   // cada línea ya tiene invItemName, qtyPurchaseUomReceived, unitPricePerPurchaseUom, purchaseUom
+      };
+    }));
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+NOTA IMPORTANTE sobre los imports dinámicos: si `db` y `users` ya están
+disponibles en el scope de `registerInventoryRoutes` (verificar imports
+al inicio del archivo), usar directamente sin el `await import(...)`.
+Revisar los imports actuales del archivo antes de aplicar este código
+y usar la forma que corresponda al patrón existente.
+
+### T004-B: Sección de historial en el frontend
+
+**Archivo:** `client/src/pages/inventory/purchase-orders.tsx`
+
+Agregar query para cargar el historial cuando hay una OC seleccionada.
+Agregar junto a las demás queries del componente:
+
+```typescript
+const { data: receiptHistory = [] } = useQuery<ReceiptHistoryItem[]>({
+  queryKey: ["/api/inv/purchase-orders", selectedPO?.id, "receipts"],
+  queryFn: () =>
+    fetch(`/api/inv/purchase-orders/${selectedPO!.id}/receipts`)
+      .then(r => r.json()),
+  enabled: !!selectedPO?.id,
+});
+```
+
+Agregar el tipo al inicio del archivo (junto a los demás interfaces):
+
+```typescript
+interface ReceiptHistoryItem {
+  id: number;
+  receivedAt: string;
+  receivedByName: string;
+  note: string | null;
+  lines: {
+    id: number;
+    invItemName: string;
+    qtyPurchaseUomReceived: string;
+    unitPricePerPurchaseUom: string;
+    purchaseUom: string;    // viene de invPurchaseOrderLines via join existente
+    qtyBaseReceived: string;
+  }[];
+}
+```
+
+Agregar sección en el detalle de la OC, debajo de la tabla de líneas,
+solo visible cuando `receiptHistory.length > 0`:
+
+```tsx
+{receiptHistory.length > 0 && (
+  <div className="mt-6">
+    <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+      Historial de Recepciones
+      <span className="bg-muted text-muted-foreground text-xs px-2 py-0.5 rounded-full font-normal">
+        {receiptHistory.length}
+      </span>
+    </h3>
+    <div className="space-y-3">
+      {receiptHistory.map((receipt) => (
+        <div key={receipt.id} className="border rounded-lg overflow-hidden">
+          {/* Encabezado de la recepción */}
+          <div className="bg-muted/40 px-4 py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-3 text-sm">
+              <span className="font-medium">
+                {new Date(receipt.receivedAt).toLocaleDateString("es-CR", {
+                  day: "2-digit", month: "short", year: "numeric",
+                })}
+                {" "}
+                <span className="text-muted-foreground font-normal">
+                  {new Date(receipt.receivedAt).toLocaleTimeString("es-CR", {
+                    hour: "2-digit", minute: "2-digit",
+                  })}
+                </span>
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground text-xs">
+                Recibido por <span className="text-foreground font-medium">{receipt.receivedByName}</span>
+              </span>
+            </div>
+            {receipt.note && (
+              <span className="text-xs text-muted-foreground italic max-w-[200px] truncate">
+                "{receipt.note}"
+              </span>
+            )}
+          </div>
+          {/* Líneas de la recepción */}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Artículo</TableHead>
+                <TableHead className="text-center">Cantidad recibida</TableHead>
+                <TableHead className="text-center">UOM</TableHead>
+                <TableHead className="text-right">Precio unit.</TableHead>
+                <TableHead className="text-right">Subtotal</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {receipt.lines.map((line) => {
+                const qty = parseFloat(line.qtyPurchaseUomReceived);
+                const price = parseFloat(line.unitPricePerPurchaseUom);
+                return (
+                  <TableRow key={line.id}>
+                    <TableCell className="font-medium">{line.invItemName}</TableCell>
+                    <TableCell className="text-center">{qty.toLocaleString("es-CR")}</TableCell>
+                    <TableCell className="text-center text-muted-foreground">{line.purchaseUom ?? "—"}</TableCell>
+                    <TableCell className="text-right">
+                      ₡{price.toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      ₡{(qty * price).toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
+```
+
+**Aceptación:**
+- OC con recepciones previas muestra la sección "Historial de Recepciones (N)"
+- Cada recepción muestra: fecha, hora, nombre del empleado, nota (si existe)
+- La tabla de líneas muestra artículo, cantidad, UOM, precio y subtotal
+- OCs sin recepciones NO muestran la sección
+- Los montos son consistentes con los datos de recepción registrados
+
+---
+
+## T005 — Auto-save confiable en edición de artículos de inventario
+
+**Archivo:** `client/src/pages/inventory/items.tsx`
+
+IMPORTANTE: Leer el archivo completo antes de modificar para identificar:
+- El nombre exacto del componente de edición mobile/dialog
+- Cómo se llama la función de guardado actual (probablemente `handleSave` o similar)
+- Qué campos usa el PATCH de inventario
+- Cómo está estructurado el estado de edición actual
+
+### T005-A: Nuevo estado de guardado
+
+Dentro del componente de edición (el que muestra el formulario en dialog):
+
+```typescript
+const [isDirty, setIsDirty] = useState(false);
+const [isSaving, setIsSaving] = useState(false);
+const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+const pendingRef = useRef<Record<string, any>>({});
+const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+```
+
+### T005-B: Función centralizada de guardado
+
+```typescript
+const saveChanges = useCallback(async () => {
+  if (!isDirty || Object.keys(pendingRef.current).length === 0) return;
+  setIsSaving(true);
+  setSaveStatus("saving");
+  const payload = { ...pendingRef.current };
+  try {
+    await apiRequest("PATCH", `/api/inv/items/${item.id}`, payload);
+    queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+    pendingRef.current = {};
+    setIsDirty(false);
+    setSaveStatus("saved");
+    // Volver a idle después de 2 segundos
+    setTimeout(() => setSaveStatus("idle"), 2000);
+  } catch {
+    setSaveStatus("error");
+    toast({
+      variant: "destructive",
+      title: "Error al guardar",
+      description: "No se pudieron guardar los cambios. Intentá de nuevo.",
+    });
+  } finally {
+    setIsSaving(false);
+  }
+}, [isDirty, item.id]);
+```
+
+### T005-C: Actualizar los onChange de los campos
+
+En cada campo del formulario, modificar el `onChange` para marcar dirty
+y activar el debounce:
+
+```typescript
+onChange={(e) => {
+  pendingRef.current[fieldName] = e.target.value; // usar el nombre real del campo
+  setIsDirty(true);
+  // Debounce: guardar automáticamente 1.5s después del último cambio
+  if (debounceRef.current) clearTimeout(debounceRef.current);
+  debounceRef.current = setTimeout(saveChanges, 1500);
+}}
+onBlur={saveChanges}  // guardar también al salir del campo
+```
+
+### T005-D: Guardar al cerrar/desmontar
+
+```typescript
+useEffect(() => {
+  return () => {
+    // Limpiar debounce
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    // Guardar cambios pendientes al desmontar (fire-and-forget)
+    if (isDirty && Object.keys(pendingRef.current).length > 0) {
+      apiRequest("PATCH", `/api/inv/items/${item.id}`, { ...pendingRef.current })
+        .then(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+        })
+        .catch(() => {
+          // No se puede mostrar toast al desmontar — el error se pierde silenciosamente
+        });
+    }
+  };
+}, [isDirty]);
+```
+
+### T005-E: Indicador visual de estado
+
+En la barra inferior del dialog (junto al botón de cerrar o guardar),
+agregar este indicador:
+
+```tsx
+import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+
+// En el JSX:
+<div className="flex items-center gap-1.5 text-xs text-muted-foreground min-h-[16px]">
+  {saveStatus === "saving" && (
+    <>
+      <Loader2 className="h-3 w-3 animate-spin" />
+      <span>Guardando...</span>
+    </>
+  )}
+  {saveStatus === "saved" && (
+    <>
+      <CheckCircle2 className="h-3 w-3 text-green-500" />
+      <span className="text-green-600">Guardado</span>
+    </>
+  )}
+  {saveStatus === "error" && (
+    <>
+      <AlertCircle className="h-3 w-3 text-red-500" />
+      <span className="text-red-600">Error al guardar</span>
+    </>
+  )}
+  {saveStatus === "idle" && isDirty && (
+    <span className="text-amber-600">● Cambios sin guardar</span>
+  )}
+</div>
+```
+
+**Aceptación:**
+- Editar un campo y cerrar el dialog inmediatamente → el cambio persiste
+- Durante el guardado se muestra "Guardando..." con spinner
+- Después del guardado exitoso se muestra "Guardado" con check verde por 2s
+- Si hay un error se muestra "Error al guardar" con ícono rojo y toast
+- Mientras hay cambios sin guardar se muestra "● Cambios sin guardar" en ámbar
+
+---
+
+## VERIFICACIÓN FINAL
+
+Ejecutar en orden:
+
+1. `npx tsc --noEmit` — debe pasar sin errores TypeScript
+2. Abrir una OC con líneas → verificar fila "Total de la orden" al pie
+3. Hacer clic en "Descargar CSV" → abrir en Excel → verificar encoding y total
+4. Hacer clic en "Descargar PDF" → verificar que la ventana muestra todos los campos
+5. Abrir una OC que ya fue recibida → verificar sección "Historial de Recepciones"
+   con nombre del empleado correcto, fecha y líneas con montos
+6. Abrir una OC nueva sin recepciones → verificar que NO aparece la sección
+7. Abrir edición de un artículo de inventario → cambiar un campo → cerrar
+   inmediatamente sin esperar → reabrir → verificar que el cambio persiste
+8. Cambiar un campo y esperar 1.5s → verificar que el indicador muestra "Guardado"
