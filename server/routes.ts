@@ -6989,7 +6989,7 @@ export async function registerRoutes(
   });
 
   // ==================== QUICKBOOKS ONLINE INTEGRATION ====================
-  app.get("/api/qbo/auth-url", requirePermission("ADMIN"), async (_req, res) => {
+  app.get("/api/qbo/auth-url", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const url = await qbo.getAuthUrl();
       res.json({ url });
@@ -7013,7 +7013,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/status", requirePermission("ADMIN"), async (_req, res) => {
+  app.get("/api/qbo/status", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const config = await qbo.getQboConfig();
       if (!config) return res.json({ connected: false });
@@ -7033,7 +7033,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/qbo/disconnect", requirePermission("ADMIN"), async (_req, res) => {
+  app.post("/api/qbo/disconnect", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       await qbo.disconnectQBO();
       res.json({ ok: true });
@@ -7042,7 +7042,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/credentials", requirePermission("ADMIN"), async (_req, res) => {
+  app.get("/api/qbo/credentials", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const status = await qbo.getCredentialStatus();
       res.json(status);
@@ -7051,7 +7051,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/qbo/credentials", requirePermission("ADMIN"), async (req, res) => {
+  app.put("/api/qbo/credentials", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const { clientId, clientSecret, redirectUri, environment } = req.body;
       await qbo.saveCredentials({ clientId, clientSecret, redirectUri, environment });
@@ -7061,7 +7061,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/qbo/settings", requirePermission("ADMIN"), async (req, res) => {
+  app.put("/api/qbo/settings", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       await qbo.updateQboSettings(req.body);
       res.json({ ok: true });
@@ -7070,7 +7070,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/items", requirePermission("ADMIN"), async (_req, res) => {
+  app.get("/api/qbo/items", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const items = await qbo.getQBOItems();
       res.json(items);
@@ -7079,7 +7079,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/accounts", requirePermission("ADMIN"), async (_req, res) => {
+  app.get("/api/qbo/accounts", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const accounts = await qbo.getQBOAccounts();
       res.json(accounts);
@@ -7088,7 +7088,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/tax-codes", requirePermission("ADMIN"), async (_req, res) => {
+  app.get("/api/qbo/tax-codes", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const codes = await qbo.getQBOTaxCodes();
       res.json(codes);
@@ -7097,7 +7097,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/mappings", requirePermission("ADMIN"), async (_req, res) => {
+  app.get("/api/qbo/mappings", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const mappings = await qbo.getMappings();
       res.json(mappings);
@@ -7106,7 +7106,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/qbo/mappings", requirePermission("ADMIN"), async (req, res) => {
+  app.put("/api/qbo/mappings", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       await qbo.saveMappings(req.body.mappings || []);
       res.json({ ok: true });
@@ -7115,7 +7115,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/sync-log", requirePermission("ADMIN"), async (req, res) => {
+  app.get("/api/qbo/sync-log", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const status = req.query.status as string | undefined;
       const limit = parseInt(req.query.limit as string) || 50;
@@ -7127,7 +7127,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/sync-stats", requirePermission("ADMIN"), async (_req, res) => {
+  app.get("/api/qbo/sync-stats", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const stats = await qbo.getSyncStats();
       res.json(stats);
@@ -7136,7 +7136,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/qbo/retry-pending", requirePermission("ADMIN"), async (_req, res) => {
+  app.post("/api/qbo/retry-pending", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
     try {
       const count = await qbo.retryPendingSync();
       res.json({ ok: true, processed: count });
@@ -7145,7 +7145,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/qbo/initial-sync", requirePermission("ADMIN"), async (req, res) => {
+  app.post("/api/qbo/initial-sync", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const { fromDate } = req.body;
       if (!fromDate) return res.status(400).json({ message: "fromDate requerido" });
