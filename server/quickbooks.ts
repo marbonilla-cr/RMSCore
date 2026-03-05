@@ -563,10 +563,11 @@ export async function updateQboSettings(data: {
 
 export async function getMappings(): Promise<any[]> {
   const allCats = await storage.getAllCategories();
+  const subCats = allCats.filter(cat => cat.parentCategoryCode !== null && cat.parentCategoryCode !== undefined);
   const mappings = await db.select().from(qboCategoryMapping);
   const mappingMap = new Map(mappings.map(m => [m.categoryId, m]));
 
-  return allCats.map(cat => ({
+  return subCats.map(cat => ({
     categoryId: cat.id,
     categoryName: cat.name,
     qboItemId: mappingMap.get(cat.id)?.qboItemId || null,
