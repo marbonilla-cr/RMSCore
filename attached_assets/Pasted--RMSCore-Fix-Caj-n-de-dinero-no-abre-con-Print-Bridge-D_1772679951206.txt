@@ -1,0 +1,167 @@
+# RMSCore — Fix: Cajón de dinero no abre con Print Bridge
+
+## DIAGNÓSTICO
+
+El cajón no abre por tres razones combinadas:
+
+1. **El comando del cajón se envía en una llamada TCP separada** — la impresora procesa el recibo y el kick del cajón como dos trabajos independientes, y puede ignorar el segundo
+2. **La llamada `POST /api/pos/open-drawer` falla silenciosamente** — si retorna `ok: false`, el frontend no muestra error
+3. **El comando debe ir en el mismo buffer que el recibo**, al final y antes del corte de papel
+
+La arquitectura correcta de ESC/POS es:
+```
+[bytes del recibo] + [ESC p 0 100 250] + [GS V 41 10]
+                          ↑ kick cajón        ↑ corte papel
+```
+Todo en un único envío TCP. No dos envíos separados.
+
+---
+
+## ARCHIVOS A MODIFICAR
+
+1. `server/escpos.ts` — agregar parámetro `openDrawer` a `buildReceiptBuffer`
+2. `server/routes.ts` (o el archivo de rutas) — pasar `openDrawer: true` cuando el método de pago es CASH
+
+---
+
+## PASO 1 — Modificar `server/escpos.ts`
+
+Abrir el archivo. Buscar la función `buildReceiptBuffer`. Leer su firma actual y sus parámetros.
+
+**Agregar el parámetro `openDrawer` a la interfaz de datos y a la función:**
+
+Si existe una interfaz `ReceiptData` o similar, agregar el campo opcional:
+```typescript
+openDrawer?: boolean;  // true = incluir comando kick del cajón antes del corte
+```
+
+Al final de la función `buildReceiptBuffer`, localizar donde se agrega el corte de papel. El corte probablemente luce así:
+```typescript
+// Algo como:
+const cutCmd = Buffer.from([0x1d, 0x56, 0x41, 0x10]);
+// o:
+buf.push(Buffer.from([0x1d, 0x56, 0x41, 0x10]));
+```
+
+**Insertar el kick del cajón ANTES del corte de papel:**
+```typescript
+// Kick del cajón: ESC p pin tiempo_on tiempo_off
+// ESC p 0 100 250  →  pin 2 (RJ11/RJ12), 100ms ON, 250ms OFF (compatible Hoin H806)
+// ESC p 1 100 250  →  pin 5 (alternativo si pin 2 no funciona)
+if (data.openDrawer) {
+  const drawerKick = Buffer.from([0x1b, 0x70, 0x00, 0x64, 0xfa]);
+  // Agregar drawerKick al buffer ANTES del corte de papel
+}
+
+// Luego el corte de papel (ya existía)
+const cutCmd = Buffer.from([0x1d, 0x56, 0x41, 0x10]);
+```
+
+Asegurarse de que `drawerKick` quede incluido en el `Buffer.concat(...)` final, posicionado antes del corte.
+
+**También modificar `buildDrawerKickData`** para usar los mismos valores de timing:
+```typescript
+export function buildDrawerKickData(): Buffer {
+  // ESC p 0 100 250 — asegurarse que usa estos valores
+  return Buffer.from([0x1b, 0x70, 0x00, 0x64, 0xfa]);
+}
+```
+
+---
+
+## PASO 2 — Modificar la ruta de impresión del recibo
+
+**Archivo:** `server/routes.ts` (o donde vive `POST /api/pos/print-receipt`)
+
+Buscar la ruta que llama a `buildReceiptBuffer` para el recibo de pago (no la de pre-cuenta). Probablemente tiene este patrón:
+```typescript
+const buffer = buildReceiptBuffer(receiptData, cajaPrinter.paperWidth);
+```
+
+Hay que determinar si el método de pago es CASH para abrir el cajón. El método de pago ya está disponible en esa ruta como `paymentMethodName` o similar.
+
+**Cambiar la llamada a `buildReceiptBuffer` para incluir `openDrawer`:**
+```typescript
+// Determinar si el pago fue en efectivo
+// El paymentCode "CASH" ya se usa en la ruta para validar la caja
+const isCashPayment = pm?.paymentCode === "CASH";
+
+const buffer = buildReceiptBuffer({
+  ...receiptData,
+  openDrawer: isCashPayment,  // ← cajón solo para efectivo
+}, cajaPrinter.paperWidth);
+```
+
+Si `pm` (el objeto del método de pago) ya está disponible en ese scope, úsalo directamente. Si no, buscarlo con:
+```typescript
+const pm = allPMs.find(m => m.id === paymentMethodId);
+const isCashPayment = pm?.paymentCode === "CASH";
+```
+
+**IMPORTANTE:** NO modificar el `buildReceiptBuffer` de pre-cuenta (`/api/pos/print-precuenta`) — ese no debe abrir el cajón.
+
+---
+
+## PASO 3 — Limpiar la ruta `/api/pos/open-drawer`
+
+La ruta `POST /api/pos/open-drawer` debe seguir existiendo para el botón manual del cajón en la UI. No eliminarla.
+
+Pero verificar que use los mismos bytes que el fix del Paso 1:
+```typescript
+// La función buildDrawerKickData debe retornar:
+Buffer.from([0x1b, 0x70, 0x00, 0x64, 0xfa])
+// ESC  p  pin:0  on:100ms  off:250ms
+```
+
+Si actualmente usa valores diferentes (como `0x19` o `0x19` para los tiempos), cambiarlos a `0x64` (100) y `0xfa` (250).
+
+---
+
+## PASO 4 — Verificar el timing en el Print Bridge local
+
+**Archivo:** `print-bridge/index.js` (en la computadora local del restaurante)
+
+Buscar cómo se procesan los trabajos en cola. Si existe un delay entre trabajos, verificar que sea suficiente:
+```javascript
+// Si hay algo como:
+setTimeout(() => processNext(), 500);
+// Cambiar a:
+setTimeout(() => processNext(), 800); // más tiempo entre trabajos
+```
+
+Si el bridge acumula trabajos en cola, asegurarse de que el trabajo del recibo y el del cajón (si llegan separados) se procesen en el orden correcto.
+
+---
+
+## VERIFICACIÓN
+
+Después de aplicar los cambios:
+
+1. Hacer un pago de prueba en efectivo desde el POS
+2. La impresora debe imprimir el recibo Y abrir el cajón en el mismo instante (no dos momentos separados)
+3. Hacer un pago de prueba con tarjeta — el cajón NO debe abrir
+4. El botón manual de abrir cajón (si existe en la UI) debe seguir funcionando
+
+**Test desde logs del bridge:**
+```
+Recibo impreso correctamente
+[NO debe aparecer un segundo trabajo de "drawer" separado para efectivo]
+```
+
+Si el cajón sigue sin abrir después del fix, el problema puede ser el pin del cajón:
+- Probar cambiando `0x00` a `0x01` en el comando kick (pin 2 vs pin 5)
+- La Hoin H806 típicamente usa pin 2 (`0x00`)
+
+---
+
+## NOTA SOBRE EL TIMING DE LOS BYTES
+
+Los valores `0x64` y `0xfa` se traducen a:
+- `0x64` = 100 decimal → 100 × 2ms = **200ms ON**
+- `0xfa` = 250 decimal → 250 × 2ms = **500ms OFF**
+
+Algunos modelos Hoin requieren más tiempo. Si no abre con estos valores, probar:
+```typescript
+Buffer.from([0x1b, 0x70, 0x00, 0x19, 0xfa])
+//                              ↑ 25 × 2ms = 50ms ON  (más corto, más compatible)
+```
