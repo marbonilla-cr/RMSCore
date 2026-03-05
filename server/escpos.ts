@@ -19,7 +19,7 @@ const CMD = {
   PARTIAL_CUT: Buffer.from([GS, 0x56, 0x01]),
   FEED_LINES: (n: number) => Buffer.from([ESC, 0x64, n]),
   LINE: Buffer.from([LF]),
-  OPEN_DRAWER: Buffer.from([ESC, 0x70, 0x00, 0x19, 0xFA]),
+  OPEN_DRAWER: Buffer.from([ESC, 0x70, 0x00, 0x64, 0xFA]),
 };
 
 const CP858_MAP: Record<number, number> = {
@@ -127,6 +127,7 @@ interface ReceiptData {
   clientName?: string;
   cashierName?: string;
   date: string;
+  openDrawer?: boolean;
 }
 
 export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): Buffer {
@@ -251,6 +252,10 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
   if (data.legalNote) {
     parts.push(CMD.LINE);
     parts.push(line(data.legalNote));
+  }
+
+  if (data.openDrawer) {
+    parts.push(CMD.OPEN_DRAWER);
   }
 
   parts.push(CMD.FEED_LINES(4));

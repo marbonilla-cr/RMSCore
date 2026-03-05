@@ -4049,16 +4049,21 @@ export async function registerRoutes(
         : allPayments;
       const lastPayment = relevantPayments.length > 0 ? relevantPayments[relevantPayments.length - 1] : null;
       let paymentMethodName = "";
+      let hasCashPayment = false;
       if (relevantPayments.length > 1) {
         const pmNames: string[] = [];
         for (const pay of relevantPayments) {
           const pm = await storage.getPaymentMethod(pay.paymentMethodId);
-          if (pm) pmNames.push(`${pm.paymentName} ₡${Number(pay.amount).toLocaleString()}`);
+          if (pm) {
+            pmNames.push(`${pm.paymentName} ₡${Number(pay.amount).toLocaleString()}`);
+            if (pm.paymentCode === "CASH") hasCashPayment = true;
+          }
         }
         paymentMethodName = pmNames.join(" + ");
       } else if (lastPayment) {
         const pm = await storage.getPaymentMethod(lastPayment.paymentMethodId);
         paymentMethodName = pm?.paymentName || "";
+        if (pm?.paymentCode === "CASH") hasCashPayment = true;
       }
 
       const receiptTotal = splitPaymentId && lastPayment
@@ -4092,6 +4097,7 @@ export async function registerRoutes(
         clientName: lastPayment?.clientNameSnapshot || undefined,
         cashierName: cashier?.displayName || undefined,
         date: new Date().toLocaleString("es-CR"),
+        openDrawer: hasCashPayment,
       };
 
       const buffer = buildReceiptBuffer(receiptData, cajaPrinter.paperWidth);

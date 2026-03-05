@@ -24,7 +24,7 @@ async function processPrintQueue() {
       log(`Error imprimiendo ${label}: ${err.message}`);
     }
     if (printQueue.length > 0) {
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 800));
     }
   }
   printing = false;
