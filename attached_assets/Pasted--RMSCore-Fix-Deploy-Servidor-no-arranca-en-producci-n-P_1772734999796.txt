@@ -1,0 +1,126 @@
+# RMSCore — Fix Deploy: Servidor no arranca en producción
+
+## PROBLEMA
+
+El deploy falla durante la inicialización de la VM con este mensaje:
+"The deployment failed during VM initialization, likely due to the server
+failing to start or listen on the expected port 5000"
+
+Hay 3 causas identificadas que deben corregirse en orden.
+
+---
+
+## FIX 1 — vite.config.ts: import.meta.dirname no disponible en CJS
+
+Abrir `vite.config.ts` en la raíz del proyecto.
+
+Buscar cualquier uso de `import.meta.dirname` o `import.meta.url`.
+Reemplazar por `__dirname` con el import de `path` y `url` necesario.
+
+Patrón típico a buscar:
+```typescript
+// ANTES (cualquiera de estas formas):
+import.meta.dirname
+new URL('.', import.meta.url).pathname
+fileURLToPath(new URL('.', import.meta.url))
+
+// DESPUÉS:
+import path from "path";
+const __dirname = path.resolve();   // solo si no existe ya
+```
+
+El resultado debe quedar así al inicio del archivo:
+```typescript
+import { defineConfig } catch { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export default defineConfig({
+  // ... resto de la config sin cambios
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./client/src"),
+      "@shared": path.resolve(__dirname, "./shared"),
+    },
+  },
+  // ...
+});
+```
+
+NOTA: No cambiar ninguna otra parte del vite.config.ts — solo el
+manejo de `__dirname` al inicio.
+
+---
+
+## FIX 2 — server/index.ts: puerto debe leer process.env.PORT
+
+Abrir `server/index.ts`.
+
+Buscar la línea donde el servidor hace `listen`. Debe verse así o similar:
+```typescript
+app.listen(5000, ...)
+// o
+server.listen(5000, ...)
+```
+
+Cambiar para que lea `process.env.PORT` con fallback a 5000:
+```typescript
+const PORT = parseInt(process.env.PORT || "5000", 10);
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`[server] Escuchando en puerto ${PORT}`);
+});
+```
+
+El `"0.0.0.0"` es crítico — sin él el servidor solo escucha en
+localhost y Replit no puede alcanzarlo desde afuera.
+
+Si el archivo ya usa `process.env.PORT`, verificar que también tenga
+`"0.0.0.0"` como segundo argumento del listen. Si no lo tiene, agregarlo.
+
+---
+
+## FIX 3 — Verificar que el build de producción no tiene errores
+
+Ejecutar en la terminal:
+```bash
+npm run build 2>&1 | tail -30
+```
+
+Si hay warnings sobre `import.meta` después del Fix 1, significa que
+quedó alguna referencia sin corregir. Buscarla y aplicar el mismo patrón.
+
+Si el build pasa sin errores rojos (warnings amarillos son aceptables),
+el servidor debería arrancar correctamente.
+
+---
+
+## VERIFICACIÓN ANTES DE HACER DEPLOY
+
+Ejecutar localmente para confirmar que el servidor arranca:
+```bash
+NODE_ENV=production node dist/index.cjs
+```
+
+Debe mostrar:
+```
+[server] Escuchando en puerto 5000
+[db] X performance indexes ensured
+```
+
+Si aparece cualquier error antes de esa línea, reportarlo antes de
+intentar el deploy.
+
+---
+
+## ORDEN DE EJECUCIÓN
+
+1. Aplicar Fix 1 en vite.config.ts
+2. Aplicar Fix 2 en server/index.ts
+3. Ejecutar `npm run build` y confirmar que pasa
+4. Ejecutar `NODE_ENV=production node dist/index.cjs` y confirmar que arranca
+5. Hacer deploy
