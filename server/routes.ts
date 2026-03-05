@@ -3706,6 +3706,10 @@ export async function registerRoutes(
       const t0 = Date.now();
       const orderId = parseInt(req.params.orderId as string);
       const splits = await storage.getSplitAccountsForOrder(orderId);
+      if (splits.length === 0) {
+        if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/orders/${orderId}/splits ${Date.now() - t0}ms (empty)`);
+        return res.json([]);
+      }
       const splitIds = splits.map(s => s.id);
       const allSplitItems = await storage.getSplitItemsByAccountIds(splitIds);
       const itemsBySplit = new Map<number, typeof allSplitItems>();

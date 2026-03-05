@@ -351,8 +351,9 @@ export default function POSPage() {
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      if (wasCash) {
+        queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
+      }
       setPaymentOpen(false);
       setSelectedTable(null);
       setSelectedOrderId(null);
@@ -391,8 +392,9 @@ export default function POSPage() {
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      if (wasCash) {
+        queryClient.invalidateQueries({ queryKey: ["/api/pos/cash-session"] });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
       setPaymentOpen(false);
       setPayingSplitId(null);
@@ -448,13 +450,36 @@ export default function POSPage() {
     mutationFn: async ({ orderItemId, fromSplitId, toSplitId }: { orderItemId: number; fromSplitId?: number | null; toSplitId?: number | null }) => {
       return apiRequest("POST", "/api/pos/split-items/move", { orderItemId, fromSplitId: fromSplitId || null, toSplitId: toSplitId || null });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
-      setMovingItemId(null);
+    onMutate: async ({ orderItemId, fromSplitId, toSplitId }) => {
+      const splitsKey = ["/api/pos/orders", selectedTable?.orderId, "splits"];
+      await queryClient.cancelQueries({ queryKey: splitsKey });
+      const previousSplits = queryClient.getQueryData(splitsKey);
+      queryClient.setQueryData(splitsKey, (old: any[]) => {
+        if (!old) return old;
+        let movedItem: any = null;
+        return old.map(split => {
+          let items = [...(split.items || [])];
+          if (split.id === fromSplitId) {
+            const idx = items.findIndex((i: any) => i.orderItemId === orderItemId);
+            if (idx >= 0) { movedItem = items[idx]; items.splice(idx, 1); }
+          }
+          if (split.id === toSplitId) {
+            items = [...items, movedItem || { orderItemId, splitId: toSplitId }];
+          }
+          return { ...split, items };
+        });
+      });
+      return { previousSplits };
     },
-    onError: (err: any) => {
+    onError: (err: any, _vars, context) => {
+      if (context?.previousSplits) {
+        queryClient.setQueryData(["/api/pos/orders", selectedTable?.orderId, "splits"], context.previousSplits);
+      }
       toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
+      setMovingItemId(null);
     },
   });
 
@@ -462,13 +487,38 @@ export default function POSPage() {
     mutationFn: async ({ orderItemIds, fromSplitId, toSplitId }: { orderItemIds: number[]; fromSplitId?: number | null; toSplitId?: number | null }) => {
       return apiRequest("POST", "/api/pos/split-items/move-bulk", { orderItemIds, fromSplitId: fromSplitId || null, toSplitId: toSplitId || null });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
-      setSelectedItemIds([]);
+    onMutate: async ({ orderItemIds, fromSplitId, toSplitId }) => {
+      const splitsKey = ["/api/pos/orders", selectedTable?.orderId, "splits"];
+      await queryClient.cancelQueries({ queryKey: splitsKey });
+      const previousSplits = queryClient.getQueryData(splitsKey);
+      queryClient.setQueryData(splitsKey, (old: any[]) => {
+        if (!old) return old;
+        const idsSet = new Set(orderItemIds);
+        let movedItems: any[] = [];
+        return old.map(split => {
+          let items = [...(split.items || [])];
+          if (split.id === fromSplitId) {
+            movedItems = items.filter((i: any) => idsSet.has(i.orderItemId));
+            items = items.filter((i: any) => !idsSet.has(i.orderItemId));
+          }
+          if (split.id === toSplitId) {
+            const fallback = orderItemIds.map(id => ({ orderItemId: id, splitId: toSplitId }));
+            items = [...items, ...(movedItems.length ? movedItems : fallback)];
+          }
+          return { ...split, items };
+        });
+      });
+      return { previousSplits };
     },
-    onError: (err: any) => {
+    onError: (err: any, _vars, context) => {
+      if (context?.previousSplits) {
+        queryClient.setQueryData(["/api/pos/orders", selectedTable?.orderId, "splits"], context.previousSplits);
+      }
       toast({ title: "Error al mover items", description: err.message, variant: "destructive" });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", selectedTable?.orderId, "splits"] });
+      setSelectedItemIds([]);
     },
   });
 

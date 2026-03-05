@@ -922,14 +922,20 @@ export async function removeSplitItemByOrderItemId(splitId: number, orderItemId:
 }
 
 export async function bulkMoveSplitItems(orderItemIds: number[], fromSplitId: number | null, toSplitId: number | null) {
+  if (orderItemIds.length === 0) return;
   await db.transaction(async (tx) => {
-    for (const orderItemId of orderItemIds) {
-      if (fromSplitId) {
-        await tx.delete(splitItems).where(and(eq(splitItems.splitId, fromSplitId), eq(splitItems.orderItemId, orderItemId)));
-      }
-      if (toSplitId) {
-        await tx.insert(splitItems).values({ splitId: toSplitId, orderItemId });
-      }
+    if (fromSplitId) {
+      await tx.delete(splitItems).where(
+        and(
+          eq(splitItems.splitId, fromSplitId),
+          inArray(splitItems.orderItemId, orderItemIds)
+        )
+      );
+    }
+    if (toSplitId) {
+      await tx.insert(splitItems).values(
+        orderItemIds.map(orderItemId => ({ splitId: toSplitId, orderItemId }))
+      ).onConflictDoNothing();
     }
   });
 }

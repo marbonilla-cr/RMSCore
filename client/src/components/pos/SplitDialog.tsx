@@ -116,12 +116,35 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
     mutationFn: async ({ orderItemId, fromSplitId, toSplitId }: { orderItemId: number; fromSplitId?: number | null; toSplitId?: number | null }) => {
       return apiRequest("POST", "/api/pos/split-items/move", { orderItemId, fromSplitId: fromSplitId || null, toSplitId: toSplitId || null });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", orderId, "splits"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+    onMutate: async ({ orderItemId, fromSplitId, toSplitId }) => {
+      const splitsKey = ["/api/pos/orders", orderId, "splits"];
+      await queryClient.cancelQueries({ queryKey: splitsKey });
+      const previousSplits = queryClient.getQueryData(splitsKey);
+      queryClient.setQueryData(splitsKey, (old: any[]) => {
+        if (!old) return old;
+        let movedItem: any = null;
+        return old.map(split => {
+          let items = [...(split.items || [])];
+          if (split.id === fromSplitId) {
+            const idx = items.findIndex((i: any) => i.orderItemId === orderItemId);
+            if (idx >= 0) { movedItem = items[idx]; items.splice(idx, 1); }
+          }
+          if (split.id === toSplitId) {
+            items = [...items, movedItem || { orderItemId, splitId: toSplitId }];
+          }
+          return { ...split, items };
+        });
+      });
+      return { previousSplits };
     },
-    onError: (err: any) => {
+    onError: (err: any, _vars, context) => {
+      if (context?.previousSplits) {
+        queryClient.setQueryData(["/api/pos/orders", orderId, "splits"], context.previousSplits);
+      }
       toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/orders", orderId, "splits"] });
     },
   });
 

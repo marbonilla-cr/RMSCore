@@ -42,6 +42,9 @@ async function ensurePerfIndexes() {
     `CREATE INDEX IF NOT EXISTS idx_order_items_order_status ON order_items (order_id, status)`,
     `CREATE INDEX IF NOT EXISTS idx_orders_table_status ON orders (table_id, status)`,
     `CREATE INDEX IF NOT EXISTS idx_kti_order_item_id ON kitchen_ticket_items (order_item_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status) WHERE status IN ('OPEN', 'IN_KITCHEN', 'PREPARING', 'READY')`,
+    `CREATE INDEX IF NOT EXISTS idx_payments_business_date ON payments (business_date, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_sales_ledger_business_date ON sales_ledger_items (business_date)`,
   ];
   for (const ddl of indexes) {
     try { await pool.query(ddl); } catch (err: any) {
