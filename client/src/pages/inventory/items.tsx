@@ -41,7 +41,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Plus, Search, Trash2, Upload, ArrowUp, ArrowDown, ArrowUpDown, Pencil } from "lucide-react";
+import { Loader2, Plus, Search, Trash2, Upload, ArrowUp, ArrowDown, ArrowUpDown, Pencil, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface InvItem {
   id: number;
@@ -751,15 +751,6 @@ export default function InventoryItems() {
               item={mobileEditItem}
               suppliers={suppliers || []}
               categories={categoryOptions}
-              onSave={(field, value) => {
-                patchItem(mobileEditItem.id, field, value);
-                const updated = { ...mobileEditItem, [field]: value } as InvItem;
-                if (field === "defaultSupplierId") {
-                  updated.default_supplier_id = value;
-                  updated.supplierName = value ? (suppliers || []).find(s => s.id === value)?.name || null : null;
-                }
-                setMobileEditItem(updated);
-              }}
             />
           )}
         </DialogContent>
@@ -1031,18 +1022,67 @@ export default function InventoryItems() {
   );
 }
 
-function MobileEditForm({ item, suppliers, categories, onSave }: {
+function MobileEditForm({ item, suppliers, categories }: {
   item: InvItem;
   suppliers: Supplier[];
   categories: { value: string; label: string }[];
-  onSave: (field: string, value: any) => void;
 }) {
+  const { toast } = useToast();
   const [name, setName] = useState(item.name);
   const [category, setCategory] = useState(item.category);
   const [supplierId, setSupplierId] = useState<number | null>(item.default_supplier_id);
   const [reorder, setReorder] = useState(item.reorderPointQtyBase);
   const [par, setPar] = useState(item.parLevelQtyBase);
   const [cost, setCost] = useState(item.lastCostPerBaseUom || "0");
+
+  const [isDirty, setIsDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const pendingRef = useRef<Record<string, any>>({});
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDirtyRef = useRef(false);
+
+  const saveChanges = useCallback(async () => {
+    if (!isDirtyRef.current || Object.keys(pendingRef.current).length === 0) return;
+    setSaveStatus("saving");
+    const payload = { ...pendingRef.current };
+    try {
+      await apiRequest("PATCH", `/api/inv/items/${item.id}`, payload);
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+      pendingRef.current = {};
+      setIsDirty(false);
+      isDirtyRef.current = false;
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus((prev) => prev === "saved" ? "idle" : prev), 2000);
+    } catch {
+      setSaveStatus("error");
+      toast({
+        variant: "destructive",
+        title: "Error al guardar",
+        description: "No se pudieron guardar los cambios. Intentá de nuevo.",
+      });
+    }
+  }, [item.id, toast]);
+
+  const markDirtyAndDebounce = useCallback((field: string, value: any) => {
+    pendingRef.current[field] = value;
+    setIsDirty(true);
+    isDirtyRef.current = true;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(saveChanges, 1500);
+  }, [saveChanges]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (isDirtyRef.current && Object.keys(pendingRef.current).length > 0) {
+        apiRequest("PATCH", `/api/inv/items/${item.id}`, { ...pendingRef.current })
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+          })
+          .catch(() => {});
+      }
+    };
+  }, [item.id]);
 
   return (
     <div className="space-y-3">
@@ -1052,15 +1092,15 @@ function MobileEditForm({ item, suppliers, categories, onSave }: {
         <label className="text-sm font-medium">Nombre</label>
         <Input
           value={name}
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => { if (name.trim() && name !== item.name) onSave("name", name.trim()); }}
+          onChange={(e) => { setName(e.target.value); markDirtyAndDebounce("name", e.target.value.trim()); }}
+          onBlur={saveChanges}
           data-testid="input-mobile-name"
         />
       </div>
 
       <div className="space-y-1">
         <label className="text-sm font-medium">Categoría</label>
-        <Select value={category} onValueChange={(v) => { setCategory(v); onSave("category", v); }}>
+        <Select value={category} onValueChange={(v) => { setCategory(v); markDirtyAndDebounce("category", v); }}>
           <SelectTrigger data-testid="select-mobile-category"><SelectValue /></SelectTrigger>
           <SelectContent>
             {categories.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
@@ -1073,7 +1113,7 @@ function MobileEditForm({ item, suppliers, categories, onSave }: {
         <Select value={supplierId ? String(supplierId) : "__none__"} onValueChange={(v) => {
           const id = v === "__none__" ? null : Number(v);
           setSupplierId(id);
-          onSave("defaultSupplierId", id);
+          markDirtyAndDebounce("defaultSupplierId", id);
         }}>
           <SelectTrigger data-testid="select-mobile-supplier"><SelectValue placeholder="Sin proveedor" /></SelectTrigger>
           <SelectContent>
@@ -1088,8 +1128,8 @@ function MobileEditForm({ item, suppliers, categories, onSave }: {
           <label className="text-sm font-medium">Pto Reorden</label>
           <Input
             type="number" step="0.01" value={reorder}
-            onChange={(e) => setReorder(e.target.value)}
-            onBlur={() => { if (reorder !== item.reorderPointQtyBase) onSave("reorderPointQtyBase", reorder); }}
+            onChange={(e) => { setReorder(e.target.value); markDirtyAndDebounce("reorderPointQtyBase", e.target.value); }}
+            onBlur={saveChanges}
             data-testid="input-mobile-reorder"
           />
         </div>
@@ -1097,8 +1137,8 @@ function MobileEditForm({ item, suppliers, categories, onSave }: {
           <label className="text-sm font-medium">Nivel Par</label>
           <Input
             type="number" step="0.01" value={par}
-            onChange={(e) => setPar(e.target.value)}
-            onBlur={() => { if (par !== item.parLevelQtyBase) onSave("parLevelQtyBase", par); }}
+            onChange={(e) => { setPar(e.target.value); markDirtyAndDebounce("parLevelQtyBase", e.target.value); }}
+            onBlur={saveChanges}
             data-testid="input-mobile-par"
           />
         </div>
@@ -1108,15 +1148,40 @@ function MobileEditForm({ item, suppliers, categories, onSave }: {
         <label className="text-sm font-medium">Costo (₡/{item.baseUom})</label>
         <Input
           type="number" step="0.01" value={cost}
-          onChange={(e) => setCost(e.target.value)}
-          onBlur={() => { if (cost !== (item.lastCostPerBaseUom || "0")) onSave("lastCostPerBaseUom", Number(cost)); }}
+          onChange={(e) => { setCost(e.target.value); markDirtyAndDebounce("lastCostPerBaseUom", Number(e.target.value)); }}
+          onBlur={saveChanges}
           data-testid="input-mobile-cost"
         />
       </div>
 
       <div className="pt-2 flex justify-between items-center">
         {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
-        <span className="text-xs text-muted-foreground">Los cambios se guardan al salir del campo</span>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground min-h-[16px]" data-testid="status-save-indicator">
+          {saveStatus === "saving" && (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Guardando...</span>
+            </>
+          )}
+          {saveStatus === "saved" && (
+            <>
+              <CheckCircle2 className="h-3 w-3 text-green-500" />
+              <span className="text-green-600">Guardado</span>
+            </>
+          )}
+          {saveStatus === "error" && (
+            <>
+              <AlertCircle className="h-3 w-3 text-red-500" />
+              <span className="text-red-600">Error al guardar</span>
+            </>
+          )}
+          {saveStatus === "idle" && isDirty && (
+            <span className="text-amber-600">Cambios sin guardar</span>
+          )}
+          {saveStatus === "idle" && !isDirty && (
+            <span>Los cambios se guardan automáticamente</span>
+          )}
+        </div>
       </div>
     </div>
   );

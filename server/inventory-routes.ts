@@ -16,7 +16,7 @@ import {
   insertInvRecipeLineSchema,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { invItems, invSuppliers, products } from "@shared/schema";
+import { invItems, invSuppliers, products, users } from "@shared/schema";
 import { eq, and, lt, asc } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
@@ -671,7 +671,32 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/purchase-orders/:id/receipts", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
-      res.json(await invStorage.getPoReceipts(parseInt(req.params.id)));
+      const poId = parseInt(req.params.id);
+      const receipts = await invStorage.getPoReceipts(poId);
+
+      const result = await Promise.all(receipts.map(async (receipt: any) => {
+        const lines = await invStorage.getPoReceiptLines(receipt.id);
+
+        let receivedByName = "—";
+        try {
+          const [user] = await db
+            .select({ displayName: users.displayName })
+            .from(users)
+            .where(eq(users.id, receipt.receivedByEmployeeId))
+            .limit(1);
+          if (user) receivedByName = user.displayName;
+        } catch (_) {}
+
+        return {
+          id: receipt.id,
+          receivedAt: receipt.receivedAt,
+          receivedByName,
+          note: receipt.note ?? null,
+          lines,
+        };
+      }));
+
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

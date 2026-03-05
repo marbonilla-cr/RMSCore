@@ -24,6 +24,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -31,7 +32,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency } from "@/lib/utils";
-import { Loader2, Plus, ArrowLeft, Send, PackageCheck, Trash2, AlertTriangle, ShoppingCart } from "lucide-react";
+import { Loader2, Plus, ArrowLeft, Send, PackageCheck, Trash2, AlertTriangle, ShoppingCart, Download, FileText } from "lucide-react";
 
 interface Supplier {
   id: number;
@@ -94,6 +95,21 @@ interface Suggestion {
     purchaseUom: string;
     lastPrice: string;
   } | null;
+}
+
+interface ReceiptHistoryItem {
+  id: number;
+  receivedAt: string;
+  receivedByName: string;
+  note: string | null;
+  lines: {
+    id: number;
+    invItemName: string;
+    qtyPurchaseUomReceived: string;
+    unitPricePerPurchaseUom: string;
+    purchaseUom: string;
+    qtyBaseReceived: string;
+  }[];
 }
 
 const statusConfig: Record<string, { label: string; variant: "secondary" | "default" | "outline" | "destructive" }> = {
@@ -166,6 +182,14 @@ export default function PurchaseOrdersPage() {
 
   const { data: suggestions, isLoading: suggestionsLoading } = useQuery<Suggestion[]>({
     queryKey: ["/api/inv/purchase-orders/suggestions"],
+  });
+
+  const { data: receiptHistory = [] } = useQuery<ReceiptHistoryItem[]>({
+    queryKey: ["/api/inv/purchase-orders", selectedPoId, "receipts"],
+    queryFn: () =>
+      fetch(`/api/inv/purchase-orders/${selectedPoId}/receipts`, { credentials: "include" })
+        .then(r => r.json()),
+    enabled: selectedPoId !== null,
   });
 
   const supplierMap = new Map<number, string>();
@@ -368,6 +392,135 @@ export default function PurchaseOrdersPage() {
     });
   }
 
+  function handleDownloadCSV() {
+    if (!poLines || !selectedPo) return;
+    const BOM = "\uFEFF";
+    const headers = [
+      "Artículo", "Cantidad", "UOM compra", "Precio Unitario",
+      "Subtotal", "Recibido (base UOM)", "Estado línea"
+    ].join(",");
+
+    const rows = poLines.map(line => {
+      const qty = parseFloat(line.qtyPurchaseUom);
+      const price = parseFloat(line.unitPricePerPurchaseUom);
+      const subtotal = qty * price;
+      return [
+        line.invItemName || line.itemName || "",
+        qty.toLocaleString("es-CR"),
+        line.purchaseUom,
+        price.toLocaleString("es-CR", { minimumFractionDigits: 2 }),
+        subtotal.toLocaleString("es-CR", { minimumFractionDigits: 2 }),
+        parseFloat(line.qtyBaseReceived).toLocaleString("es-CR"),
+        line.lineStatus,
+      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",");
+    });
+
+    const total = poLines.reduce(
+      (s, l) => s + parseFloat(l.qtyPurchaseUom) * parseFloat(l.unitPricePerPurchaseUom), 0
+    );
+    const totalRow = [
+      `"Total"`, `""`, `""`, `""`,
+      `"${total.toLocaleString("es-CR", { minimumFractionDigits: 2 })}"`,
+      `""`, `""`
+    ].join(",");
+
+    const csv = BOM + [headers, ...rows, totalRow].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `OC-${selectedPo.id}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleDownloadPDF() {
+    if (!poLines || !selectedPo) return;
+    const total = poLines.reduce(
+      (s, l) => s + parseFloat(l.qtyPurchaseUom) * parseFloat(l.unitPricePerPurchaseUom), 0
+    );
+
+    const linesHtml = poLines.map(line => {
+      const qty = parseFloat(line.qtyPurchaseUom);
+      const price = parseFloat(line.unitPricePerPurchaseUom);
+      const subtotal = qty * price;
+      const received = parseFloat(line.qtyBaseReceived);
+      return `<tr>
+        <td>${line.invItemName || line.itemName || "—"}</td>
+        <td style="text-align:center">${qty.toLocaleString("es-CR")}</td>
+        <td style="text-align:center">${line.purchaseUom}</td>
+        <td style="text-align:right">₡${price.toLocaleString("es-CR", { minimumFractionDigits: 2 })}</td>
+        <td style="text-align:right">₡${subtotal.toLocaleString("es-CR", { minimumFractionDigits: 2 })}</td>
+        <td style="text-align:center">${received.toLocaleString("es-CR")}</td>
+        <td style="text-align:center">${line.lineStatus}</td>
+      </tr>`;
+    }).join("");
+
+    const createdDate = selectedPo.createdAt
+      ? new Date(selectedPo.createdAt).toLocaleDateString("es-CR", {
+          day: "2-digit", month: "long", year: "numeric"
+        })
+      : "—";
+
+    const html = `<!DOCTYPE html><html lang="es"><head>
+      <meta charset="utf-8">
+      <title>OC-${selectedPo.id}</title>
+      <style>
+        body { font-family: Arial, sans-serif; font-size: 12px; margin: 32px; color: #111; }
+        h2 { margin: 0 0 4px 0; font-size: 18px; }
+        .meta { color: #555; margin-bottom: 20px; font-size: 11px; line-height: 1.8; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f3f4f6; padding: 7px 8px; text-align: left;
+             border-bottom: 2px solid #d1d5db; font-size: 11px; font-weight: 600; }
+        td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+        tfoot td { font-weight: bold; border-top: 2px solid #374151;
+                   border-bottom: none; background: #f9fafb; }
+        .print-btn { margin-top: 20px; padding: 8px 20px; background: #374151;
+                     color: white; border: none; border-radius: 4px;
+                     cursor: pointer; font-size: 13px; }
+        @media print { .print-btn { display: none; } }
+      </style>
+    </head><body>
+      <h2>Orden de Compra #${selectedPo.id}</h2>
+      <div class="meta">
+        <strong>Proveedor:</strong> ${selectedPo.supplierName || supplierMap.get(selectedPo.supplierId) || "—"}<br>
+        <strong>Fecha:</strong> ${createdDate}<br>
+        <strong>Estado:</strong> ${statusConfig[selectedPo.status]?.label || selectedPo.status}
+        ${selectedPo.notes ? `<br><strong>Notas:</strong> ${selectedPo.notes}` : ""}
+      </div>
+      <table>
+        <thead><tr>
+          <th>Artículo</th>
+          <th style="text-align:center">Cantidad</th>
+          <th style="text-align:center">UOM</th>
+          <th style="text-align:right">Precio Unit.</th>
+          <th style="text-align:right">Subtotal</th>
+          <th style="text-align:center">Recibido</th>
+          <th style="text-align:center">Estado</th>
+        </tr></thead>
+        <tbody>${linesHtml}</tbody>
+        <tfoot><tr>
+          <td colspan="4" style="text-align:right">Total de la orden</td>
+          <td style="text-align:right">
+            ₡${total.toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+          </td>
+          <td colspan="2"></td>
+        </tr></tfoot>
+      </table>
+      <button class="print-btn" onclick="window.print()">
+        Imprimir / Guardar como PDF
+      </button>
+    </body></html>`;
+
+    const win = window.open("", "_blank", "width=960,height=720");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+    }
+  }
+
   function openReceiveDialog() {
     if (!poLines) return;
     const lines = poLines
@@ -506,6 +659,14 @@ export default function PurchaseOrdersPage() {
                     Recibir
                   </Button>
                 )}
+                <Button variant="outline" size="sm" data-testid="button-download-csv" onClick={handleDownloadCSV}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Descargar CSV
+                </Button>
+                <Button variant="outline" size="sm" data-testid="button-download-pdf" onClick={handleDownloadPDF}>
+                  <FileText className="mr-2 h-4 w-4" />
+                  Descargar PDF
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -572,6 +733,17 @@ export default function PurchaseOrdersPage() {
                       );
                     })}
                   </TableBody>
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-right font-semibold text-sm">
+                        Total de la orden
+                      </TableCell>
+                      <TableCell className="font-bold" data-testid="text-po-total">
+                        ₡{poLines.reduce((s, l) => s + parseFloat(l.qtyPurchaseUom) * parseFloat(l.unitPricePerPurchaseUom), 0).toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell colSpan={isDraft ? 3 : 2}></TableCell>
+                    </TableRow>
+                  </TableFooter>
                 </Table>
               </div>
             )}
@@ -645,6 +817,81 @@ export default function PurchaseOrdersPage() {
             )}
           </CardContent>
         </Card>
+
+        {receiptHistory.length > 0 && (
+          <Card className="mt-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                Historial de Recepciones
+                <span className="bg-muted text-muted-foreground text-xs px-2 py-0.5 rounded-full font-normal">
+                  {receiptHistory.length}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {receiptHistory.map((receipt) => (
+                  <div key={receipt.id} className="border rounded-lg overflow-hidden" data-testid={`receipt-${receipt.id}`}>
+                    <div className="bg-muted/40 px-4 py-2.5 flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-3 text-sm">
+                        <span className="font-medium">
+                          {new Date(receipt.receivedAt).toLocaleDateString("es-CR", {
+                            day: "2-digit", month: "short", year: "numeric",
+                          })}
+                          {" "}
+                          <span className="text-muted-foreground font-normal">
+                            {new Date(receipt.receivedAt).toLocaleTimeString("es-CR", {
+                              hour: "2-digit", minute: "2-digit",
+                            })}
+                          </span>
+                        </span>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-muted-foreground text-xs">
+                          Recibido por <span className="text-foreground font-medium">{receipt.receivedByName}</span>
+                        </span>
+                      </div>
+                      {receipt.note && (
+                        <span className="text-xs text-muted-foreground italic max-w-[200px] truncate">
+                          "{receipt.note}"
+                        </span>
+                      )}
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Artículo</TableHead>
+                          <TableHead className="text-center">Cantidad recibida</TableHead>
+                          <TableHead className="text-center">UOM</TableHead>
+                          <TableHead className="text-right">Precio unit.</TableHead>
+                          <TableHead className="text-right">Subtotal</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {receipt.lines.map((line) => {
+                          const qty = parseFloat(line.qtyPurchaseUomReceived);
+                          const price = parseFloat(line.unitPricePerPurchaseUom);
+                          return (
+                            <TableRow key={line.id}>
+                              <TableCell className="font-medium">{line.invItemName}</TableCell>
+                              <TableCell className="text-center">{qty.toLocaleString("es-CR")}</TableCell>
+                              <TableCell className="text-center text-muted-foreground">{line.purchaseUom ?? "—"}</TableCell>
+                              <TableCell className="text-right">
+                                ₡{price.toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="text-right font-medium">
+                                ₡{(qty * price).toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <Dialog open={receiveOpen} onOpenChange={(open) => { if (!open) setReceiveOpen(false); }}>
           <DialogContent className="max-w-2xl" data-testid="dialog-receive">
