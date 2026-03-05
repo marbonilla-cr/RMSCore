@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
+import { formatCurrency } from "@/lib/utils";
 import { Loader2, Plus, ArrowLeft, Send, PackageCheck, Trash2, AlertTriangle, ShoppingCart } from "lucide-react";
 
 interface Supplier {
@@ -123,14 +124,23 @@ function statusBadgeStyle(status: string): React.CSSProperties | undefined {
 export default function PurchaseOrdersPage() {
   const { toast } = useToast();
   const [selectedPoId, setSelectedPoId] = useState<number | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
-  const [newPo, setNewPo] = useState({ supplierId: "", notes: "", expectedDeliveryDate: "" });
   const [newLine, setNewLine] = useState({ invItemId: "", qtyPurchaseUom: "", purchaseUom: "", unitPricePerPurchaseUom: "" });
   const [receiveLines, setReceiveLines] = useState<ReceiveLine[]>([]);
   const [receiveNote, setReceiveNote] = useState("");
   const [activeTab, setActiveTab] = useState("orders");
   const [selectedSuggestions, setSelectedSuggestions] = useState<Set<number>>(new Set());
+
+  const [creatingNew, setCreatingNew] = useState(false);
+  const [poSupplierId, setPOSupplierId] = useState<number | null>(null);
+  const [poDeliveryDate, setPODeliveryDate] = useState("");
+  const [poMode, setPOMode] = useState<"all" | "low_stock">("low_stock");
+  const [poSelectedCats, setPOSelectedCats] = useState<string[]>([]);
+  const [poAvailableCats, setPOAvailableCats] = useState<string[]>([]);
+  const [poItems, setPOItems] = useState<any[]>([]);
+  const [poItemsLoaded, setPOItemsLoaded] = useState(false);
+  const [poLoadingItems, setPOLoadingItems] = useState(false);
+  const [poCreating, setPOCreating] = useState(false);
 
   const { data: orders, isLoading: ordersLoading } = useQuery<PurchaseOrder[]>({
     queryKey: ["/api/inv/purchase-orders"],
@@ -167,23 +177,6 @@ export default function PurchaseOrdersPage() {
   if (items) {
     for (const i of items) itemMap.set(i.id, i);
   }
-
-  const createPoMutation = useMutation({
-    mutationFn: async (data: { supplierId: number; notes: string; expectedDeliveryDate: string }) => {
-      const res = await apiRequest("POST", "/api/inv/purchase-orders", data);
-      return await res.json();
-    },
-    onSuccess: (data: PurchaseOrder) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/inv/purchase-orders"] });
-      toast({ title: "Orden de compra creada" });
-      setCreateOpen(false);
-      setNewPo({ supplierId: "", notes: "", expectedDeliveryDate: "" });
-      setSelectedPoId(data.id);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error al crear OC", description: err.message, variant: "destructive" });
-    },
-  });
 
   const createPoFromSuggestionsMutation = useMutation({
     mutationFn: async (data: { supplierId: number; lines: Array<{ invItemId: number; qtyPurchaseUom: number; purchaseUom: string; unitPricePerPurchaseUom: number }> }) => {
@@ -270,17 +263,97 @@ export default function PurchaseOrdersPage() {
     },
   });
 
-  function handleCreatePo() {
-    if (!newPo.supplierId) {
-      toast({ title: "Seleccione proveedor", variant: "destructive" });
+  const loadPOItems = async () => {
+    if (!poSupplierId) return;
+    setPOLoadingItems(true);
+    setPOItemsLoaded(false);
+    try {
+      const cats = poSelectedCats.length > 0 ? `&categories=${poSelectedCats.join(",")}` : "";
+      const r = await fetch(
+        `/api/inv/suppliers/${poSupplierId}/items?mode=${poMode}${cats}`,
+        { credentials: "include" }
+      );
+      if (!r.ok) throw new Error((await r.json()).message);
+      const data = await r.json();
+      setPOItems(data.items.map((item: any) => ({
+        ...item,
+        qtyOrdered: 0,
+        unitPrice: item.last_price || 0,
+      })));
+      setPOAvailableCats(data.categories || []);
+      setPOItemsLoaded(true);
+    } catch (e: any) {
+      toast({ title: "Error al cargar items", description: e.message, variant: "destructive" });
+    } finally {
+      setPOLoadingItems(false);
+    }
+  };
+
+  const submitCreatePO = async () => {
+    const lines = poItems.filter(i => i.qtyOrdered > 0);
+    if (!poSupplierId || !poDeliveryDate || lines.length === 0) {
+      toast({ title: "Complete fecha, proveedor y al menos 1 cantidad", variant: "destructive" });
       return;
     }
-    createPoMutation.mutate({
-      supplierId: parseInt(newPo.supplierId),
-      notes: newPo.notes,
-      expectedDeliveryDate: newPo.expectedDeliveryDate,
-    });
-  }
+    setPOCreating(true);
+    try {
+      const poRes = await fetch("/api/inv/purchase-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          supplierId: poSupplierId,
+          expectedDeliveryDate: poDeliveryDate,
+          notes: "",
+        }),
+      });
+      const po = await poRes.json();
+      if (!poRes.ok) throw new Error(po.message);
+
+      for (const item of lines) {
+        const lineRes = await fetch(`/api/inv/purchase-orders/${po.id}/lines`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            invItemId: item.id,
+            qtyPurchaseUom: item.qtyOrdered,
+            purchaseUom: item.purchase_uom,
+            unitPricePerPurchaseUom: item.unitPrice,
+          }),
+        });
+        if (!lineRes.ok) {
+          const err = await lineRes.json();
+          throw new Error(`Línea ${item.name}: ${err.message}`);
+        }
+      }
+
+      toast({ title: "Orden de compra creada", description: `${lines.length} productos` });
+      setCreatingNew(false);
+      setPOSupplierId(null);
+      setPODeliveryDate("");
+      setPOItems([]);
+      setPOItemsLoaded(false);
+      setPOSelectedCats([]);
+      setPOAvailableCats([]);
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/purchase-orders"] });
+    } catch (e: any) {
+      toast({ title: "Error al crear OC", description: e.message, variant: "destructive" });
+    } finally {
+      setPOCreating(false);
+    }
+  };
+
+  const resetNewPOPanel = () => {
+    setCreatingNew(false);
+    setPOSupplierId(null);
+    setPODeliveryDate("");
+    setPOMode("low_stock");
+    setPOItems([]);
+    setPOItemsLoaded(false);
+    setPOSelectedCats([]);
+    setPOAvailableCats([]);
+  };
 
   function handleAddLine() {
     if (!newLine.invItemId || !newLine.qtyPurchaseUom || !newLine.purchaseUom || !newLine.unitPricePerPurchaseUom) {
@@ -653,11 +726,216 @@ export default function PurchaseOrdersPage() {
 
   const suggestionsCount = suggestions?.length || 0;
 
+  const poLinesWithQty = poItems.filter(i => i.qtyOrdered > 0);
+  const poEstimatedTotal = poLinesWithQty.reduce((sum: number, i: any) => sum + (i.qtyOrdered * i.unitPrice), 0);
+
+  if (creatingNew) {
+    return (
+      <div className="admin-page">
+        <div className="admin-page-header">
+          <Button variant="ghost" data-testid="button-po-back" onClick={resetNewPOPanel}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Volver
+          </Button>
+          <h1 className="admin-page-title" data-testid="text-new-po-title">Nueva Orden de Compra</h1>
+        </div>
+
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label>Fecha de entrega *</Label>
+                <Input
+                  data-testid="input-newpo-date"
+                  type="date"
+                  value={poDeliveryDate}
+                  onChange={(e) => setPODeliveryDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Proveedor *</Label>
+                <Select
+                  value={poSupplierId ? String(poSupplierId) : ""}
+                  onValueChange={(v) => {
+                    setPOSupplierId(parseInt(v));
+                    setPOItems([]);
+                    setPOItemsLoaded(false);
+                    setPOSelectedCats([]);
+                    setPOAvailableCats([]);
+                  }}
+                >
+                  <SelectTrigger data-testid="select-newpo-supplier">
+                    <SelectValue placeholder="Seleccionar proveedor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suppliers?.filter((s) => s.isActive !== false).map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)} data-testid={`option-newpo-supplier-${s.id}`}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {poSupplierId && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm whitespace-nowrap">Filtro:</Label>
+                    <Select value={poMode} onValueChange={(v) => setPOMode(v as "all" | "low_stock")}>
+                      <SelectTrigger className="w-[160px]" data-testid="select-newpo-mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low_stock">Stock bajo</SelectItem>
+                        <SelectItem value="all">Todos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Button
+                    data-testid="button-newpo-load"
+                    onClick={loadPOItems}
+                    disabled={poLoadingItems}
+                    size="sm"
+                  >
+                    {poLoadingItems && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Cargar Items
+                  </Button>
+                </div>
+
+                {poAvailableCats.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {poAvailableCats.map((cat) => (
+                      <label key={cat} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                        <Checkbox
+                          data-testid={`check-cat-${cat}`}
+                          checked={poSelectedCats.includes(cat)}
+                          onCheckedChange={(checked) => {
+                            setPOSelectedCats(prev =>
+                              checked ? [...prev, cat] : prev.filter(c => c !== cat)
+                            );
+                          }}
+                        />
+                        {cat}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {poItemsLoaded && poItems.length === 0 && (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No se encontraron artículos con los filtros seleccionados.
+              </p>
+            )}
+
+            {poItemsLoaded && poItems.length > 0 && (
+              <div className="overflow-x-auto border rounded-md">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Producto</TableHead>
+                      <TableHead className="text-right w-[80px]">Stock</TableHead>
+                      <TableHead className="text-right w-[80px]">Reorden</TableHead>
+                      <TableHead className="w-[100px]">UOM</TableHead>
+                      <TableHead className="w-[100px]">Cantidad</TableHead>
+                      <TableHead className="w-[110px]">Precio ₡</TableHead>
+                      <TableHead className="text-right w-[100px]">Subtotal</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {poItems.map((item: any, idx: number) => {
+                      const isLow = item.reorder_point_qty_base != null &&
+                        item.on_hand_qty_base < item.reorder_point_qty_base;
+                      return (
+                        <TableRow
+                          key={item.id}
+                          className={isLow ? "bg-amber-50 dark:bg-amber-950/30" : ""}
+                          data-testid={`row-newpo-item-${item.id}`}
+                        >
+                          <TableCell>
+                            <div className="font-medium text-sm">{item.name}</div>
+                            <div className="text-xs text-muted-foreground">{item.sku} · {item.category}</div>
+                          </TableCell>
+                          <TableCell className="text-right text-sm">
+                            {Math.round(item.on_hand_qty_base)} {item.base_uom}
+                          </TableCell>
+                          <TableCell className="text-right text-sm">
+                            {item.reorder_point_qty_base != null ? `${Math.round(item.reorder_point_qty_base)} ${item.base_uom}` : "—"}
+                          </TableCell>
+                          <TableCell className="text-sm">{item.purchase_uom}</TableCell>
+                          <TableCell>
+                            <Input
+                              data-testid={`input-newpo-qty-${item.id}`}
+                              type="number"
+                              min="0"
+                              step="1"
+                              className="h-8 w-[80px]"
+                              value={item.qtyOrdered || ""}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                setPOItems(prev => prev.map((p, i) =>
+                                  i === idx ? { ...p, qtyOrdered: val } : p
+                                ));
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              data-testid={`input-newpo-price-${item.id}`}
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              className="h-8 w-[90px]"
+                              value={item.unitPrice || ""}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                setPOItems(prev => prev.map((p, i) =>
+                                  i === idx ? { ...p, unitPrice: val } : p
+                                ));
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="text-right text-sm font-medium">
+                            {item.qtyOrdered > 0 ? formatCurrency(item.qtyOrdered * item.unitPrice) : "—"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            {poItemsLoaded && poItems.length > 0 && (
+              <div className="flex items-center justify-between flex-wrap gap-3 pt-2 border-t">
+                <div className="text-sm text-muted-foreground" data-testid="text-newpo-summary">
+                  {poLinesWithQty.length} producto{poLinesWithQty.length !== 1 ? "s" : ""} · Total estimado: {formatCurrency(poEstimatedTotal)}
+                </div>
+                <Button
+                  data-testid="button-newpo-submit"
+                  onClick={submitCreatePO}
+                  disabled={poCreating || poLinesWithQty.length === 0 || !poDeliveryDate}
+                >
+                  {poCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Crear OC ({poLinesWithQty.length})
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="admin-page">
       <div className="admin-page-header">
         <h1 className="admin-page-title" data-testid="text-po-title">Órdenes de Compra</h1>
-        <Button data-testid="button-create-po" onClick={() => setCreateOpen(true)}>
+        <Button data-testid="button-create-po" onClick={() => setCreatingNew(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Nueva OC
         </Button>
@@ -819,61 +1097,6 @@ export default function PurchaseOrdersPage() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={createOpen} onOpenChange={(open) => { if (!open) setCreateOpen(false); }}>
-        <DialogContent data-testid="dialog-create-po">
-          <DialogHeader>
-            <DialogTitle>Nueva Orden de Compra</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <Label>Proveedor *</Label>
-              <Select value={newPo.supplierId} onValueChange={(v) => setNewPo({ ...newPo, supplierId: v })}>
-                <SelectTrigger data-testid="select-po-supplier">
-                  <SelectValue placeholder="Seleccionar proveedor" />
-                </SelectTrigger>
-                <SelectContent>
-                  {suppliers?.filter((s) => s.isActive !== false).map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)} data-testid={`option-supplier-${s.id}`}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Fecha esperada de entrega</Label>
-              <Input
-                data-testid="input-po-expected-date"
-                type="date"
-                value={newPo.expectedDeliveryDate}
-                onChange={(e) => setNewPo({ ...newPo, expectedDeliveryDate: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Notas</Label>
-              <Input
-                data-testid="input-po-notes"
-                value={newPo.notes}
-                onChange={(e) => setNewPo({ ...newPo, notes: e.target.value })}
-                placeholder="Notas opcionales"
-              />
-            </div>
-            <div className="flex justify-end gap-2 flex-wrap">
-              <Button variant="outline" data-testid="button-cancel-po" onClick={() => setCreateOpen(false)}>
-                Cancelar
-              </Button>
-              <Button
-                data-testid="button-save-po"
-                onClick={handleCreatePo}
-                disabled={createPoMutation.isPending}
-              >
-                {createPoMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Crear OC
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

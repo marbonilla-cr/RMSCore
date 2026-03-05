@@ -944,6 +944,10 @@ export default function POSPage() {
       setSelectedTable(null);
       setSelectedOrderId(null);
       setDetailView(false);
+    } else {
+      setTimeout(() => {
+        setSplitDialogOpen(true);
+      }, 200);
     }
     toast({ title: payDialogSplitId ? "Subcuenta pagada" : "Pago procesado" });
     setPrintConfirmOrderId(tbl.orderId);

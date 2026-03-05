@@ -15,7 +15,7 @@ import {
   insertInvRecipeSchema,
   insertInvRecipeLineSchema,
 } from "@shared/schema";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { invItems, products } from "@shared/schema";
 import { eq, and, lt, asc } from "drizzle-orm";
 import * as fs from "fs";
@@ -372,8 +372,66 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/suppliers/:id/items", requirePermission("INV_VIEW"), async (req, res) => {
     try {
-      res.json(await invStorage.getSupplierItems(parseInt(req.params.id)));
+      const supplierId = parseInt(req.params.id);
+      if (isNaN(supplierId)) return res.status(400).json({ message: "ID inválido" });
+
+      const mode = (req.query.mode as string) || "all";
+      const categoriesParam = req.query.categories as string | undefined;
+      const categories = categoriesParam
+        ? categoriesParam.split(",").map((c: string) => c.trim()).filter(Boolean)
+        : [];
+
+      let q = `
+        SELECT
+          ii.id,
+          ii.sku,
+          ii.name,
+          ii.category,
+          ii.base_uom,
+          CAST(ii.on_hand_qty_base AS FLOAT) AS on_hand_qty_base,
+          CAST(ii.reorder_point_qty_base AS FLOAT) AS reorder_point_qty_base,
+          COALESCE(isi.purchase_uom, ii.base_uom) AS purchase_uom,
+          CAST(COALESCE(isi.last_price_per_purchase_uom, 0) AS FLOAT) AS last_price,
+          isi.is_preferred
+        FROM inv_items ii
+        JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id
+        WHERE isi.supplier_id = $1
+          AND ii.is_active = true
+      `;
+      const params: any[] = [supplierId];
+      let idx = 2;
+
+      if (mode === "low_stock") {
+        q += ` AND ii.reorder_point_qty_base IS NOT NULL AND CAST(ii.on_hand_qty_base AS FLOAT) < CAST(ii.reorder_point_qty_base AS FLOAT)`;
+      }
+      if (categories.length > 0) {
+        q += ` AND ii.category = ANY($${idx})`;
+        params.push(categories);
+        idx++;
+      }
+      q += ` ORDER BY ii.category NULLS LAST, ii.name`;
+
+      const catsQ = `
+        SELECT DISTINCT ii.category
+        FROM inv_items ii
+        JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id
+        WHERE isi.supplier_id = $1
+          AND ii.is_active = true
+          AND ii.category IS NOT NULL
+        ORDER BY ii.category
+      `;
+
+      const [itemsRes, catsRes] = await Promise.all([
+        pool.query(q, params),
+        pool.query(catsQ, [supplierId]),
+      ]);
+
+      res.json({
+        items: itemsRes.rows,
+        categories: catsRes.rows.map((r: any) => r.category),
+      });
     } catch (err: any) {
+      console.error("[supplier-items]", err.message);
       res.status(500).json({ message: err.message });
     }
   });

@@ -10,6 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, MapPin } from "lucide-react";
 
+interface GraceByDay {
+  mon: number; tue: number; wed: number; thu: number; fri: number; sat: number; sun: number;
+}
+
 interface HrSettings {
   geoEnforcementEnabled: boolean;
   businessLat: number;
@@ -36,6 +40,7 @@ interface HrSettings {
   ccssEmployeeRate: number;
   ccssEmployerRate: number;
   ccssIncludeService: boolean;
+  autoClockoutGraceByDay?: GraceByDay;
 }
 
 const defaultSettings: HrSettings = {
@@ -66,9 +71,22 @@ const defaultSettings: HrSettings = {
   ccssIncludeService: false,
 };
 
+const DEFAULT_GRACE: GraceByDay = { mon: 30, tue: 30, wed: 30, thu: 30, fri: 30, sat: 30, sun: 30 };
+
+const DAYS_DISPLAY: { key: keyof GraceByDay; label: string }[] = [
+  { key: "mon", label: "Lunes" },
+  { key: "tue", label: "Martes" },
+  { key: "wed", label: "Miércoles" },
+  { key: "thu", label: "Jueves" },
+  { key: "fri", label: "Viernes" },
+  { key: "sat", label: "Sábado" },
+  { key: "sun", label: "Domingo" },
+];
+
 export default function HrSettingsPage() {
   const { toast } = useToast();
   const [values, setValues] = useState<HrSettings>(defaultSettings);
+  const [graceByDay, setGraceByDay] = useState<GraceByDay>(DEFAULT_GRACE);
 
   const { data, isLoading } = useQuery<HrSettings>({
     queryKey: ["/api/hr/settings"],
@@ -77,6 +95,9 @@ export default function HrSettingsPage() {
   useEffect(() => {
     if (data) {
       setValues(data);
+      if (data.autoClockoutGraceByDay) {
+        setGraceByDay(data.autoClockoutGraceByDay);
+      }
     }
   }, [data]);
 
@@ -125,7 +146,7 @@ export default function HrSettingsPage() {
   }
 
   function handleSave() {
-    mutation.mutate(values);
+    mutation.mutate({ ...values, autoClockoutGraceByDay: graceByDay });
   }
 
   if (isLoading) {
@@ -486,6 +507,38 @@ export default function HrSettingsPage() {
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Auto-salida por día</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Minutos de gracia después del fin de turno antes del clock-out automático.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
+            {DAYS_DISPLAY.map(d => (
+              <div key={d.key} className="flex flex-col gap-1">
+                <Label className="text-xs font-semibold text-muted-foreground">{d.label}</Label>
+                <div className="flex items-center gap-1">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={240}
+                    data-testid={`input-grace-${d.key}`}
+                    value={graceByDay[d.key] ?? 30}
+                    onChange={e => setGraceByDay(p => ({
+                      ...p, [d.key]: Math.max(0, parseInt(e.target.value) || 0)
+                    }))}
+                    className="w-full"
+                  />
+                  <span className="text-xs text-muted-foreground">min</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
 

@@ -419,6 +419,9 @@ export const hrSettings = pgTable("hr_settings", {
   ccssEmployeeRate: numeric("ccss_employee_rate", { precision: 5, scale: 2 }).notNull().default("10.67"),
   ccssEmployerRate: numeric("ccss_employer_rate", { precision: 5, scale: 2 }).notNull().default("26.33"),
   ccssIncludeService: boolean("ccss_include_service").notNull().default(false),
+  autoClockoutGraceByDay: jsonb("auto_clockout_grace_by_day")
+    .$type<{ mon: number; tue: number; wed: number; thu: number; fri: number; sat: number; sun: number }>()
+    .default({ mon: 30, tue: 30, wed: 30, thu: 30, fri: 30, sat: 30, sun: 30 }),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 

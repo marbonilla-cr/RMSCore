@@ -421,7 +421,7 @@ function ExpandableRow({
 type PeriodType = "day" | "month" | "year" | "range" | "hour";
 
 function getToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
 }
 
 function getDateRange(period: PeriodType, dateValue: string): { from: string; to: string } {
@@ -609,8 +609,13 @@ export default function DashboardPage() {
       </div>
 
       {!historicalMode ? (
-        <div style={{ padding: '0 18px 8px' }}>
+        <div style={{ padding: '0 18px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="dash-meta">Resumen del día</span>
+          <span data-testid="badge-hoy" style={{
+            background: 'rgba(74,124,89,0.09)', color: '#4a7c59',
+            border: '1px solid rgba(74,124,89,0.22)',
+            borderRadius: 20, padding: '2px 10px', fontSize: 11, fontWeight: 600,
+          }}>Hoy</span>
         </div>
       ) : (
         <div style={{ padding: '0 18px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -724,6 +729,13 @@ export default function DashboardPage() {
                 ? `${dateValue} de ${String(hourFrom).padStart(2, "0")}:00 a ${String(hourTo).padStart(2, "0")}:59`
                 : formatPeriodLabel(period, dateValue)}
           </span>
+          {dateValue === getToday() && period === "day" && (
+            <span data-testid="badge-hoy-hist" style={{
+              background: 'rgba(74,124,89,0.09)', color: '#4a7c59',
+              border: '1px solid rgba(74,124,89,0.22)',
+              borderRadius: 20, padding: '2px 10px', fontSize: 11, fontWeight: 600,
+            }}>Hoy</span>
+          )}
         </div>
       )}
 
@@ -991,7 +1003,7 @@ export default function DashboardPage() {
             Exportar las ventas del día al formato QBO.
           </p>
           <button
-            className="btn-primary"
+            className="btn-secondary"
             onClick={() => qboMutation.mutate()}
             disabled={qboMutation.isPending}
             data-testid="button-export-qbo"
