@@ -429,10 +429,10 @@ export function registerInventoryRoutes(app: Express, wss: any) {
           CAST(ii.reorder_point_qty_base AS FLOAT) AS reorder_point_qty_base,
           COALESCE(isi.purchase_uom, ii.base_uom) AS purchase_uom,
           CAST(COALESCE(isi.last_price_per_purchase_uom, 0) AS FLOAT) AS last_price,
-          isi.is_preferred
+          COALESCE(isi.is_preferred, false) AS is_preferred
         FROM inv_items ii
-        JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id
-        WHERE isi.supplier_id = $1
+        LEFT JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id AND isi.supplier_id = $1
+        WHERE (isi.supplier_id = $1 OR ii.default_supplier_id = $1)
           AND ii.is_active = true
       `;
       const params: any[] = [supplierId];
@@ -451,8 +451,8 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       const catsQ = `
         SELECT DISTINCT ii.category
         FROM inv_items ii
-        JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id
-        WHERE isi.supplier_id = $1
+        LEFT JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id AND isi.supplier_id = $1
+        WHERE (isi.supplier_id = $1 OR ii.default_supplier_id = $1)
           AND ii.is_active = true
           AND ii.category IS NOT NULL
         ORDER BY ii.category
