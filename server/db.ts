@@ -52,5 +52,19 @@ async function ensurePerfIndexes() {
     }
   }
   console.log(`[db] ${indexes.length} performance indexes ensured`);
+
+  try {
+    const { rowCount } = await pool.query(`
+      UPDATE inv_items 
+      SET avg_cost_per_base_uom = last_cost_per_base_uom, updated_at = now()
+      WHERE avg_cost_per_base_uom = 0 
+        AND last_cost_per_base_uom > 0
+    `);
+    if (rowCount && rowCount > 0) {
+      console.log(`[db] Migrated avg_cost for ${rowCount} inv_items`);
+    }
+  } catch (err: any) {
+    console.error(`[db] avg_cost migration failed: ${err.message}`);
+  }
 }
 ensurePerfIndexes();
