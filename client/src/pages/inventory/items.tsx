@@ -519,7 +519,7 @@ export default function InventoryItems() {
   const categoryOptions = [...new Set([...CATEGORIES, ...categories])].sort().map(c => ({ value: c, label: c }));
 
   return (
-    <div className="admin-page">
+    <div className="admin-page full-width">
       <Card className="flex flex-col" style={{ height: "calc(100vh - 80px)" }}>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap flex-shrink-0">
           <CardTitle className="text-lg" data-testid="text-page-title">Insumos ({filtered.length})</CardTitle>
