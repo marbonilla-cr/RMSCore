@@ -17,7 +17,7 @@ import {
 } from "@shared/schema";
 import { db, pool } from "./db";
 import { invItems, invSuppliers, products, users } from "@shared/schema";
-import { eq, and, lt, asc } from "drizzle-orm";
+import { eq, and, lt, asc, sql } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -70,6 +70,9 @@ export function registerInventoryRoutes(app: Express, wss: any) {
           notes: invItems.notes, defaultSupplierId: invItems.defaultSupplierId,
           avgCostPerBaseUom: invItems.avgCostPerBaseUom,
           lastCostPerBaseUom: invItems.lastCostPerBaseUom,
+          purchasePresentation: invItems.purchasePresentation,
+          purchaseQtyPerBaseUom: invItems.purchaseQtyPerBaseUom,
+          lastCostPerPresentation: invItems.lastCostPerPresentation,
           unitWeightG: invItems.unitWeightG,
           createdAt: invItems.createdAt, updatedAt: invItems.updatedAt,
           supplierName: invSuppliers.name,
@@ -101,6 +104,9 @@ export function registerInventoryRoutes(app: Express, wss: any) {
           notes: invItems.notes, defaultSupplierId: invItems.defaultSupplierId,
           avgCostPerBaseUom: invItems.avgCostPerBaseUom,
           lastCostPerBaseUom: invItems.lastCostPerBaseUom,
+          purchasePresentation: invItems.purchasePresentation,
+          purchaseQtyPerBaseUom: invItems.purchaseQtyPerBaseUom,
+          lastCostPerPresentation: invItems.lastCostPerPresentation,
           unitWeightG: invItems.unitWeightG,
           createdAt: invItems.createdAt, updatedAt: invItems.updatedAt,
           supplierName: invSuppliers.name,
@@ -120,6 +126,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     const numericKeys = [
       "onHandQtyBase", "reorderPointQtyBase", "parLevelQtyBase",
       "avgCostPerBaseUom", "lastCostPerBaseUom", "unitWeightG",
+      "purchaseQtyPerBaseUom", "lastCostPerPresentation",
     ];
     const out = { ...body };
     for (const k of numericKeys) {
@@ -162,6 +169,23 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       if (!result.item) return res.status(404).json({ message: "Item no encontrado" });
       broadcast(wss, "INV_ITEM_DELETED", result.item);
       res.json({ item: result.item, hardDeleted: result.hardDeleted });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/inv/items/recalc-avg-cost", requirePermission("INV_MANAGE_ITEMS"), async (_req, res) => {
+    try {
+      const result = await db.execute(sql`
+        UPDATE inv_items
+        SET avg_cost_per_base_uom = last_cost_per_base_uom,
+            updated_at = NOW()
+        WHERE is_active = true
+          AND last_cost_per_base_uom > 0
+          AND avg_cost_per_base_uom != last_cost_per_base_uom
+      `);
+      const updated = (result as any).rowCount ?? 0;
+      res.json({ updated });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

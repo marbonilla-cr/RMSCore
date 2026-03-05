@@ -42,7 +42,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { Loader2, Plus, Search, Trash2, Upload, ArrowUp, ArrowDown, ArrowUpDown, Pencil, CheckCircle2, AlertCircle, StickyNote } from "lucide-react";
+import { Loader2, Plus, Search, Trash2, Upload, ArrowUp, ArrowDown, ArrowUpDown, Pencil, CheckCircle2, AlertCircle, StickyNote, Calculator } from "lucide-react";
 
 interface InvItem {
   id: number;
@@ -60,6 +60,9 @@ interface InvItem {
   avgCostPerBaseUom: string;
   lastCostPerBaseUom: string;
   unitWeightG: string | null;
+  purchasePresentation: string | null;
+  purchaseQtyPerBaseUom: string | null;
+  lastCostPerPresentation: string | null;
   defaultSupplierId: number | null;
   supplierName: string | null;
 }
@@ -92,6 +95,18 @@ const COST_HELPERS: Record<string, string> = {
   PORTION: "₡ por 1 porción",
 };
 
+const PRESENTATION_OPTIONS = [
+  { value: "Bolsa", label: "Bolsa" },
+  { value: "Caja", label: "Caja" },
+  { value: "Paquete", label: "Paquete" },
+  { value: "Botella", label: "Botella" },
+  { value: "Saco", label: "Saco" },
+  { value: "Lata", label: "Lata" },
+  { value: "Unidad", label: "Unidad" },
+  { value: "Rollo", label: "Rollo" },
+  { value: "Garrafa", label: "Garrafa" },
+];
+
 const CATEGORIES = [
   "General", "Abarrotes", "Carnes", "Lácteos", "Verduras", "Frutas",
   "Granos", "Aceites", "Condimentos", "Bebidas", "Limpieza",
@@ -109,6 +124,9 @@ const formSchema = z.object({
   parLevelQtyBase: z.string().default("0"),
   lastCostPerBaseUom: z.coerce.number().min(0).default(0),
   avgCostPerBaseUom: z.coerce.number().min(0).optional(),
+  purchasePresentation: z.string().optional(),
+  purchaseQtyPerBaseUom: z.coerce.number().min(0).optional(),
+  lastCostPerPresentation: z.coerce.number().min(0).optional(),
   unitWeightG: z.coerce.number().min(0).optional(),
   isPerishable: z.boolean().default(false),
   notes: z.string().optional(),
@@ -261,7 +279,7 @@ function EditableSelectCell({ value, options, onSave, itemId, field, placeholder
   placeholder?: string;
 }) {
   return (
-    <Select value={value || "__none__"} onValueChange={(v) => { if (v !== value && v !== "__none__") onSave(v); }}>
+    <Select value={value || "__none__"} onValueChange={(v) => { if (v !== value) onSave(v); }}>
       <SelectTrigger className="h-7 text-sm px-1 border-0 shadow-none hover:bg-muted/50" data-testid={`select-${field}-${itemId}`}>
         <SelectValue placeholder={placeholder || "—"} />
       </SelectTrigger>
@@ -453,6 +471,20 @@ export default function InventoryItems() {
     },
   });
 
+  const recalcMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/inv/items/recalc-avg-cost");
+      return res.json();
+    },
+    onSuccess: (data: { updated: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+      toast({ title: "Costos recalculados", description: `${data.updated} insumos actualizados (promedio = último costo).` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error al recalcular", description: err.message, variant: "destructive" });
+    },
+  });
+
   const patchItem = useCallback(async (itemId: number, field: string, value: any) => {
     const cellKey = `${itemId}_${field}`;
     setSavingCells(prev => new Set(prev).add(cellKey));
@@ -474,6 +506,10 @@ export default function InventoryItems() {
           else if (field === "unitWeightG") updated.unitWeightG = value != null ? String(value) : null;
           else if (field === "isPerishable") updated.isPerishable = value;
           else if (field === "notes") updated.notes = value || null;
+          else if (field === "baseUom") updated.baseUom = value;
+          else if (field === "purchasePresentation") updated.purchasePresentation = value;
+          else if (field === "purchaseQtyPerBaseUom") updated.purchaseQtyPerBaseUom = value != null ? String(value) : null;
+          else if (field === "lastCostPerPresentation") updated.lastCostPerPresentation = value != null ? String(value) : null;
           return updated;
         });
       });
@@ -489,6 +525,25 @@ export default function InventoryItems() {
       });
     }
   }, [suppliers, toast]);
+
+  const patchItemMulti = useCallback(async (itemId: number, fields: Record<string, any>) => {
+    try {
+      queryClient.setQueryData<InvItem[]>(["/api/inv/items"], (old) => {
+        if (!old) return old;
+        return old.map(item => {
+          if (item.id !== itemId) return item;
+          const updated = { ...item, ...fields };
+          if ("lastCostPerBaseUom" in fields) updated.lastCostPerBaseUom = String(fields.lastCostPerBaseUom);
+          if ("lastCostPerPresentation" in fields) updated.lastCostPerPresentation = fields.lastCostPerPresentation != null ? String(fields.lastCostPerPresentation) : null;
+          return updated;
+        });
+      });
+      await apiRequest("PATCH", `/api/inv/items/${itemId}`, fields);
+    } catch (err: any) {
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+      toast({ title: "Error al guardar", description: err.message, variant: "destructive" });
+    }
+  }, [toast]);
 
   const categories = useMemo(() => {
     if (!items) return [];
@@ -558,6 +613,16 @@ export default function InventoryItems() {
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap flex-shrink-0">
           <CardTitle className="text-lg" data-testid="text-page-title">Insumos ({filtered.length})</CardTitle>
           <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => recalcMutation.mutate()}
+              disabled={recalcMutation.isPending}
+              data-testid="button-recalc-avg-cost"
+            >
+              {recalcMutation.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Calculator className="h-4 w-4 mr-1" />}
+              Recalcular Costos
+            </Button>
             <Button variant="outline" size="sm" onClick={() => { setImportOpen(true); setImportText(""); setImportPreview([]); setImportResults(null); }} data-testid="button-import-items">
               <Upload className="h-4 w-4 mr-1" />
               Importar
@@ -627,7 +692,10 @@ export default function InventoryItems() {
                 <SortHeader label="En Mano" sortKey="onHand" currentSort={sort} onSort={handleSort} className="text-right w-[80px]" />
                 <SortHeader label="Pto Reorden" sortKey="reorderPoint" currentSort={sort} onSort={handleSort} className="text-right w-[90px]" />
                 <SortHeader label="Nivel Par" sortKey="parLevel" currentSort={sort} onSort={handleSort} className="text-right w-[80px]" />
-                <SortHeader label="Costo ₡" sortKey="cost" currentSort={sort} onSort={handleSort} className="text-right w-[90px]" />
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-left w-[80px]">Present.</th>
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-right w-[70px]">Cant.P.</th>
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-right w-[90px]">₡ Present.</th>
+                <SortHeader label="₡/UOM" sortKey="cost" currentSort={sort} onSort={handleSort} className="text-right w-[90px]" />
                 <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-right w-[80px]">Costo Prom</th>
                 <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-right w-[70px]">Peso (g)</th>
                 <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-center w-[40px]">P</th>
@@ -677,8 +745,14 @@ export default function InventoryItems() {
                       itemId={item.id}
                     />
                   </td>
-                  <td className="px-2 py-1 text-center text-xs text-muted-foreground" data-testid={`cell-uom-${item.id}`}>
-                    {item.baseUom}
+                  <td className="px-1 py-1">
+                    <EditableSelectCell
+                      value={item.baseUom}
+                      options={UOM_OPTIONS}
+                      onSave={(v) => patchItem(item.id, "baseUom", v)}
+                      itemId={item.id}
+                      field="uom"
+                    />
                   </td>
                   <td className="px-2 py-1 text-right tabular-nums" data-testid={`cell-onhand-${item.id}`}>
                     {parseFloat(item.onHandQtyBase).toFixed(2)}
@@ -697,6 +771,44 @@ export default function InventoryItems() {
                       onSave={(v) => patchItem(item.id, "parLevelQtyBase", v)}
                       itemId={item.id}
                       field="parLevel"
+                    />
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableSelectCell
+                      value={item.purchasePresentation || "__none__"}
+                      options={[{ value: "__none__", label: "—" }, ...PRESENTATION_OPTIONS]}
+                      onSave={(v) => patchItem(item.id, "purchasePresentation", v === "__none__" ? null : v)}
+                      itemId={item.id}
+                      field="presentation"
+                      placeholder="—"
+                    />
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableNumberCell
+                      value={item.purchaseQtyPerBaseUom || "0"}
+                      onSave={(v) => patchItem(item.id, "purchaseQtyPerBaseUom", Number(v))}
+                      itemId={item.id}
+                      field="purchaseQty"
+                    />
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableNumberCell
+                      value={item.lastCostPerPresentation || "0"}
+                      onSave={(v) => {
+                        const costPres = Number(v);
+                        const qtyPerBase = parseFloat(item.purchaseQtyPerBaseUom || "0");
+                        if (qtyPerBase > 0) {
+                          const costPerBase = costPres / qtyPerBase;
+                          patchItemMulti(item.id, {
+                            lastCostPerPresentation: costPres,
+                            lastCostPerBaseUom: Number(costPerBase.toFixed(6)),
+                          });
+                        } else {
+                          patchItem(item.id, "lastCostPerPresentation", costPres);
+                        }
+                      }}
+                      itemId={item.id}
+                      field="costPresentation"
                     />
                   </td>
                   <td className="px-1 py-1">
@@ -766,7 +878,7 @@ export default function InventoryItems() {
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={15} className="text-center text-muted-foreground py-8">
+                  <td colSpan={18} className="text-center text-muted-foreground py-8">
                     No se encontraron insumos
                   </td>
                 </tr>
@@ -921,11 +1033,53 @@ export default function InventoryItems() {
                   </FormItem>
                 )} />
               </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Presentación de compra (opcional)</label>
+                <Select value={form.watch("purchasePresentation") || "__none__"} onValueChange={(v) => form.setValue("purchasePresentation", v === "__none__" ? undefined : v)}>
+                  <SelectTrigger data-testid="select-create-presentation"><SelectValue placeholder="Sin presentación" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Sin presentación</SelectItem>
+                    {PRESENTATION_OPTIONS.map((opt) => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Cant. por presentación</label>
+                  <Input
+                    type="number" step="0.01"
+                    value={form.watch("purchaseQtyPerBaseUom") ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? undefined : Number(e.target.value);
+                      form.setValue("purchaseQtyPerBaseUom", val);
+                    }}
+                    placeholder="Ej: 5000"
+                    data-testid="input-create-purchase-qty"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">₡ Presentación</label>
+                  <Input
+                    type="number" step="0.01"
+                    value={form.watch("lastCostPerPresentation") ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? undefined : Number(e.target.value);
+                      form.setValue("lastCostPerPresentation", val);
+                      const qtyPerBase = form.getValues("purchaseQtyPerBaseUom");
+                      if (val && qtyPerBase && qtyPerBase > 0) {
+                        form.setValue("lastCostPerBaseUom", Number((val / qtyPerBase).toFixed(6)));
+                      }
+                    }}
+                    placeholder="Ej: 870"
+                    data-testid="input-create-cost-presentation"
+                  />
+                </div>
+              </div>
               <FormField control={form.control} name="lastCostPerBaseUom" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Costo por unidad base (₡)</FormLabel>
+                  <FormLabel>Costo por unidad base (₡/{watchBaseUom})</FormLabel>
                   <FormControl>
-                    <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))} placeholder="Ej: 700" data-testid="input-last-cost" />
+                    <Input type="number" step="0.000001" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))} placeholder="Ej: 700" data-testid="input-last-cost" />
                   </FormControl>
                   <p className="text-xs text-muted-foreground">{COST_HELPERS[watchBaseUom] || `₡ por 1 ${watchBaseUom}`}</p>
                 </FormItem>
@@ -1117,10 +1271,14 @@ function MobileEditForm({ item, suppliers, categories }: {
   const [supplierId, setSupplierId] = useState<number | null>(item.defaultSupplierId);
   const [reorder, setReorder] = useState(item.reorderPointQtyBase);
   const [par, setPar] = useState(item.parLevelQtyBase);
+  const [baseUom, setBaseUom] = useState(item.baseUom);
   const [cost, setCost] = useState(item.lastCostPerBaseUom || "0");
   const [unitWeight, setUnitWeight] = useState(item.unitWeightG || "");
   const [isPerishable, setIsPerishable] = useState(item.isPerishable);
   const [notes, setNotes] = useState(item.notes || "");
+  const [purchasePresentation, setPurchasePresentation] = useState(item.purchasePresentation || "");
+  const [purchaseQty, setPurchaseQty] = useState(item.purchaseQtyPerBaseUom || "");
+  const [costPresentation, setCostPresentation] = useState(item.lastCostPerPresentation || "");
 
   const [isDirty, setIsDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -1177,9 +1335,9 @@ function MobileEditForm({ item, suppliers, categories }: {
         <Badge variant={item.itemType === "EP" ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
           {item.itemType || "AP"}
         </Badge>
-        <span>{item.sku} · {item.baseUom} · En mano: {parseFloat(item.onHandQtyBase).toFixed(2)}</span>
+        <span>{item.sku} · En mano: {parseFloat(item.onHandQtyBase).toFixed(2)}</span>
       </div>
-      <div className="text-xs text-muted-foreground">Costo Promedio: ₡{parseFloat(item.avgCostPerBaseUom || "0").toFixed(2)}/{item.baseUom}</div>
+      <div className="text-xs text-muted-foreground">Costo Promedio: ₡{parseFloat(item.avgCostPerBaseUom || "0").toFixed(2)}/{baseUom}</div>
 
       <div className="space-y-1">
         <label className="text-sm font-medium">Nombre</label>
@@ -1216,6 +1374,16 @@ function MobileEditForm({ item, suppliers, categories }: {
         </Select>
       </div>
 
+      <div className="space-y-1">
+        <label className="text-sm font-medium">Unidad de Medida (UOM)</label>
+        <Select value={baseUom} onValueChange={(v) => { setBaseUom(v); markDirtyAndDebounce("baseUom", v); }}>
+          <SelectTrigger data-testid="select-mobile-uom"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {UOM_OPTIONS.map((opt) => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
           <label className="text-sm font-medium">Pto Reorden</label>
@@ -1238,16 +1406,74 @@ function MobileEditForm({ item, suppliers, categories }: {
       </div>
 
       <div className="space-y-1">
-        <label className="text-sm font-medium">Costo (₡/{item.baseUom})</label>
+        <label className="text-sm font-medium">Presentación de compra</label>
+        <Select value={purchasePresentation || "__none__"} onValueChange={(v) => {
+          const val = v === "__none__" ? "" : v;
+          setPurchasePresentation(val);
+          markDirtyAndDebounce("purchasePresentation", val || null);
+        }}>
+          <SelectTrigger data-testid="select-mobile-presentation"><SelectValue placeholder="Sin presentación" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">Sin presentación</SelectItem>
+            {PRESENTATION_OPTIONS.map((opt) => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Cant. por {baseUom}</label>
+          <Input
+            type="number" step="0.01" value={purchaseQty}
+            onChange={(e) => { setPurchaseQty(e.target.value); markDirtyAndDebounce("purchaseQtyPerBaseUom", e.target.value ? Number(e.target.value) : null); }}
+            onBlur={saveChanges}
+            placeholder="Ej: 5000"
+            data-testid="input-mobile-purchase-qty"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">₡ Presentación</label>
+          <Input
+            type="number" step="0.01" value={costPresentation}
+            onChange={(e) => {
+              const val = e.target.value;
+              setCostPresentation(val);
+              const costPres = Number(val);
+              const qtyPerBase = parseFloat(purchaseQty || "0");
+              if (qtyPerBase > 0 && !isNaN(costPres)) {
+                const costPerBase = costPres / qtyPerBase;
+                setCost(costPerBase.toFixed(6));
+                pendingRef.current.lastCostPerPresentation = costPres;
+                pendingRef.current.lastCostPerBaseUom = Number(costPerBase.toFixed(6));
+              } else {
+                pendingRef.current.lastCostPerPresentation = val ? costPres : null;
+              }
+              setIsDirty(true);
+              isDirtyRef.current = true;
+              if (debounceRef.current) clearTimeout(debounceRef.current);
+              debounceRef.current = setTimeout(saveChanges, 1500);
+            }}
+            onBlur={saveChanges}
+            placeholder="Ej: 870"
+            data-testid="input-mobile-cost-presentation"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-sm font-medium">Costo (₡/{baseUom})</label>
         <Input
-          type="number" step="0.01" value={cost}
+          type="number" step="0.000001" value={cost}
           onChange={(e) => { setCost(e.target.value); markDirtyAndDebounce("lastCostPerBaseUom", Number(e.target.value)); }}
           onBlur={saveChanges}
           data-testid="input-mobile-cost"
         />
+        {parseFloat(purchaseQty || "0") > 0 && parseFloat(costPresentation || "0") > 0 && (
+          <p className="text-xs text-muted-foreground">Calculado: ₡{costPresentation} / {purchaseQty} = ₡{cost}/{baseUom}</p>
+        )}
       </div>
 
-      {item.baseUom === "UNIT" && (
+      {baseUom === "UNIT" && (
         <div className="space-y-1">
           <label className="text-sm font-medium">Peso por unidad (g)</label>
           <Input

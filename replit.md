@@ -37,7 +37,7 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 -   **Point of Sale (POS):** Cash register with payment processing, order splitting, voiding, cash session management, item-level discounts, and receipt generation.
 -   **Manager Dashboard & Admin Panel:** Overview, user/role/product management, 2-level category system, and business configuration.
 -   **Inventory Module:**
-    -   **Inline Editable Grid:** Items list is a spreadsheet-style inline editable grid with sticky header, sortable columns (name, category, supplier, stock, reorder, par, cost, status), supplier filter, and mobile edit dialogs. Edits save inline via PATCH on blur/Enter.
+    -   **Inline Editable Grid:** Items list is a spreadsheet-style inline editable grid with sticky header, sortable columns (name, category, supplier, stock, reorder, par, cost, status), supplier filter, and mobile edit dialogs. Edits save inline via PATCH on blur/Enter. UOM is editable. Purchase presentation fields: `purchasePresentation` (text select), `purchaseQtyPerBaseUom` (qty in base UOM per presentation), `lastCostPerPresentation` (₡ per presentation). Auto-calculates `lastCostPerBaseUom = lastCostPerPresentation / purchaseQtyPerBaseUom`. "Recalcular Costos" button sets avgCost=lastCost for all active items.
     -   **Basic Inventory Control:** Manages product portion availability, reorder points, and auto-disabling with idempotent deduction logic.
     -   **Full Inventory (AP/EP):** Supports dual-type items (AP/EP), AP→EP conversions with factors, production batches, recipes, and dedicated stock tables with transactional updates.
     -   **UOM System:** Standardized unit of measurement conversions.
