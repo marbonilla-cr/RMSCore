@@ -124,6 +124,7 @@ export interface DailyPayrollResult {
   overtimePaidMinutes: number;
   unpaidBreakMinutes: number;
   paidWorkedMinutes: number;
+  workedMinutesForService: number;
   tardyMinutes: number;
   normalPay: number;
   overtimePay: number;
@@ -149,10 +150,7 @@ function toDate(v: Date | string | null): Date | null {
 }
 
 function parseDateInTZ(dateStr: string, timeStr: string): Date {
-  const [h, m] = timeStr.split(":").map(Number);
-  const d = new Date(dateStr + "T00:00:00");
-  d.setHours(h, m, 0, 0);
-  return d;
+  return new Date(`${dateStr}T${timeStr}:00-06:00`);
 }
 
 function getScheduleTimesForDate(
@@ -206,7 +204,7 @@ export function computeDailyPayroll(args: {
   const emptyResult = (extraFlags: string[] = [], noShow = false): DailyPayrollResult => ({
     normalMinutesRaw: 0, normalMinutesPaid: 0,
     overtimeCalculatedMinutes: 0, overtimePaidMinutes: 0,
-    unpaidBreakMinutes: 0, paidWorkedMinutes: 0, tardyMinutes: 0,
+    unpaidBreakMinutes: 0, paidWorkedMinutes: 0, workedMinutesForService: 0, tardyMinutes: 0,
     normalPay: 0, overtimePay: 0, basePay: 0, hourlyRate,
     scheduledStartTime: schedStartStr, scheduledEndTime: schedEndStr,
     flags: noShow ? [...extraFlags, "NO_SHOW"] : extraFlags,
@@ -270,7 +268,7 @@ export function computeDailyPayroll(args: {
     return {
       normalMinutesRaw, normalMinutesPaid,
       overtimeCalculatedMinutes, overtimePaidMinutes,
-      unpaidBreakMinutes, paidWorkedMinutes, tardyMinutes: 0,
+      unpaidBreakMinutes, paidWorkedMinutes, workedMinutesForService: paidWorkedMinutes, tardyMinutes: 0,
       normalPay, overtimePay, basePay, hourlyRate,
       scheduledStartTime: schedStartStr, scheduledEndTime: schedEndStr,
       flags,
@@ -303,30 +301,39 @@ export function computeDailyPayroll(args: {
     if (autoCheckout) flags.push("AUTO_OUT");
   }
 
-  const ordinaryEnd = scheduledEnd && lastClockOut.getTime() > scheduledEnd.getTime()
-    ? scheduledEnd : lastClockOut;
+  const ordinaryEnd = new Date(paidStart.getTime() + jornadaHoras * 3600000);
 
-  const normalMinutesRaw = Math.max(0, diffMinutes(paidStart, ordinaryEnd));
+  const normalMinutesRaw = Math.max(0, diffMinutes(paidStart,
+    lastClockOut.getTime() < ordinaryEnd.getTime() ? lastClockOut : ordinaryEnd
+  ));
 
   let overtimeCalculatedMinutes = 0;
-  if (scheduledEnd && lastClockOutType === "MANUAL" && lastClockOut.getTime() > scheduledEnd.getTime()) {
-    overtimeCalculatedMinutes = diffMinutes(scheduledEnd, lastClockOut);
+  const isManualOut = lastClockOutType === "MANUAL";
+  if (isManualOut && lastClockOut.getTime() > ordinaryEnd.getTime()) {
+    overtimeCalculatedMinutes = diffMinutes(ordinaryEnd, lastClockOut);
   }
 
   let overtimePaidMinutes = overtimeCalculatedMinutes;
   if (overtimeRequiresApproval && overtimeCalculatedMinutes > 0) {
-    overtimePaidMinutes = 0;
     flags.push("OVERTIME_PENDIENTE_APROBACION");
   }
 
   let unpaidBreakMinutes = 0;
+  let normalMinutesPaid = normalMinutesRaw;
+  let overtimePaidAfterBreak = overtimePaidMinutes;
+
   if (breakDeductEnabled) {
-    const payableWindow = normalMinutesRaw + overtimeCalculatedMinutes;
-    if (payableWindow >= breakThresholdMin) {
+    const totalEffectiveMinutes = normalMinutesRaw + overtimeCalculatedMinutes;
+    if (totalEffectiveMinutes >= breakThresholdMin) {
       unpaidBreakMinutes = breakDeductMin;
+      const deductFromOvertime = Math.min(unpaidBreakMinutes, overtimePaidAfterBreak);
+      overtimePaidAfterBreak = Math.max(0, overtimePaidAfterBreak - deductFromOvertime);
+      const remaining = unpaidBreakMinutes - deductFromOvertime;
+      normalMinutesPaid = Math.max(0, normalMinutesRaw - remaining);
     }
   }
-  const normalMinutesPaid = Math.max(0, normalMinutesRaw - unpaidBreakMinutes);
+
+  overtimePaidMinutes = overtimePaidAfterBreak;
 
   let tardyMinutes = 0;
   let late = false;
@@ -339,6 +346,7 @@ export function computeDailyPayroll(args: {
     }
   }
 
+  const workedMinutesForService = normalMinutesPaid + overtimeCalculatedMinutes;
   const paidWorkedMinutes = normalMinutesPaid + overtimePaidMinutes;
 
   const midnightShift = scheduledStart && scheduledEnd
@@ -352,7 +360,9 @@ export function computeDailyPayroll(args: {
   return {
     normalMinutesRaw, normalMinutesPaid,
     overtimeCalculatedMinutes, overtimePaidMinutes,
-    unpaidBreakMinutes, paidWorkedMinutes, tardyMinutes,
+    unpaidBreakMinutes, paidWorkedMinutes,
+    workedMinutesForService,
+    tardyMinutes,
     normalPay, overtimePay, basePay, hourlyRate,
     scheduledStartTime: schedStartStr, scheduledEndTime: schedEndStr,
     flags,
@@ -594,8 +604,8 @@ export function computeRangePayroll(args: {
         for (const emp of employees) {
           if (emp.role !== "WAITER" && emp.role !== "SALONERO") continue;
           const daily = getDailyResult(emp.id, dateStr, Number(emp.dailyRate) || 0);
-          if (daily.paidWorkedMinutes > 0) {
-            eligibles.push({ employeeId: emp.id, paidWorkedMinutes: daily.paidWorkedMinutes });
+          if (daily.workedMinutesForService > 0) {
+            eligibles.push({ employeeId: emp.id, paidWorkedMinutes: daily.workedMinutesForService });
           }
         }
         serviceCache[dateStr] = computeServiceForDay({ servicePool: pool, eligibleWaiters: eligibles });

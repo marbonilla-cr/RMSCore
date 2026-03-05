@@ -1,0 +1,232 @@
+# RMSCore — Fix: Cálculo de Planilla (payroll.ts)
+
+## CONTEXTO
+
+El archivo a modificar es `server/payroll.ts`. Hay 4 correcciones
+independientes. Aplicar en el orden indicado. No cambiar ninguna
+interfaz pública (los tipos exportados deben quedar igual).
+
+---
+
+## CORRECCIÓN 1 — `parseDateInTZ`: construir fechas con timezone CR
+
+**Problema:** La función construye fechas con `setHours()` usando la
+hora local del servidor. En Railway/Replit el servidor corre en UTC,
+por lo que todos los horarios quedan desplazados 6 horas.
+
+**Localizar** la función `parseDateInTZ` (líneas ~151–156):
+```typescript
+function parseDateInTZ(dateStr: string, timeStr: string): Date {
+  const [h, m] = timeStr.split(":").map(Number);
+  const d = new Date(dateStr + "T00:00:00");
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+```
+
+**Reemplazar completamente por:**
+```typescript
+function parseDateInTZ(dateStr: string, timeStr: string): Date {
+  // Construir con offset explícito de Costa Rica (UTC-6)
+  // Formato: "2026-03-05T08:00:00-06:00"
+  return new Date(`${dateStr}T${timeStr}:00-06:00`);
+}
+```
+
+**Verificar** que `getScheduleTimesForDate` sigue funcionando igual —
+no necesita cambios porque sigue llamando a `parseDateInTZ`.
+
+---
+
+## CORRECCIÓN 2 — `ordinaryEnd` y cálculo de extras
+
+**Problema:** El sistema calcula `ordinaryEnd = min(scheduledEnd, clockOut)`
+y las extras como `clockOut - scheduledEnd`. Esto es incorrecto cuando
+el empleado llega tarde: trabaja sus 8h exactas pero el sistema le
+paga 7h ordinarias + 1h extra.
+
+**La regla correcta (Código de Trabajo CR, Art. 136 y 139):**
+- El tiempo ordinario se cuenta desde `paidStart` (que ya tiene el
+  cap de llegada tarde).
+- Las primeras `jornadaHoras` desde `paidStart` son ordinarias.
+- Todo lo que supere `jornadaHoras` desde `paidStart` son extras.
+- Solo aplica si `clockOutType === "MANUAL"` — los cierres automáticos
+  (AUTO, AUTO_NO_SCHEDULE, GEO_AUTO) nunca generan extras.
+
+**Localizar** el bloque que empieza en línea ~306:
+```typescript
+  const ordinaryEnd = scheduledEnd && lastClockOut.getTime() > scheduledEnd.getTime()
+    ? scheduledEnd : lastClockOut;
+
+  const normalMinutesRaw = Math.max(0, diffMinutes(paidStart, ordinaryEnd));
+
+  let overtimeCalculatedMinutes = 0;
+  if (scheduledEnd && lastClockOutType === "MANUAL" && lastClockOut.getTime() > scheduledEnd.getTime()) {
+    overtimeCalculatedMinutes = diffMinutes(scheduledEnd, lastClockOut);
+  }
+
+  let overtimePaidMinutes = overtimeCalculatedMinutes;
+  if (overtimeRequiresApproval && overtimeCalculatedMinutes > 0) {
+    overtimePaidMinutes = 0;
+    flags.push("OVERTIME_PENDIENTE_APROBACION");
+  }
+```
+
+**Reemplazar completamente por:**
+```typescript
+  // ordinaryEnd = paidStart + jornadaHoras (ej: paidStart 9am + 8h = 5pm)
+  // Las extras son todo lo que supere ese límite, solo si salida MANUAL
+  const ordinaryEnd = new Date(paidStart.getTime() + jornadaHoras * 3600000);
+
+  const normalMinutesRaw = Math.max(0, diffMinutes(paidStart,
+    lastClockOut.getTime() < ordinaryEnd.getTime() ? lastClockOut : ordinaryEnd
+  ));
+
+  let overtimeCalculatedMinutes = 0;
+  const isManualOut = lastClockOutType === "MANUAL";
+  if (isManualOut && lastClockOut.getTime() > ordinaryEnd.getTime()) {
+    overtimeCalculatedMinutes = diffMinutes(ordinaryEnd, lastClockOut);
+  }
+
+  // Las extras siempre se pagan si fueron trabajadas (Código de Trabajo CR Art. 139)
+  // overtimeRequiresApproval solo activa el flag de visibilidad para el manager,
+  // NUNCA bloquea el pago
+  let overtimePaidMinutes = overtimeCalculatedMinutes;
+  if (overtimeRequiresApproval && overtimeCalculatedMinutes > 0) {
+    flags.push("OVERTIME_PENDIENTE_APROBACION");
+    // NOTA: overtimePaidMinutes NO se pone en 0 — el pago es obligatorio por ley
+  }
+```
+
+---
+
+## CORRECCIÓN 3 — Deducción de almuerzo sobre total efectivo
+
+**Problema:** El descuento de almuerzo se aplica sobre `normalMinutesRaw`
+(solo horas ordinarias), cuando debería aplicarse sobre el total de
+tiempo efectivo trabajado. Además el umbral debe verificarse contra el
+tiempo total, no solo ordinario.
+
+**Regla de negocio:**
+- Si tiempo efectivo total < 9h (540 min) → sin descuento, el empleador absorbe
+- Si tiempo efectivo total ≥ 9h (540 min) → descontar 60 min (30 almuerzo + 30 café)
+- El descuento reduce primero las extras, luego las ordinarias si es necesario
+
+**Localizar** el bloque del almuerzo (~líneas 322–329):
+```typescript
+  let unpaidBreakMinutes = 0;
+  if (breakDeductEnabled) {
+    const payableWindow = normalMinutesRaw + overtimeCalculatedMinutes;
+    if (payableWindow >= breakThresholdMin) {
+      unpaidBreakMinutes = breakDeductMin;
+    }
+  }
+  const normalMinutesPaid = Math.max(0, normalMinutesRaw - unpaidBreakMinutes);
+```
+
+**Reemplazar completamente por:**
+```typescript
+  let unpaidBreakMinutes = 0;
+  let normalMinutesPaid = normalMinutesRaw;
+  let overtimePaidAfterBreak = overtimePaidMinutes;
+
+  if (breakDeductEnabled) {
+    // Umbral sobre tiempo efectivo total (ordinario + extra calculado)
+    const totalEffectiveMinutes = normalMinutesRaw + overtimeCalculatedMinutes;
+    if (totalEffectiveMinutes >= breakThresholdMin) {
+      unpaidBreakMinutes = breakDeductMin;
+      // El descuento se aplica primero sobre las extras, luego sobre ordinarias
+      const deductFromOvertime = Math.min(unpaidBreakMinutes, overtimePaidAfterBreak);
+      overtimePaidAfterBreak = Math.max(0, overtimePaidAfterBreak - deductFromOvertime);
+      const remaining = unpaidBreakMinutes - deductFromOvertime;
+      normalMinutesPaid = Math.max(0, normalMinutesRaw - remaining);
+    }
+  }
+
+  // Usar overtimePaidAfterBreak para los cálculos de pago
+  overtimePaidMinutes = overtimePaidAfterBreak;
+```
+
+---
+
+## CORRECCIÓN 4 — `paidWorkedMinutes` para distribución de propina
+
+**Problema:** `paidWorkedMinutes` se usa para distribuir la propina
+entre meseros. Debe reflejar minutos trabajados reales, no pagados,
+para que extras pendientes de aprobación no reduzcan la propina.
+
+**Localizar** la línea ~342:
+```typescript
+  const paidWorkedMinutes = normalMinutesPaid + overtimePaidMinutes;
+```
+
+**Reemplazar por:**
+```typescript
+  // Para distribución de propina usar minutos efectivos reales
+  // Para pago usar minutos pagados (que ya tienen el descuento de almuerzo)
+  const workedMinutesForService = normalMinutesPaid + overtimeCalculatedMinutes;
+  const paidWorkedMinutes = normalMinutesPaid + overtimePaidMinutes;
+```
+
+Luego localizar el `return` al final de la función (~línea 352) y
+agregar `workedMinutesForService` al objeto retornado:
+```typescript
+  return {
+    normalMinutesRaw, normalMinutesPaid,
+    overtimeCalculatedMinutes, overtimePaidMinutes,
+    unpaidBreakMinutes, paidWorkedMinutes,
+    workedMinutesForService,   // ← agregar esta línea
+    tardyMinutes,
+    // ... resto igual
+  };
+```
+
+Agregar `workedMinutesForService: number` a la interfaz
+`DailyPayrollResult` (línea ~120).
+
+Luego en `computeRangePayroll`, localizar donde se calculan los
+elegibles para propina (~línea 594):
+```typescript
+          const daily = getDailyResult(emp.id, dateStr, Number(emp.dailyRate) || 0);
+          if (daily.paidWorkedMinutes > 0) {
+            eligibles.push({ employeeId: emp.id, paidWorkedMinutes: daily.paidWorkedMinutes });
+          }
+```
+
+**Cambiar** `daily.paidWorkedMinutes` por `daily.workedMinutesForService`:
+```typescript
+          const daily = getDailyResult(emp.id, dateStr, Number(emp.dailyRate) || 0);
+          if (daily.workedMinutesForService > 0) {
+            eligibles.push({ employeeId: emp.id, paidWorkedMinutes: daily.workedMinutesForService });
+          }
+```
+
+---
+
+## VERIFICACIÓN DESPUÉS DE APLICAR LOS CAMBIOS
+
+Compilar TypeScript sin errores: `npx tsc --noEmit`
+
+Verificar estos 4 escenarios manualmente en la UI de planilla:
+
+**Escenario A — Llegada puntual, salida puntual (turno 8am–4pm)**
+- clockIn 8:00, clockOut 16:00, MANUAL
+- Esperado: 8h ordinarias, 0 extras, sin descuento almuerzo
+
+**Escenario B — Llegada tarde, salida "even" (turno 8am–4pm)**
+- clockIn 9:00, clockOut 17:00, MANUAL
+- Esperado: 8h ordinarias, 0 extras (trabajó exactamente 8h)
+
+**Escenario C — Llegada puntual, 1h extra (turno 8am–4pm)**
+- clockIn 8:00, clockOut 17:00, MANUAL
+- Esperado: 8h ordinarias, 1h extra al 150%
+
+**Escenario D — Turno largo con almuerzo (turno 8am–6pm)**
+- clockIn 8:00, clockOut 18:00, MANUAL (10h efectivas)
+- Esperado: 8h ordinarias, 2h extras, descuento 60 min
+- El descuento va primero a las 2h extras → 1h extra queda pagada
+- Resultado: 8h ordinarias + 1h extra pagada
+
+**Escenario E — Auto clock-out (turno 8am–4pm)**
+- clockIn 8:00, clockOut 16:00, AUTO
+- Esperado: 8h ordinarias, 0 extras (AUTO nunca genera extras)
