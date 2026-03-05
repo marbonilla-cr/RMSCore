@@ -67,6 +67,13 @@ interface InvItem {
   notes: string | null;
   avgCostPerBaseUom: string;
   lastCostPerBaseUom: string;
+  default_supplier_id: number | null;
+  supplierName: string | null;
+}
+
+interface Supplier {
+  id: number;
+  name: string;
 }
 
 const UOM_OPTIONS = [
@@ -106,6 +113,7 @@ const formSchema = z.object({
   unitWeightG: z.coerce.number().min(0).optional(),
   isPerishable: z.boolean().default(false),
   notes: z.string().optional(),
+  defaultSupplierId: z.coerce.number().optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -158,6 +166,10 @@ export default function InventoryItems() {
     queryKey: ["/api/inv/items"],
   });
 
+  const { data: suppliers } = useQuery<Supplier[]>({
+    queryKey: ["/api/inv/suppliers"],
+  });
+
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -174,6 +186,7 @@ export default function InventoryItems() {
       unitWeightG: undefined,
       isPerishable: false,
       notes: "",
+      defaultSupplierId: undefined,
     },
   });
 
@@ -330,6 +343,7 @@ export default function InventoryItems() {
                   <TableHead>Nombre</TableHead>
                   <TableHead>Tipo</TableHead>
                   <TableHead>Categoría</TableHead>
+                  <TableHead>Proveedor</TableHead>
                   <TableHead>UOM</TableHead>
                   <TableHead className="text-right">En Mano</TableHead>
                   <TableHead className="text-center">Estado</TableHead>
@@ -355,6 +369,7 @@ export default function InventoryItems() {
                       </Badge>
                     </TableCell>
                     <TableCell>{item.category}</TableCell>
+                    <TableCell className="text-muted-foreground">{item.supplierName || "—"}</TableCell>
                     <TableCell>{item.baseUom}</TableCell>
                     <TableCell className="text-right">{parseFloat(item.onHandQtyBase).toFixed(2)}</TableCell>
                     <TableCell className="text-center">
@@ -374,7 +389,7 @@ export default function InventoryItems() {
                 ))}
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                       No se encontraron insumos
                     </TableCell>
                   </TableRow>
@@ -415,7 +430,7 @@ export default function InventoryItems() {
                     </div>
                   </div>
                   <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>{item.sku} · {item.category}</span>
+                    <span>{item.sku} · {item.category}{item.supplierName ? ` · ${item.supplierName}` : ""}</span>
                     <span>{parseFloat(item.onHandQtyBase).toFixed(2)} {item.baseUom}</span>
                   </div>
                 </CardContent>
@@ -625,6 +640,28 @@ export default function InventoryItems() {
                       <Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-perishable" />
                     </FormControl>
                     <FormLabel className="!mt-0">Perecedero</FormLabel>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="defaultSupplierId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Proveedor (opcional)</FormLabel>
+                    <Select value={field.value ? String(field.value) : "__none__"} onValueChange={(v) => field.onChange(v === "__none__" ? undefined : Number(v))}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-supplier">
+                          <SelectValue placeholder="Sin proveedor" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">Sin proveedor</SelectItem>
+                        {(suppliers || []).map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </FormItem>
                 )}
               />

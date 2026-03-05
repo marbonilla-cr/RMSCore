@@ -16,7 +16,7 @@ import {
   insertInvRecipeLineSchema,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { invItems, products } from "@shared/schema";
+import { invItems, invSuppliers, products } from "@shared/schema";
 import { eq, and, lt, asc } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
@@ -59,13 +59,29 @@ export function registerInventoryRoutes(app: Express, wss: any) {
   app.get("/api/inv/items", requirePermission("INV_VIEW"), async (req, res) => {
     try {
       const typeFilter = req.query.type as string | undefined;
+      let query = db
+        .select({
+          id: invItems.id, sku: invItems.sku, name: invItems.name,
+          itemType: invItems.itemType, category: invItems.category,
+          baseUom: invItems.baseUom, onHandQtyBase: invItems.onHandQtyBase,
+          reorderPointQtyBase: invItems.reorderPointQtyBase,
+          parLevelQtyBase: invItems.parLevelQtyBase,
+          isActive: invItems.isActive, isPerishable: invItems.isPerishable,
+          notes: invItems.notes, defaultSupplierId: invItems.defaultSupplierId,
+          avgCostPerBaseUom: invItems.avgCostPerBaseUom,
+          lastCostPerBaseUom: invItems.lastCostPerBaseUom,
+          unitWeightG: invItems.unitWeightG,
+          createdAt: invItems.createdAt, updatedAt: invItems.updatedAt,
+          supplierName: invSuppliers.name,
+        })
+        .from(invItems)
+        .leftJoin(invSuppliers, eq(invItems.defaultSupplierId, invSuppliers.id))
+        .orderBy(asc(invItems.name));
+
       if (typeFilter && (typeFilter === "AP" || typeFilter === "EP")) {
-        const items = await db.select().from(invItems)
-          .where(eq(invItems.itemType, typeFilter))
-          .orderBy(asc(invItems.name));
-        return res.json(items);
+        query = query.where(eq(invItems.itemType, typeFilter)) as any;
       }
-      res.json(await invStorage.getAllInvItems());
+      res.json(await query);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -73,10 +89,28 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/items/:id", requirePermission("INV_VIEW"), async (req, res) => {
     try {
-      const item = await invStorage.getInvItem(parseInt(req.params.id));
-      if (!item) return res.status(404).json({ message: "Item no encontrado" });
-      const conversions = await invStorage.getUomConversions(item.id);
-      res.json({ ...item, uomConversions: conversions });
+      const id = parseInt(req.params.id);
+      const rows = await db
+        .select({
+          id: invItems.id, sku: invItems.sku, name: invItems.name,
+          itemType: invItems.itemType, category: invItems.category,
+          baseUom: invItems.baseUom, onHandQtyBase: invItems.onHandQtyBase,
+          reorderPointQtyBase: invItems.reorderPointQtyBase,
+          parLevelQtyBase: invItems.parLevelQtyBase,
+          isActive: invItems.isActive, isPerishable: invItems.isPerishable,
+          notes: invItems.notes, defaultSupplierId: invItems.defaultSupplierId,
+          avgCostPerBaseUom: invItems.avgCostPerBaseUom,
+          lastCostPerBaseUom: invItems.lastCostPerBaseUom,
+          unitWeightG: invItems.unitWeightG,
+          createdAt: invItems.createdAt, updatedAt: invItems.updatedAt,
+          supplierName: invSuppliers.name,
+        })
+        .from(invItems)
+        .leftJoin(invSuppliers, eq(invItems.defaultSupplierId, invSuppliers.id))
+        .where(eq(invItems.id, id));
+      if (rows.length === 0) return res.status(404).json({ message: "Item no encontrado" });
+      const conversions = await invStorage.getUomConversions(id);
+      res.json({ ...rows[0], uomConversions: conversions });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -110,6 +144,9 @@ export function registerInventoryRoutes(app: Express, wss: any) {
   app.patch("/api/inv/items/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
       const coerced = coerceNumericFields(req.body);
+      if ("defaultSupplierId" in coerced) {
+        coerced.defaultSupplierId = coerced.defaultSupplierId || null;
+      }
       const item = await invStorage.updateInvItem(parseInt(req.params.id), coerced);
       if (!item) return res.status(404).json({ message: "Item no encontrado" });
       broadcast(wss, "INV_ITEM_UPDATED", item);
@@ -1197,7 +1234,33 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         return res.status(400).json({ message: "CSV vacío o sin datos" });
       }
 
-      const results = { created: 0, skipped: 0, errors: [] as string[] };
+      const results = { created: 0, skipped: 0, errors: [] as string[], suppliersCreated: 0, linksCreated: 0 };
+
+      const supplierNames = new Set<string>();
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(";");
+        const supplierName = (cols[5] || "").trim();
+        if (supplierName) supplierNames.add(supplierName);
+      }
+
+      const supplierMap = new Map<string, number>();
+      for (const sName of supplierNames) {
+        try {
+          const existingRes = await pool.query(
+            `SELECT id FROM inv_suppliers WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+            [sName]
+          );
+          if (existingRes.rows.length > 0) {
+            supplierMap.set(sName, existingRes.rows[0].id);
+          } else {
+            const newSupplier = await invStorage.createSupplier({ name: sName, isActive: true } as any);
+            supplierMap.set(sName, newSupplier.id);
+            results.suppliersCreated++;
+          }
+        } catch (sErr: any) {
+          results.errors.push(`Proveedor "${sName}": ${sErr.message}`);
+        }
+      }
 
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(";");
@@ -1206,7 +1269,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         const handle = (cols[0] || "").trim();
         const name = (cols[2] || "").trim().replace(/<[^>]*>/g, "");
         const rawCategory = (cols[3] || "").trim();
-        const supplier = (cols[5] || "").trim();
+        const supplierName = (cols[5] || "").trim();
         const cost = (cols[6] || "").trim();
         const purchaseUnit = (cols[7] || "").trim().toLowerCase();
         const unitsPerPurchase = (cols[8] || "").trim();
@@ -1228,6 +1291,8 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         else if (presentationUnit === "mililitros" || purchaseUnit === "botella") baseUom = "L";
         else if (presentationUnit === "metros") baseUom = "UNIT";
 
+        const supplierId = supplierName ? supplierMap.get(supplierName) || null : null;
+
         try {
           const existing = await invStorage.getInvItemBySku(sku);
           if (existing) {
@@ -1245,12 +1310,34 @@ export function registerInventoryRoutes(app: Express, wss: any) {
             reorderPointQtyBase: parseCSVNumber(reorderPoint),
             parLevelQtyBase: parseCSVNumber(parLevel),
             isPerishable: category === "Carnes" || category === "Verduras",
-            notes: supplier ? `Proveedor: ${supplier}` : null,
+            notes: null,
             lastCostPerBaseUom: cost ? parseCSVNumber(cost) : null,
+            defaultSupplierId: supplierId,
           });
 
-          await invStorage.createInvItem(parsed);
+          const newItem = await invStorage.createInvItem(parsed);
           results.created++;
+
+          if (supplierId) {
+            try {
+              let purchaseUom = baseUom;
+              if (purchaseUnit === "kilo") purchaseUom = "KG";
+              else if (purchaseUnit === "botella") purchaseUom = "L";
+              else if (purchaseUnit) purchaseUom = purchaseUnit.toUpperCase();
+              else purchaseUom = baseUom;
+
+              await invStorage.createSupplierItem({
+                supplierId,
+                invItemId: newItem.id,
+                purchaseUom,
+                lastPricePerPurchaseUom: cost ? String(parseCSVNumber(cost)) : "0",
+                isPreferred: true,
+              } as any);
+              results.linksCreated++;
+            } catch (linkErr: any) {
+              results.errors.push(`Link ${sku}→${supplierName}: ${linkErr.message}`);
+            }
+          }
         } catch (itemErr: any) {
           results.errors.push(`SKU ${sku}: ${itemErr.message}`);
           results.skipped++;

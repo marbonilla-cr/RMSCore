@@ -42,7 +42,8 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
     -   **UOM System:** Standardized unit of measurement conversions.
     -   **Auto-Deduction:** FULL-first-then-BASIC strategy on item `SENT` status, with transactional and idempotent stock updates.
     -   **Physical Counts:** Supports AP/EP/ALL/Category scope with finalization creating inventory adjustments.
-    -   **Purchase Orders:** Reorder suggestions and PO receipt processing.
+    -   **Purchase Orders:** Reorder suggestions and PO receipt processing. Inline full-page PO creation flow.
+    -   **Supplier Linkage:** `inv_items.default_supplier_id` FK to `inv_suppliers`. CSV import auto-creates suppliers and `inv_supplier_items` relationships. Supplier visible in items list/detail, editable in create/edit dialogs.
 -   **Shortages Module:** Manages item shortages with lifecycle tracking and alerts.
 -   **Reservations Module:** Comprehensive table reservation system with public booking, staff management, conflict detection, and email confirmations.
 -   **Smart Delete System:** Implements soft or hard deletion for inventory items and products based on related records.

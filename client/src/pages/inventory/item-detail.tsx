@@ -47,6 +47,13 @@ import {
   FormLabel,
   FormControl,
 } from "@/components/ui/form";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, ArrowLeft, Pencil, Plus, Trash2 } from "lucide-react";
@@ -66,6 +73,13 @@ interface InvItem {
   avgCostPerBaseUom: string;
   lastCostPerBaseUom: string;
   unitWeightG: string | null;
+  default_supplier_id: number | null;
+  supplierName: string | null;
+}
+
+interface Supplier {
+  id: number;
+  name: string;
 }
 
 interface UomConversion {
@@ -108,6 +122,7 @@ const editSchema = z.object({
   unitWeightG: z.coerce.number().min(0).optional(),
   isPerishable: z.boolean(),
   notes: z.string().optional(),
+  defaultSupplierId: z.coerce.number().optional(),
 });
 
 const convSchema = z.object({
@@ -140,6 +155,10 @@ export default function ItemDetail() {
     enabled: !!id,
   });
 
+  const { data: suppliers } = useQuery<Supplier[]>({
+    queryKey: ["/api/inv/suppliers"],
+  });
+
   const editForm = useForm({
     resolver: zodResolver(editSchema),
     defaultValues: {
@@ -153,6 +172,7 @@ export default function ItemDetail() {
       unitWeightG: undefined as number | undefined,
       isPerishable: false,
       notes: "",
+      defaultSupplierId: undefined as number | undefined,
     },
   });
 
@@ -178,6 +198,7 @@ export default function ItemDetail() {
         unitWeightG: item.unitWeightG ? parseFloat(item.unitWeightG) : undefined,
         isPerishable: item.isPerishable,
         notes: item.notes || "",
+        defaultSupplierId: item.default_supplier_id || undefined,
       });
     }
     setEditOpen(true);
@@ -303,6 +324,10 @@ export default function ItemDetail() {
             <div>
               <span className="text-muted-foreground">UOM Base</span>
               <p data-testid="text-uom">{item.baseUom}</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Proveedor</span>
+              <p data-testid="text-supplier">{item.supplierName || "—"}</p>
             </div>
             <div>
               <span className="text-muted-foreground">Perecedero</span>
@@ -561,6 +586,24 @@ export default function ItemDetail() {
                     <Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-edit-perishable" />
                   </FormControl>
                   <FormLabel className="!mt-0">Perecedero</FormLabel>
+                </FormItem>
+              )} />
+              <FormField control={editForm.control} name="defaultSupplierId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Proveedor</FormLabel>
+                  <Select value={field.value ? String(field.value) : "__none__"} onValueChange={(v) => field.onChange(v === "__none__" ? undefined : Number(v))}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-edit-supplier">
+                        <SelectValue placeholder="Sin proveedor" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__none__">Sin proveedor</SelectItem>
+                      {(suppliers || []).map((s) => (
+                        <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </FormItem>
               )} />
               <FormField control={editForm.control} name="notes" render={({ field }) => (

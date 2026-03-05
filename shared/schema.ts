@@ -534,6 +534,7 @@ export const invItems = pgTable("inv_items", {
   isActive: boolean("is_active").notNull().default(true),
   isPerishable: boolean("is_perishable").notNull().default(false),
   notes: text("notes"),
+  defaultSupplierId: integer("default_supplier_id"),
   avgCostPerBaseUom: numeric("avg_cost_per_base_uom", { precision: 12, scale: 6 }).notNull().default("0"),
   lastCostPerBaseUom: numeric("last_cost_per_base_uom", { precision: 12, scale: 6 }).notNull().default("0"),
   unitWeightG: numeric("unit_weight_g", { precision: 12, scale: 4 }),
