@@ -1,8 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -16,14 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-} from "@/components/ui/table";
 import {
   Select,
   SelectTrigger,
@@ -50,7 +41,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Plus, Search, Trash2, Upload } from "lucide-react";
+import { Loader2, Plus, Search, Trash2, Upload, ArrowUp, ArrowDown, ArrowUpDown, Pencil } from "lucide-react";
 
 interface InvItem {
   id: number;
@@ -99,6 +90,12 @@ const COST_HELPERS: Record<string, string> = {
   PORTION: "₡ por 1 porción",
 };
 
+const CATEGORIES = [
+  "General", "Abarrotes", "Carnes", "Lácteos", "Verduras", "Frutas",
+  "Granos", "Aceites", "Condimentos", "Bebidas", "Limpieza",
+  "Desechables", "Porciones", "Otros",
+];
+
 const formSchema = z.object({
   sku: z.string().min(1, "SKU requerido"),
   name: z.string().min(1, "Nombre requerido"),
@@ -126,14 +123,20 @@ function stockBadge(onHand: string, reorderPoint: string) {
   return <Badge className="text-white" style={{ background: 'var(--sage)' }} data-testid="badge-stock-green">OK</Badge>;
 }
 
+function stockLevel(onHand: string, reorderPoint: string): number {
+  const qty = parseFloat(onHand);
+  const reorder = parseFloat(reorderPoint);
+  if (qty <= 0) return 0;
+  if (qty <= reorder) return 1;
+  return 2;
+}
+
 function parseImportText(text: string) {
   const lines = text.trim().split("\n").filter(l => l.trim());
   if (lines.length === 0) return [];
-
   const firstLine = lines[0].toLowerCase();
   const hasHeader = firstLine.includes("sku") || firstLine.includes("nombre") || firstLine.includes("name");
   const dataLines = hasHeader ? lines.slice(1) : lines;
-
   return dataLines.map(line => {
     const parts = line.split("\t").length > 1 ? line.split("\t") : line.split(",");
     return {
@@ -149,18 +152,193 @@ function parseImportText(text: string) {
   }).filter(item => item.sku && item.name);
 }
 
+type SortKey = "name" | "category" | "supplierName" | "onHand" | "reorderPoint" | "parLevel" | "cost" | "status";
+type SortDir = "asc" | "desc";
+
+function EditableTextCell({ value, onSave, itemId, field, className }: {
+  value: string;
+  onSave: (val: string) => void;
+  itemId: number;
+  field: string;
+  className?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setDraft(value); }, [value]);
+  useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== value) onSave(trimmed);
+    else setDraft(value);
+  };
+
+  if (!editing) {
+    return (
+      <div
+        className={`cursor-pointer hover:bg-muted/50 px-1 py-0.5 rounded min-h-[28px] flex items-center ${className || ""}`}
+        onClick={() => setEditing(true)}
+        data-testid={`cell-${field}-${itemId}`}
+      >
+        <span className="truncate">{value}</span>
+      </div>
+    );
+  }
+
+  return (
+    <Input
+      ref={inputRef}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setDraft(value); setEditing(false); } }}
+      className="h-7 text-sm px-1"
+      data-testid={`input-${field}-${itemId}`}
+    />
+  );
+}
+
+function EditableNumberCell({ value, onSave, itemId, field, step }: {
+  value: string;
+  onSave: (val: string) => void;
+  itemId: number;
+  field: string;
+  step?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const displayVal = parseFloat(value || "0");
+
+  useEffect(() => { setDraft(value); }, [value]);
+  useEffect(() => { if (editing) { inputRef.current?.focus(); inputRef.current?.select(); } }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const num = parseFloat(draft);
+    if (!isNaN(num) && draft !== value) onSave(String(num));
+    else setDraft(value);
+  };
+
+  if (!editing) {
+    return (
+      <div
+        className="cursor-pointer hover:bg-muted/50 px-1 py-0.5 rounded text-right min-h-[28px] flex items-center justify-end"
+        onClick={() => setEditing(true)}
+        data-testid={`cell-${field}-${itemId}`}
+      >
+        {displayVal.toFixed(2)}
+      </div>
+    );
+  }
+
+  return (
+    <Input
+      ref={inputRef}
+      type="number"
+      step={step || "0.01"}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setDraft(value); setEditing(false); } }}
+      className="h-7 text-sm px-1 text-right"
+      data-testid={`input-${field}-${itemId}`}
+    />
+  );
+}
+
+function EditableSelectCell({ value, options, onSave, itemId, field, placeholder }: {
+  value: string;
+  options: { value: string; label: string }[];
+  onSave: (val: string) => void;
+  itemId: number;
+  field: string;
+  placeholder?: string;
+}) {
+  return (
+    <Select value={value || "__none__"} onValueChange={(v) => { if (v !== value && v !== "__none__") onSave(v); }}>
+      <SelectTrigger className="h-7 text-sm px-1 border-0 shadow-none hover:bg-muted/50" data-testid={`select-${field}-${itemId}`}>
+        <SelectValue placeholder={placeholder || "—"} />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((opt) => (
+          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function EditableSupplierCell({ value, supplierId, suppliers, onSave, itemId }: {
+  value: string | null;
+  supplierId: number | null;
+  suppliers: Supplier[];
+  onSave: (supplierId: number | null) => void;
+  itemId: number;
+}) {
+  const currentVal = supplierId ? String(supplierId) : "__none__";
+  return (
+    <Select value={currentVal} onValueChange={(v) => {
+      const newId = v === "__none__" ? null : Number(v);
+      if (newId !== supplierId) onSave(newId);
+    }}>
+      <SelectTrigger className="h-7 text-sm px-1 border-0 shadow-none hover:bg-muted/50" data-testid={`select-supplier-${itemId}`}>
+        <SelectValue placeholder="—" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">Sin proveedor</SelectItem>
+        {suppliers.map((s) => (
+          <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function SortHeader({ label, sortKey, currentSort, onSort, className }: {
+  label: string;
+  sortKey: SortKey;
+  currentSort: { key: SortKey; dir: SortDir } | null;
+  onSort: (key: SortKey) => void;
+  className?: string;
+}) {
+  const active = currentSort?.key === sortKey;
+  return (
+    <th
+      className={`px-2 py-2 text-xs font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground whitespace-nowrap ${className || ""}`}
+      onClick={() => onSort(sortKey)}
+      data-testid={`header-sort-${sortKey}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active ? (
+          currentSort.dir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+        ) : (
+          <ArrowUpDown className="h-3 w-3 opacity-30" />
+        )}
+      </span>
+    </th>
+  );
+}
+
 export default function InventoryItems() {
   const { toast } = useToast();
-  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("__all__");
   const [typeFilter, setTypeFilter] = useState("__all__");
+  const [supplierFilter, setSupplierFilter] = useState("__all__");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importResults, setImportResults] = useState<{created: number; skipped: number; errors: string[]} | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<InvItem | null>(null);
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
+  const [mobileEditItem, setMobileEditItem] = useState<InvItem | null>(null);
+  const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
 
   const { data: items, isLoading } = useQuery<InvItem[]>({
     queryKey: ["/api/inv/items"],
@@ -196,12 +374,8 @@ export default function InventoryItems() {
   const createMutation = useMutation({
     mutationFn: async (data: FormValues) => {
       const payload: any = { ...data };
-      if (data.avgCostPerBaseUom == null || isNaN(data.avgCostPerBaseUom)) {
-        delete payload.avgCostPerBaseUom;
-      }
-      if (data.unitWeightG == null || isNaN(data.unitWeightG)) {
-        delete payload.unitWeightG;
-      }
+      if (data.avgCostPerBaseUom == null || isNaN(data.avgCostPerBaseUom)) delete payload.avgCostPerBaseUom;
+      if (data.unitWeightG == null || isNaN(data.unitWeightG)) delete payload.unitWeightG;
       await apiRequest("POST", "/api/inv/items", payload);
     },
     onSuccess: () => {
@@ -238,12 +412,8 @@ export default function InventoryItems() {
     onSuccess: (data: { hardDeleted: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
       toast({
-        title: data.hardDeleted
-          ? "Insumo eliminado permanentemente"
-          : "Insumo desactivado",
-        description: data.hardDeleted
-          ? "El insumo fue eliminado de la base de datos."
-          : "El insumo tiene registros relacionados y fue desactivado.",
+        title: data.hardDeleted ? "Insumo eliminado permanentemente" : "Insumo desactivado",
+        description: data.hardDeleted ? "El insumo fue eliminado de la base de datos." : "El insumo tiene registros relacionados y fue desactivado.",
       });
       setDeleteTarget(null);
     },
@@ -252,29 +422,91 @@ export default function InventoryItems() {
     },
   });
 
+  const patchItem = useCallback(async (itemId: number, field: string, value: any) => {
+    const cellKey = `${itemId}_${field}`;
+    setSavingCells(prev => new Set(prev).add(cellKey));
+    try {
+      queryClient.setQueryData<InvItem[]>(["/api/inv/items"], (old) => {
+        if (!old) return old;
+        return old.map(item => {
+          if (item.id !== itemId) return item;
+          const updated = { ...item };
+          if (field === "name") updated.name = value;
+          else if (field === "category") updated.category = value;
+          else if (field === "defaultSupplierId") {
+            updated.default_supplier_id = value;
+            updated.supplierName = value ? (suppliers || []).find(s => s.id === value)?.name || null : null;
+          }
+          else if (field === "reorderPointQtyBase") updated.reorderPointQtyBase = value;
+          else if (field === "parLevelQtyBase") updated.parLevelQtyBase = value;
+          else if (field === "lastCostPerBaseUom") updated.lastCostPerBaseUom = value;
+          return updated;
+        });
+      });
+      await apiRequest("PATCH", `/api/inv/items/${itemId}`, { [field]: value });
+    } catch (err: any) {
+      queryClient.invalidateQueries({ queryKey: ["/api/inv/items"] });
+      toast({ title: "Error al guardar", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingCells(prev => {
+        const next = new Set(prev);
+        next.delete(cellKey);
+        return next;
+      });
+    }
+  }, [suppliers, toast]);
+
   const categories = useMemo(() => {
     if (!items) return [];
     const set = new Set(items.filter((i) => i.isActive).map((i) => i.category));
     return Array.from(set).sort();
   }, [items]);
 
+  const suppliersList = useMemo(() => {
+    if (!items) return [];
+    const map = new Map<string, boolean>();
+    items.filter(i => i.isActive && i.supplierName).forEach(i => map.set(i.supplierName!, true));
+    return Array.from(map.keys()).sort();
+  }, [items]);
+
   const filtered = useMemo(() => {
     if (!items) return [];
     let list = items.filter((i) => i.isActive);
-    if (typeFilter !== "__all__") {
-      list = list.filter((i) => i.itemType === typeFilter);
-    }
-    if (categoryFilter !== "__all__") {
-      list = list.filter((i) => i.category === categoryFilter);
+    if (typeFilter !== "__all__") list = list.filter((i) => i.itemType === typeFilter);
+    if (categoryFilter !== "__all__") list = list.filter((i) => i.category === categoryFilter);
+    if (supplierFilter !== "__all__") {
+      if (supplierFilter === "__none__") list = list.filter((i) => !i.supplierName);
+      else list = list.filter((i) => i.supplierName === supplierFilter);
     }
     if (search.trim()) {
       const q = search.toLowerCase();
-      list = list.filter(
-        (i) => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q)
-      );
+      list = list.filter((i) => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q));
+    }
+    if (sort) {
+      list = [...list].sort((a, b) => {
+        let cmp = 0;
+        switch (sort.key) {
+          case "name": cmp = a.name.localeCompare(b.name, "es"); break;
+          case "category": cmp = (a.category || "").localeCompare(b.category || "", "es"); break;
+          case "supplierName": cmp = (a.supplierName || "").localeCompare(b.supplierName || "", "es"); break;
+          case "onHand": cmp = parseFloat(a.onHandQtyBase) - parseFloat(b.onHandQtyBase); break;
+          case "reorderPoint": cmp = parseFloat(a.reorderPointQtyBase) - parseFloat(b.reorderPointQtyBase); break;
+          case "parLevel": cmp = parseFloat(a.parLevelQtyBase) - parseFloat(b.parLevelQtyBase); break;
+          case "cost": cmp = parseFloat(a.lastCostPerBaseUom || "0") - parseFloat(b.lastCostPerBaseUom || "0"); break;
+          case "status": cmp = stockLevel(a.onHandQtyBase, a.reorderPointQtyBase) - stockLevel(b.onHandQtyBase, b.reorderPointQtyBase); break;
+        }
+        return sort.dir === "asc" ? cmp : -cmp;
+      });
     }
     return list;
-  }, [items, search, categoryFilter, typeFilter]);
+  }, [items, search, categoryFilter, typeFilter, supplierFilter, sort]);
+
+  const handleSort = useCallback((key: SortKey) => {
+    setSort(prev => {
+      if (prev?.key === key) return prev.dir === "asc" ? { key, dir: "desc" } : null;
+      return { key, dir: "asc" };
+    });
+  }, []);
 
   if (isLoading) {
     return (
@@ -284,166 +516,254 @@ export default function InventoryItems() {
     );
   }
 
+  const categoryOptions = [...new Set([...CATEGORIES, ...categories])].sort().map(c => ({ value: c, label: c }));
+
   return (
     <div className="admin-page">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap">
-          <CardTitle className="text-lg" data-testid="text-page-title">Insumos</CardTitle>
+      <Card className="flex flex-col" style={{ height: "calc(100vh - 80px)" }}>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2 flex-wrap flex-shrink-0">
+          <CardTitle className="text-lg" data-testid="text-page-title">Insumos ({filtered.length})</CardTitle>
           <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="outline" onClick={() => { setImportOpen(true); setImportText(""); setImportPreview([]); setImportResults(null); }} data-testid="button-import-items">
-              <Upload className="h-4 w-4 mr-2" />
+            <Button variant="outline" size="sm" onClick={() => { setImportOpen(true); setImportText(""); setImportPreview([]); setImportResults(null); }} data-testid="button-import-items">
+              <Upload className="h-4 w-4 mr-1" />
               Importar
             </Button>
-            <Button onClick={() => setDialogOpen(true)} data-testid="button-create-item">
-              <Plus className="h-4 w-4 mr-2" />
-              Nuevo Insumo
+            <Button size="sm" onClick={() => setDialogOpen(true)} data-testid="button-create-item">
+              <Plus className="h-4 w-4 mr-1" />
+              Nuevo
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por nombre o SKU..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-                data-testid="input-search"
-              />
-            </div>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[140px]" data-testid="select-type-filter">
-                <SelectValue placeholder="Tipo" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todos</SelectItem>
-                <SelectItem value="AP">AP (Materia Prima)</SelectItem>
-                <SelectItem value="EP">EP (Elaborado)</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="w-[180px]" data-testid="select-category-filter">
-                <SelectValue placeholder="Categoría" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todas las categorías</SelectItem>
-                {categories.map((cat) => (
-                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <div className="px-6 pb-2 flex items-center gap-2 flex-wrap flex-shrink-0">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar nombre o SKU..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 h-8 text-sm"
+              data-testid="input-search"
+            />
           </div>
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="w-[100px] h-8 text-sm" data-testid="select-type-filter">
+              <SelectValue placeholder="Tipo" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Tipo</SelectItem>
+              <SelectItem value="AP">AP</SelectItem>
+              <SelectItem value="EP">EP</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="w-[140px] h-8 text-sm" data-testid="select-category-filter">
+              <SelectValue placeholder="Categoría" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Categoría</SelectItem>
+              {categories.map((cat) => (
+                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={supplierFilter} onValueChange={setSupplierFilter}>
+            <SelectTrigger className="w-[140px] h-8 text-sm" data-testid="select-supplier-filter">
+              <SelectValue placeholder="Proveedor" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Proveedor</SelectItem>
+              <SelectItem value="__none__">Sin proveedor</SelectItem>
+              {suppliersList.map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-          <div className="hidden md:block overflow-x-auto">
-            <Table data-testid="table-items">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>SKU</TableHead>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Categoría</TableHead>
-                  <TableHead>Proveedor</TableHead>
-                  <TableHead>UOM</TableHead>
-                  <TableHead className="text-right">En Mano</TableHead>
-                  <TableHead className="text-center">Estado</TableHead>
-                  <TableHead className="text-center">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((item) => (
-                  <TableRow
-                    key={item.id}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/inventory/items/${item.id}`)}
-                    data-testid={`row-item-${item.id}`}
-                  >
-                    <TableCell className="font-mono text-sm">{item.sku}</TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={item.itemType === "EP" ? "default" : "secondary"}
-                        data-testid={`badge-item-type-${item.id}`}
-                      >
-                        {item.itemType || "AP"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{item.category}</TableCell>
-                    <TableCell className="text-muted-foreground">{item.supplierName || "—"}</TableCell>
-                    <TableCell>{item.baseUom}</TableCell>
-                    <TableCell className="text-right">{parseFloat(item.onHandQtyBase).toFixed(2)}</TableCell>
-                    <TableCell className="text-center">
-                      {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
-                        data-testid={`button-delete-item-${item.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {filtered.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                      No se encontraron insumos
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
+        <div className="hidden md:block flex-1 overflow-auto px-6 pb-4">
+          <table className="w-full text-sm" data-testid="table-items">
+            <thead className="sticky top-0 z-10 bg-background border-b">
+              <tr>
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-left w-[100px]">SKU</th>
+                <SortHeader label="Nombre" sortKey="name" currentSort={sort} onSort={handleSort} className="text-left min-w-[160px]" />
+                <SortHeader label="Categoría" sortKey="category" currentSort={sort} onSort={handleSort} className="text-left w-[120px]" />
+                <SortHeader label="Proveedor" sortKey="supplierName" currentSort={sort} onSort={handleSort} className="text-left w-[130px]" />
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-center w-[50px]">UOM</th>
+                <SortHeader label="En Mano" sortKey="onHand" currentSort={sort} onSort={handleSort} className="text-right w-[80px]" />
+                <SortHeader label="Pto Reorden" sortKey="reorderPoint" currentSort={sort} onSort={handleSort} className="text-right w-[90px]" />
+                <SortHeader label="Nivel Par" sortKey="parLevel" currentSort={sort} onSort={handleSort} className="text-right w-[80px]" />
+                <SortHeader label="Costo ₡" sortKey="cost" currentSort={sort} onSort={handleSort} className="text-right w-[90px]" />
+                <SortHeader label="Estado" sortKey="status" currentSort={sort} onSort={handleSort} className="text-center w-[80px]" />
+                <th className="px-2 py-2 text-xs font-medium text-muted-foreground text-center w-[40px]"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {filtered.map((item) => (
+                <tr
+                  key={item.id}
+                  className="hover:bg-muted/30 group"
+                  data-testid={`row-item-${item.id}`}
+                >
+                  <td className="px-2 py-1 font-mono text-xs text-muted-foreground truncate max-w-[100px]" title={item.sku} data-testid={`cell-sku-${item.id}`}>
+                    {item.sku}
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableTextCell
+                      value={item.name}
+                      onSave={(v) => patchItem(item.id, "name", v)}
+                      itemId={item.id}
+                      field="name"
+                      className="font-medium"
+                    />
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableSelectCell
+                      value={item.category}
+                      options={categoryOptions}
+                      onSave={(v) => patchItem(item.id, "category", v)}
+                      itemId={item.id}
+                      field="category"
+                    />
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableSupplierCell
+                      value={item.supplierName}
+                      supplierId={item.default_supplier_id}
+                      suppliers={suppliers || []}
+                      onSave={(id) => patchItem(item.id, "defaultSupplierId", id)}
+                      itemId={item.id}
+                    />
+                  </td>
+                  <td className="px-2 py-1 text-center text-xs text-muted-foreground" data-testid={`cell-uom-${item.id}`}>
+                    {item.baseUom}
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums" data-testid={`cell-onhand-${item.id}`}>
+                    {parseFloat(item.onHandQtyBase).toFixed(2)}
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableNumberCell
+                      value={item.reorderPointQtyBase}
+                      onSave={(v) => patchItem(item.id, "reorderPointQtyBase", v)}
+                      itemId={item.id}
+                      field="reorderPoint"
+                    />
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableNumberCell
+                      value={item.parLevelQtyBase}
+                      onSave={(v) => patchItem(item.id, "parLevelQtyBase", v)}
+                      itemId={item.id}
+                      field="parLevel"
+                    />
+                  </td>
+                  <td className="px-1 py-1">
+                    <EditableNumberCell
+                      value={item.lastCostPerBaseUom || "0"}
+                      onSave={(v) => patchItem(item.id, "lastCostPerBaseUom", Number(v))}
+                      itemId={item.id}
+                      field="cost"
+                    />
+                  </td>
+                  <td className="px-2 py-1 text-center" data-testid={`cell-status-${item.id}`}>
+                    {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
+                  </td>
+                  <td className="px-1 py-1 text-center">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                      onClick={() => setDeleteTarget(item)}
+                      data-testid={`button-delete-item-${item.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="text-center text-muted-foreground py-8">
+                    No se encontraron insumos
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
 
-          <div className="md:hidden space-y-2">
-            {filtered.map((item) => (
-              <Card
-                key={item.id}
-                className="cursor-pointer hover-elevate"
-                onClick={() => navigate(`/inventory/items/${item.id}`)}
-                data-testid={`card-item-${item.id}`}
-              >
-                <CardContent className="p-3 space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-sm">{item.name}</span>
-                      <Badge
-                        variant={item.itemType === "EP" ? "default" : "secondary"}
-                        data-testid={`badge-item-type-mobile-${item.id}`}
-                      >
-                        {item.itemType || "AP"}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
-                        data-testid={`button-delete-item-mobile-${item.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+        <div className="md:hidden flex-1 overflow-auto px-4 pb-4 space-y-2">
+          {filtered.map((item) => (
+            <Card
+              key={item.id}
+              className="cursor-pointer hover-elevate"
+              onClick={() => setMobileEditItem(item)}
+              data-testid={`card-item-${item.id}`}
+            >
+              <CardContent className="p-3 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-sm">{item.name}</span>
+                    <Badge
+                      variant={item.itemType === "EP" ? "default" : "secondary"}
+                      data-testid={`badge-item-type-mobile-${item.id}`}
+                    >
+                      {item.itemType || "AP"}
+                    </Badge>
                   </div>
-                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>{item.sku} · {item.category}{item.supplierName ? ` · ${item.supplierName}` : ""}</span>
-                    <span>{parseFloat(item.onHandQtyBase).toFixed(2)} {item.baseUom}</span>
+                  <div className="flex items-center gap-1">
+                    {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
+                      data-testid={`button-delete-item-mobile-${item.id}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-            {filtered.length === 0 && (
-              <p className="text-center text-muted-foreground py-8" data-testid="text-empty">
-                No se encontraron insumos
-              </p>
-            )}
-          </div>
-        </CardContent>
+                </div>
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>{item.sku} · {item.category}{item.supplierName ? ` · ${item.supplierName}` : ""}</span>
+                  <span>{parseFloat(item.onHandQtyBase).toFixed(2)} {item.baseUom}</span>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {filtered.length === 0 && (
+            <p className="text-center text-muted-foreground py-8" data-testid="text-empty">
+              No se encontraron insumos
+            </p>
+          )}
+        </div>
       </Card>
+
+      <Dialog open={!!mobileEditItem} onOpenChange={(open) => { if (!open) setMobileEditItem(null); }}>
+        <DialogContent className="max-w-sm max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle data-testid="text-mobile-edit-title">
+              <Pencil className="h-4 w-4 inline mr-1" />
+              {mobileEditItem?.name}
+            </DialogTitle>
+          </DialogHeader>
+          {mobileEditItem && (
+            <MobileEditForm
+              item={mobileEditItem}
+              suppliers={suppliers || []}
+              categories={categoryOptions}
+              onSave={(field, value) => {
+                patchItem(mobileEditItem.id, field, value);
+                const updated = { ...mobileEditItem, [field]: value } as InvItem;
+                if (field === "defaultSupplierId") {
+                  updated.default_supplier_id = value;
+                  updated.supplierName = value ? (suppliers || []).find(s => s.id === value)?.name || null : null;
+                }
+                setMobileEditItem(updated);
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
@@ -452,235 +772,134 @@ export default function InventoryItems() {
           </DialogHeader>
           <Form {...form}>
             <form onSubmit={form.handleSubmit((data) => createMutation.mutate(data))} className="space-y-3">
-              <FormField
-                control={form.control}
-                name="sku"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>SKU</FormLabel>
+              <FormField control={form.control} name="sku" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>SKU</FormLabel>
+                  <FormControl><Input {...field} placeholder="Ej: ARR-001" data-testid="input-sku" /></FormControl>
+                  <p className="text-xs text-muted-foreground">Código único del insumo</p>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="name" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Nombre</FormLabel>
+                  <FormControl><Input {...field} placeholder="Ej: Arroz Horizonte 5kg" data-testid="input-name" /></FormControl>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="itemType" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Tipo</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
-                      <Input {...field} placeholder="Ej: ARR-001" data-testid="input-sku" />
+                      <SelectTrigger data-testid="select-item-type"><SelectValue placeholder="Seleccionar tipo" /></SelectTrigger>
                     </FormControl>
-                    <p className="text-xs text-muted-foreground">Código único del insumo</p>
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Nombre</FormLabel>
+                    <SelectContent>
+                      {ITEM_TYPE_OPTIONS.map((opt) => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">AP = Materia Prima, EP = Producto Elaborado</p>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="category" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Categoría</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
-                      <Input {...field} placeholder="Ej: Arroz Horizonte 5kg" data-testid="input-name" />
+                      <SelectTrigger data-testid="select-category"><SelectValue placeholder="Seleccionar categoría" /></SelectTrigger>
                     </FormControl>
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="itemType"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Tipo</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger data-testid="select-item-type">
-                          <SelectValue placeholder="Seleccionar tipo" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {ITEM_TYPE_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">AP = Materia Prima, EP = Producto Elaborado (resultado de conversión)</p>
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="category"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Categoría</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger data-testid="select-category">
-                          <SelectValue placeholder="Seleccionar categoría" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="General">General</SelectItem>
-                        <SelectItem value="Carnes">Carnes</SelectItem>
-                        <SelectItem value="Lácteos">Lácteos</SelectItem>
-                        <SelectItem value="Vegetales">Vegetales</SelectItem>
-                        <SelectItem value="Frutas">Frutas</SelectItem>
-                        <SelectItem value="Granos">Granos</SelectItem>
-                        <SelectItem value="Aceites">Aceites</SelectItem>
-                        <SelectItem value="Condimentos">Condimentos</SelectItem>
-                        <SelectItem value="Bebidas">Bebidas</SelectItem>
-                        <SelectItem value="Limpieza">Limpieza</SelectItem>
-                        <SelectItem value="Desechables">Desechables</SelectItem>
-                        <SelectItem value="Otros">Otros</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="baseUom"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Unidad Base (UOM)</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger data-testid="select-base-uom">
-                          <SelectValue placeholder="Seleccionar unidad" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {UOM_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">Unidad en que se mide el stock (ej: KG para arroz, UNIT para botellas)</p>
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="onHandQtyBase"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Stock Inicial</FormLabel>
+                    <SelectContent>
+                      {categoryOptions.map((opt) => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="baseUom" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Unidad Base (UOM)</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
-                      <Input type="number" step="0.01" min="0" {...field} placeholder="Ej: 50" data-testid="input-initial-stock" />
+                      <SelectTrigger data-testid="select-base-uom"><SelectValue placeholder="Seleccionar unidad" /></SelectTrigger>
                     </FormControl>
-                    <p className="text-xs text-muted-foreground">Cantidad actual en inventario (en la unidad base seleccionada)</p>
-                  </FormItem>
-                )}
-              />
+                    <SelectContent>
+                      {UOM_OPTIONS.map((opt) => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Unidad en que se mide el stock</p>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="onHandQtyBase" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Stock Inicial</FormLabel>
+                  <FormControl><Input type="number" step="0.01" min="0" {...field} placeholder="Ej: 50" data-testid="input-initial-stock" /></FormControl>
+                </FormItem>
+              )} />
               <div className="grid grid-cols-2 gap-3">
-                <FormField
-                  control={form.control}
-                  name="reorderPointQtyBase"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Punto Reorden</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" {...field} data-testid="input-reorder-point" />
-                      </FormControl>
-                      <p className="text-xs text-muted-foreground">Alerta cuando baje de esta cantidad</p>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="parLevelQtyBase"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Nivel Par</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" {...field} data-testid="input-par-level" />
-                      </FormControl>
-                      <p className="text-xs text-muted-foreground">Cantidad ideal a mantener</p>
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={form.control}
-                name="lastCostPerBaseUom"
-                render={({ field }) => (
+                <FormField control={form.control} name="reorderPointQtyBase" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Costo por unidad base (₡)</FormLabel>
-                    <FormControl>
-                      <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))} placeholder="Ej: 700" data-testid="input-last-cost" />
-                    </FormControl>
-                    <p className="text-xs text-muted-foreground">{COST_HELPERS[watchBaseUom] || `₡ por 1 ${watchBaseUom}`}</p>
+                    <FormLabel>Punto Reorden</FormLabel>
+                    <FormControl><Input type="number" step="0.01" {...field} data-testid="input-reorder-point" /></FormControl>
                   </FormItem>
-                )}
-              />
+                )} />
+                <FormField control={form.control} name="parLevelQtyBase" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nivel Par</FormLabel>
+                    <FormControl><Input type="number" step="0.01" {...field} data-testid="input-par-level" /></FormControl>
+                  </FormItem>
+                )} />
+              </div>
+              <FormField control={form.control} name="lastCostPerBaseUom" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Costo por unidad base (₡)</FormLabel>
+                  <FormControl>
+                    <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))} placeholder="Ej: 700" data-testid="input-last-cost" />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">{COST_HELPERS[watchBaseUom] || `₡ por 1 ${watchBaseUom}`}</p>
+                </FormItem>
+              )} />
               {watchBaseUom === "UNIT" && (
                 <>
-                  <FormField
-                    control={form.control}
-                    name="unitWeightG"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Peso por unidad (g)</FormLabel>
-                        <FormControl>
-                          <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))} placeholder="Ej: 250" data-testid="input-unit-weight" />
-                        </FormControl>
-                        <p className="text-xs text-muted-foreground">Necesario para conversiones UNIT→G</p>
-                      </FormItem>
-                    )}
-                  />
+                  <FormField control={form.control} name="unitWeightG" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Peso por unidad (g)</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="0.01" min="0" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : Number(e.target.value))} placeholder="Ej: 250" data-testid="input-unit-weight" />
+                      </FormControl>
+                    </FormItem>
+                  )} />
                   {(!watchUnitWeightG || watchUnitWeightG <= 0) && (
                     <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-unit-weight-warning">
-                      ⚠ Sin peso por unidad, las conversiones UNIT→G no podrán calcular costos
+                      Sin peso por unidad, las conversiones UNIT - G no funcionarán
                     </p>
                   )}
                 </>
               )}
-              <FormField
-                control={form.control}
-                name="isPerishable"
-                render={({ field }) => (
-                  <FormItem className="flex items-center gap-2">
+              <FormField control={form.control} name="isPerishable" render={({ field }) => (
+                <FormItem className="flex items-center gap-2">
+                  <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-perishable" /></FormControl>
+                  <FormLabel className="!mt-0">Perecedero</FormLabel>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="defaultSupplierId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Proveedor (opcional)</FormLabel>
+                  <Select value={field.value ? String(field.value) : "__none__"} onValueChange={(v) => field.onChange(v === "__none__" ? undefined : Number(v))}>
                     <FormControl>
-                      <Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-perishable" />
+                      <SelectTrigger data-testid="select-supplier"><SelectValue placeholder="Sin proveedor" /></SelectTrigger>
                     </FormControl>
-                    <FormLabel className="!mt-0">Perecedero</FormLabel>
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="defaultSupplierId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Proveedor (opcional)</FormLabel>
-                    <Select value={field.value ? String(field.value) : "__none__"} onValueChange={(v) => field.onChange(v === "__none__" ? undefined : Number(v))}>
-                      <FormControl>
-                        <SelectTrigger data-testid="select-supplier">
-                          <SelectValue placeholder="Sin proveedor" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="__none__">Sin proveedor</SelectItem>
-                        {(suppliers || []).map((s) => (
-                          <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Notas (opcional)</FormLabel>
-                    <FormControl>
-                      <Textarea {...field} placeholder="Observaciones adicionales..." data-testid="input-notes" />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
+                    <SelectContent>
+                      <SelectItem value="__none__">Sin proveedor</SelectItem>
+                      {(suppliers || []).map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="notes" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notas (opcional)</FormLabel>
+                  <FormControl><Textarea {...field} placeholder="Observaciones adicionales..." data-testid="input-notes" /></FormControl>
+                </FormItem>
+              )} />
               <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} data-testid="button-cancel">
-                  Cancelar
-                </Button>
+                <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} data-testid="button-cancel">Cancelar</Button>
                 <Button type="submit" disabled={createMutation.isPending} data-testid="button-save">
                   {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                   Guardar
@@ -694,9 +913,7 @@ export default function InventoryItems() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle data-testid="text-delete-dialog-title">
-              Eliminar {deleteTarget?.name}
-            </AlertDialogTitle>
+            <AlertDialogTitle data-testid="text-delete-dialog-title">Eliminar {deleteTarget?.name}</AlertDialogTitle>
             <AlertDialogDescription data-testid="text-delete-dialog-description">
               Si el insumo tiene registros relacionados (movimientos, conversiones, recetas, etc.) se desactivará en lugar de eliminarse permanentemente.
             </AlertDialogDescription>
@@ -738,9 +955,7 @@ export default function InventoryItems() {
                   const parsed = parseImportText(importText);
                   setImportPreview(parsed);
                   setImportResults(null);
-                  if (parsed.length === 0) {
-                    toast({ title: "No se encontraron items válidos", variant: "destructive" });
-                  }
+                  if (parsed.length === 0) toast({ title: "No se encontraron items válidos", variant: "destructive" });
                 }}
                 disabled={!importText.trim()}
                 data-testid="button-analyze-import"
@@ -758,40 +973,38 @@ export default function InventoryItems() {
                 </Button>
               )}
             </div>
-
             {importPreview.length > 0 && !importResults && (
               <div className="overflow-x-auto">
-                <Table data-testid="table-import-preview">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>SKU</TableHead>
-                      <TableHead>Nombre</TableHead>
-                      <TableHead>Categoría</TableHead>
-                      <TableHead>UOM</TableHead>
-                      <TableHead>Stock</TableHead>
-                      <TableHead>Reorden</TableHead>
-                      <TableHead>Par</TableHead>
-                      <TableHead>Perec.</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+                <table className="w-full text-sm" data-testid="table-import-preview">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="px-2 py-1 text-left text-xs">SKU</th>
+                      <th className="px-2 py-1 text-left text-xs">Nombre</th>
+                      <th className="px-2 py-1 text-left text-xs">Categoría</th>
+                      <th className="px-2 py-1 text-left text-xs">UOM</th>
+                      <th className="px-2 py-1 text-right text-xs">Stock</th>
+                      <th className="px-2 py-1 text-right text-xs">Reorden</th>
+                      <th className="px-2 py-1 text-right text-xs">Par</th>
+                      <th className="px-2 py-1 text-left text-xs">Perec.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
                     {importPreview.map((item, idx) => (
-                      <TableRow key={idx} data-testid={`row-import-preview-${idx}`}>
-                        <TableCell className="font-mono text-sm">{item.sku}</TableCell>
-                        <TableCell>{item.name}</TableCell>
-                        <TableCell>{item.category}</TableCell>
-                        <TableCell>{item.baseUom}</TableCell>
-                        <TableCell>{item.onHandQtyBase}</TableCell>
-                        <TableCell>{item.reorderPointQtyBase}</TableCell>
-                        <TableCell>{item.parLevelQtyBase}</TableCell>
-                        <TableCell>{item.isPerishable ? "Si" : "No"}</TableCell>
-                      </TableRow>
+                      <tr key={idx} className="border-b" data-testid={`row-import-preview-${idx}`}>
+                        <td className="px-2 py-1 font-mono text-xs">{item.sku}</td>
+                        <td className="px-2 py-1">{item.name}</td>
+                        <td className="px-2 py-1">{item.category}</td>
+                        <td className="px-2 py-1">{item.baseUom}</td>
+                        <td className="px-2 py-1 text-right">{item.onHandQtyBase}</td>
+                        <td className="px-2 py-1 text-right">{item.reorderPointQtyBase}</td>
+                        <td className="px-2 py-1 text-right">{item.parLevelQtyBase}</td>
+                        <td className="px-2 py-1">{item.isPerishable ? "Si" : "No"}</td>
+                      </tr>
                     ))}
-                  </TableBody>
-                </Table>
+                  </tbody>
+                </table>
               </div>
             )}
-
             {importResults && (
               <Card data-testid="card-import-results">
                 <CardContent className="p-4 space-y-2">
@@ -814,6 +1027,97 @@ export default function InventoryItems() {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function MobileEditForm({ item, suppliers, categories, onSave }: {
+  item: InvItem;
+  suppliers: Supplier[];
+  categories: { value: string; label: string }[];
+  onSave: (field: string, value: any) => void;
+}) {
+  const [name, setName] = useState(item.name);
+  const [category, setCategory] = useState(item.category);
+  const [supplierId, setSupplierId] = useState<number | null>(item.default_supplier_id);
+  const [reorder, setReorder] = useState(item.reorderPointQtyBase);
+  const [par, setPar] = useState(item.parLevelQtyBase);
+  const [cost, setCost] = useState(item.lastCostPerBaseUom || "0");
+
+  return (
+    <div className="space-y-3">
+      <div className="text-xs text-muted-foreground">{item.sku} · {item.baseUom} · En mano: {parseFloat(item.onHandQtyBase).toFixed(2)}</div>
+
+      <div className="space-y-1">
+        <label className="text-sm font-medium">Nombre</label>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => { if (name.trim() && name !== item.name) onSave("name", name.trim()); }}
+          data-testid="input-mobile-name"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-sm font-medium">Categoría</label>
+        <Select value={category} onValueChange={(v) => { setCategory(v); onSave("category", v); }}>
+          <SelectTrigger data-testid="select-mobile-category"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {categories.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-sm font-medium">Proveedor</label>
+        <Select value={supplierId ? String(supplierId) : "__none__"} onValueChange={(v) => {
+          const id = v === "__none__" ? null : Number(v);
+          setSupplierId(id);
+          onSave("defaultSupplierId", id);
+        }}>
+          <SelectTrigger data-testid="select-mobile-supplier"><SelectValue placeholder="Sin proveedor" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">Sin proveedor</SelectItem>
+            {suppliers.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Pto Reorden</label>
+          <Input
+            type="number" step="0.01" value={reorder}
+            onChange={(e) => setReorder(e.target.value)}
+            onBlur={() => { if (reorder !== item.reorderPointQtyBase) onSave("reorderPointQtyBase", reorder); }}
+            data-testid="input-mobile-reorder"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Nivel Par</label>
+          <Input
+            type="number" step="0.01" value={par}
+            onChange={(e) => setPar(e.target.value)}
+            onBlur={() => { if (par !== item.parLevelQtyBase) onSave("parLevelQtyBase", par); }}
+            data-testid="input-mobile-par"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-sm font-medium">Costo (₡/{item.baseUom})</label>
+        <Input
+          type="number" step="0.01" value={cost}
+          onChange={(e) => setCost(e.target.value)}
+          onBlur={() => { if (cost !== (item.lastCostPerBaseUom || "0")) onSave("lastCostPerBaseUom", Number(cost)); }}
+          data-testid="input-mobile-cost"
+        />
+      </div>
+
+      <div className="pt-2 flex justify-between items-center">
+        {stockBadge(item.onHandQtyBase, item.reorderPointQtyBase)}
+        <span className="text-xs text-muted-foreground">Los cambios se guardan al salir del campo</span>
+      </div>
     </div>
   );
 }

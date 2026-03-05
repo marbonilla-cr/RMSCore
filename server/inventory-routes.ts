@@ -1296,6 +1296,33 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         try {
           const existing = await invStorage.getInvItemBySku(sku);
           if (existing) {
+            if (supplierId) {
+              try {
+                if (!existing.defaultSupplierId) {
+                  await pool.query(`UPDATE inv_items SET default_supplier_id = $1 WHERE id = $2`, [supplierId, existing.id]);
+                }
+                const linkCheck = await pool.query(
+                  `SELECT id FROM inv_supplier_items WHERE supplier_id = $1 AND inv_item_id = $2 LIMIT 1`,
+                  [supplierId, existing.id]
+                );
+                if (linkCheck.rows.length === 0) {
+                  let purchaseUomVal = baseUom;
+                  if (purchaseUnit === "kilo") purchaseUomVal = "KG";
+                  else if (purchaseUnit === "botella") purchaseUomVal = "L";
+                  else if (purchaseUnit) purchaseUomVal = purchaseUnit.toUpperCase();
+                  await invStorage.createSupplierItem({
+                    supplierId,
+                    invItemId: existing.id,
+                    purchaseUom: purchaseUomVal,
+                    lastPricePerPurchaseUom: cost ? String(parseCSVNumber(cost)) : "0",
+                    isPreferred: true,
+                  } as any);
+                  results.linksCreated++;
+                }
+              } catch (linkErr: any) {
+                results.errors.push(`Link existente ${sku}→${supplierName}: ${linkErr.message}`);
+              }
+            }
             results.skipped++;
             continue;
           }
