@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import bcrypt from "bcryptjs";
 import { PLAN_MODULES, ADDON_PRICES } from "@shared/schema-public";
 import { propagateMigrations } from "./migrate-tenants";
+import { seedTenantSchema } from "../storage";
 
 const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
 
@@ -283,31 +284,8 @@ async function seedTenant(
     orderGlobalStart?: number;
     invoiceStart?: number;
   }
-) {
-  const dailyStart = sequences?.orderDailyStart ?? 1;
-  const globalStart = sequences?.orderGlobalStart ?? 1;
-  const invStart = sequences?.invoiceStart ?? 1;
-
-  await publicPool.query(
-    `INSERT INTO "${schemaName}".business_config
-       (business_name, legal_note, order_daily_start, order_global_start, invoice_start)
-     VALUES ($1, 'Gracias por su preferencia', $2, $3, $4)
-     ON CONFLICT DO NOTHING`,
-    [businessName, dailyStart, globalStart, invStart]
-  );
-
-  for (const [name, code] of [["Efectivo","CASH"],["Tarjeta","CARD"],["SINPE Móvil","SINPE"]]) {
-    await publicPool.query(`INSERT INTO "${schemaName}".payment_methods (name,code,active) VALUES ($1,$2,true) ON CONFLICT DO NOTHING`, [name, code]);
-  }
-  for (const [code, name, color] of [["TOP-COMIDAS","Comidas","emerald"],["TOP-BEBIDAS","Bebidas","blue"],["TOP-POSTRES","Postres","rose"],["TOP-ALCOHOL","Alcohol","amber"]]) {
-    await publicPool.query(`INSERT INTO "${schemaName}".categories (code,name,active,sort_order,color) VALUES ($1,$2,true,0,$3) ON CONFLICT DO NOTHING`, [code, name, color]);
-  }
-  await publicPool.query(`INSERT INTO "${schemaName}".hr_settings (work_start_time,work_end_time,late_tolerance_minutes,overtime_threshold_hours) VALUES ('08:00','22:00',10,8) ON CONFLICT DO NOTHING`);
-  const perms = ["MODULE_TABLES_VIEW","MODULE_POS_VIEW","MODULE_KDS_VIEW","MODULE_DASHBOARD_VIEW","MODULE_ADMIN_VIEW","MODULE_HR_VIEW","MODULE_INV_VIEW","MODULE_PRODUCTS_VIEW","SHORTAGES_VIEW","POS_PAY","POS_SPLIT","POS_PRINT","POS_EMAIL_TICKET","POS_VOID","POS_VOID_ORDER","POS_REOPEN","POS_VIEW_CASH_REPORT","CASH_CLOSE","POS_EDIT_CUSTOMER_PREPAY","POS_EDIT_CUSTOMER_POSTPAY","ADMIN"];
-  for (const key of perms) {
-    await publicPool.query(`INSERT INTO "${schemaName}".permissions (key,description) VALUES ($1,$1) ON CONFLICT DO NOTHING`, [key]);
-    await publicPool.query(`INSERT INTO "${schemaName}".role_permissions (role,permission_key,granted) VALUES ('MANAGER',$1,true) ON CONFLICT DO NOTHING`, [key]);
-  }
+): Promise<void> {
+  await seedTenantSchema(publicPool, schemaName, businessName, sequences);
 }
 
 async function runMigrations(schemaName: string): Promise<void> {

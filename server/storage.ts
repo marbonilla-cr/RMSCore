@@ -2251,4 +2251,97 @@ export async function seedExtraTypes() {
   }
 }
 
+export async function seedTenantSchema(
+  pool: import("pg").Pool,
+  schemaName: string,
+  businessName: string,
+  sequences?: {
+    orderDailyStart?: number;
+    orderGlobalStart?: number;
+    invoiceStart?: number;
+  }
+): Promise<void> {
+  const s = schemaName;
+  const dailyStart = sequences?.orderDailyStart ?? 1;
+  const globalStart = sequences?.orderGlobalStart ?? 1;
+  const invStart = sequences?.invoiceStart ?? 1;
+
+  await pool.query(
+    `INSERT INTO "${s}".business_config
+       (business_name, legal_note, order_daily_start, order_global_start, invoice_start)
+     VALUES ($1, 'Gracias por su preferencia', $2, $3, $4)
+     ON CONFLICT DO NOTHING`,
+    [businessName, dailyStart, globalStart, invStart]
+  );
+
+  const pmData = [
+    { payment_code: "CASH", payment_name: "Efectivo", active: true, sort_order: 0 },
+    { payment_code: "CARD", payment_name: "Tarjeta", active: true, sort_order: 1 },
+    { payment_code: "SINPE", payment_name: "SINPE Móvil", active: true, sort_order: 2 },
+  ];
+  for (const pm of pmData) {
+    await pool.query(
+      `INSERT INTO "${s}".payment_methods (payment_code, payment_name, active, sort_order)
+       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+      [pm.payment_code, pm.payment_name, pm.active, pm.sort_order]
+    );
+  }
+
+  const catData = [
+    { code: "TOP-COMIDAS", name: "Comidas", color: "emerald", sort_order: 1 },
+    { code: "TOP-BEBIDAS", name: "Bebidas", color: "blue", sort_order: 2 },
+    { code: "TOP-POSTRES", name: "Postres", color: "rose", sort_order: 3 },
+    { code: "TOP-ALCOHOL", name: "Alcohol", color: "amber", sort_order: 4 },
+  ];
+  for (const cat of catData) {
+    await pool.query(
+      `INSERT INTO "${s}".categories (code, name, active, sort_order, color)
+       VALUES ($1, $2, true, $3, $4) ON CONFLICT DO NOTHING`,
+      [cat.code, cat.name, cat.sort_order, cat.color]
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO "${s}".hr_settings
+       (work_start_time, work_end_time, late_tolerance_minutes, overtime_threshold_hours)
+     VALUES ('08:00', '22:00', 10, 8) ON CONFLICT DO NOTHING`
+  );
+
+  for (const perm of SYSTEM_PERMISSIONS) {
+    await pool.query(
+      `INSERT INTO "${s}".permissions (key, description)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [perm.key, perm.description]
+    );
+  }
+
+  for (const [role, keys] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+    for (const key of keys) {
+      await pool.query(
+        `INSERT INTO "${s}".role_permissions (role, permission_key)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [role, key]
+      );
+    }
+  }
+
+  const extraTypes = [
+    { typeCode: "BONO", name: "Bono", kind: "EARNING" },
+    { typeCode: "VIATICO", name: "Viático", kind: "EARNING" },
+    { typeCode: "REEMBOLSO", name: "Reembolso", kind: "EARNING" },
+    { typeCode: "PRESTAMO_DEDUCCION", name: "Préstamo / Deducción", kind: "DEDUCTION" },
+    { typeCode: "AJUSTE_POSITIVO", name: "Ajuste Positivo", kind: "EARNING" },
+    { typeCode: "AJUSTE_NEGATIVO", name: "Ajuste Negativo", kind: "DEDUCTION" },
+  ];
+  for (const et of extraTypes) {
+    await pool.query(
+      `INSERT INTO "${s}".hr_extra_types (type_code, name, kind)
+       VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+      [et.typeCode, et.name, et.kind]
+    );
+  }
+
+  console.log(`[seed] Schema "${s}" inicializado ✓`);
+}
+
 export { getBusinessDate };
