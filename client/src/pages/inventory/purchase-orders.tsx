@@ -8,12 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -650,15 +644,14 @@ export default function PurchaseOrdersPage() {
                     Enviar OC
                   </Button>
                 )}
-                {(poStatus === "SENT" || poStatus === "PARTIAL") && (
-                  <Button
-                    data-testid="button-receive-po"
-                    onClick={openReceiveDialog}
-                  >
-                    <PackageCheck className="mr-2 h-4 w-4" />
-                    Recibir
-                  </Button>
-                )}
+                <Button
+                  data-testid="button-receive-po"
+                  onClick={openReceiveDialog}
+                  disabled={isDraft || poStatus === "RECEIVED"}
+                >
+                  <PackageCheck className="mr-2 h-4 w-4" />
+                  Recibir
+                </Button>
                 <Button variant="outline" size="sm" data-testid="button-download-csv" onClick={handleDownloadCSV}>
                   <Download className="mr-2 h-4 w-4" />
                   Descargar CSV
@@ -818,6 +811,83 @@ export default function PurchaseOrdersPage() {
           </CardContent>
         </Card>
 
+        {receiveOpen && (
+          <Card className="mt-4 border-primary/30" data-testid="card-receive-inline">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Recibir OC #{selectedPoId}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="overflow-x-auto">
+                  <Table data-testid="table-receive-lines">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Artículo</TableHead>
+                        <TableHead>Cant. Recibida</TableHead>
+                        <TableHead>Precio Unit.</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {receiveLines.map((rl) => {
+                        const line = poLines?.find((l) => l.id === rl.poLineId);
+                        return (
+                          <TableRow key={rl.poLineId} data-testid={`row-receive-${rl.poLineId}`}>
+                            <TableCell data-testid={`text-receive-item-${rl.poLineId}`}>
+                              {line?.invItemName || line?.itemName || line?.itemSku || (line ? itemMap.get(line.invItemId)?.name : "") || `Línea #${rl.poLineId}`}
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                data-testid={`input-receive-qty-${rl.poLineId}`}
+                                type="number"
+                                step="0.01"
+                                value={rl.qtyPurchaseUomReceived}
+                                onChange={(e) => updateReceiveLine(rl.poLineId, "qtyPurchaseUomReceived", parseFloat(e.target.value) || 0)}
+                                className="w-28"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                data-testid={`input-receive-price-${rl.poLineId}`}
+                                type="number"
+                                step="0.01"
+                                value={rl.unitPricePerPurchaseUom}
+                                onChange={(e) => updateReceiveLine(rl.poLineId, "unitPricePerPurchaseUom", parseFloat(e.target.value) || 0)}
+                                className="w-28"
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-1">
+                  <Label>Nota (opcional)</Label>
+                  <Input
+                    data-testid="input-receive-note"
+                    value={receiveNote}
+                    onChange={(e) => setReceiveNote(e.target.value)}
+                    placeholder="Nota de recepción"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 flex-wrap">
+                  <Button variant="outline" data-testid="button-cancel-receive" onClick={() => setReceiveOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    data-testid="button-confirm-receive"
+                    onClick={handleReceive}
+                    disabled={receiveMutation.isPending}
+                  >
+                    {receiveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Confirmar Recepción
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {receiptHistory.length > 0 && (
           <Card className="mt-4">
             <CardHeader className="pb-2">
@@ -893,80 +963,6 @@ export default function PurchaseOrdersPage() {
           </Card>
         )}
 
-        <Dialog open={receiveOpen} onOpenChange={(open) => { if (!open) setReceiveOpen(false); }}>
-          <DialogContent className="max-w-2xl" data-testid="dialog-receive">
-            <DialogHeader>
-              <DialogTitle>Recibir OC #{selectedPoId}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="overflow-x-auto">
-                <Table data-testid="table-receive-lines">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Artículo</TableHead>
-                      <TableHead>Cant. Recibida</TableHead>
-                      <TableHead>Precio Unit.</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {receiveLines.map((rl) => {
-                      const line = poLines?.find((l) => l.id === rl.poLineId);
-                      return (
-                        <TableRow key={rl.poLineId} data-testid={`row-receive-${rl.poLineId}`}>
-                          <TableCell data-testid={`text-receive-item-${rl.poLineId}`}>
-                            {line?.invItemName || line?.itemName || line?.itemSku || (line ? itemMap.get(line.invItemId)?.name : "") || `Línea #${rl.poLineId}`}
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              data-testid={`input-receive-qty-${rl.poLineId}`}
-                              type="number"
-                              step="0.01"
-                              value={rl.qtyPurchaseUomReceived}
-                              onChange={(e) => updateReceiveLine(rl.poLineId, "qtyPurchaseUomReceived", parseFloat(e.target.value) || 0)}
-                              className="w-28"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              data-testid={`input-receive-price-${rl.poLineId}`}
-                              type="number"
-                              step="0.01"
-                              value={rl.unitPricePerPurchaseUom}
-                              onChange={(e) => updateReceiveLine(rl.poLineId, "unitPricePerPurchaseUom", parseFloat(e.target.value) || 0)}
-                              className="w-28"
-                            />
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="space-y-1">
-                <Label>Nota (opcional)</Label>
-                <Input
-                  data-testid="input-receive-note"
-                  value={receiveNote}
-                  onChange={(e) => setReceiveNote(e.target.value)}
-                  placeholder="Nota de recepción"
-                />
-              </div>
-              <div className="flex justify-end gap-2 flex-wrap">
-                <Button variant="outline" data-testid="button-cancel-receive" onClick={() => setReceiveOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button
-                  data-testid="button-confirm-receive"
-                  onClick={handleReceive}
-                  disabled={receiveMutation.isPending}
-                >
-                  {receiveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Confirmar Recepción
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
       </div>
     );
   }
