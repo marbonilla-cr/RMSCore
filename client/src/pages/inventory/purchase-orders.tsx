@@ -374,7 +374,7 @@ export default function PurchaseOrdersPage() {
   };
 
   function handleAddLine() {
-    if (!newLine.invItemId || !newLine.qtyPurchaseUom || !newLine.purchaseUom || !newLine.unitPricePerPurchaseUom) {
+    if (!newLine.invItemId || !newLine.qtyPurchaseUom || !newLine.purchaseUom) {
       toast({ title: "Complete todos los campos de la línea", variant: "destructive" });
       return;
     }
