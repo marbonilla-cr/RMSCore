@@ -17,24 +17,28 @@ interface ValueItem {
   sku: string;
   name: string;
   category: string;
-  onHand: number;
   baseUom: string;
-  avgCost: number;
-  totalValue: number;
+  onHandQtyBase: string;
+  avgCostPerBaseUom: string;
+  totalValue: string;
 }
 
 interface LowStockItem {
+  id: number;
   sku: string;
   name: string;
   category: string;
-  onHand: number;
-  reorderPoint: number;
   baseUom: string;
+  onHandQtyBase: string;
+  reorderPointQtyBase: string;
+  avgCostPerBaseUom: string;
 }
 
-function fmt(n: number): string {
-  return "₡" + n.toLocaleString("es-CR", { minimumFractionDigits: 2 });
-}
+const fmt = (val: string | number) =>
+  `₡${parseFloat(String(val)).toLocaleString("es-CR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 export default function InventoryReportsPage() {
   const [activeTab, setActiveTab] = useState<"value" | "lowstock">("value");
@@ -78,18 +82,19 @@ function ValueTab() {
   const grouped = useMemo(() => {
     const map = new Map<string, { items: ValueItem[]; subtotal: number }>();
     for (const item of sorted) {
+      const tv = parseFloat(item.totalValue);
       const g = map.get(item.category);
       if (g) {
         g.items.push(item);
-        g.subtotal += item.totalValue;
+        g.subtotal += tv;
       } else {
-        map.set(item.category, { items: [item], subtotal: item.totalValue });
+        map.set(item.category, { items: [item], subtotal: tv });
       }
     }
     return map;
   }, [sorted]);
 
-  const grandTotal = useMemo(() => sorted.reduce((s, i) => s + i.totalValue, 0), [sorted]);
+  const grandTotal = useMemo(() => sorted.reduce((s, i) => s + parseFloat(i.totalValue), 0), [sorted]);
 
   return (
     <div className="space-y-4">
@@ -140,11 +145,11 @@ function ValueTab() {
                           <TableCell data-testid={`text-name-${item.sku}`}>{item.name}</TableCell>
                           <TableCell data-testid={`text-category-${item.sku}`}>{item.category}</TableCell>
                           <TableCell className="text-right" data-testid={`text-onhand-${item.sku}`}>
-                            {item.onHand.toLocaleString("es-CR")}
+                            {parseFloat(item.onHandQtyBase).toLocaleString("es-CR")}
                           </TableCell>
                           <TableCell data-testid={`text-uom-${item.sku}`}>{item.baseUom}</TableCell>
                           <TableCell className="text-right" data-testid={`text-avgcost-${item.sku}`}>
-                            {fmt(item.avgCost)}
+                            {fmt(item.avgCostPerBaseUom)}
                           </TableCell>
                           <TableCell className="text-right" data-testid={`text-totalvalue-${item.sku}`}>
                             {fmt(item.totalValue)}
@@ -207,18 +212,20 @@ function LowStockTab() {
               </TableHeader>
               <TableBody>
                 {data.map((item) => {
-                  const deficit = item.reorderPoint - item.onHand;
-                  const isZero = item.onHand <= 0;
+                  const onHand = parseFloat(item.onHandQtyBase);
+                  const reorderPoint = parseFloat(item.reorderPointQtyBase);
+                  const deficit = reorderPoint - onHand;
+                  const isZero = onHand <= 0;
                   return (
                     <TableRow key={item.sku} data-testid={`row-lowstock-${item.sku}`}>
                       <TableCell data-testid={`text-ls-sku-${item.sku}`}>{item.sku}</TableCell>
                       <TableCell data-testid={`text-ls-name-${item.sku}`}>{item.name}</TableCell>
                       <TableCell data-testid={`text-ls-category-${item.sku}`}>{item.category}</TableCell>
                       <TableCell className="text-right" data-testid={`text-ls-onhand-${item.sku}`}>
-                        {item.onHand.toLocaleString("es-CR")}
+                        {onHand.toLocaleString("es-CR")}
                       </TableCell>
                       <TableCell className="text-right" data-testid={`text-ls-reorder-${item.sku}`}>
-                        {item.reorderPoint.toLocaleString("es-CR")}
+                        {reorderPoint.toLocaleString("es-CR")}
                       </TableCell>
                       <TableCell className="text-right" data-testid={`text-ls-deficit-${item.sku}`}>
                         {deficit.toLocaleString("es-CR")}

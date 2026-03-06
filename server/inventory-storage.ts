@@ -325,6 +325,7 @@ export async function getPoReceiptLines(receiptId: number) {
     unitCostPerBaseUom: invPoReceiptLines.unitCostPerBaseUom,
     createdAt: invPoReceiptLines.createdAt,
     invItemName: invItems.name,
+    purchaseUom: invPurchaseOrderLines.purchaseUom,
   }).from(invPoReceiptLines)
     .innerJoin(invPurchaseOrderLines, eq(invPoReceiptLines.poLineId, invPurchaseOrderLines.id))
     .innerJoin(invItems, eq(invPurchaseOrderLines.invItemId, invItems.id))
