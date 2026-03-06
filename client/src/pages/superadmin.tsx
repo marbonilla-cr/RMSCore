@@ -453,7 +453,7 @@ export default function SuperadminPage() {
           {([
             {id:"tenants", label:"Tenants",    icon:Ico.home  },
             {id:"metrics", label:"Métricas",   icon:Ico.chart },
-            {id:"migrations", label:"Migraciones", icon:Ico.gear },
+            {id:"migrations", label:"Versiones de Schema", icon:Ico.gear },
             {id:"setup",   label:"Setup",      icon:Ico.gear  },
           ] as const).map(item=>(
             <div key={item.id} className="sa-nav-item"
@@ -485,7 +485,7 @@ export default function SuperadminPage() {
         {/* Topbar */}
         <div style={{ height:54, background:"var(--sa-s0)", borderBottom:"1px solid var(--sa-border)", display:"flex", alignItems:"center", padding:"0 24px", position:"sticky", top:0, zIndex:50 }}>
           <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:18, flex:1 }}>
-            {{tenants:"Tenants",metrics:"Métricas",setup:"Configuración",migrations:"Migraciones"}[section]}
+            {{tenants:"Tenants",metrics:"Métricas",setup:"Configuración",migrations:"Versiones de Schema"}[section]}
           </div>
           <button onClick={loadData} style={{ width:32, height:32, background:"var(--sa-s1)", border:"1px solid var(--sa-border)", borderRadius:"var(--sa-r-xs)", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:"var(--sa-text2)" }}>{Ico.refresh}</button>
         </div>
@@ -586,12 +586,13 @@ export default function SuperadminPage() {
                             <td style={{ padding:"12px 18px" }}>
                               <div className="sa-row-actions" style={{ display:"flex", gap:5 }}>
                                 <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-border)", background:"var(--sa-s0)", color:"var(--sa-text2)" }} onClick={()=>openDetail(t.id)}>Ver</button>
-                                {t.status==="FAILED"
-                                  ? <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-amber)", background:"var(--sa-s0)", color:"var(--sa-amber)" }} onClick={()=>openReprovision(t)}>Re-provisionar</button>
-                                  : t.is_active
-                                    ? <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>doSuspend(t)}>Suspender</button>
-                                    : <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>doReactivate(t)}>Reactivar</button>
+                                {(t.status==="FAILED"||t.status==="ACTIVE") &&
+                                  <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-amber)", background:"var(--sa-s0)", color:"var(--sa-amber)" }} onClick={()=>openReprovision(t)}>🔄 Re-provisionar</button>
                                 }
+                                {t.status!=="FAILED" && (t.is_active
+                                  ? <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>doSuspend(t)}>Suspender</button>
+                                  : <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>doReactivate(t)}>Reactivar</button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -638,11 +639,11 @@ export default function SuperadminPage() {
             </div>
           </>}
 
-          {/* ════ MIGRATIONS ════ */}
+          {/* ════ VERSIONES DE SCHEMA ════ */}
           {section==="migrations" && (
-            <div style={{ maxWidth:800 }}>
+            <div style={{ maxWidth:900 }}>
               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
-                <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:16 }}>Estado de Migraciones por Schema</div>
+                <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:16 }}>Versiones de Schema</div>
                 <button onClick={loadMigrationStatus} style={{ ...S.btnSec, padding:"5px 12px", fontSize:12 }}>
                   {migrationLoading?"Cargando...":"Actualizar"}
                 </button>
@@ -657,7 +658,7 @@ export default function SuperadminPage() {
                   <table style={{ width:"100%", borderCollapse:"collapse" }}>
                     <thead>
                       <tr style={{ background:"var(--sa-s1)" }}>
-                        {["Schema","Tenant","Status","Aplicadas","Pendientes","Última migración"].map((h,i)=>(
+                        {["Tenant","Plan","Schema","Aplicadas","Pendientes","Última migración","Estado"].map((h,i)=>(
                           <th key={i} style={{ textAlign:"left", padding:"9px 14px", fontSize:10, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase" as const, color:"var(--sa-text3)", borderBottom:"1px solid var(--sa-border)", whiteSpace:"nowrap" as const }}>{h}</th>
                         ))}
                       </tr>
@@ -665,18 +666,21 @@ export default function SuperadminPage() {
                     <tbody>
                       {migrationStatus.map((s:any)=>(
                         <tr key={s.schemaName} className="sa-tr" style={{ borderBottom:"1px solid var(--sa-border)" }}>
-                          <td style={{ padding:"10px 14px", fontFamily:"var(--sa-f-mono)", fontSize:11 }}>{s.schemaName}</td>
                           <td style={{ padding:"10px 14px", fontSize:13, fontWeight:500 }}>{s.slug||"–"}</td>
                           <td style={{ padding:"10px 14px" }}>
-                            {s.pendingCount===0
-                              ? <span style={badge("var(--sa-sage)","var(--sa-sage-d)","var(--sa-sage-m)")}>✓ Al día</span>
-                              : <span style={badge("var(--sa-amber)","var(--sa-amber)"+"18","var(--sa-amber)"+"50")}>{s.pendingCount} pendiente{s.pendingCount>1?"s":""}</span>
-                            }
+                            <span style={badge(PLAN_COLORS[s.plan as Plan]||"#888",(PLAN_COLORS[s.plan as Plan]||"#888")+"18",(PLAN_COLORS[s.plan as Plan]||"#888")+"50")}>{PLAN_LABELS[s.plan as Plan]||s.plan}</span>
                           </td>
+                          <td style={{ padding:"10px 14px", fontFamily:"var(--sa-f-mono)", fontSize:11 }}>{s.schemaName}</td>
                           <td style={{ padding:"10px 14px", fontFamily:"var(--sa-f-mono)", fontSize:13, fontWeight:600 }}>{s.appliedCount}</td>
                           <td style={{ padding:"10px 14px", fontFamily:"var(--sa-f-mono)", fontSize:13, fontWeight:600, color:s.pendingCount>0?"var(--sa-amber)":"var(--sa-text3)" }}>{s.pendingCount}</td>
                           <td style={{ padding:"10px 14px", fontSize:12, color:"var(--sa-text3)" }}>
                             {s.lastAppliedAt ? new Date(s.lastAppliedAt).toLocaleDateString("es-CR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "–"}
+                          </td>
+                          <td style={{ padding:"10px 14px" }}>
+                            {s.pendingCount===0
+                              ? <span style={badge("var(--sa-sage)","var(--sa-sage-d)","var(--sa-sage-m)")}>Al día</span>
+                              : <span style={badge("var(--sa-amber)","var(--sa-amber)"+"18","var(--sa-amber)"+"50")}>Pendiente</span>
+                            }
                           </td>
                         </tr>
                       ))}
@@ -895,12 +899,13 @@ export default function SuperadminPage() {
                     style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-border)", background:"var(--sa-s0)", color:"var(--sa-text2)" }}>
                     {Ico.upgrade} Cambiar plan
                   </button>
-                  {detailData.tenant.status==="FAILED"
-                    ? <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-amber)", background:"var(--sa-s0)", color:"var(--sa-amber)" }} onClick={()=>{setDetailOpen(false);openReprovision(detailData.tenant);}}>Re-provisionar</button>
-                    : detailData.tenant.is_active
-                      ? <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>{setDetailOpen(false);doSuspend(detailData.tenant);}}>Suspender</button>
-                      : <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>{setDetailOpen(false);doReactivate(detailData.tenant);}}>Reactivar</button>
+                  {(detailData.tenant.status==="FAILED"||detailData.tenant.status==="ACTIVE") &&
+                    <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-amber)", background:"var(--sa-s0)", color:"var(--sa-amber)" }} onClick={()=>{setDetailOpen(false);openReprovision(detailData.tenant);}}>🔄 Re-provisionar</button>
                   }
+                  {detailData.tenant.status!=="FAILED" && (detailData.tenant.is_active
+                    ? <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>{setDetailOpen(false);doSuspend(detailData.tenant);}}>Suspender</button>
+                    : <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>{setDetailOpen(false);doReactivate(detailData.tenant);}}>Reactivar</button>
+                  )}
                 </div>
               </div>
             )}
@@ -943,7 +948,7 @@ export default function SuperadminPage() {
               <button style={S.btnSec} onClick={()=>setReprovOpen(false)}>Cancelar</button>
               <button onClick={submitReprovision} disabled={reprovLoading}
                 style={{ padding:"9px 20px", background:"var(--sa-amber)", color:"white", border:"none", borderRadius:"var(--sa-r-sm)", fontFamily:"var(--sa-f-disp)", fontWeight:600, fontSize:14, cursor:"pointer", opacity:reprovLoading?0.7:1 }}>
-                {reprovLoading?"Re-provisionando...":"Re-provisionar"}
+                {reprovLoading?"Re-provisionando...":"🔄 Re-provisionar"}
               </button>
             </div>
           </div>

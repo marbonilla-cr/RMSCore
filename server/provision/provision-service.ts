@@ -143,9 +143,9 @@ export async function reprovisionTenant(tenantId: number, input: ReprovisionInpu
   if (rows.length === 0) throw new Error(`Tenant ${tenantId} no encontrado`);
 
   const tenant = rows[0];
-  if (tenant.status !== "FAILED") {
+  if (tenant.status !== "FAILED" && tenant.status !== "ACTIVE") {
     throw new Error(
-      `Solo se puede re-provisionar tenants FAILED. Status actual: ${tenant.status}`
+      `Solo se puede re-provisionar tenants FAILED o ACTIVE. Status actual: ${tenant.status}`
     );
   }
 
