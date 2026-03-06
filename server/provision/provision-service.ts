@@ -1,11 +1,7 @@
-/**
- * server/provision/provision-service.ts
- * Lógica core: crear, suspender, reactivar tenants con rollback automático.
- */
-
 import { Pool } from "pg";
 import bcrypt from "bcryptjs";
 import { PLAN_MODULES, ADDON_PRICES } from "@shared/schema-public";
+import { propagateMigrations } from "./migrate-tenants";
 
 const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
 
@@ -18,6 +14,19 @@ export interface CreateTenantInput {
   adminPassword: string;
   adminDisplayName: string;
   actorId?: number;
+  orderDailyStart?: number;
+  orderGlobalStart?: number;
+  invoiceStart?: number;
+}
+
+export interface ReprovisionInput {
+  adminEmail: string;
+  adminPassword: string;
+  adminDisplayName: string;
+  actorId?: number;
+  orderDailyStart?: number;
+  orderGlobalStart?: number;
+  invoiceStart?: number;
 }
 
 export function validateSlug(slug: string): string | null {
@@ -67,7 +76,11 @@ export async function createTenant(input: CreateTenantInput) {
     console.log(`[provision] Schema "${schemaName}" creado`);
 
     await runMigrations(schemaName);
-    await seedTenant(schemaName, input.businessName);
+    await seedTenant(schemaName, input.businessName, {
+      orderDailyStart: input.orderDailyStart,
+      orderGlobalStart: input.orderGlobalStart,
+      invoiceStart: input.invoiceStart,
+    });
     await createAdminUser(schemaName, { email: input.adminEmail, password: input.adminPassword, displayName: input.adminDisplayName });
     await activatePlanModules(tenantId, input.plan);
 
@@ -119,6 +132,95 @@ export async function reactivateTenant(tenantId: number, actorId?: number) {
     `INSERT INTO public.provision_log (tenant_id,action,actor_id,status) VALUES ($1,'REACTIVATE',$2,'COMPLETED')`,
     [tenantId, actorId || null]
   );
+}
+
+export async function reprovisionTenant(tenantId: number, input: ReprovisionInput) {
+  const { rows } = await publicPool.query(
+    `SELECT id, slug, schema_name, plan, status, business_name
+     FROM public.tenants WHERE id = $1`,
+    [tenantId]
+  );
+  if (rows.length === 0) throw new Error(`Tenant ${tenantId} no encontrado`);
+
+  const tenant = rows[0];
+  if (tenant.status !== "FAILED") {
+    throw new Error(
+      `Solo se puede re-provisionar tenants FAILED. Status actual: ${tenant.status}`
+    );
+  }
+
+  const schemaName: string = tenant.schema_name;
+
+  await publicPool.query(
+    `INSERT INTO public.provision_log (tenant_id, action, actor_id, status, metadata)
+     VALUES ($1, 'REPROVISION', $2, 'STARTED', $3)`,
+    [tenantId, input.actorId || null,
+     JSON.stringify({ slug: tenant.slug, plan: tenant.plan })]
+  );
+
+  try {
+    await publicPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    console.log(`[reprovision] Schema "${schemaName}" eliminado`);
+
+    await publicPool.query(
+      `UPDATE public.tenants SET status='PROVISIONING', is_active=false,
+       updated_at=NOW() WHERE id=$1`,
+      [tenantId]
+    );
+
+    await publicPool.query(`CREATE SCHEMA "${schemaName}"`);
+    console.log(`[reprovision] Schema "${schemaName}" re-creado`);
+
+    await runMigrations(schemaName);
+    await seedTenant(schemaName, tenant.business_name, {
+      orderDailyStart: input.orderDailyStart,
+      orderGlobalStart: input.orderGlobalStart,
+      invoiceStart: input.invoiceStart,
+    });
+    await createAdminUser(schemaName, {
+      email: input.adminEmail,
+      password: input.adminPassword,
+      displayName: input.adminDisplayName,
+    });
+    await activatePlanModules(tenantId, tenant.plan);
+
+    await publicPool.query(
+      `UPDATE public.tenants SET status='ACTIVE', is_active=true,
+       updated_at=NOW() WHERE id=$1`,
+      [tenantId]
+    );
+    await publicPool.query(
+      `UPDATE public.provision_log SET status='COMPLETED'
+       WHERE tenant_id=$1 AND action='REPROVISION' AND status='STARTED'`,
+      [tenantId]
+    );
+
+    console.log(`[reprovision] Tenant "${tenant.slug}" re-provisionado ✓`);
+    const result = (await publicPool.query(
+      `SELECT id, slug, schema_name, plan, status, is_active
+       FROM public.tenants WHERE id=$1`,
+      [tenantId]
+    )).rows[0];
+
+    return {
+      id: result.id, slug: result.slug, schemaName: result.schema_name,
+      plan: result.plan, status: result.status, isActive: result.is_active,
+    };
+  } catch (err: any) {
+    console.error(`[reprovision] ERROR:`, err.message);
+    try {
+      await publicPool.query(
+        `UPDATE public.tenants SET status='FAILED', updated_at=NOW() WHERE id=$1`,
+        [tenantId]
+      );
+      await publicPool.query(
+        `UPDATE public.provision_log SET status='FAILED', error_message=$1
+         WHERE tenant_id=$2 AND action='REPROVISION' AND status='STARTED'`,
+        [err.message, tenantId]
+      );
+    } catch (_) {}
+    throw err;
+  }
 }
 
 export async function changeTenantPlan(tenantId: number, newPlan: string, actorId?: number) {
@@ -173,8 +275,27 @@ async function createAdminUser(schemaName: string, data: { email: string; passwo
   );
 }
 
-async function seedTenant(schemaName: string, businessName: string) {
-  await publicPool.query(`INSERT INTO "${schemaName}".business_config (business_name,legal_note) VALUES ($1,'Gracias por su preferencia') ON CONFLICT DO NOTHING`, [businessName]);
+async function seedTenant(
+  schemaName: string,
+  businessName: string,
+  sequences?: {
+    orderDailyStart?: number;
+    orderGlobalStart?: number;
+    invoiceStart?: number;
+  }
+) {
+  const dailyStart = sequences?.orderDailyStart ?? 1;
+  const globalStart = sequences?.orderGlobalStart ?? 1;
+  const invStart = sequences?.invoiceStart ?? 1;
+
+  await publicPool.query(
+    `INSERT INTO "${schemaName}".business_config
+       (business_name, legal_note, order_daily_start, order_global_start, invoice_start)
+     VALUES ($1, 'Gracias por su preferencia', $2, $3, $4)
+     ON CONFLICT DO NOTHING`,
+    [businessName, dailyStart, globalStart, invStart]
+  );
+
   for (const [name, code] of [["Efectivo","CASH"],["Tarjeta","CARD"],["SINPE Móvil","SINPE"]]) {
     await publicPool.query(`INSERT INTO "${schemaName}".payment_methods (name,code,active) VALUES ($1,$2,true) ON CONFLICT DO NOTHING`, [name, code]);
   }
@@ -189,14 +310,6 @@ async function seedTenant(schemaName: string, businessName: string) {
   }
 }
 
-async function runMigrations(schemaName: string) {
-  const source = process.env.TENANT_SCHEMA || "public";
-  const tables = ["users","tables","categories","products","payment_methods","modifier_groups","modifier_options","item_modifier_groups","orders","order_items","order_item_modifiers","order_item_taxes","order_item_discounts","order_subaccounts","kitchen_tickets","kitchen_ticket_items","qr_submissions","qr_rate_limits","portion_reservations","payments","cash_sessions","split_accounts","split_items","sales_ledger_items","voided_items","audit_events","discounts","order_discounts","tax_categories","product_tax_categories","business_config","printers","permissions","role_permissions","hr_settings","hr_weekly_schedules","hr_schedule_days","hr_time_punches","service_charge_ledger","service_charge_payouts","hr_extra_types","hr_payroll_extras","inv_items","inv_uom_conversions","inv_suppliers","inv_supplier_items","inv_purchase_orders","inv_purchase_order_lines","inv_po_receipts","inv_po_receipt_lines","inv_physical_counts","inv_physical_count_lines","inv_recipes","inv_recipe_lines","inv_order_item_consumptions","inv_movements","inv_shortages","inv_shortage_events","inv_audit_alerts","reservations","reservation_duration_config","reservation_settings","qbo_config","qbo_category_mapping","qbo_sync_log","qbo_export_jobs"];
-  for (const table of tables) {
-    try {
-      await publicPool.query(`CREATE TABLE IF NOT EXISTS "${schemaName}"."${table}" (LIKE "${source}"."${table}" INCLUDING ALL)`);
-    } catch (err: any) {
-      if (!err.message.includes("does not exist")) console.warn(`[migration] ${table}: ${err.message}`);
-    }
-  }
+async function runMigrations(schemaName: string): Promise<void> {
+  await propagateMigrations(schemaName);
 }

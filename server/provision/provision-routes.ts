@@ -5,7 +5,8 @@
 
 import type { Express, Request, Response } from "express";
 import { Pool } from "pg";
-import { createTenant, suspendTenant, reactivateTenant, changeTenantPlan, activateAddon, validateSlug } from "./provision-service";
+import { createTenant, suspendTenant, reactivateTenant, changeTenantPlan, activateAddon, validateSlug, reprovisionTenant, type ReprovisionInput } from "./provision-service";
+import { getMigrationStatus } from "./migrate-tenants";
 import { ADDON_PRICES, PLAN_PRICES, PLAN_MODULES } from "@shared/schema-public";
 
 const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
@@ -44,11 +45,19 @@ export function registerProvisionRoutes(app: Express) {
 
   app.post("/api/superadmin/tenants", requireSuperadmin, async (req, res) => {
     try {
-      const { slug, businessName, plan, billingEmail, adminEmail, adminPassword, adminDisplayName } = req.body;
+      const { slug, businessName, plan, billingEmail, adminEmail, adminPassword, adminDisplayName, orderDailyStart, orderGlobalStart, invoiceStart } = req.body;
       if (!slug || !businessName || !plan || !billingEmail || !adminEmail) return res.status(400).json({ message: "Faltan campos requeridos" });
       const err = validateSlug(slug);
       if (err) return res.status(400).json({ message: err });
-      const result = await createTenant({ slug, businessName, plan, billingEmail, adminEmail, adminPassword: adminPassword || "TempPass123!", adminDisplayName: adminDisplayName || businessName, actorId: (req as any).superadminId });
+      const result = await createTenant({
+        slug, businessName, plan, billingEmail,
+        adminEmail, adminPassword: adminPassword || "TempPass123!",
+        adminDisplayName: adminDisplayName || businessName,
+        actorId: (req as any).superadminId,
+        orderDailyStart: orderDailyStart ? parseInt(orderDailyStart) : undefined,
+        orderGlobalStart: orderGlobalStart ? parseInt(orderGlobalStart) : undefined,
+        invoiceStart: invoiceStart ? parseInt(invoiceStart) : undefined,
+      });
       res.status(201).json(result);
     } catch (err: any) { res.status(400).json({ message: err.message }); }
   });
@@ -67,6 +76,42 @@ export function registerProvisionRoutes(app: Express) {
       await reactivateTenant(parseInt(req.params.id), (req as any).superadminId);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.post("/api/superadmin/tenants/:id/reprovision", requireSuperadmin, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.id);
+      const {
+        adminEmail, adminPassword, adminDisplayName,
+        orderDailyStart, orderGlobalStart, invoiceStart,
+      } = req.body;
+
+      if (!adminEmail || !adminPassword || !adminDisplayName) {
+        return res.status(400).json({
+          message: "adminEmail, adminPassword y adminDisplayName son requeridos"
+        });
+      }
+
+      const result = await reprovisionTenant(tenantId, {
+        adminEmail, adminPassword, adminDisplayName,
+        actorId: (req as any).superadminId || undefined,
+        orderDailyStart: orderDailyStart ? parseInt(orderDailyStart) : undefined,
+        orderGlobalStart: orderGlobalStart ? parseInt(orderGlobalStart) : undefined,
+        invoiceStart: invoiceStart ? parseInt(invoiceStart) : undefined,
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/superadmin/migration-status", requireSuperadmin, async (_req, res) => {
+    try {
+      const status = await getMigrationStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.patch("/api/superadmin/tenants/:id/plan", requireSuperadmin, async (req, res) => {

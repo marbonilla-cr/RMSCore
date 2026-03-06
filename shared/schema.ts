@@ -969,6 +969,9 @@ export const businessConfig = pgTable("business_config", {
   updatedAt: timestamp("updated_at").defaultNow(),
   maxSubaccounts: integer("max_subaccounts").notNull().default(15),
   serviceTaxCategoryId: integer("service_tax_category_id"),
+  orderDailyStart: integer("order_daily_start").default(1).notNull(),
+  orderGlobalStart: integer("order_global_start").default(1).notNull(),
+  invoiceStart: integer("invoice_start").default(1).notNull(),
 });
 
 export const printers = pgTable("printers", {

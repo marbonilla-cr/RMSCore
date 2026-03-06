@@ -127,7 +127,7 @@ export default function SuperadminPage() {
   const [metrics,  setMetrics]  = useState<Metrics|null>(null);
   const [tenants,  setTenants]  = useState<Tenant[]>([]);
   const [loading,  setLoading]  = useState(false);
-  const [section,  setSection]  = useState<"tenants"|"metrics"|"setup">("tenants");
+  const [section,  setSection]  = useState<"tenants"|"metrics"|"setup"|"migrations">("tenants");
 
   // ── Modals ───────────────────────────────────────────────────────────────────
   const [createOpen,   setCreateOpen]   = useState(false);
@@ -149,6 +149,7 @@ export default function SuperadminPage() {
   const [form, setForm] = useState({
     plan:"TRIAL", businessName:"", slug:"", billingEmail:"",
     adminEmail:"", adminPassword:"", adminDisplayName:"",
+    orderDailyStart:"1", orderGlobalStart:"1", invoiceStart:"1",
   });
   const [createLoading, setCreateLoading] = useState(false);
   const [createError,   setCreateError]   = useState("");
@@ -157,6 +158,17 @@ export default function SuperadminPage() {
   const [search,       setSearch]       = useState("");
   const [filterPlan,   setFilterPlan]   = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+
+  // ── Reprovision ─────────────────────────────────────────────────────────────
+  const [reprovOpen, setReprovOpen]     = useState(false);
+  const [reprovTenant, setReprovTenant] = useState<Tenant|null>(null);
+  const [reprovForm, setReprovForm]     = useState({ adminEmail:"", adminPassword:"", adminDisplayName:"", orderDailyStart:"1", orderGlobalStart:"1", invoiceStart:"1" });
+  const [reprovLoading, setReprovLoading] = useState(false);
+  const [reprovError, setReprovError]   = useState("");
+
+  // ── Migrations ──────────────────────────────────────────────────────────────
+  const [migrationStatus, setMigrationStatus] = useState<any[]>([]);
+  const [migrationLoading, setMigrationLoading] = useState(false);
 
   // ── Setup ────────────────────────────────────────────────────────────────────
   const [setupLoading, setSetupLoading] = useState(false);
@@ -247,9 +259,12 @@ export default function SuperadminPage() {
         ...form, slug:`rest-${form.slug}`,
         adminPassword: form.adminPassword||"TempPass123!",
         adminDisplayName: form.adminDisplayName||form.businessName,
+        orderDailyStart: parseInt(form.orderDailyStart)||1,
+        orderGlobalStart: parseInt(form.orderGlobalStart)||1,
+        invoiceStart: parseInt(form.invoiceStart)||1,
       });
       setCreateOpen(false);
-      setForm({plan:"TRIAL",businessName:"",slug:"",billingEmail:"",adminEmail:"",adminPassword:"",adminDisplayName:""});
+      setForm({plan:"TRIAL",businessName:"",slug:"",billingEmail:"",adminEmail:"",adminPassword:"",adminDisplayName:"",orderDailyStart:"1",orderGlobalStart:"1",invoiceStart:"1"});
       toast("success","¡Tenant creado!",form.businessName);
       await loadData();
     } catch(e:any){ setCreateError(e.message); }
@@ -309,6 +324,46 @@ export default function SuperadminPage() {
     try { await confirmCfg.onConfirm(confirmReason.trim()||undefined); setConfirmOpen(false); }
     catch(e:any){ toast("error","Error",e.message); }
     finally { setConfirmLoading(false); }
+  };
+
+  // ── Reprovision ──────────────────────────────────────────────────────────────
+  const openReprovision = (t: Tenant) => {
+    setReprovTenant(t);
+    setReprovForm({ adminEmail:"", adminPassword:"", adminDisplayName:t.business_name, orderDailyStart:"1", orderGlobalStart:"1", invoiceStart:"1" });
+    setReprovError("");
+    setReprovOpen(true);
+  };
+
+  const submitReprovision = async () => {
+    if (!reprovTenant) return;
+    if (!reprovForm.adminEmail || !reprovForm.adminPassword || !reprovForm.adminDisplayName) {
+      setReprovError("Email, password y nombre del admin son requeridos"); return;
+    }
+    setReprovLoading(true); setReprovError("");
+    try {
+      await api("POST",`/api/superadmin/tenants/${reprovTenant.id}/reprovision`,{
+        adminEmail: reprovForm.adminEmail,
+        adminPassword: reprovForm.adminPassword,
+        adminDisplayName: reprovForm.adminDisplayName,
+        orderDailyStart: parseInt(reprovForm.orderDailyStart)||1,
+        orderGlobalStart: parseInt(reprovForm.orderGlobalStart)||1,
+        invoiceStart: parseInt(reprovForm.invoiceStart)||1,
+      });
+      setReprovOpen(false);
+      toast("success","Tenant re-provisionado",reprovTenant.business_name);
+      await loadData();
+    } catch(e:any){ setReprovError(e.message); }
+    finally { setReprovLoading(false); }
+  };
+
+  // ── Migrations ──────────────────────────────────────────────────────────────
+  const loadMigrationStatus = async () => {
+    setMigrationLoading(true);
+    try {
+      const data = await api("GET","/api/superadmin/migration-status");
+      setMigrationStatus(data.tenants || []);
+    } catch(e:any){ toast("error","Error al cargar migraciones",e.message); }
+    finally { setMigrationLoading(false); }
   };
 
   // ── Setup ────────────────────────────────────────────────────────────────────
@@ -398,10 +453,11 @@ export default function SuperadminPage() {
           {([
             {id:"tenants", label:"Tenants",    icon:Ico.home  },
             {id:"metrics", label:"Métricas",   icon:Ico.chart },
+            {id:"migrations", label:"Migraciones", icon:Ico.gear },
             {id:"setup",   label:"Setup",      icon:Ico.gear  },
           ] as const).map(item=>(
             <div key={item.id} className="sa-nav-item"
-              onClick={()=>{ setSection(item.id); if(item.id==="metrics") loadData(); }}
+              onClick={()=>{ setSection(item.id as any); if(item.id==="metrics") loadData(); if(item.id==="migrations") loadMigrationStatus(); }}
               style={{ display:"flex", alignItems:"center", gap:9, padding:"8px 9px", borderRadius:"var(--sa-r-sm)", marginBottom:1, cursor:"pointer", fontSize:13, fontWeight:500, color:section===item.id?"var(--sa-rail-accent)":"var(--sa-rail-text)", background:section===item.id?"rgba(224,94,58,0.18)":"transparent" }}>
               {item.icon}{item.label}
               {item.id==="tenants" && (
@@ -429,7 +485,7 @@ export default function SuperadminPage() {
         {/* Topbar */}
         <div style={{ height:54, background:"var(--sa-s0)", borderBottom:"1px solid var(--sa-border)", display:"flex", alignItems:"center", padding:"0 24px", position:"sticky", top:0, zIndex:50 }}>
           <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:18, flex:1 }}>
-            {{tenants:"Tenants",metrics:"Métricas",setup:"Configuración"}[section]}
+            {{tenants:"Tenants",metrics:"Métricas",setup:"Configuración",migrations:"Migraciones"}[section]}
           </div>
           <button onClick={loadData} style={{ width:32, height:32, background:"var(--sa-s1)", border:"1px solid var(--sa-border)", borderRadius:"var(--sa-r-xs)", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:"var(--sa-text2)" }}>{Ico.refresh}</button>
         </div>
@@ -515,7 +571,9 @@ export default function SuperadminPage() {
                             <td style={{ padding:"12px 18px" }}>
                               {t.is_active
                                 ? <span style={badge("var(--sa-sage)","var(--sa-sage-d)","var(--sa-sage-m)")}>● Activo</span>
-                                : <span style={badge("var(--sa-red)","var(--sa-red-d)","var(--sa-red-m)")}>● {t.status==="SUSPENDED"?"Suspendido":"Inactivo"}</span>
+                                : t.status==="FAILED"
+                                  ? <span style={badge("var(--sa-red)","var(--sa-red-d)","var(--sa-red-m)")}>● Fallido</span>
+                                  : <span style={badge("var(--sa-red)","var(--sa-red-d)","var(--sa-red-m)")}>● {t.status==="SUSPENDED"?"Suspendido":"Inactivo"}</span>
                               }
                               {tLeft!==null && <div style={{ fontSize:11, color:tLeft<5?"var(--sa-red)":"var(--sa-amber)", fontWeight:600, marginTop:2 }}>{tLeft}d trial</div>}
                             </td>
@@ -528,9 +586,11 @@ export default function SuperadminPage() {
                             <td style={{ padding:"12px 18px" }}>
                               <div className="sa-row-actions" style={{ display:"flex", gap:5 }}>
                                 <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-border)", background:"var(--sa-s0)", color:"var(--sa-text2)" }} onClick={()=>openDetail(t.id)}>Ver</button>
-                                {t.is_active
-                                  ? <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>doSuspend(t)}>Suspender</button>
-                                  : <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>doReactivate(t)}>Reactivar</button>
+                                {t.status==="FAILED"
+                                  ? <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-amber)", background:"var(--sa-s0)", color:"var(--sa-amber)" }} onClick={()=>openReprovision(t)}>Re-provisionar</button>
+                                  : t.is_active
+                                    ? <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>doSuspend(t)}>Suspender</button>
+                                    : <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>doReactivate(t)}>Reactivar</button>
                                 }
                               </div>
                             </td>
@@ -577,6 +637,55 @@ export default function SuperadminPage() {
               </div>
             </div>
           </>}
+
+          {/* ════ MIGRATIONS ════ */}
+          {section==="migrations" && (
+            <div style={{ maxWidth:800 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
+                <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:16 }}>Estado de Migraciones por Schema</div>
+                <button onClick={loadMigrationStatus} style={{ ...S.btnSec, padding:"5px 12px", fontSize:12 }}>
+                  {migrationLoading?"Cargando...":"Actualizar"}
+                </button>
+              </div>
+              {migrationStatus.length===0 && !migrationLoading && (
+                <div style={{ ...S.card, textAlign:"center", color:"var(--sa-text3)", padding:40 }}>
+                  Haz clic en "Actualizar" para cargar el estado de migraciones
+                </div>
+              )}
+              {migrationStatus.length>0 && (
+                <div style={S.tableWrap}>
+                  <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                    <thead>
+                      <tr style={{ background:"var(--sa-s1)" }}>
+                        {["Schema","Tenant","Status","Aplicadas","Pendientes","Última migración"].map((h,i)=>(
+                          <th key={i} style={{ textAlign:"left", padding:"9px 14px", fontSize:10, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase" as const, color:"var(--sa-text3)", borderBottom:"1px solid var(--sa-border)", whiteSpace:"nowrap" as const }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {migrationStatus.map((s:any)=>(
+                        <tr key={s.schemaName} className="sa-tr" style={{ borderBottom:"1px solid var(--sa-border)" }}>
+                          <td style={{ padding:"10px 14px", fontFamily:"var(--sa-f-mono)", fontSize:11 }}>{s.schemaName}</td>
+                          <td style={{ padding:"10px 14px", fontSize:13, fontWeight:500 }}>{s.slug||"–"}</td>
+                          <td style={{ padding:"10px 14px" }}>
+                            {s.pendingCount===0
+                              ? <span style={badge("var(--sa-sage)","var(--sa-sage-d)","var(--sa-sage-m)")}>✓ Al día</span>
+                              : <span style={badge("var(--sa-amber)","var(--sa-amber)"+"18","var(--sa-amber)"+"50")}>{s.pendingCount} pendiente{s.pendingCount>1?"s":""}</span>
+                            }
+                          </td>
+                          <td style={{ padding:"10px 14px", fontFamily:"var(--sa-f-mono)", fontSize:13, fontWeight:600 }}>{s.appliedCount}</td>
+                          <td style={{ padding:"10px 14px", fontFamily:"var(--sa-f-mono)", fontSize:13, fontWeight:600, color:s.pendingCount>0?"var(--sa-amber)":"var(--sa-text3)" }}>{s.pendingCount}</td>
+                          <td style={{ padding:"10px 14px", fontSize:12, color:"var(--sa-text3)" }}>
+                            {s.lastAppliedAt ? new Date(s.lastAppliedAt).toLocaleDateString("es-CR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "–"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ════ SETUP ════ */}
           {section==="setup" && (
@@ -635,9 +744,15 @@ export default function SuperadminPage() {
                 <div><label style={S.lbl}>Email facturación *</label><input value={form.billingEmail} onChange={e=>setForm(f=>({...f,billingEmail:e.target.value}))} placeholder="admin@rest.com" type="email" style={S.input}/></div>
                 <div><label style={S.lbl}>Nombre del admin</label><input value={form.adminDisplayName} onChange={e=>setForm(f=>({...f,adminDisplayName:e.target.value}))} placeholder="Gerente" style={S.input}/></div>
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
                 <div><label style={S.lbl}>Email del admin *</label><input value={form.adminEmail} onChange={e=>setForm(f=>({...f,adminEmail:e.target.value}))} placeholder="gerente@rest.com" type="email" style={S.input}/></div>
                 <div><label style={S.lbl}>Password temporal</label><input value={form.adminPassword} onChange={e=>setForm(f=>({...f,adminPassword:e.target.value}))} placeholder="TempPass123! si vacío" type="password" style={S.input}/></div>
+              </div>
+              <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase" as const, color:"var(--sa-text3)", paddingBottom:8, borderBottom:"1px solid var(--sa-border)", marginBottom:12 }}>Consecutivos iniciales</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
+                <div><label style={S.lbl}>Orden diario</label><input value={form.orderDailyStart} onChange={e=>setForm(f=>({...f,orderDailyStart:e.target.value}))} type="number" min="1" style={S.input}/></div>
+                <div><label style={S.lbl}>Orden global</label><input value={form.orderGlobalStart} onChange={e=>setForm(f=>({...f,orderGlobalStart:e.target.value}))} type="number" min="1" style={S.input}/></div>
+                <div><label style={S.lbl}>Factura</label><input value={form.invoiceStart} onChange={e=>setForm(f=>({...f,invoiceStart:e.target.value}))} type="number" min="1" style={S.input}/></div>
               </div>
               {createError && <div style={{ marginTop:14, padding:"10px 13px", background:"var(--sa-red-d)", border:"1px solid var(--sa-red-m)", borderRadius:"var(--sa-r-sm)", fontSize:13, color:"var(--sa-red)" }}>{createError}</div>}
             </div>
@@ -780,13 +895,57 @@ export default function SuperadminPage() {
                     style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-border)", background:"var(--sa-s0)", color:"var(--sa-text2)" }}>
                     {Ico.upgrade} Cambiar plan
                   </button>
-                  {detailData.tenant.is_active
-                    ? <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>{setDetailOpen(false);doSuspend(detailData.tenant);}}>Suspender</button>
-                    : <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>{setDetailOpen(false);doReactivate(detailData.tenant);}}>Reactivar</button>
+                  {detailData.tenant.status==="FAILED"
+                    ? <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-amber)", background:"var(--sa-s0)", color:"var(--sa-amber)" }} onClick={()=>{setDetailOpen(false);openReprovision(detailData.tenant);}}>Re-provisionar</button>
+                    : detailData.tenant.is_active
+                      ? <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>{setDetailOpen(false);doSuspend(detailData.tenant);}}>Suspender</button>
+                      : <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>{setDetailOpen(false);doReactivate(detailData.tenant);}}>Reactivar</button>
                   }
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════ MODAL: RE-PROVISIONAR ════════════════ */}
+      {reprovOpen && reprovTenant && (
+        <div className="sa-overlay" style={{ ...S.overlay, zIndex:260 }} onClick={e=>{if(e.target===e.currentTarget)setReprovOpen(false)}}>
+          <div className="sa-modal" style={S.modal}>
+            <div style={S.modalHdr}>
+              <div>
+                <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:20 }}>Re-provisionar Tenant</div>
+                <div style={{ fontSize:13, color:"var(--sa-text3)", marginTop:3 }}>{reprovTenant.business_name} · {reprovTenant.slug}</div>
+              </div>
+              <button style={S.closeBtn} onClick={()=>setReprovOpen(false)}>{Ico.close}</button>
+            </div>
+            <div style={{ padding:"20px 26px" }}>
+              <div style={{ padding:"10px 14px", background:"var(--sa-amber)"+"18", border:"1px solid var(--sa-amber)"+"40", borderRadius:"var(--sa-r-sm)", fontSize:12, color:"var(--sa-text2)", marginBottom:18, lineHeight:1.7 }}>
+                Este proceso eliminará el schema existente y lo re-creará desde cero con las tablas actuales. Se perderán todos los datos del tenant.
+              </div>
+              <div style={{ marginBottom:14 }}>
+                <label style={S.lbl}>Nombre del admin *</label>
+                <input value={reprovForm.adminDisplayName} onChange={e=>setReprovForm(f=>({...f,adminDisplayName:e.target.value}))} placeholder="Gerente" style={S.input}/>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+                <div><label style={S.lbl}>Email del admin *</label><input value={reprovForm.adminEmail} onChange={e=>setReprovForm(f=>({...f,adminEmail:e.target.value}))} placeholder="admin@rest.com" type="email" style={S.input}/></div>
+                <div><label style={S.lbl}>Password *</label><input value={reprovForm.adminPassword} onChange={e=>setReprovForm(f=>({...f,adminPassword:e.target.value}))} placeholder="TempPass123!" type="password" style={S.input}/></div>
+              </div>
+              <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase" as const, color:"var(--sa-text3)", paddingBottom:8, borderBottom:"1px solid var(--sa-border)", marginBottom:12 }}>Consecutivos iniciales</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
+                <div><label style={S.lbl}>Orden diario</label><input value={reprovForm.orderDailyStart} onChange={e=>setReprovForm(f=>({...f,orderDailyStart:e.target.value}))} type="number" min="1" style={S.input}/></div>
+                <div><label style={S.lbl}>Orden global</label><input value={reprovForm.orderGlobalStart} onChange={e=>setReprovForm(f=>({...f,orderGlobalStart:e.target.value}))} type="number" min="1" style={S.input}/></div>
+                <div><label style={S.lbl}>Factura</label><input value={reprovForm.invoiceStart} onChange={e=>setReprovForm(f=>({...f,invoiceStart:e.target.value}))} type="number" min="1" style={S.input}/></div>
+              </div>
+              {reprovError && <div style={{ marginTop:14, padding:"10px 13px", background:"var(--sa-red-d)", border:"1px solid var(--sa-red-m)", borderRadius:"var(--sa-r-sm)", fontSize:13, color:"var(--sa-red)" }}>{reprovError}</div>}
+            </div>
+            <div style={{ padding:"14px 26px 22px", borderTop:"1px solid var(--sa-border)", display:"flex", justifyContent:"flex-end", gap:10 }}>
+              <button style={S.btnSec} onClick={()=>setReprovOpen(false)}>Cancelar</button>
+              <button onClick={submitReprovision} disabled={reprovLoading}
+                style={{ padding:"9px 20px", background:"var(--sa-amber)", color:"white", border:"none", borderRadius:"var(--sa-r-sm)", fontFamily:"var(--sa-f-disp)", fontWeight:600, fontSize:14, cursor:"pointer", opacity:reprovLoading?0.7:1 }}>
+                {reprovLoading?"Re-provisionando...":"Re-provisionar"}
+              </button>
+            </div>
           </div>
         </div>
       )}
