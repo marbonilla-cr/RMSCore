@@ -2288,23 +2288,23 @@ export async function seedTenantSchema(
   }
 
   const catData = [
-    { code: "TOP-COMIDAS", name: "Comidas", color: "emerald", sort_order: 1 },
-    { code: "TOP-BEBIDAS", name: "Bebidas", color: "blue", sort_order: 2 },
-    { code: "TOP-POSTRES", name: "Postres", color: "rose", sort_order: 3 },
-    { code: "TOP-ALCOHOL", name: "Alcohol", color: "amber", sort_order: 4 },
+    { category_code: "TOP-COMIDAS", name: "Comidas", sort_order: 1 },
+    { category_code: "TOP-BEBIDAS", name: "Bebidas", sort_order: 2 },
+    { category_code: "TOP-POSTRES", name: "Postres", sort_order: 3 },
+    { category_code: "TOP-ALCOHOL", name: "Alcohol", sort_order: 4 },
   ];
   for (const cat of catData) {
     await pool.query(
-      `INSERT INTO "${s}".categories (code, name, active, sort_order, color)
-       VALUES ($1, $2, true, $3, $4) ON CONFLICT DO NOTHING`,
-      [cat.code, cat.name, cat.sort_order, cat.color]
+      `INSERT INTO "${s}".categories (category_code, name, active, sort_order)
+       VALUES ($1, $2, true, $3) ON CONFLICT DO NOTHING`,
+      [cat.category_code, cat.name, cat.sort_order]
     );
   }
 
   await pool.query(
     `INSERT INTO "${s}".hr_settings
-       (work_start_time, work_end_time, late_tolerance_minutes, overtime_threshold_hours)
-     VALUES ('08:00', '22:00', 10, 8) ON CONFLICT DO NOTHING`
+       (lateness_grace_minutes, overtime_daily_threshold_hours)
+     VALUES (10, 8) ON CONFLICT DO NOTHING`
   );
 
   for (const perm of SYSTEM_PERMISSIONS) {

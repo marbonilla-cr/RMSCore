@@ -102,7 +102,10 @@ export async function createTenant(input: CreateTenantInput) {
   } catch (err: any) {
     console.error(`[provision] ERROR:`, err.message);
     if (schemaCreated && schemaName) {
-      try { await publicPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`); } catch (_) {}
+      try {
+        await publicPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+        await publicPool.query(`DELETE FROM public.schema_migrations WHERE schema_name = $1`, [schemaName]);
+      } catch (_) {}
     }
     if (tenantId) {
       try {
@@ -161,7 +164,11 @@ export async function reprovisionTenant(tenantId: number, input: ReprovisionInpu
 
   try {
     await publicPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
-    console.log(`[reprovision] Schema "${schemaName}" eliminado`);
+    await publicPool.query(
+      `DELETE FROM public.schema_migrations WHERE schema_name = $1`,
+      [schemaName]
+    );
+    console.log(`[reprovision] Schema "${schemaName}" eliminado (migrations reset)`);
 
     await publicPool.query(
       `UPDATE public.tenants SET status='PROVISIONING', is_active=false,
@@ -271,7 +278,7 @@ async function createAdminUser(schemaName: string, data: { email: string; passwo
   const hash = await bcrypt.hash(data.password, 10);
   const username = data.email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
   await publicPool.query(
-    `INSERT INTO "${schemaName}".users (username,password,display_name,role,active,email,has_pin) VALUES ($1,$2,$3,'MANAGER',true,$4,false) ON CONFLICT DO NOTHING`,
+    `INSERT INTO "${schemaName}".users (username,password,display_name,role,active,email) VALUES ($1,$2,$3,'MANAGER',true,$4) ON CONFLICT DO NOTHING`,
     [username, hash, data.displayName, data.email]
   );
 }
