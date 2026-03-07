@@ -266,6 +266,16 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "HR_VIEW_SELF", "HR_CLOCK_IN_OUT_ALLOW",
     "SHORTAGES_VIEW", "SHORTAGES_REPORT",
   ],
+  STAFF: [
+    "MODULE_HR_VIEW",
+    "HR_VIEW_SELF", "HR_CLOCK_IN_OUT_ALLOW",
+    "SHORTAGES_VIEW", "SHORTAGES_REPORT",
+  ],
+  KITCHEN: [
+    "MODULE_HR_VIEW",
+    "HR_VIEW_SELF", "HR_CLOCK_IN_OUT_ALLOW",
+    "SHORTAGES_VIEW", "SHORTAGES_REPORT",
+  ],
 };
 
 export async function seedDefaultRolePermissions() {

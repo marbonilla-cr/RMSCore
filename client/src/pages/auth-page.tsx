@@ -6,7 +6,8 @@ import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
 const LS_KEY = "rms_last_username";
 
-type Screen = "login" | "pin" | "forgot";
+type Screen = "login" | "pin-return" | "forgot";
+type LoginMode = "password" | "pin";
 
 interface UserInfo {
   exists: boolean;
@@ -17,6 +18,7 @@ interface UserInfo {
 export default function AuthPage() {
   const { login, pinLogin } = useAuth();
   const [screen, setScreen] = useState<Screen>("login");
+  const [loginMode, setLoginMode] = useState<LoginMode>("password");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
@@ -59,7 +61,7 @@ export default function AuthPage() {
       if (data.exists && data.hasPin) {
         setUsername(u);
         setUserInfo(data);
-        setScreen("pin");
+        setScreen("pin-return");
       } else {
         localStorage.removeItem(LS_KEY);
         setScreen("login");
@@ -89,15 +91,47 @@ export default function AuthPage() {
     }
   };
 
+  const handlePinLoginSubmit = async () => {
+    const u = username.trim().toLowerCase();
+    if (!u) { setError("Ingresa tu usuario"); return; }
+    if (pin.length < 4) return;
+    setError("");
+    setLoading(true);
+    try {
+      await pinLogin(pin);
+      localStorage.setItem(LS_KEY, u);
+    } catch (err: any) {
+      setError(err.message || "PIN incorrecto");
+      setPin("");
+      setShakeKey(k => k + 1);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDigit = (digit: string) => {
     if (pin.length >= 4) return;
     const newPin = pin + digit;
     setPin(newPin);
     setError("");
-    if (newPin.length === 4) submitPin(newPin);
+    if (newPin.length === 4) {
+      if (screen === "pin-return") {
+        submitPinReturn(newPin);
+      } else {
+        setTimeout(() => {
+          const u = username.trim().toLowerCase();
+          if (!u) { setError("Ingresa tu usuario"); setPin(""); return; }
+          setLoading(true);
+          pinLogin(newPin)
+            .then(() => { localStorage.setItem(LS_KEY, u); })
+            .catch((err: any) => { setError(err.message || "PIN incorrecto"); setPin(""); setShakeKey(k => k + 1); })
+            .finally(() => setLoading(false));
+        }, 0);
+      }
+    }
   };
 
-  const submitPin = async (p: string) => {
+  const submitPinReturn = async (p: string) => {
     setLoading(true);
     try {
       await pinLogin(p);
@@ -129,6 +163,7 @@ export default function AuthPage() {
     setUserInfo(null);
     setPin("");
     setError("");
+    setLoginMode("password");
     setScreen("login");
   };
 
@@ -140,7 +175,14 @@ export default function AuthPage() {
   };
 
   const goBackFromForgot = () => {
-    setScreen(userInfo?.hasPin ? "pin" : "login");
+    setScreen(userInfo?.hasPin ? "pin-return" : "login");
+  };
+
+  const toggleLoginMode = () => {
+    setError("");
+    setPin("");
+    setPassword("");
+    setLoginMode(m => m === "password" ? "pin" : "password");
   };
 
   if (checkingUser) {
@@ -184,6 +226,9 @@ export default function AuthPage() {
         .auth-success { background:hsl(140 60% 95%); border:1px solid hsl(140 50% 80%); color:hsl(140 50% 30%); border-radius:8px; padding:12px 14px; font-size:13px; text-align:center; margin-bottom:12px; }
         .pw-wrapper { position:relative; margin-bottom:12px; }
         .pw-toggle { position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--text3); cursor:pointer; padding:4px; }
+        .mode-tabs { display:flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:16px; }
+        .mode-tab { flex:1; padding:10px; border:none; font-size:13px; font-weight:600; cursor:pointer; font-family:var(--f-body); transition:all .15s; background:var(--s1); color:var(--text3); }
+        .mode-tab.active { background:var(--accent); color:#fff; }
       `}</style>
 
       <div className="auth-card">
@@ -192,44 +237,88 @@ export default function AuthPage() {
         <div className="auth-date">{currentDate}</div>
 
         {screen === "login" && (
-          <form onSubmit={handleLoginSubmit}>
-            <input
-              className="auth-input"
-              value={username}
-              onChange={e => { setUsername(e.target.value); setError(""); }}
-              placeholder="Usuario"
-              autoFocus
-              autoComplete="username"
-              data-testid="input-username"
-            />
-            <div className="pw-wrapper">
-              <input
-                className="auth-input"
-                style={{ marginBottom: 0 }}
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={e => { setPassword(e.target.value); setError(""); }}
-                placeholder="Contraseña"
-                autoComplete="current-password"
-                data-testid="input-password"
-              />
-              <button type="button" className="pw-toggle" onClick={() => setShowPassword(v => !v)}>
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+          <div>
+            <div className="mode-tabs">
+              <button className={`mode-tab ${loginMode === "password" ? "active" : ""}`} onClick={() => { if (loginMode !== "password") toggleLoginMode(); }} data-testid="tab-password">
+                Contraseña
+              </button>
+              <button className={`mode-tab ${loginMode === "pin" ? "active" : ""}`} onClick={() => { if (loginMode !== "pin") toggleLoginMode(); }} data-testid="tab-pin">
+                PIN
               </button>
             </div>
-            {error && <div className="auth-error" style={{ marginTop: 8 }}>{error}</div>}
-            <button type="submit" className="auth-btn auth-btn-primary" disabled={loading} style={{ marginTop: 12 }} data-testid="button-login">
-              {loading ? <Loader2 size={18} className="animate-spin" /> : "Ingresar"}
-            </button>
+
+            {loginMode === "password" ? (
+              <form onSubmit={handleLoginSubmit}>
+                <input
+                  className="auth-input"
+                  value={username}
+                  onChange={e => { setUsername(e.target.value); setError(""); }}
+                  placeholder="Usuario"
+                  autoFocus
+                  autoComplete="username"
+                  data-testid="input-username"
+                />
+                <div className="pw-wrapper">
+                  <input
+                    className="auth-input"
+                    style={{ marginBottom: 0 }}
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={e => { setPassword(e.target.value); setError(""); }}
+                    placeholder="Contraseña"
+                    autoComplete="current-password"
+                    data-testid="input-password"
+                  />
+                  <button type="button" className="pw-toggle" onClick={() => setShowPassword(v => !v)}>
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+                {error && <div className="auth-error" style={{ marginTop: 8 }}>{error}</div>}
+                <button type="submit" className="auth-btn auth-btn-primary" disabled={loading} style={{ marginTop: 12 }} data-testid="button-login">
+                  {loading ? <Loader2 size={18} className="animate-spin" /> : "Ingresar"}
+                </button>
+              </form>
+            ) : (
+              <div>
+                <input
+                  className="auth-input"
+                  value={username}
+                  onChange={e => { setUsername(e.target.value); setError(""); }}
+                  placeholder="Usuario"
+                  autoFocus
+                  autoComplete="username"
+                  data-testid="input-username-pin"
+                />
+                <div className="pin-dots" key={shakeKey} style={shakeKey > 0 ? { animation: "shake 0.3s ease-in-out" } : undefined}>
+                  {[0, 1, 2, 3].map(i => (
+                    <div key={i} className={`pin-dot ${i < pin.length ? "filled" : ""}`} />
+                  ))}
+                </div>
+                {error && <div className="auth-error">{error}</div>}
+                <div className="pin-grid">
+                  {["1","2","3","4","5","6","7","8","9"].map(d => (
+                    <button key={d} className="pin-key" onClick={() => handleDigit(d)} disabled={loading} data-testid={`pin-key-${d}`}>{d}</button>
+                  ))}
+                  <button className="pin-key" onClick={() => setPin(pin.slice(0, -1))} disabled={loading} data-testid="pin-key-delete">
+                    <Delete size={20} />
+                  </button>
+                  <button className="pin-key" onClick={() => handleDigit("0")} disabled={loading} data-testid="pin-key-0">0</button>
+                  <button className="pin-key accent" onClick={() => pin.length === 4 && handlePinLoginSubmit()} disabled={loading || pin.length < 4} data-testid="pin-key-enter">
+                    {loading ? <Loader2 size={18} className="animate-spin" /> : "OK"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="auth-links">
               <button type="button" className="auth-link auth-link-muted" onClick={goForgot} data-testid="link-forgot">
                 ¿Olvidé mi contraseña?
               </button>
             </div>
-          </form>
+          </div>
         )}
 
-        {screen === "pin" && userInfo && (
+        {screen === "pin-return" && userInfo && (
           <div>
             <div className="auth-greeting">Hola, <strong>{userInfo.displayName}</strong></div>
             <div className="pin-dots" key={shakeKey} style={shakeKey > 0 ? { animation: "shake 0.3s ease-in-out" } : undefined}>
@@ -246,7 +335,7 @@ export default function AuthPage() {
                 <Delete size={20} />
               </button>
               <button className="pin-key" onClick={() => handleDigit("0")} disabled={loading} data-testid="pin-key-0">0</button>
-              <button className="pin-key accent" onClick={() => pin.length === 4 && submitPin(pin)} disabled={loading || pin.length < 4} data-testid="pin-key-enter">
+              <button className="pin-key accent" onClick={() => pin.length === 4 && submitPinReturn(pin)} disabled={loading || pin.length < 4} data-testid="pin-key-enter">
                 {loading ? <Loader2 size={18} className="animate-spin" /> : "OK"}
               </button>
             </div>
