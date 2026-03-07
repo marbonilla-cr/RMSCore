@@ -60,5 +60,6 @@ TZ = "America/Costa_Rica"
 PRINT_BRIDGE_TOKEN = "restaurante-bridge-2024"
 QBO_REDIRECT_URI = "https://fba196fd-4268-4726-8caa-fad6012229cb-00-36hw98k6cq6ue.riker.replit.dev/api/qbo/callback"
 QBO_ENVIRONMENT = "sandbox"
+EMAIL_FROM = "soporte@rmscore.app"
 
 [userenv.production]

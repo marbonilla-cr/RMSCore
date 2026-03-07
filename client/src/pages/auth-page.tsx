@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, Delete, ArrowLeft, Eye, EyeOff } from "lucide-react";
@@ -6,7 +6,7 @@ import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
 const LS_KEY = "rms_last_username";
 
-type Step = "username" | "pin" | "password" | "forgot";
+type Screen = "login" | "pin" | "forgot";
 
 interface UserInfo {
   exists: boolean;
@@ -16,11 +16,11 @@ interface UserInfo {
 
 export default function AuthPage() {
   const { login, pinLogin } = useAuth();
-  const [step, setStep] = useState<Step>("username");
+  const [screen, setScreen] = useState<Screen>("login");
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [pin, setPin] = useState("");
-  const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -56,41 +56,34 @@ export default function AuthPage() {
     try {
       const res = await fetch(`/api/auth/user-info?username=${encodeURIComponent(u)}`);
       const data: UserInfo = await res.json();
-      if (data.exists) {
+      if (data.exists && data.hasPin) {
         setUsername(u);
         setUserInfo(data);
-        setStep(data.hasPin ? "pin" : "password");
+        setScreen("pin");
       } else {
         localStorage.removeItem(LS_KEY);
-        setStep("username");
+        setScreen("login");
       }
     } catch {
       localStorage.removeItem(LS_KEY);
-      setStep("username");
+      setScreen("login");
     } finally {
       setCheckingUser(false);
     }
   };
 
-  const handleUsernameSubmit = async (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const u = username.trim().toLowerCase();
-    if (!u) return;
+    const p = password.trim();
+    if (!u || !p) { setError("Ingresa usuario y contraseña"); return; }
     setError("");
     setLoading(true);
     try {
-      const res = await fetch(`/api/auth/user-info?username=${encodeURIComponent(u)}`);
-      const data: UserInfo = await res.json();
-      if (!data.exists) {
-        setError("Usuario no encontrado");
-        return;
-      }
-      setUsername(u);
-      setUserInfo(data);
+      await login(u, p);
       localStorage.setItem(LS_KEY, u);
-      setStep(data.hasPin ? "pin" : "password");
-    } catch {
-      setError("Error de conexión");
+    } catch (err: any) {
+      setError(err.message || "Usuario o contraseña incorrectos");
     } finally {
       setLoading(false);
     }
@@ -118,21 +111,6 @@ export default function AuthPage() {
     }
   };
 
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!password.trim()) return;
-    setError("");
-    setLoading(true);
-    try {
-      await login(username, password);
-      localStorage.setItem(LS_KEY, username);
-    } catch (err: any) {
-      setError(err.message || "Contraseña incorrecta");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleForgot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
@@ -147,11 +125,22 @@ export default function AuthPage() {
   const switchUser = () => {
     localStorage.removeItem(LS_KEY);
     setUsername("");
+    setPassword("");
     setUserInfo(null);
     setPin("");
-    setPassword("");
     setError("");
-    setStep("username");
+    setScreen("login");
+  };
+
+  const goForgot = () => {
+    setError("");
+    setEmail("");
+    setForgotSent(false);
+    setScreen("forgot");
+  };
+
+  const goBackFromForgot = () => {
+    setScreen(userInfo?.hasPin ? "pin" : "login");
   };
 
   if (checkingUser) {
@@ -167,12 +156,11 @@ export default function AuthPage() {
       <style>{`
         .auth-card { width:100%; max-width:360px; }
         .auth-logo { width:96px; height:96px; border-radius:50%; object-fit:cover; margin:0 auto 16px; display:block; }
-        .auth-title { text-align:center; font-family:var(--f-disp); font-weight:800; font-size:20px; color:var(--text); margin-bottom:4px; }
         .auth-time { text-align:center; font-family:var(--f-mono,monospace); font-size:28px; font-weight:700; color:var(--text); letter-spacing:0.04em; margin-bottom:2px; }
         .auth-date { text-align:center; font-size:13px; color:var(--text3); text-transform:capitalize; margin-bottom:20px; }
         .auth-greeting { text-align:center; font-size:16px; color:var(--text2); margin-bottom:16px; }
         .auth-greeting strong { color:var(--text); font-weight:700; }
-        .auth-input { width:100%; padding:12px 14px; background:var(--s1); border:1px solid var(--border); border-radius:8px; font-size:15px; color:var(--text); outline:none; font-family:var(--f-body); }
+        .auth-input { width:100%; padding:12px 14px; background:var(--s1); border:1px solid var(--border); border-radius:8px; font-size:15px; color:var(--text); outline:none; font-family:var(--f-body); margin-bottom:12px; }
         .auth-input:focus { border-color:var(--accent); }
         .auth-input::placeholder { color:var(--text3); }
         .auth-btn { width:100%; padding:12px; border:none; border-radius:8px; font-size:15px; font-weight:600; cursor:pointer; font-family:var(--f-body); display:flex; align-items:center; justify-content:center; gap:8px; transition:opacity .15s; }
@@ -193,9 +181,8 @@ export default function AuthPage() {
         .pin-key:active { background:var(--s2); }
         .pin-key.accent { background:var(--accent); color:#fff; border-color:var(--accent); }
         @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
-        .shake { animation: shake 0.3s ease-in-out; }
         .auth-success { background:hsl(140 60% 95%); border:1px solid hsl(140 50% 80%); color:hsl(140 50% 30%); border-radius:8px; padding:12px 14px; font-size:13px; text-align:center; margin-bottom:12px; }
-        .pw-wrapper { position:relative; }
+        .pw-wrapper { position:relative; margin-bottom:12px; }
         .pw-toggle { position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--text3); cursor:pointer; padding:4px; }
       `}</style>
 
@@ -204,8 +191,8 @@ export default function AuthPage() {
         <div className="auth-time">{currentTime}</div>
         <div className="auth-date">{currentDate}</div>
 
-        {step === "username" && (
-          <form onSubmit={handleUsernameSubmit}>
+        {screen === "login" && (
+          <form onSubmit={handleLoginSubmit}>
             <input
               className="auth-input"
               value={username}
@@ -215,14 +202,34 @@ export default function AuthPage() {
               autoComplete="username"
               data-testid="input-username"
             />
+            <div className="pw-wrapper">
+              <input
+                className="auth-input"
+                style={{ marginBottom: 0 }}
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError(""); }}
+                placeholder="Contraseña"
+                autoComplete="current-password"
+                data-testid="input-password"
+              />
+              <button type="button" className="pw-toggle" onClick={() => setShowPassword(v => !v)}>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
             {error && <div className="auth-error" style={{ marginTop: 8 }}>{error}</div>}
-            <button type="submit" className="auth-btn auth-btn-primary" disabled={loading} style={{ marginTop: 12 }} data-testid="button-continue">
-              {loading ? <Loader2 size={18} className="animate-spin" /> : "Continuar"}
+            <button type="submit" className="auth-btn auth-btn-primary" disabled={loading} style={{ marginTop: 12 }} data-testid="button-login">
+              {loading ? <Loader2 size={18} className="animate-spin" /> : "Ingresar"}
             </button>
+            <div className="auth-links">
+              <button type="button" className="auth-link auth-link-muted" onClick={goForgot} data-testid="link-forgot">
+                ¿Olvidé mi contraseña?
+              </button>
+            </div>
           </form>
         )}
 
-        {step === "pin" && userInfo && (
+        {screen === "pin" && userInfo && (
           <div>
             <div className="auth-greeting">Hola, <strong>{userInfo.displayName}</strong></div>
             <div className="pin-dots" key={shakeKey} style={shakeKey > 0 ? { animation: "shake 0.3s ease-in-out" } : undefined}>
@@ -240,15 +247,12 @@ export default function AuthPage() {
               </button>
               <button className="pin-key" onClick={() => handleDigit("0")} disabled={loading} data-testid="pin-key-0">0</button>
               <button className="pin-key accent" onClick={() => pin.length === 4 && submitPin(pin)} disabled={loading || pin.length < 4} data-testid="pin-key-enter">
-                {loading ? <Loader2 size={18} className="animate-spin" /> : "→"}
+                {loading ? <Loader2 size={18} className="animate-spin" /> : "OK"}
               </button>
             </div>
             <div className="auth-links">
-              <button className="auth-link" onClick={() => { setStep("password"); setError(""); setPin(""); }} data-testid="link-use-password">
-                Usar contraseña
-              </button>
-              <button className="auth-link auth-link-muted" onClick={() => { setStep("forgot"); setError(""); setForgotSent(false); }} data-testid="link-forgot">
-                ¿Olvidaste tu acceso?
+              <button className="auth-link auth-link-muted" onClick={goForgot} data-testid="link-forgot-pin">
+                ¿Olvidé mi contraseña?
               </button>
               <button className="auth-link auth-link-muted" onClick={switchUser} data-testid="link-switch-user">
                 Cambiar usuario
@@ -257,47 +261,9 @@ export default function AuthPage() {
           </div>
         )}
 
-        {step === "password" && userInfo && (
-          <form onSubmit={handlePasswordSubmit}>
-            <div className="auth-greeting">Hola, <strong>{userInfo.displayName}</strong></div>
-            <div className="pw-wrapper">
-              <input
-                className="auth-input"
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={e => { setPassword(e.target.value); setError(""); }}
-                placeholder="Contraseña"
-                autoFocus
-                autoComplete="current-password"
-                data-testid="input-password"
-              />
-              <button type="button" className="pw-toggle" onClick={() => setShowPassword(v => !v)}>
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            </div>
-            {error && <div className="auth-error" style={{ marginTop: 8 }}>{error}</div>}
-            <button type="submit" className="auth-btn auth-btn-primary" disabled={loading} style={{ marginTop: 12 }} data-testid="button-login">
-              {loading ? <Loader2 size={18} className="animate-spin" /> : "Ingresar"}
-            </button>
-            <div className="auth-links">
-              {userInfo.hasPin && (
-                <button className="auth-link" onClick={() => { setStep("pin"); setError(""); setPassword(""); }} data-testid="link-use-pin">
-                  Usar PIN
-                </button>
-              )}
-              <button className="auth-link auth-link-muted" onClick={() => { setStep("forgot"); setError(""); setForgotSent(false); }} data-testid="link-forgot-pw">
-                ¿Olvidaste tu acceso?
-              </button>
-              <button className="auth-link auth-link-muted" onClick={switchUser} data-testid="link-switch-user-pw">
-                Cambiar usuario
-              </button>
-            </div>
-          </form>
-        )}
-
-        {step === "forgot" && (
+        {screen === "forgot" && (
           <div>
-            <button className="auth-link auth-link-muted" onClick={() => { setStep(userInfo?.hasPin ? "pin" : "password"); setForgotSent(false); }} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 16 }} data-testid="link-back-login">
+            <button className="auth-link auth-link-muted" onClick={goBackFromForgot} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 16 }} data-testid="link-back-login">
               <ArrowLeft size={14} /> Volver al inicio de sesión
             </button>
             {forgotSent ? (
@@ -318,7 +284,7 @@ export default function AuthPage() {
                   autoFocus
                   data-testid="input-email-forgot"
                 />
-                <button type="submit" className="auth-btn auth-btn-primary" disabled={loading} style={{ marginTop: 12 }} data-testid="button-send-reset">
+                <button type="submit" className="auth-btn auth-btn-primary" disabled={loading} style={{ marginTop: 0 }} data-testid="button-send-reset">
                   {loading ? <Loader2 size={18} className="animate-spin" /> : "Enviar instrucciones"}
                 </button>
               </form>

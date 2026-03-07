@@ -16,7 +16,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
   }
   try {
     await client.emails.send({
-      from: process.env.EMAIL_FROM || 'noreply@rmscore.app',
+      from: process.env.EMAIL_FROM || 'soporte@rmscore.app',
       to,
       subject,
       html,
