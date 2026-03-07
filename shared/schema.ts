@@ -29,6 +29,8 @@ export const users = pgTable("users", {
   pinLockedUntil: timestamp("pin_locked_until"),
   dailyRate: numeric("daily_rate", { precision: 10, scale: 2 }),
   createdAt: timestamp("created_at").defaultNow(),
+  resetToken: text("reset_token"),
+  resetTokenExpires: timestamp("reset_token_expires"),
 });
 
 export const tables = pgTable("tables", {

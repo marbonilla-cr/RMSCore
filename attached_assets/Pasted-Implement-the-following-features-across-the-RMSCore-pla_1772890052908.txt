@@ -1,0 +1,168 @@
+Implement the following features across the RMSCore platform. Do not break existing functionality.
+
+---
+
+DEPENDENCIES
+Install: npm install resend
+The RESEND_API_KEY and EMAIL_FROM environment variables are already configured.
+
+---
+
+PART 1: Email Service
+
+Create server/services/email-service.ts:
+
+import { Resend } from 'resend';
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+  if (!process.env.RESEND_API_KEY) {
+    console.log('[EMAIL] RESEND_API_KEY not configured. Email content:', { to, subject });
+    return;
+  }
+  try {
+    await resend.emails.send({
+      from: process.env.EMAIL_FROM || 'noreply@rmscore.app',
+      to,
+      subject,
+      html,
+    });
+  } catch (error) {
+    console.error('[EMAIL] Failed to send email:', error);
+  }
+}
+
+---
+
+PART 2: New Login Flow
+
+Replace the current dual-screen PIN/password login with a unified 3-step flow:
+
+Step 1 — Username input:
+- Single input field: "Usuario"
+- Button: "Continuar"
+- Calls GET /api/auth/user-info?username=X
+- Returns: { exists: boolean, hasPin: boolean, displayName: string }
+
+Step 2a — If user hasPin = true:
+- Shows: "Hola, [displayName]"
+- PIN pad (4 digits, same as current pin-login.tsx)
+- Link: "Usar contraseña" → goes to Step 2b
+- Link: "¿Olvidaste tu acceso?" → goes to forgot password screen
+- "Cambiar usuario" link goes back to Step 1
+
+Step 2b — Password input:
+- Shows: "Hola, [displayName]"  
+- Password input field
+- Button: "Ingresar"
+- Link: "¿Olvidaste tu acceso?" → goes to forgot password screen
+- "Cambiar usuario" link goes back to Step 1
+
+Step 3 — Session persistence:
+- After successful login, store username in localStorage key: 'rms_last_username'
+- On app load, if 'rms_last_username' exists, skip Step 1 and go directly to Step 2 (PIN or password)
+- Show small "Cambiar usuario" link to go back to Step 1
+
+Forgot password screen:
+- Input: email address
+- Button: "Enviar instrucciones"
+- Calls POST /api/auth/forgot-password { email }
+- Always shows success message regardless of result: "Si ese correo está registrado, recibirás instrucciones en unos minutos."
+- Link to go back to login
+
+Reset password page (new public route /reset-password):
+- Create client/src/pages/reset-password.tsx
+- Reads ?token= from URL
+- Form: new password + confirm password
+- Calls POST /api/auth/reset-password { token, newPassword }
+- On success: redirect to / with message "Contraseña actualizada. Ya puedes ingresar."
+- Add to App.tsx as public route (no auth required): /reset-password → ResetPasswordPage
+
+Backend endpoints needed:
+
+GET /api/auth/user-info?username=X
+→ Search users table in current tenant schema
+→ Return { exists: boolean, hasPin: boolean, displayName: string }
+→ Never return sensitive data
+
+POST /api/auth/forgot-password { email }
+→ Find user by email in current tenant schema
+→ Generate reset token: crypto.randomBytes(32).toString('hex')
+→ Store in users table (add columns if not exist):
+   ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token varchar(64);
+   ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires timestamp;
+→ Set expiry: NOW() + 1 hour
+→ Build reset URL: https://[tenant-slug].rmscore.app/reset-password?token=XXX
+→ Send email using email-service.ts:
+   Subject: "Recuperación de acceso - RMSCore"
+   Body: Clean HTML with reset link, valid for 1 hour
+→ Always return 200 { message: "ok" }
+
+POST /api/auth/reset-password { token, newPassword }
+→ Find user by reset_token where reset_token_expires > NOW()
+→ If not found: return 400 { message: "Token inválido o expirado" }
+→ Hash newPassword with bcrypt
+→ Update password, clear reset_token and reset_token_expires
+→ Return 200 { message: "Contraseña actualizada" }
+
+---
+
+PART 3: Superadmin - Show password on tenant creation
+
+In the "Nuevo Tenant" form in client/src/pages/superadmin.tsx:
+- Add eye toggle button to show/hide the "Password temporal" field
+- After successful tenant provisioning, show a confirmation dialog with:
+  - Restaurant name
+  - Login URL: https://[slug].rmscore.app  
+  - Username: gerente
+  - Temporary password: [the actual password in plain text]
+  - PIN: [the 4-digit PIN]
+  - A "Copiar credenciales" button that copies all info to clipboard
+  - Warning: "Guarda esta información. No se mostrará nuevamente."
+
+---
+
+PART 4: Trial plan with base plan selector
+
+In the "Nuevo Tenant" form:
+- When "Trial" plan is selected, show a second row: "Plan base del trial"
+- Options: Básico, Pro, Empresarial (default: Básico)
+- This determines which modules get activated for the trial tenant
+
+Backend changes in server/provision/provision-service.ts:
+- Add column: ALTER TABLE tenants ADD COLUMN IF NOT EXISTS trial_base_plan varchar(20);
+- When plan = TRIAL, activate modules based on trial_base_plan instead of TRIAL
+- Store trial_base_plan in the tenants record
+
+In superadmin tenant detail view, show trial_base_plan if plan = TRIAL.
+
+---
+
+PART 5: Welcome email on tenant provisioning
+
+In server/provision/provision-service.ts, after creating the admin user:
+- Generate a random 4-digit PIN
+- Hash with bcrypt, store in users.pin, set hasPin = true
+- Send welcome email to admin email using email-service.ts:
+
+Subject: "Bienvenido a RMSCore - [Restaurant Name]"
+HTML body:
+  - RMSCore logo/header
+  - "Tu sistema está listo" heading
+  - Restaurant name
+  - Access URL: https://[slug].rmscore.app
+  - Username: gerente
+  - Temporary password: [plain text - only shown once]
+  - PIN: [4 digits - only shown once]
+  - Instructions: "Te recomendamos cambiar tu contraseña y PIN en el primer acceso."
+  - Footer: "Este correo fue generado automáticamente por RMSCore."
+
+---
+
+IMPORTANT:
+- Run all ALTER TABLE statements safely with IF NOT EXISTS
+- The email-service.ts must gracefully handle missing RESEND_API_KEY (log to console, don't crash)
+- The new login flow replaces pin-login.tsx and login.tsx — keep the files but have App.tsx route to the new unified login component
+- Maintain all existing session/auth logic, only change the UI flow
+- The tenant slug for building URLs comes from req.tenantSlug which is already set by the tenant middleware

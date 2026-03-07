@@ -24,6 +24,7 @@ export const tenants = pgTable("tenants", {
   billingEmail:     text("billing_email"),
   stripeCustomerId: text("stripe_customer_id"),
   onboardingFileUrl:text("onboarding_file_url"),
+  trialBasePlan:    text("trial_base_plan"),
   createdAt:        timestamp("created_at").notNull().defaultNow(),
   updatedAt:        timestamp("updated_at").notNull().defaultNow(),
 });

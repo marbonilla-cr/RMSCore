@@ -13,6 +13,8 @@ import { Loader2, LogOut, RefreshCw, Grid3x3, CreditCard, ChefHat, Wine } from "
 import { Button } from "@/components/ui/button";
 import PinLoginPage from "@/pages/pin-login";
 import LoginPage from "@/pages/login";
+import AuthPage from "@/pages/auth-page";
+import ResetPasswordPage from "@/pages/reset-password";
 import TablesPage from "@/pages/tables";
 import TableDetailPage from "@/pages/table-detail";
 import KDSPage from "@/pages/kds";
@@ -273,7 +275,6 @@ function AuthenticatedLayout() {
 
 function AppContent() {
   const { user, loading } = useAuth();
-  const [showPasswordLogin, setShowPasswordLogin] = useState(false);
 
   if (loading) {
     return (
@@ -284,23 +285,7 @@ function AppContent() {
   }
 
   if (!user) {
-    if (showPasswordLogin) {
-      return (
-        <div>
-          <LoginPage />
-          <div className="fixed bottom-4 left-0 right-0 text-center">
-            <button
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-              data-testid="link-pin-login"
-              onClick={() => setShowPasswordLogin(false)}
-            >
-              Volver a PIN
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return <PinLoginPage onSwitchToPassword={() => setShowPasswordLogin(true)} />;
+    return <AuthPage />;
   }
 
   return <AuthenticatedLayout />;
@@ -313,6 +298,7 @@ function AppRouter() {
       <Route path="/reserve" component={PublicReservePage} />
       <Route path="/menu" component={PublicMenuPage} />
       <Route path="/superadmin" component={SuperadminPage} />
+      <Route path="/reset-password" component={ResetPasswordPage} />
       <Route component={AppContent} />
     </Switch>
   );

@@ -20,7 +20,8 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
 -   **Framework:** Express.js with TypeScript.
 -   **Database:** PostgreSQL managed with Drizzle ORM.
 -   **Real-time Communication:** WebSocket (`ws` library) for live updates.
--   **Authentication:** Dual-mode session auth (cookie-based primary, token-based fallback for embedded contexts). Includes PIN-based login, RBAC, Helmet for HTTP headers, login rate limiting, and secure session handling.
+-   **Authentication:** Dual-mode session auth (cookie-based primary, token-based fallback for embedded contexts). Unified 3-step login flow (username → PIN/password → session) with localStorage username persistence. Password reset via email (Resend). Includes PIN-based login, RBAC, Helmet for HTTP headers, login rate limiting, and secure session handling.
+-   **Email Service:** `server/services/email-service.ts` using Resend SDK with lazy initialization (graceful fallback when `RESEND_API_KEY` not set).
 -   **Core Business Logic:**
     -   **Timezone Management:** All business date calculations use `America/Costa_Rica` (UTC-6).
     -   **Payment Integrity:** Robust payment validation, voiding, cash session management, and tax snapshotting.

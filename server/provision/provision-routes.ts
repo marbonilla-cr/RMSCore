@@ -45,7 +45,7 @@ export function registerProvisionRoutes(app: Express) {
 
   app.post("/api/superadmin/tenants", requireSuperadmin, async (req, res) => {
     try {
-      const { slug, businessName, plan, billingEmail, adminEmail, adminPassword, adminDisplayName, orderDailyStart, orderGlobalStart, invoiceStart } = req.body;
+      const { slug, businessName, plan, billingEmail, adminEmail, adminPassword, adminDisplayName, orderDailyStart, orderGlobalStart, invoiceStart, trialBasePlan } = req.body;
       if (!slug || !businessName || !plan || !billingEmail || !adminEmail) return res.status(400).json({ message: "Faltan campos requeridos" });
       const err = validateSlug(slug);
       if (err) return res.status(400).json({ message: err });
@@ -57,6 +57,7 @@ export function registerProvisionRoutes(app: Express) {
         orderDailyStart: orderDailyStart ? parseInt(orderDailyStart) : undefined,
         orderGlobalStart: orderGlobalStart ? parseInt(orderGlobalStart) : undefined,
         invoiceStart: invoiceStart ? parseInt(invoiceStart) : undefined,
+        trialBasePlan: plan === "TRIAL" ? (trialBasePlan || "BASIC") : undefined,
       });
       res.status(201).json(result);
     } catch (err: any) { res.status(400).json({ message: err.message }); }

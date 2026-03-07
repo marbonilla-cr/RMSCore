@@ -464,6 +464,68 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/auth/user-info", async (req, res) => {
+    try {
+      const username = (req.query.username as string || "").trim().toLowerCase();
+      if (!username) return res.json({ exists: false, hasPin: false, displayName: "" });
+      const user = await storage.getUserByUsername(username);
+      if (!user || !user.active) return res.json({ exists: false, hasPin: false, displayName: "" });
+      res.json({ exists: true, hasPin: !!user.pin, displayName: user.displayName });
+    } catch { res.json({ exists: false, hasPin: false, displayName: "" }); }
+  });
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) return res.json({ message: "ok" });
+      const allUsers = await storage.getAllUsers();
+      const user = allUsers.find(u => u.email?.toLowerCase() === email.toLowerCase() && u.active);
+      if (user) {
+        const crypto = await import("crypto");
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const expires = new Date(Date.now() + 60 * 60 * 1000);
+        await storage.setResetToken(user.id, resetToken, expires);
+        const host = req.get("host") || "localhost:5000";
+        const proto = req.get("x-forwarded-proto") || req.protocol;
+        const resetUrl = `${proto}://${host}/reset-password?token=${resetToken}`;
+        const { sendEmail } = await import("./services/email-service");
+        await sendEmail(
+          email,
+          "Recuperación de acceso - RMSCore",
+          `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
+            <h2 style="color:#333">Recuperación de acceso</h2>
+            <p>Recibimos una solicitud para restablecer tu contraseña.</p>
+            <p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#b08d57;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold">Restablecer contraseña</a></p>
+            <p style="color:#888;font-size:13px">Este enlace es válido por 1 hora. Si no solicitaste este cambio, ignora este correo.</p>
+            <hr style="border:none;border-top:1px solid #eee;margin:20px 0"/>
+            <p style="color:#aaa;font-size:11px">Este correo fue generado automáticamente por RMSCore.</p>
+          </div>`
+        );
+      }
+      res.json({ message: "ok" });
+    } catch (err: any) {
+      console.error("[auth] forgot-password error:", err.message);
+      res.json({ message: "ok" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, newPassword } = req.body;
+      if (!token || !newPassword) return res.status(400).json({ message: "Datos incompletos" });
+      if (newPassword.length < 6) return res.status(400).json({ message: "La contraseña debe tener al menos 6 caracteres" });
+      const user = await storage.getUserByResetToken(token);
+      if (!user) return res.status(400).json({ message: "Token inválido o expirado" });
+      const bcrypt = await import("bcryptjs");
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await storage.resetPassword(user.id, hashedPassword);
+      res.json({ message: "Contraseña actualizada" });
+    } catch (err: any) {
+      console.error("[auth] reset-password error:", err.message);
+      res.status(500).json({ message: "Error interno" });
+    }
+  });
+
   app.post("/api/auth/logout", async (req, res) => {
     if (req.session.userId) {
       await storage.createAuditEvent({ actorType: "USER", actorUserId: req.session.userId, action: "LOGOUT", entityType: "USER", entityId: req.session.userId, metadata: {} });

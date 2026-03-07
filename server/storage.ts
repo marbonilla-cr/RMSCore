@@ -117,6 +117,21 @@ export async function generateAndSetPin(userId: number): Promise<string> {
   return pin;
 }
 
+export async function setResetToken(userId: number, token: string, expires: Date) {
+  await db.update(users).set({ resetToken: token, resetTokenExpires: expires }).where(eq(users.id, userId));
+}
+
+export async function getUserByResetToken(token: string) {
+  const [user] = await db.select().from(users).where(
+    and(eq(users.resetToken, token), gte(users.resetTokenExpires, new Date()))
+  );
+  return user || null;
+}
+
+export async function resetPassword(userId: number, hashedPassword: string) {
+  await db.update(users).set({ password: hashedPassword, resetToken: null, resetTokenExpires: null }).where(eq(users.id, userId));
+}
+
 export async function getAllUsersWithPin() {
   return db.select({
     id: users.id,

@@ -150,9 +150,12 @@ export default function SuperadminPage() {
     plan:"TRIAL", businessName:"", slug:"", billingEmail:"",
     adminEmail:"", adminPassword:"", adminDisplayName:"",
     orderDailyStart:"1", orderGlobalStart:"1", invoiceStart:"1",
+    trialBasePlan:"BASIC",
   });
   const [createLoading, setCreateLoading] = useState(false);
   const [createError,   setCreateError]   = useState("");
+  const [pwVisible,     setPwVisible]     = useState(false);
+  const [credDialog,    setCredDialog]    = useState<{slug:string;businessName:string;username:string;password:string;pin:string}|null>(null);
 
   // ── Filters ──────────────────────────────────────────────────────────────────
   const [search,       setSearch]       = useState("");
@@ -255,17 +258,26 @@ export default function SuperadminPage() {
     }
     setCreateLoading(true); setCreateError("");
     try {
-      await api("POST","/api/superadmin/tenants",{
+      const actualPw = form.adminPassword||"TempPass123!";
+      const result = await api("POST","/api/superadmin/tenants",{
         ...form, slug:`rest-${form.slug}`,
-        adminPassword: form.adminPassword||"TempPass123!",
+        adminPassword: actualPw,
         adminDisplayName: form.adminDisplayName||form.businessName,
         orderDailyStart: parseInt(form.orderDailyStart)||1,
         orderGlobalStart: parseInt(form.orderGlobalStart)||1,
         invoiceStart: parseInt(form.invoiceStart)||1,
+        trialBasePlan: form.plan==="TRIAL" ? form.trialBasePlan : undefined,
       });
       setCreateOpen(false);
-      setForm({plan:"TRIAL",businessName:"",slug:"",billingEmail:"",adminEmail:"",adminPassword:"",adminDisplayName:"",orderDailyStart:"1",orderGlobalStart:"1",invoiceStart:"1"});
-      toast("success","¡Tenant creado!",form.businessName);
+      const bizName = form.businessName;
+      const slugVal = `rest-${form.slug}`;
+      setForm({plan:"TRIAL",businessName:"",slug:"",billingEmail:"",adminEmail:"",adminPassword:"",adminDisplayName:"",orderDailyStart:"1",orderGlobalStart:"1",invoiceStart:"1",trialBasePlan:"BASIC"});
+      setPwVisible(false);
+      if (result.credentials) {
+        setCredDialog({ slug:slugVal, businessName:bizName, username:result.credentials.username, password:result.credentials.password, pin:result.credentials.pin });
+      } else {
+        toast("success","¡Tenant creado!",bizName);
+      }
       await loadData();
     } catch(e:any){ setCreateError(e.message); }
     finally { setCreateLoading(false); }
@@ -750,8 +762,27 @@ export default function SuperadminPage() {
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
                 <div><label style={S.lbl}>Email del admin *</label><input value={form.adminEmail} onChange={e=>setForm(f=>({...f,adminEmail:e.target.value}))} placeholder="gerente@rest.com" type="email" style={S.input}/></div>
-                <div><label style={S.lbl}>Password temporal</label><input value={form.adminPassword} onChange={e=>setForm(f=>({...f,adminPassword:e.target.value}))} placeholder="TempPass123! si vacío" type="password" style={S.input}/></div>
+                <div><label style={S.lbl}>Password temporal</label>
+                  <div style={{ position:"relative" }}>
+                    <input value={form.adminPassword} onChange={e=>setForm(f=>({...f,adminPassword:e.target.value}))} placeholder="TempPass123! si vacío" type={pwVisible?"text":"password"} style={S.input}/>
+                    <button type="button" onClick={()=>setPwVisible(v=>!v)} style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"var(--sa-text3)", padding:4 }}>{pwVisible?Ico.eyeOff:Ico.eye}</button>
+                  </div>
+                </div>
               </div>
+              {form.plan==="TRIAL" && (
+                <div style={{ marginBottom:14 }}>
+                  <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase" as const, color:"var(--sa-text3)", paddingBottom:8, borderBottom:"1px solid var(--sa-border)", marginBottom:10 }}>Plan base del trial</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+                    {(["BASIC","PRO","ENTERPRISE"] as Plan[]).map(k=>(
+                      <div key={k} className={`sa-plan-opt${form.trialBasePlan===k?" active":""}`} onClick={()=>setForm(f=>({...f,trialBasePlan:k}))}
+                        style={{ border:`2px solid ${form.trialBasePlan===k?"var(--sa-acc)":"var(--sa-border)"}`, borderRadius:"var(--sa-r-md)", padding:"8px", textAlign:"center" as const, background:form.trialBasePlan===k?"var(--sa-acc-d)":"transparent" }}>
+                        <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:12, color:form.trialBasePlan===k?"var(--sa-acc)":"var(--sa-text)" }}>{PLAN_LABELS[k]}</div>
+                        <div style={{ fontFamily:"var(--sa-f-mono)", fontSize:9, color:"var(--sa-text3)", marginTop:2 }}>{PLAN_MODULES[k].length} módulos</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase" as const, color:"var(--sa-text3)", paddingBottom:8, borderBottom:"1px solid var(--sa-border)", marginBottom:12 }}>Consecutivos iniciales</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
                 <div><label style={S.lbl}>Orden diario</label><input value={form.orderDailyStart} onChange={e=>setForm(f=>({...f,orderDailyStart:e.target.value}))} type="number" min="1" style={S.input}/></div>
@@ -765,6 +796,48 @@ export default function SuperadminPage() {
               <button onClick={submitCreate} disabled={createLoading} style={{ ...S.btnPrimary, opacity:createLoading?0.7:1 }}>
                 {createLoading?"Provisionando...":"Crear y Provisionar"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════ MODAL: CREDENCIALES ════════════════ */}
+      {credDialog && (
+        <div className="sa-overlay" style={{ ...S.overlay, zIndex:300 }} onClick={e=>{if(e.target===e.currentTarget)setCredDialog(null)}}>
+          <div className="sa-modal" style={{ ...S.modal, maxWidth:460 }}>
+            <div style={S.modalHdr}>
+              <div>
+                <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:20 }}>Tenant creado</div>
+                <div style={{ fontSize:13, color:"var(--sa-text3)", marginTop:3 }}>{credDialog.businessName}</div>
+              </div>
+              <button style={S.closeBtn} onClick={()=>setCredDialog(null)}>{Ico.close}</button>
+            </div>
+            <div style={{ padding:"20px 26px" }}>
+              <div style={{ background:"#fffbeb", border:"1px solid #f5e6b8", borderRadius:"var(--sa-r-sm)", padding:"10px 14px", marginBottom:16, fontSize:12, color:"#92400e" }}>
+                ⚠️ Guarda esta información. No se mostrará nuevamente.
+              </div>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <tbody>
+                  {[
+                    ["URL de acceso", `https://${credDialog.slug}.rmscore.app`],
+                    ["Usuario", credDialog.username],
+                    ["Contraseña", credDialog.password],
+                    ["PIN", credDialog.pin],
+                  ].map(([label, value]) => (
+                    <tr key={label}>
+                      <td style={{ padding:"8px 12px", fontSize:12, color:"var(--sa-text3)", borderBottom:"1px solid var(--sa-border)", whiteSpace:"nowrap" as const }}>{label}</td>
+                      <td style={{ padding:"8px 12px", fontSize:14, fontWeight:600, fontFamily:"var(--sa-f-mono)", color:"var(--sa-text)", borderBottom:"1px solid var(--sa-border)" }}>{value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding:"14px 26px 22px", borderTop:"1px solid var(--sa-border)", display:"flex", justifyContent:"flex-end", gap:10 }}>
+              <button style={S.btnSec} onClick={()=>setCredDialog(null)}>Cerrar</button>
+              <button style={S.btnPrimary} onClick={()=>{
+                const t = `${credDialog.businessName}\nURL: https://${credDialog.slug}.rmscore.app\nUsuario: ${credDialog.username}\nContraseña: ${credDialog.password}\nPIN: ${credDialog.pin}`;
+                navigator.clipboard.writeText(t).then(()=>toast("success","Copiado","Credenciales copiadas al portapapeles")).catch(()=>toast("error","Error","No se pudo copiar"));
+              }}>Copiar credenciales</button>
             </div>
           </div>
         </div>
@@ -863,6 +936,7 @@ export default function SuperadminPage() {
                       ["Estado",   detailData.tenant.status,       false],
                       ["Billing",  detailData.tenant.billing_email||"–", false],
                       ["Trial",    detailData.tenant.trial_ends_at?new Date(detailData.tenant.trial_ends_at).toLocaleDateString("es-CR"):"–", false],
+                      ...(detailData.tenant.plan==="TRIAL"&&(detailData.tenant as any).trial_base_plan?[["Plan base",(PLAN_LABELS as any)[(detailData.tenant as any).trial_base_plan]||(detailData.tenant as any).trial_base_plan,false]]:[] as any),
                       ["Creado",   new Date(detailData.tenant.created_at).toLocaleDateString("es-CR"), false],
                       ...(detailData.tenant.suspend_reason?[["Razón",detailData.tenant.suspend_reason,false]]:[] as any),
                     ] as [string,string,boolean][]).map(([k,v,mono])=>(

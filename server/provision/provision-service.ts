@@ -1,8 +1,10 @@
 import { Pool } from "pg";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { PLAN_MODULES, ADDON_PRICES } from "@shared/schema-public";
 import { propagateMigrations } from "./migrate-tenants";
 import { seedTenantSchema } from "../storage";
+import { sendEmail } from "../services/email-service";
 
 const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
 
@@ -18,6 +20,7 @@ export interface CreateTenantInput {
   orderDailyStart?: number;
   orderGlobalStart?: number;
   invoiceStart?: number;
+  trialBasePlan?: string;
 }
 
 export interface ReprovisionInput {
@@ -61,9 +64,9 @@ export async function createTenant(input: CreateTenantInput) {
     const trialEndsAt = input.plan === "TRIAL" ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null;
 
     const tenantResult = await publicPool.query(
-      `INSERT INTO public.tenants (slug, business_name, schema_name, plan, status, is_active, trial_ends_at, billing_email)
-       VALUES ($1,$2,$3,$4,'PROVISIONING',false,$5,$6) RETURNING id`,
-      [input.slug, input.businessName, schemaName, input.plan, trialEndsAt, input.billingEmail]
+      `INSERT INTO public.tenants (slug, business_name, schema_name, plan, status, is_active, trial_ends_at, billing_email, trial_base_plan)
+       VALUES ($1,$2,$3,$4,'PROVISIONING',false,$5,$6,$7) RETURNING id`,
+      [input.slug, input.businessName, schemaName, input.plan, trialEndsAt, input.billingEmail, input.plan === "TRIAL" ? (input.trialBasePlan || "BASIC") : null]
     );
     tenantId = tenantResult.rows[0].id;
 
@@ -82,8 +85,10 @@ export async function createTenant(input: CreateTenantInput) {
       orderGlobalStart: input.orderGlobalStart,
       invoiceStart: input.invoiceStart,
     });
-    await createAdminUser(schemaName, { email: input.adminEmail, password: input.adminPassword, displayName: input.adminDisplayName });
-    await activatePlanModules(tenantId, input.plan);
+    const adminPin = generateRandomPin();
+    const adminUsername = await createAdminUser(schemaName, { email: input.adminEmail, password: input.adminPassword, displayName: input.adminDisplayName, pin: adminPin });
+    const modulePlan = input.plan === "TRIAL" ? (input.trialBasePlan || "BASIC") : input.plan;
+    await activatePlanModules(tenantId, modulePlan);
 
     await publicPool.query(
       `UPDATE public.tenants SET status='ACTIVE', is_active=true, updated_at=NOW() WHERE id=$1`, [tenantId]
@@ -97,7 +102,9 @@ export async function createTenant(input: CreateTenantInput) {
       `SELECT id,slug,schema_name,plan,status,is_active,trial_ends_at,created_at FROM public.tenants WHERE id=$1`, [tenantId]
     )).rows[0];
 
-    return { id: row.id, slug: row.slug, schemaName: row.schema_name, plan: row.plan, status: row.status, isActive: row.is_active, trialEndsAt: row.trial_ends_at, createdAt: row.created_at };
+    sendWelcomeEmail(input.adminEmail, input.businessName, input.slug, adminUsername, input.adminPassword || "TempPass123!", adminPin).catch(e => console.error("[provision] welcome email error:", e.message));
+
+    return { id: row.id, slug: row.slug, schemaName: row.schema_name, plan: row.plan, status: row.status, isActive: row.is_active, trialEndsAt: row.trial_ends_at, createdAt: row.created_at, credentials: { username: adminUsername, password: input.adminPassword || "TempPass123!", pin: adminPin } };
 
   } catch (err: any) {
     console.error(`[provision] ERROR:`, err.message);
@@ -274,13 +281,45 @@ async function activatePlanModules(tenantId: number, plan: string) {
   }
 }
 
-async function createAdminUser(schemaName: string, data: { email: string; password: string; displayName: string }) {
-  const hash = await bcrypt.hash(data.password, 10);
+function generateRandomPin(): string {
+  return String(Math.floor(1000 + Math.random() * 9000));
+}
+
+async function createAdminUser(schemaName: string, data: { email: string; password: string; displayName: string; pin?: string }): Promise<string> {
+  const hash = await bcrypt.hash(data.password || "TempPass123!", 10);
   const username = data.email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+  const pinHash = data.pin ? await bcrypt.hash(data.pin, 10) : null;
   await publicPool.query(
-    `INSERT INTO "${schemaName}".users (username,password,display_name,role,active,email) VALUES ($1,$2,$3,'MANAGER',true,$4) ON CONFLICT DO NOTHING`,
-    [username, hash, data.displayName, data.email]
+    `INSERT INTO "${schemaName}".users (username,password,display_name,role,active,email,pin) VALUES ($1,$2,$3,'MANAGER',true,$4,$5) ON CONFLICT DO NOTHING`,
+    [username, hash, data.displayName, data.email, pinHash]
   );
+  return username;
+}
+
+async function sendWelcomeEmail(to: string, businessName: string, slug: string, username: string, password: string, pin: string) {
+  const url = `https://${slug}.rmscore.app`;
+  const html = `
+    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;background:#fff;border:1px solid #e5e5e5;border-radius:12px;">
+      <div style="text-align:center;margin-bottom:24px;">
+        <h1 style="font-size:22px;font-weight:700;color:#1a1a1a;margin:0 0 4px;">RMSCore</h1>
+        <p style="font-size:14px;color:#888;margin:0;">Sistema de Gestión para Restaurantes</p>
+      </div>
+      <div style="background:#f8f6f3;border-radius:10px;padding:24px;margin-bottom:20px;">
+        <h2 style="font-size:18px;font-weight:700;color:#1a1a1a;margin:0 0 8px;">¡Tu sistema está listo!</h2>
+        <p style="font-size:14px;color:#555;margin:0;">${businessName}</p>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+        <tr><td style="padding:10px 14px;font-size:13px;color:#888;border-bottom:1px solid #eee;">URL de acceso</td><td style="padding:10px 14px;font-size:13px;font-weight:600;color:#1d4ed8;border-bottom:1px solid #eee;"><a href="${url}" style="color:#1d4ed8;">${url}</a></td></tr>
+        <tr><td style="padding:10px 14px;font-size:13px;color:#888;border-bottom:1px solid #eee;">Usuario</td><td style="padding:10px 14px;font-size:14px;font-weight:600;color:#1a1a1a;border-bottom:1px solid #eee;font-family:monospace;">${username}</td></tr>
+        <tr><td style="padding:10px 14px;font-size:13px;color:#888;border-bottom:1px solid #eee;">Contraseña</td><td style="padding:10px 14px;font-size:14px;font-weight:600;color:#1a1a1a;border-bottom:1px solid #eee;font-family:monospace;">${password}</td></tr>
+        <tr><td style="padding:10px 14px;font-size:13px;color:#888;">PIN</td><td style="padding:10px 14px;font-size:14px;font-weight:600;color:#1a1a1a;font-family:monospace;">${pin}</td></tr>
+      </table>
+      <div style="background:#fffbeb;border:1px solid #f5e6b8;border-radius:8px;padding:14px;margin-bottom:20px;">
+        <p style="font-size:13px;color:#92400e;margin:0;">⚠️ Te recomendamos cambiar tu contraseña y PIN en el primer acceso.</p>
+      </div>
+      <p style="font-size:11px;color:#aaa;text-align:center;margin:0;">Este correo fue generado automáticamente por RMSCore.</p>
+    </div>`;
+  await sendEmail(to, `Bienvenido a RMSCore - ${businessName}`, html);
 }
 
 async function seedTenant(
