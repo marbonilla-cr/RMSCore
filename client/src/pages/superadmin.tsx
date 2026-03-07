@@ -417,7 +417,7 @@ export default function SuperadminPage() {
         <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:24, marginBottom:22 }}>Panel de Operaciones</div>
         <label style={S.lbl}>Token de acceso</label>
         <div style={{ display:"flex", background:"var(--sa-s1)", border:"1px solid var(--sa-border)", borderRadius:"var(--sa-r-sm)", overflow:"hidden", marginBottom:4 }}>
-          <input type={tokenVis?"text":"password"} value={tokenInput} onChange={e=>setTokenInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="rmscore-superadmin-2026" autoFocus
+          <input type={tokenVis?"text":"password"} value={tokenInput} onChange={e=>setTokenInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="Ingrese el token" autoFocus
             style={{ flex:1, padding:"9px 12px", background:"none", border:"none", outline:"none", fontFamily:"var(--sa-f-mono)", fontSize:13, color:"var(--sa-text)", letterSpacing:"0.04em" }} />
           <button onClick={()=>setTokenVis(v=>!v)} style={{ padding:"0 12px", background:"none", border:"none", color:"var(--sa-text3)", cursor:"pointer", display:"flex", alignItems:"center" }}>
             {tokenVis ? Ico.eyeOff : Ico.eye}
