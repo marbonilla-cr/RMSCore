@@ -5,8 +5,8 @@
 
 import type { Express, Request, Response } from "express";
 import { Pool } from "pg";
-import { createTenant, suspendTenant, reactivateTenant, changeTenantPlan, activateAddon, validateSlug, reprovisionTenant, type ReprovisionInput } from "./provision-service";
-import { getMigrationStatus } from "./migrate-tenants";
+import { createTenant, suspendTenant, reactivateTenant, changeTenantPlan, activateAddon, validateSlug, reprovisionTenant, sendTenantPasswordReset, type ReprovisionInput } from "./provision-service";
+import { getMigrationStatus, markMigrationsAsApplied } from "./migrate-tenants";
 import { ADDON_PRICES, PLAN_PRICES, PLAN_MODULES } from "@shared/schema-public";
 
 const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
@@ -112,6 +112,33 @@ export function registerProvisionRoutes(app: Express) {
       res.json(status);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/superadmin/migrations/mark-applied", requireSuperadmin, async (req, res) => {
+    try {
+      const { schemaName, filenames } = req.body;
+      if (!schemaName || !Array.isArray(filenames) || filenames.length === 0) {
+        return res.status(400).json({ message: "schemaName y filenames[] son requeridos" });
+      }
+      await markMigrationsAsApplied(schemaName, filenames);
+      res.json({ ok: true, marked: filenames.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/superadmin/tenants/:id/send-password-reset", requireSuperadmin, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.id);
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ message: "Email requerido" });
+      const host = req.get("host") || "localhost:5000";
+      const proto = req.get("x-forwarded-proto") || req.protocol;
+      const result = await sendTenantPasswordReset(tenantId, email, host, proto);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
     }
   });
 

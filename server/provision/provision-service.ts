@@ -296,6 +296,62 @@ async function createAdminUser(schemaName: string, data: { email: string; passwo
   return username;
 }
 
+export async function sendTenantPasswordReset(tenantId: number, email: string, reqHost: string, reqProto: string) {
+  const { rows: tenantRows } = await publicPool.query(
+    `SELECT id, slug, schema_name, business_name FROM public.tenants WHERE id = $1`,
+    [tenantId]
+  );
+  if (tenantRows.length === 0) throw new Error(`Tenant ${tenantId} no encontrado`);
+  const tenant = tenantRows[0];
+  const schemaName = tenant.schema_name;
+
+  const { rows: userRows } = await publicPool.query(
+    `SELECT id, email, username, display_name FROM "${schemaName}".users WHERE role = 'MANAGER' AND active = true ORDER BY id ASC LIMIT 1`
+  );
+  if (userRows.length === 0) throw new Error("No se encontró un usuario MANAGER activo en este tenant");
+  const adminUser = userRows[0];
+
+  if (adminUser.email?.toLowerCase() !== email.toLowerCase()) {
+    await publicPool.query(
+      `UPDATE "${schemaName}".users SET email = $1 WHERE id = $2`,
+      [email, adminUser.id]
+    );
+  }
+
+  const resetToken = crypto.randomBytes(32).toString("hex");
+  const expires = new Date(Date.now() + 60 * 60 * 1000);
+  await publicPool.query(
+    `UPDATE "${schemaName}".users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3`,
+    [resetToken, expires, adminUser.id]
+  );
+
+  const resetUrl = `${reqProto}://${reqHost}/reset-password?token=${resetToken}`;
+  const html = `
+    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;background:#fff;border:1px solid #e5e5e5;border-radius:12px;">
+      <div style="text-align:center;margin-bottom:24px;">
+        <h1 style="font-size:22px;font-weight:700;color:#1a1a1a;margin:0 0 4px;">RMSCore</h1>
+        <p style="font-size:14px;color:#888;margin:0;">Restablecimiento de contraseña</p>
+      </div>
+      <div style="background:#f8f6f3;border-radius:10px;padding:24px;margin-bottom:20px;">
+        <h2 style="font-size:18px;font-weight:700;color:#1a1a1a;margin:0 0 8px;">Hola ${adminUser.display_name || adminUser.username}</h2>
+        <p style="font-size:14px;color:#555;margin:0;">${tenant.business_name}</p>
+      </div>
+      <p style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
+        El administrador del sistema ha solicitado restablecer tu contraseña. Haz clic en el siguiente botón para crear una nueva:
+      </p>
+      <div style="text-align:center;margin-bottom:20px;">
+        <a href="${resetUrl}" style="display:inline-block;padding:14px 28px;background:#1d4ed8;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;font-size:15px;">Restablecer contraseña</a>
+      </div>
+      <div style="background:#fffbeb;border:1px solid #f5e6b8;border-radius:8px;padding:14px;margin-bottom:20px;">
+        <p style="font-size:13px;color:#92400e;margin:0;">Este enlace es válido por 1 hora. Si no reconoces esta solicitud, contacta al soporte.</p>
+      </div>
+      <p style="font-size:11px;color:#aaa;text-align:center;margin:0;">Este correo fue generado automáticamente por RMSCore.</p>
+    </div>`;
+  await sendEmail(email, `Restablecimiento de contraseña - ${tenant.business_name}`, html);
+
+  return { sent: true, username: adminUser.username, email };
+}
+
 async function sendWelcomeEmail(to: string, businessName: string, slug: string, username: string, password: string, pin: string) {
   const url = `https://${slug}.rmscore.app`;
   const html = `

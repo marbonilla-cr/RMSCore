@@ -173,6 +173,12 @@ export default function SuperadminPage() {
   const [migrationStatus, setMigrationStatus] = useState<any[]>([]);
   const [migrationLoading, setMigrationLoading] = useState(false);
 
+  // ── Password Reset ─────────────────────────────────────────────────────────
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetResult, setResetResult] = useState<""|"ok"|"err">("");
+  const [resetErr, setResetErr] = useState("");
+
   // ── Setup ────────────────────────────────────────────────────────────────────
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupResult,  setSetupResult]  = useState<""|"ok"|"err">("");
@@ -286,8 +292,24 @@ export default function SuperadminPage() {
   // ── Detail ───────────────────────────────────────────────────────────────────
   const openDetail = async (id:number) => {
     setDetailOpen(true); setDetailData(null);
-    try { setDetailData(await api("GET",`/api/superadmin/tenants/${id}`)); }
+    setResetEmail(""); setResetResult(""); setResetErr("");
+    try {
+      const data = await api("GET",`/api/superadmin/tenants/${id}`);
+      setDetailData(data);
+      setResetEmail(data.tenant.billing_email || "");
+    }
     catch(e:any){ toast("error","Error",e.message); setDetailOpen(false); }
+  };
+
+  const submitPasswordReset = async () => {
+    if (!detailData || !resetEmail.trim()) { setResetErr("Email requerido"); return; }
+    setResetLoading(true); setResetResult(""); setResetErr("");
+    try {
+      await api("POST",`/api/superadmin/tenants/${detailData.tenant.id}/send-password-reset`,{ email: resetEmail.trim() });
+      setResetResult("ok");
+      toast("success","Correo enviado",`Reset enviado a ${resetEmail.trim()}`);
+    } catch(e:any){ setResetResult("err"); setResetErr(e.message); }
+    finally { setResetLoading(false); }
   };
 
   // ── CAMBIO DE PLAN ────────────────────────────────────────────────────────────
@@ -369,13 +391,28 @@ export default function SuperadminPage() {
   };
 
   // ── Migrations ──────────────────────────────────────────────────────────────
+  const [migrationFiles, setMigrationFiles] = useState<string[]>([]);
+  const [markingSchema, setMarkingSchema] = useState<string|null>(null);
+
   const loadMigrationStatus = async () => {
     setMigrationLoading(true);
     try {
       const data = await api("GET","/api/superadmin/migration-status");
       setMigrationStatus(data.tenants || []);
+      setMigrationFiles(data.files || []);
     } catch(e:any){ toast("error","Error al cargar migraciones",e.message); }
     finally { setMigrationLoading(false); }
+  };
+
+  const markAsApplied = async (schemaName: string) => {
+    if (migrationFiles.length === 0) { toast("error","Sin archivos","No hay archivos de migración"); return; }
+    setMarkingSchema(schemaName);
+    try {
+      await api("POST","/api/superadmin/migrations/mark-applied",{ schemaName, filenames: migrationFiles });
+      toast("success","Migraciones marcadas",schemaName);
+      await loadMigrationStatus();
+    } catch(e:any){ toast("error","Error al marcar",e.message); }
+    finally { setMarkingSchema(null); }
   };
 
   // ── Setup ────────────────────────────────────────────────────────────────────
@@ -670,7 +707,7 @@ export default function SuperadminPage() {
                   <table style={{ width:"100%", borderCollapse:"collapse" }}>
                     <thead>
                       <tr style={{ background:"var(--sa-s1)" }}>
-                        {["Tenant","Plan","Schema","Aplicadas","Pendientes","Última migración","Estado"].map((h,i)=>(
+                        {["Tenant","Plan","Schema","Aplicadas","Pendientes","Última migración","Estado","Acciones"].map((h,i)=>(
                           <th key={i} style={{ textAlign:"left", padding:"9px 14px", fontSize:10, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase" as const, color:"var(--sa-text3)", borderBottom:"1px solid var(--sa-border)", whiteSpace:"nowrap" as const }}>{h}</th>
                         ))}
                       </tr>
@@ -693,6 +730,18 @@ export default function SuperadminPage() {
                               ? <span style={badge("var(--sa-sage)","var(--sa-sage-d)","var(--sa-sage-m)")}>Al día</span>
                               : <span style={badge("var(--sa-amber)","var(--sa-amber)"+"18","var(--sa-amber)"+"50")}>Pendiente</span>
                             }
+                          </td>
+                          <td style={{ padding:"10px 14px" }}>
+                            {s.pendingCount>0 && (
+                              <button
+                                data-testid={`button-mark-applied-${s.schemaName}`}
+                                onClick={()=>markAsApplied(s.schemaName)}
+                                disabled={markingSchema===s.schemaName}
+                                style={{ padding:"5px 12px", fontSize:11, fontWeight:600, fontFamily:"var(--sa-f-disp)", background:"var(--sa-acc)", color:"white", border:"none", borderRadius:"var(--sa-r-xs)", cursor:"pointer", opacity:markingSchema===s.schemaName?0.6:1, whiteSpace:"nowrap" as const }}
+                              >
+                                {markingSchema===s.schemaName?"Marcando...":"Marcar como aplicadas"}
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -968,6 +1017,32 @@ export default function SuperadminPage() {
                     </>}
                   </div>
                 </div>
+                <div style={{ paddingTop:16, borderTop:"1px solid var(--sa-border)", marginBottom:16 }}>
+                  <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:14, marginBottom:10 }}>Restablecer contraseña del admin</div>
+                  <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
+                    <div style={{ flex:1 }}>
+                      <label style={S.lbl}>Email de destino</label>
+                      <input
+                        value={resetEmail}
+                        onChange={e=>setResetEmail(e.target.value)}
+                        placeholder="admin@restaurante.com"
+                        type="email"
+                        style={S.input}
+                        data-testid="input-reset-email"
+                      />
+                    </div>
+                    <button
+                      onClick={submitPasswordReset}
+                      disabled={resetLoading}
+                      data-testid="button-send-password-reset"
+                      style={{ padding:"9px 16px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-acc)", background:"var(--sa-acc-d)", color:"var(--sa-acc)", whiteSpace:"nowrap" as const, opacity:resetLoading?0.7:1 }}>
+                      {resetLoading?"Enviando...":"Enviar correo de restablecimiento"}
+                    </button>
+                  </div>
+                  {resetResult==="ok" && <div style={{ marginTop:8, padding:"8px 12px", background:"var(--sa-sage-d)", border:"1px solid var(--sa-sage-m)", borderRadius:"var(--sa-r-sm)", fontSize:12, color:"var(--sa-sage)" }}>Correo de restablecimiento enviado exitosamente.</div>}
+                  {resetResult==="err" && <div style={{ marginTop:8, padding:"8px 12px", background:"var(--sa-red-d)", border:"1px solid var(--sa-red-m)", borderRadius:"var(--sa-r-sm)", fontSize:12, color:"var(--sa-red)" }}>{resetErr}</div>}
+                </div>
+
                 <div style={{ paddingTop:16, borderTop:"1px solid var(--sa-border)", display:"flex", gap:8 }}>
                   <button onClick={()=>{ setDetailOpen(false); openPlanChange(detailData.tenant); }}
                     style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-border)", background:"var(--sa-s0)", color:"var(--sa-text2)" }}>

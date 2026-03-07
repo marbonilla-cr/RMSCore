@@ -95,6 +95,7 @@ export async function propagateMigrations(targetSchema?: string): Promise<void> 
 
 export async function getMigrationStatus(): Promise<{
   totalFiles: number;
+  files: string[];
   tenants: {
     tenantId: number;
     slug: string;
@@ -137,5 +138,29 @@ export async function getMigrationStatus(): Promise<{
     })
   );
 
-  return { totalFiles, tenants: result };
+  return { totalFiles, files, tenants: result };
+}
+
+export async function markMigrationsAsApplied(
+  schemaName: string,
+  filenames: string[]
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const filename of filenames) {
+      await client.query(
+        `INSERT INTO public.schema_migrations (schema_name, filename)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [schemaName, filename]
+      );
+    }
+    await client.query("COMMIT");
+    console.log(`[migrate] Marcadas ${filenames.length} migración(es) como aplicadas para ${schemaName}`);
+  } catch (err: any) {
+    await client.query("ROLLBACK");
+    throw new Error(`[migrate] Error marcando migraciones para ${schemaName}: ${err.message}`);
+  } finally {
+    client.release();
+  }
 }

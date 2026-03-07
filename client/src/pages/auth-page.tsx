@@ -194,16 +194,16 @@ export default function AuthPage() {
         .auth-greeting { text-align:center; font-size:16px; color:var(--text2); margin-bottom:16px; }
         .auth-greeting strong { color:var(--text); font-weight:700; }
         .auth-input { width:100%; padding:12px 14px; background:var(--s1); border:1px solid var(--border); border-radius:8px; font-size:15px; color:var(--text); outline:none; font-family:var(--f-body); margin-bottom:12px; }
-        .auth-input:focus { border-color:var(--accent); }
+        .auth-input:focus { border-color:hsl(var(--primary)); }
         .auth-input::placeholder { color:var(--text3); }
         .auth-btn { width:100%; padding:12px; border:none; border-radius:8px; font-size:15px; font-weight:600; cursor:pointer; font-family:var(--f-body); display:flex; align-items:center; justify-content:center; gap:8px; transition:opacity .15s; }
         .auth-btn:disabled { opacity:0.6; cursor:not-allowed; }
-        .auth-btn-primary { background:var(--accent); color:#fff; }
+        .auth-btn-primary { background:hsl(var(--primary)); color:#fff; }
         .auth-btn-primary:hover:not(:disabled) { opacity:0.9; }
-        .auth-btn-secondary { background:transparent; color:var(--accent); border:1.5px solid var(--accent); }
+        .auth-btn-secondary { background:transparent; color:hsl(var(--primary)); border:1.5px solid hsl(var(--primary)); }
         .auth-btn-secondary:hover:not(:disabled) { background:var(--s1); }
         .auth-error { background:hsl(0 80% 95%); border:1px solid hsl(0 70% 85%); color:hsl(0 70% 40%); border-radius:8px; padding:10px 14px; font-size:13px; margin-bottom:12px; text-align:center; }
-        .auth-link { background:none; border:none; color:var(--accent); font-size:13px; cursor:pointer; font-family:var(--f-body); padding:0; text-decoration:underline; }
+        .auth-link { background:none; border:none; color:hsl(var(--primary)); font-size:13px; cursor:pointer; font-family:var(--f-body); padding:0; text-decoration:underline; }
         .auth-link:hover { opacity:0.8; }
         .auth-link-muted { color:var(--text3); text-decoration:none; }
         .auth-link-muted:hover { color:var(--text2); }
@@ -213,11 +213,12 @@ export default function AuthPage() {
         .auth-divider-text { font-size:12px; color:var(--text3); white-space:nowrap; }
         .pin-dots { display:flex; justify-content:center; gap:12px; margin-bottom:20px; }
         .pin-dot { width:14px; height:14px; border-radius:50%; border:2px solid var(--border); transition:all .15s; }
-        .pin-dot.filled { background:var(--accent); border-color:var(--accent); }
+        .pin-dot.filled { background:hsl(var(--primary)); border-color:hsl(var(--primary)); }
         .pin-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; max-width:240px; margin:0 auto; }
-        .pin-key { width:100%; aspect-ratio:1.2; border:1px solid var(--border); border-radius:12px; background:var(--s1); font-size:22px; font-weight:600; color:var(--text); cursor:pointer; display:flex; align-items:center; justify-content:center; font-family:var(--f-body); transition:background .1s; user-select:none; -webkit-tap-highlight-color:transparent; }
+        .pin-key { width:100%; aspect-ratio:1.2; border:1px solid var(--border); border-radius:12px; background:var(--s1); font-size:22px; font-weight:600; color:#1a1a1a; cursor:pointer; display:flex; align-items:center; justify-content:center; font-family:var(--f-body); transition:background .1s; user-select:none; -webkit-tap-highlight-color:transparent; }
+        [data-theme="dark"] .pin-key { color:#ffffff; }
         .pin-key:active { background:var(--s2); }
-        .pin-key.accent { background:var(--accent); color:#fff; border-color:var(--accent); }
+        .pin-key.accent { background:hsl(var(--primary)); color:#fff; border-color:hsl(var(--primary)); }
         @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
         .auth-success { background:hsl(140 60% 95%); border:1px solid hsl(140 50% 80%); color:hsl(140 50% 30%); border-radius:8px; padding:12px 14px; font-size:13px; text-align:center; margin-bottom:12px; }
         .pw-wrapper { position:relative; margin-bottom:12px; }
