@@ -6,7 +6,7 @@
 import type { Express, Request, Response } from "express";
 import { Pool } from "pg";
 import { createTenant, suspendTenant, reactivateTenant, changeTenantPlan, activateAddon, validateSlug, reprovisionTenant, sendTenantPasswordReset, type ReprovisionInput } from "./provision-service";
-import { getMigrationStatus, markMigrationsAsApplied } from "./migrate-tenants";
+import { getMigrationStatus, markMigrationsAsApplied, propagateMigrations } from "./migrate-tenants";
 import { ADDON_PRICES, PLAN_PRICES, PLAN_MODULES } from "@shared/schema-public";
 
 const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
@@ -123,6 +123,16 @@ export function registerProvisionRoutes(app: Express) {
       }
       await markMigrationsAsApplied(schemaName, filenames);
       res.json({ ok: true, marked: filenames.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/superadmin/migrations/propagate", requireSuperadmin, async (_req, res) => {
+    try {
+      await propagateMigrations();
+      const status = await getMigrationStatus();
+      res.json({ success: true, message: "Migraciones aplicadas", ...status });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

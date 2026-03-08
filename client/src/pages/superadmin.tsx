@@ -404,6 +404,20 @@ export default function SuperadminPage() {
     finally { setMigrationLoading(false); }
   };
 
+  const [propagating, setPropagating] = useState(false);
+  const propagateMigrations = async () => {
+    setPropagating(true);
+    try {
+      const data = await api("POST","/api/superadmin/migrations/propagate");
+      setMigrationStatus(data.tenants || []);
+      setMigrationFiles(data.files || []);
+      toast("success","Migraciones aplicadas","Se propagaron las migraciones pendientes");
+    } catch(e:any){ toast("error","Error al propagar migraciones",e.message); }
+    finally { setPropagating(false); }
+  };
+
+  const hasPending = migrationStatus.some((s:any) => s.pendingCount > 0);
+
   const markAsApplied = async (schemaName: string) => {
     if (migrationFiles.length === 0) { toast("error","Sin archivos","No hay archivos de migración"); return; }
     setMarkingSchema(schemaName);
@@ -693,9 +707,19 @@ export default function SuperadminPage() {
             <div style={{ maxWidth:900 }}>
               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
                 <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:16 }}>Versiones de Schema</div>
-                <button onClick={loadMigrationStatus} style={{ ...S.btnSec, padding:"5px 12px", fontSize:12 }}>
+                <button onClick={loadMigrationStatus} style={{ ...S.btnSec, padding:"5px 12px", fontSize:12 }} data-testid="button-refresh-migrations">
                   {migrationLoading?"Cargando...":"Actualizar"}
                 </button>
+                {hasPending && (
+                  <button
+                    onClick={propagateMigrations}
+                    disabled={propagating}
+                    data-testid="button-propagate-migrations"
+                    style={{ padding:"5px 14px", fontSize:12, fontWeight:600, fontFamily:"var(--sa-f-disp)", background:"var(--sa-acc)", color:"white", border:"none", borderRadius:"var(--sa-r-xs)", cursor:"pointer", opacity:propagating?0.6:1 }}
+                  >
+                    {propagating?"Aplicando...":"Aplicar Pendientes"}
+                  </button>
+                )}
               </div>
               {migrationStatus.length===0 && !migrationLoading && (
                 <div style={{ ...S.card, textAlign:"center", color:"var(--sa-text3)", padding:40 }}>
