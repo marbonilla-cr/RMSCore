@@ -1,0 +1,19 @@
+G-283	2026-03-08	03:45 p. m.	Terr 2	₡23 000	Efectivo	Bebidas Sin Alcohol, Compartir, Desayuno, Entradas, Gaseosas, Naturales, Platos Fuertes	Sin sync	-
+G-270	2026-03-08	03:41 p. m.	Terr 6	₡77 600	Tarjeta	Antojos, Bebidas Sin Alcohol, Carnes y Pescado, Cerveza y Vino, Compartir, Entradas, Naturales	Sin sync	-
+G-279	2026-03-08	03:19 p. m.	Terr 4	₡3 400	Tarjeta	Antojos, Bebidas Sin Alcohol, Compartir, Desayuno, Naturales, Platos Fuertes	Sin sync	-
+G-279	2026-03-08	03:18 p. m.	Terr 4	₡15 500	Tarjeta	Antojos, Bebidas Sin Alcohol, Compartir, Desayuno, Naturales, Platos Fuertes	Sin sync	-
+G-274	2026-03-08	03:11 p. m.	Mesa 12	₡19 700	Tarjeta	Antojos, Bebidas Sin Alcohol, Entradas, Menu Niños, Naturales, Platos Fuertes, ZPorcionesInv	Sin sync	-
+G-278	2026-03-08	03:09 p. m.	Terr 3	₡14 400	Tarjeta	Antojos, Bebidas Sin Alcohol, Naturales, Platos Fuertes	Sin sync	-
+G-277	2026-03-08	03:05 p. m.	Terr 2	₡11 800	Tarjeta	Antojos, Bebidas Sin Alcohol, Carnes, Entradas, Naturales, ZVerdurasInv	Sin sync	-
+G-273	2026-03-08	02:54 p. m.	Mesa 13	₡17 000	Efectivo	Adicionales, Antojos, Bebidas Sin Alcohol, Entradas, Gaseosas, Menu Niños, ZPorcionesInv	Sin sync	-
+G-272	2026-03-08	02:53 p. m.	Mesa 9	₡68 400	Tarjeta	Adicionales, Bebidas Sin Alcohol, Carnes y Pescado, Cerveza Vino y Cocteles, Entradas, Gaseosas, Menu Niños, Naturales, Otros, Platos Fuertes, ZPorcionesInv	Sin sync	-
+G-271	2026-03-08	02:38 p. m.	Terr 5	₡20 700	Tarjeta	Antojos, Bebidas Sin Alcohol, Carnes y Pescado, Naturales, Platos Fuertes	Sin sync	-
+G-266	2026-03-08	02:30 p. m.	Mesa 14	₡26 400	Tarjeta	Adicionales, Antojos, Bebidas Sin Alcohol, Cerveza y Vino, Compartir, Entradas, Gaseosas, Naturales, Platos Fuertes, Postres	Sin sync	-
+G-266	2026-03-08	02:29 p. m.	Mesa 14	₡39 625	Tarjeta	Adicionales, Antojos, Bebidas Sin Alcohol, Cerveza y Vino, Compartir, Entradas, Gaseosas, Naturales, Platos Fuertes, Postres	Sin sync	-
+G-254	2026-03-08	02:24 p. m.	Terr 1	₡32 800	Tarjeta	Antojos, Bebidas Sin Alcohol, Carnes y Pescado, Cerveza y Vino, Entradas, Menu Niños, Naturales, Platos Fuertes	Sin sync	-
+G-269	2026-03-08	02:10 p. m.	Terr 2	₡8 700	Tarjeta	Bebidas Sin Alcohol, Entradas, Gaseosas, Menu Niños, Naturales, ZPorcionesInv	Sin sync	-
+G-231	2026-03-08	02:04 p. m.	Mesa 8	₡33 600	Tarjeta	Bebidas Sin Alcohol, Compartir, Menu Niños, Naturales, Platos Fuertes	Sin sync	-
+G-267	2026-03-08	02:03 p. m.	Mesa 11	₡33 550	SINPE Móvil	Antojos, Bebidas Sin Alcohol, Entradas, Gaseosas, Menu Niños, Naturales, Otros, Platos Fuertes, Postres	Sin sync	-
+G-268	2026-03-08	01:57 p. m.	Terr 3	₡24 300	Tarjeta	Bebidas Sin Alcohol, Menu Niños, Naturales, Platos Fuertes	Sin sync	-
+G-256	2026-03-08	01:52 p. m.	Mesa 13	₡34 150	Tarjeta	Adicionales, Bebidas Sin Alcohol, Cerveza Vino y Cocteles, Compartir, Entradas, Gaseosas, Naturales, Platos Fuertes, Postres	Sin sync	-
+G-257	2026-03-08	01:49 p. m.	Mesa 12	₡21 250	Tarjeta	Bebidas Sin Alcohol, Entradas, Gaseosas, Menu Niños, Naturales, Postres	Sin sync	-
