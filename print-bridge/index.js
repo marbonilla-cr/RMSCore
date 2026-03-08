@@ -86,24 +86,32 @@ function sendToPrinter(printer, data) {
       fn(val);
     };
 
+    socket.setTimeout(5000);
+    socket.on("timeout", () => {
+      socket.destroy();
+      settle(reject, new Error(`Timeout conectando a ${printer.ipAddress}:${printer.port}`));
+    });
+
     const timeout = setTimeout(() => {
       socket.destroy();
       settle(reject, new Error(`Timeout conectando a ${printer.ipAddress}:${printer.port}`));
     }, 8000);
 
     socket.connect(printer.port, printer.ipAddress, () => {
-      const flushed = socket.write(data);
-      const finish = () => {
-        setTimeout(() => {
-          socket.end();
-          setTimeout(() => settle(resolve), 100);
-        }, 200);
-      };
-      if (flushed) {
-        finish();
-      } else {
-        socket.once("drain", finish);
-      }
+      setTimeout(() => {
+        const flushed = socket.write(data);
+        const finish = () => {
+          setTimeout(() => {
+            socket.end();
+            setTimeout(() => settle(resolve), 100);
+          }, 200);
+        };
+        if (flushed) {
+          finish();
+        } else {
+          socket.once("drain", finish);
+        }
+      }, 200);
     });
 
     socket.on("close", () => settle(resolve));
