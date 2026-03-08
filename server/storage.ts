@@ -52,9 +52,11 @@ import {
   type ServiceChargePayout, type InsertServiceChargePayout,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
+import { getTenantTimezone, getBusinessDateInTZ } from "./utils/timezone";
 
-function getBusinessDate(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+export async function getBusinessDate(schema?: string): Promise<string> {
+  const tz = await getTenantTimezone(schema || process.env.TENANT_SCHEMA || "public");
+  return getBusinessDateInTZ(tz);
 }
 
 // Users
@@ -1073,8 +1075,8 @@ export async function getOrder(id: number) {
   return order;
 }
 
-export async function getPaidOrdersForDate(date?: string) {
-  const targetDate = date || getBusinessDate();
+export async function getPaidOrdersForDate(date?: string, schema?: string) {
+  const targetDate = date || await getBusinessDate(schema);
   return db.select().from(orders)
     .where(and(eq(orders.status, "PAID"), eq(orders.businessDate, targetDate)))
     .orderBy(desc(orders.closedAt));
@@ -1117,8 +1119,8 @@ export async function getPaymentsByDateRangeGrouped(fromDate: string, toDate: st
 }
 
 // Dashboard queries
-export async function getDashboardData(dateFrom?: string, dateTo?: string, hourFrom?: number, hourTo?: number) {
-  const today = getBusinessDate();
+export async function getDashboardData(dateFrom?: string, dateTo?: string, hourFrom?: number, hourTo?: number, schema?: string, tz?: string) {
+  const today = await getBusinessDate(schema);
   const fromDate = dateFrom || today;
   const toDate = dateTo || fromDate;
 
@@ -1131,9 +1133,10 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   const validHourFilter = hourFrom !== undefined && hourTo !== undefined
     && !isNaN(hourFrom) && !isNaN(hourTo) && hourFrom >= 0 && hourTo <= 23 && hourFrom <= hourTo;
 
+  const dashTz = tz || "America/Costa_Rica";
   const getCRHour = (dateVal: any): number => {
     const d = new Date(dateVal);
-    const crTime = new Date(d.toLocaleString("en-US", { timeZone: "America/Costa_Rica" }));
+    const crTime = new Date(d.toLocaleString("en-US", { timeZone: dashTz }));
     return crTime.getHours();
   };
 
@@ -2369,4 +2372,3 @@ export async function seedTenantSchema(
   console.log(`[seed] Schema "${s}" inicializado ✓`);
 }
 
-export { getBusinessDate };

@@ -3,6 +3,7 @@ import { db } from "./db";
 import { salesLedgerItems, users } from "@shared/schema";
 import { sql, and, eq, inArray, gte, lte, or, SQL } from "drizzle-orm";
 import * as storage from "./storage";
+import { getTenantTimezone } from "./utils/timezone";
 
 function requirePermission(perm: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -49,7 +50,7 @@ interface CubeRequest extends CubeFilters {
   topN?: number;
 }
 
-function getGroupSelect(key: GroupKey): { selectExpr: SQL; alias: string } {
+function getGroupSelect(key: GroupKey, tz: string = "America/Costa_Rica"): { selectExpr: SQL; alias: string } {
   switch (key) {
     case "business_date":
       return { selectExpr: sql`${salesLedgerItems.businessDate}`, alias: "business_date" };
@@ -62,7 +63,7 @@ function getGroupSelect(key: GroupKey): { selectExpr: SQL; alias: string } {
       };
     case "hour":
       return {
-        selectExpr: sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))::int`,
+        selectExpr: sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE ${tz}))::int`,
         alias: "hour"
       };
     case "product":
@@ -81,7 +82,7 @@ function getGroupSelect(key: GroupKey): { selectExpr: SQL; alias: string } {
   }
 }
 
-function buildWhereConditions(filters: CubeFilters): SQL[] {
+function buildWhereConditions(filters: CubeFilters, tz: string = "America/Costa_Rica"): SQL[] {
   const conditions: SQL[] = [
     eq(salesLedgerItems.status, "PAID")
   ];
@@ -101,17 +102,17 @@ function buildWhereConditions(filters: CubeFilters): SQL[] {
   }
 
   if (filters.hourFrom !== undefined && filters.hourTo !== undefined) {
-    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))::int`;
+    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE ${tz}))::int`;
     if (filters.hourFrom <= filters.hourTo) {
       conditions.push(sql`${hourExpr} >= ${filters.hourFrom} AND ${hourExpr} <= ${filters.hourTo}`);
     } else {
       conditions.push(sql`(${hourExpr} >= ${filters.hourFrom} OR ${hourExpr} <= ${filters.hourTo})`);
     }
   } else if (filters.hourFrom !== undefined) {
-    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))::int`;
+    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE ${tz}))::int`;
     conditions.push(sql`${hourExpr} >= ${filters.hourFrom}`);
   } else if (filters.hourTo !== undefined) {
-    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))::int`;
+    const hourExpr = sql`extract(hour from (coalesce(${salesLedgerItems.paidAt}, ${salesLedgerItems.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE ${tz}))::int`;
     conditions.push(sql`${hourExpr} <= ${filters.hourTo}`);
   }
 
@@ -252,10 +253,11 @@ export function registerSalesCubeRoutes(app: Express) {
         return res.status(400).json({ message: "MVP: máximo 2 dimensiones simultáneas" });
       }
 
-      const conditions = buildWhereConditions(body);
+      const tz = await getTenantTimezone(req.tenantSchema);
+      const conditions = buildWhereConditions(body, tz);
       const whereClause = and(...conditions)!;
 
-      const groupSelects = groupByKeys.map(k => getGroupSelect(k));
+      const groupSelects = groupByKeys.map(k => getGroupSelect(k, tz));
 
       const selectParts = [
         ...groupSelects.map(g => sql`${g.selectExpr} as "${sql.raw(g.alias)}"`),

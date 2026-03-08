@@ -9,6 +9,8 @@ import { retryPendingSync } from "./quickbooks";
 import { runTenantLifecycleCheck } from "./provision/provision-service";
 import { ensurePublicTables } from "./provision/seed-own-tenant";
 import { propagateMigrations } from "./provision/migrate-tenants";
+import { setTimezonePool } from "./utils/timezone";
+import { pool } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -131,6 +133,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  setTimezonePool(pool);
   await ensureSystemPermissions();
   await seedDefaultRolePermissions();
   await seedExtraTypes();

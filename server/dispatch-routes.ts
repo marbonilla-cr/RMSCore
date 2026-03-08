@@ -54,7 +54,9 @@ export function registerDispatchRoutes(app: Express, broadcast: Function) {
 
       let order = openOrders[0];
       if (!order) {
-        const businessDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        const { getTenantTimezone, getBusinessDateInTZ } = await import("./utils/timezone");
+        const tz = await getTenantTimezone(req.tenantSchema || process.env.TENANT_SCHEMA || "public");
+        const businessDate = getBusinessDateInTZ(tz);
         [order] = await db.insert(schema.orders).values({ tableId: table.id, status: "OPEN", businessDate, responsibleWaiterId: null }).returning();
       }
 

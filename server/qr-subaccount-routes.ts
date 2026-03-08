@@ -39,8 +39,10 @@ function requireRole(...roles: string[]) {
   };
 }
 
-function getBusinessDate(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+async function getBusinessDate(schema?: string): Promise<string> {
+  const { getTenantTimezone, getBusinessDateInTZ } = await import("./utils/timezone");
+  const tz = await getTenantTimezone(schema || process.env.TENANT_SCHEMA || "public");
+  return getBusinessDateInTZ(tz);
 }
 
 function extractTableNumber(tableName: string): string {
@@ -56,7 +58,7 @@ async function getOrCreateOrderForTable(tableId: number) {
       tableId,
       status: "OPEN",
       responsibleWaiterId: null,
-      businessDate: getBusinessDate(),
+      businessDate: await getBusinessDate(),
     });
   } catch (e: any) {
     order = await storage.getOpenOrderForTable(tableId);
@@ -72,17 +74,17 @@ interface QrSecurityUtils {
   qrSubmitRateCheck: (req: Request, res: Response) => boolean;
   qrSubaccountRateCheck: (req: Request, res: Response) => boolean;
   generateQrDailyToken: (tableCode: string, date: string) => string;
-  getBusinessDateCR: () => string;
+  getBusinessDateCR: (schema?: string) => Promise<string>;
 }
 
 function validateQrToken(utils: QrSecurityUtils) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const token = req.headers["x-qr-token"] as string;
     const tableCode = req.params.tableCode as string;
     if (!token || !tableCode) {
       return res.status(403).json({ message: "Token de acceso requerido. Escanee el QR nuevamente." });
     }
-    const today = utils.getBusinessDateCR();
+    const today = await utils.getBusinessDateCR(req.tenantSchema);
     const expected = utils.generateQrDailyToken(tableCode, today);
     if (token !== expected) {
       return res.status(403).json({ message: "Token expirado. Escanee el QR nuevamente para obtener acceso." });
@@ -355,7 +357,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       console.log(`[perf] accept-v2 prefetch took ${Date.now() - t0}ms`);
 
       const createdItems: any[] = [];
-      const businessDate = getBusinessDate();
+      const businessDate = await getBusinessDate();
 
       for (const item of payloadItems) {
         const product = productsMap.get(item.productId);

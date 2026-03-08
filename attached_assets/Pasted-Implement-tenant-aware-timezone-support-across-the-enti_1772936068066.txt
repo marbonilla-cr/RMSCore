@@ -1,0 +1,190 @@
+Implement tenant-aware timezone support across the entire RMSCore backend.
+Do NOT change any business logic, only change how the current time and 
+business date are obtained. Follow these instructions exactly.
+
+IMPORTANT: Create a migration file for every schema change. Do not run ALTER TABLE directly.
+
+---
+
+STEP 1 — Create migration file
+
+Create /migrations/0004_business_config_timezone.sql:
+
+ALTER TABLE business_config ADD COLUMN IF NOT EXISTS timezone varchar(100) NOT NULL DEFAULT 'America/Costa_Rica';
+
+---
+
+STEP 2 — Create server/utils/timezone.ts
+
+Create this file with exactly this content:
+
+import { Pool } from 'pg';
+
+const timezoneCache = new Map<string, { tz: string; cachedAt: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+let pool: Pool;
+
+export function setTimezonePool(p: Pool) {
+  pool = p;
+}
+
+export async function getTenantTimezone(schema: string): Promise<string> {
+  const cached = timezoneCache.get(schema);
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
+    return cached.tz;
+  }
+  try {
+    const result = await pool.query(
+      `SELECT timezone FROM ${schema}.business_config LIMIT 1`
+    );
+    const tz = result.rows?.[0]?.timezone || 'America/Costa_Rica';
+    timezoneCache.set(schema, { tz, cachedAt: Date.now() });
+    return tz;
+  } catch {
+    return 'America/Costa_Rica';
+  }
+}
+
+export function getBusinessDateInTZ(timezone: string): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+}
+
+export function getNowInTZ(timezone: string): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: timezone }));
+}
+
+export function invalidateTimezoneCache(schema: string): void {
+  timezoneCache.delete(schema);
+}
+
+---
+
+STEP 3 — Fix server/hr-jobs.ts (CRITICAL — this caused the bug on 07/03/2026)
+
+This is the most critical fix. The autoClockOutJob runs every 5 minutes and 
+was closing employee shifts using UTC time instead of tenant local time.
+
+Changes required:
+- Import getTenantTimezone and getNowInTZ from server/utils/timezone.ts
+- In autoClockOutJob(), add parameter: schema: string
+- At the top of autoClockOutJob(), get timezone:
+  const tz = await getTenantTimezone(schema);
+- Replace every new Date() used for time comparisons with getNowInTZ(tz)
+- Replace hardcoded 'America/Costa_Rica' string with tz variable
+- In startHrBackgroundJobs(), the setInterval must:
+  1. Query all active tenant schemas: SELECT schema_name FROM public.tenants WHERE is_active = true
+  2. Run autoClockOutJob(schema) for each active tenant
+  3. Use the pg Pool directly to query public.tenants (not Drizzle with tenant schema)
+
+---
+
+STEP 4 — Fix server/storage.ts
+
+Replace the getBusinessDate() function with an async version:
+
+import { getTenantTimezone, getBusinessDateInTZ } from './utils/timezone';
+
+export async function getBusinessDate(schema: string): Promise<string> {
+  const tz = await getTenantTimezone(schema);
+  return getBusinessDateInTZ(tz);
+}
+
+Remove the hardcoded 'America/Costa_Rica' from this function.
+Update all callers of getBusinessDate() to pass the schema and await the result.
+
+---
+
+STEP 5 — Remove duplicate getBusinessDate() functions
+
+These files have their own copy of getBusinessDate(). Remove the local copy 
+from each and import from server/utils/timezone.ts instead:
+
+- server/inventory-storage.ts (line 28)
+- server/inventory-deduction.ts (line 17)  
+- server/qr-subaccount-routes.ts (line 43)
+- server/dispatch-routes.ts (line 57)
+
+In each file, replace the local function with:
+import { getTenantTimezone, getBusinessDateInTZ } from './utils/timezone';
+
+And pass the tenant schema when calling getBusinessDateInTZ(tz).
+
+---
+
+STEP 6 — Fix server/payroll.ts
+
+Line 1: Remove const TZ = "America/Costa_Rica"
+
+Replace with a pattern that receives the tenant schema:
+import { getTenantTimezone, getNowInTZ } from './utils/timezone';
+
+The main payroll calculation function must:
+- Accept schema as a parameter
+- Get timezone at the start: const tz = await getTenantTimezone(schema);
+- Replace all uses of TZ constant with tz variable
+- Replace hardcoded '-06:00' offset in parseDateInTZ() with dynamic offset:
+  const offset = new Intl.DateTimeFormat('en', {
+    timeZone: tz,
+    timeZoneName: 'shortOffset'
+  }).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value || '-06:00';
+
+---
+
+STEP 7 — Fix hardcoded references in server/routes.ts
+
+In every route handler that currently hardcodes 'America/Costa_Rica', replace with:
+const tz = await getTenantTimezone(req.tenantSchema);
+
+Affected lines: 194, 251, 734, 1749, 5069, 6254, 6996
+
+Use getNowInTZ(tz) for current time and getBusinessDateInTZ(tz) for business date.
+
+---
+
+STEP 8 — Fix server/inventory-routes.ts
+
+Lines 986, 1040, 1124 — replace inline business date calculations with:
+const tz = await getTenantTimezone(req.tenantSchema);
+const businessDate = getBusinessDateInTZ(tz);
+
+---
+
+STEP 9 — Add timezone selector to Admin Panel
+
+In client/src/pages/admin/business-config.tsx:
+- Add a select field labeled "Zona horaria del sistema"
+- Options:
+  { value: 'America/Costa_Rica', label: 'Costa Rica (UTC-6)' }
+  { value: 'America/Mexico_City', label: 'México Centro (UTC-6/-5)' }
+  { value: 'America/Bogota', label: 'Colombia (UTC-5)' }
+  { value: 'America/Lima', label: 'Perú (UTC-5)' }
+  { value: 'America/Santiago', label: 'Chile (UTC-4/-3)' }
+  { value: 'America/Argentina/Buenos_Aires', label: 'Argentina (UTC-3)' }
+  { value: 'America/Sao_Paulo', label: 'Brasil (UTC-3/-2)' }
+  { value: 'Europe/Madrid', label: 'España (UTC+1/+2)' }
+- Save via existing PUT /api/admin/business-config endpoint
+- Show a warning: "Cambiar la zona horaria afecta todos los cálculos de tiempo del sistema."
+
+In the PUT /api/admin/business-config route in server/routes.ts:
+- Accept and save the timezone field
+- After saving, call invalidateTimezoneCache(req.tenantSchema)
+
+---
+
+STEP 10 — Initialize the pool in server/utils/timezone.ts
+
+In server/index.ts or wherever the pg Pool is created:
+- Import setTimezonePool from server/utils/timezone.ts
+- Call setTimezonePool(pool) after the pool is created
+
+---
+
+IMPORTANT RULES:
+- Do NOT change any business logic, payroll formulas, or worked_minutes calculations
+- Do NOT change the auto-clockout grace period logic
+- Do NOT change shift comparison logic — only change what "now" and "today" mean
+- All changes must be backward compatible
+- Default timezone is America/Costa_Rica so existing behavior is preserved for all current tenants
+- After completing ALL changes, provide a list of every file modified with a one-line description of what changed
+- If any step is unclear or has a dependency conflict, stop and ask before proceeding

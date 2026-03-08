@@ -23,9 +23,11 @@ import {
   type InsertInvRecipeLine, type InvRecipeLine,
   type InsertInvOrderItemConsumption, type InvOrderItemConsumption,
 } from "@shared/schema";
+import { getTenantTimezone, getBusinessDateInTZ } from "./utils/timezone";
 
-function getBusinessDate(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+async function getBusinessDate(schema?: string): Promise<string> {
+  const tz = await getTenantTimezone(schema || process.env.TENANT_SCHEMA || "public");
+  return getBusinessDateInTZ(tz);
 }
 
 // ==================== INV ITEMS ====================
@@ -134,7 +136,7 @@ export async function getInvMovements(invItemId: number, limit: number = 100) {
 export async function createInvMovement(data: InsertInvMovement) {
   const [movement] = await db.insert(invMovements).values({
     ...data,
-    businessDate: data.businessDate || getBusinessDate(),
+    businessDate: data.businessDate || await getBusinessDate(),
   }).returning();
   await db.update(invItems).set({
     onHandQtyBase: sql`${invItems.onHandQtyBase} + ${movement.qtyDeltaBase}`,
@@ -421,7 +423,7 @@ export async function receivePurchaseOrder(
       [purchaseOrderId, receivedByEmployeeId, note || null]
     );
     const receiptId = receiptRes.rows[0].id;
-    const businessDate = getBusinessDate();
+    const businessDate = await getBusinessDate();
 
     for (const line of lines) {
       const poLineRes = await client.query(
@@ -606,7 +608,7 @@ export async function finalizePhysicalCount(id: number, finalizedByEmployeeId: n
     if (line.deltaQtyBase && Number(line.deltaQtyBase) !== 0) {
       const movementType = line.itemType === "EP" ? "ADJUST_EP" : "ADJUST_AP";
       await createInvMovement({
-        businessDate: getBusinessDate(),
+        businessDate: await getBusinessDate(),
         movementType,
         invItemId: line.invItemId,
         itemType: line.itemType,
@@ -1152,7 +1154,7 @@ export async function consumeForOrderItem(orderItemId: number, menuProductId: nu
   for (const line of lines) {
     const qtyToConsume = Number(line.qtyBasePerMenuUnit) * quantity * (1 + Number(line.wastePct) / 100) / Number(recipe.yieldQty);
     await createInvMovement({
-      businessDate: getBusinessDate(),
+      businessDate: await getBusinessDate(),
       movementType: "CONSUMPTION",
       invItemId: line.invItemId,
       qtyDeltaBase: (-qtyToConsume).toFixed(4),
@@ -1183,7 +1185,7 @@ export async function reverseConsumptionForOrderItem(orderItemId: number, employ
 
   for (const movement of movements) {
     await createInvMovement({
-      businessDate: getBusinessDate(),
+      businessDate: await getBusinessDate(),
       movementType: "REVERSAL",
       invItemId: movement.invItemId,
       qtyDeltaBase: (-(Number(movement.qtyDeltaBase))).toFixed(4),

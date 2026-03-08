@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Save, Building2, Loader2, Upload, Package } from "lucide-react";
+import { Save, Building2, Loader2, Upload, Package, Globe } from "lucide-react";
 
 interface TaxCategory {
   id: number;
@@ -29,7 +29,25 @@ interface BusinessConfigData {
   email: string;
   legalNote: string;
   serviceTaxCategoryId?: number | null;
+  timezone?: string;
 }
+
+const TIMEZONE_OPTIONS = [
+  { value: "America/Costa_Rica", label: "Costa Rica (UTC-6)" },
+  { value: "America/Mexico_City", label: "México Centro (UTC-6)" },
+  { value: "America/Panama", label: "Panamá (UTC-5)" },
+  { value: "America/Bogota", label: "Colombia (UTC-5)" },
+  { value: "America/Lima", label: "Perú (UTC-5)" },
+  { value: "America/Santiago", label: "Chile (UTC-3/-4)" },
+  { value: "America/Argentina/Buenos_Aires", label: "Argentina (UTC-3)" },
+  { value: "America/Sao_Paulo", label: "Brasil (UTC-3)" },
+  { value: "America/New_York", label: "US Eastern (UTC-5/-4)" },
+  { value: "America/Chicago", label: "US Central (UTC-6/-5)" },
+  { value: "America/Denver", label: "US Mountain (UTC-7/-6)" },
+  { value: "America/Los_Angeles", label: "US Pacific (UTC-8/-7)" },
+  { value: "Europe/Madrid", label: "España (UTC+1/+2)" },
+  { value: "Europe/London", label: "Reino Unido (UTC+0/+1)" },
+];
 
 export default function AdminBusinessConfigPage() {
   const { toast } = useToast();
@@ -43,6 +61,7 @@ export default function AdminBusinessConfigPage() {
     email: "",
     legalNote: "",
     serviceTaxCategoryId: null,
+    timezone: "America/Costa_Rica",
   });
 
   const { data: config, isLoading } = useQuery<BusinessConfigData>({
@@ -64,6 +83,7 @@ export default function AdminBusinessConfigPage() {
         email: config.email || "",
         legalNote: config.legalNote || "",
         serviceTaxCategoryId: config.serviceTaxCategoryId || null,
+        timezone: config.timezone || "America/Costa_Rica",
       });
     }
   }, [config]);
@@ -162,6 +182,31 @@ export default function AdminBusinessConfigPage() {
                   placeholder="info@laantiguaecheria.com"
                 />
               </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="timezone">
+                <Globe className="w-3.5 h-3.5 inline mr-1" />
+                Zona Horaria
+              </Label>
+              <Select
+                value={form.timezone || "America/Costa_Rica"}
+                onValueChange={(val) => setForm({ ...form, timezone: val })}
+              >
+                <SelectTrigger data-testid="select-timezone">
+                  <SelectValue placeholder="Seleccionar zona horaria..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEZONE_OPTIONS.map(tz => (
+                    <SelectItem key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Define la zona horaria para fechas de negocio, reportes, planilla y cierre de caja.
+              </p>
             </div>
 
             <div className="space-y-1">

@@ -12,9 +12,11 @@ import {
   auditEvents,
 } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
+import { getTenantTimezone, getBusinessDateInTZ } from "./utils/timezone";
 
-function getBusinessDate(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+async function getBusinessDate(schema?: string): Promise<string> {
+  const tz = await getTenantTimezone(schema || process.env.TENANT_SCHEMA || "public");
+  return getBusinessDateInTZ(tz);
 }
 
 interface ConsumptionEntry {
@@ -183,7 +185,7 @@ async function processOneDeduction(
     );
   }
 
-  const businessDate = getBusinessDate();
+  const businessDate = await getBusinessDate();
 
   for (const entry of sortedEntries) {
     const stockTable = entry.itemType === "AP" ? "inv_stock_ap" : "inv_stock_ep";
@@ -345,7 +347,7 @@ async function processOneReversal(
       return a.invItemId - b.invItemId;
     });
 
-    const businessDate = getBusinessDate();
+    const businessDate = await getBusinessDate();
 
     for (const entry of sorted) {
       const stockTable = entry.itemType === "AP" ? "inv_stock_ap" : "inv_stock_ep";

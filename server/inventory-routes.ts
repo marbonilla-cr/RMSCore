@@ -3,6 +3,7 @@ import { WebSocket } from "ws";
 import * as invStorage from "./inventory-storage";
 import * as storage from "./storage";
 import { normalizeUom } from "./uom-helpers";
+import { getTenantTimezone, getBusinessDateInTZ } from "./utils/timezone";
 import {
   insertInvItemSchema,
   insertInvUomConversionSchema,
@@ -983,7 +984,8 @@ export function registerInventoryRoutes(app: Express, wss: any) {
           `UPDATE inv_stock_ap SET qty_on_hand = $1, updated_at = NOW() WHERE organization_id=1 AND location_id=1 AND inv_item_id=$2`,
           [newQty.toFixed(4), invItemId]
         );
-        const businessDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        const tz = await getTenantTimezone(req.tenantSchema);
+        const businessDate = getBusinessDateInTZ(tz);
         await client.query(
           `INSERT INTO inv_movements (business_date, movement_type, inv_item_id, item_type, qty_delta_base, reference_type, note, created_by_employee_id)
            VALUES ($1, 'ADJUST_AP', $2, 'AP', $3, 'MANUAL', $4, $5)`,
@@ -1037,7 +1039,8 @@ export function registerInventoryRoutes(app: Express, wss: any) {
           `UPDATE inv_stock_ep SET qty_on_hand = $1, updated_at = NOW() WHERE organization_id=1 AND location_id=1 AND inv_item_id=$2`,
           [newQty.toFixed(4), invItemId]
         );
-        const businessDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        const tzEp = await getTenantTimezone(req.tenantSchema);
+        const businessDate = getBusinessDateInTZ(tzEp);
         await client.query(
           `INSERT INTO inv_movements (business_date, movement_type, inv_item_id, item_type, qty_delta_base, reference_type, note, created_by_employee_id)
            VALUES ($1, 'ADJUST_EP', $2, 'EP', $3, 'MANUAL', $4, $5)`,
@@ -1121,7 +1124,8 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         );
         const batchId = batchRes.rows[0].id;
 
-        const businessDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        const tzConv = await getTenantTimezone(req.tenantSchema);
+        const businessDate = getBusinessDateInTZ(tzConv);
         await client.query(
           `INSERT INTO inv_movements (business_date, movement_type, inv_item_id, item_type, qty_delta_base, reference_type, reference_id, created_by_employee_id)
            VALUES ($1, 'CONSUME_AP', $2, 'AP', $3, 'BATCH', $4, $5)`,

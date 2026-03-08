@@ -1,10 +1,25 @@
 import * as storage from "./storage";
-import { getBusinessDate } from "./storage";
+import { Pool } from "pg";
+import { getTenantTimezone, getNowInTZ } from "./utils/timezone";
+
+const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 
 export function startHrBackgroundJobs() {
   setInterval(async () => {
     try {
-      await autoClockOutJob();
+      const { rows: tenants } = await publicPool.query(
+        `SELECT schema_name FROM public.tenants WHERE is_active = true`
+      );
+      const schemas = tenants.map((t: any) => t.schema_name);
+      if (schemas.length === 0) schemas.push(process.env.TENANT_SCHEMA || "public");
+
+      for (const schema of schemas) {
+        try {
+          await autoClockOutJob(schema);
+        } catch (err: any) {
+          console.error(`[HR-Jobs] AutoClockOut error for schema ${schema}:`, err.message);
+        }
+      }
     } catch (err) {
       console.error("[HR-Jobs] AutoClockOut error:", err);
     }
@@ -13,11 +28,12 @@ export function startHrBackgroundJobs() {
   console.log("[HR-Jobs] Background jobs started (auto clock-out every 5min)");
 }
 
-async function autoClockOutJob() {
+async function autoClockOutJob(schema: string) {
   const openPunches = await storage.getAllOpenPunches();
   if (openPunches.length === 0) return;
 
-  const now = new Date();
+  const tz = await getTenantTimezone(schema);
+  const now = getNowInTZ(tz);
   const settings = await storage.getHrSettings();
   const autoCloseHours = settings ? Number(settings.overtimeDailyThresholdHours) || 8 : 8;
   const dailyThresholdMinutes = autoCloseHours * 60;
@@ -34,7 +50,7 @@ async function autoClockOutJob() {
       if (now < scheduledEnd) continue;
 
       const crWeekday = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/Costa_Rica",
+        timeZone: tz,
         weekday: "short",
       }).format(scheduledEnd).toLowerCase();
 

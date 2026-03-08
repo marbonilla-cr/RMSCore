@@ -1,4 +1,4 @@
-const TZ = "America/Costa_Rica";
+const DEFAULT_TZ = "America/Costa_Rica";
 
 export function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -149,19 +149,35 @@ function toDate(v: Date | string | null): Date | null {
   return v instanceof Date ? v : new Date(v);
 }
 
-function parseDateInTZ(dateStr: string, timeStr: string): Date {
-  return new Date(`${dateStr}T${timeStr}:00-06:00`);
+function getTimezoneOffset(tz: string): string {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: tz,
+    timeZoneName: 'shortOffset'
+  }).formatToParts(new Date());
+  const offsetPart = parts.find(p => p.type === 'timeZoneName')?.value || 'GMT-6';
+  const match = offsetPart.match(/GMT([+-]\d+(?::\d+)?)/);
+  if (!match) return '-06:00';
+  const raw = match[1];
+  if (raw.includes(':')) return raw.padStart(6, '+');
+  const hours = parseInt(raw);
+  return `${hours >= 0 ? '+' : ''}${String(hours).padStart(2, '0')}:00`;
+}
+
+function parseDateInTZ(dateStr: string, timeStr: string, tz?: string): Date {
+  const offset = tz ? getTimezoneOffset(tz) : '-06:00';
+  return new Date(`${dateStr}T${timeStr}:00${offset}`);
 }
 
 function getScheduleTimesForDate(
   dateStr: string,
-  schedule: ScheduleDay | null
+  schedule: ScheduleDay | null,
+  tz?: string
 ): { scheduledStart: Date | null; scheduledEnd: Date | null } {
   if (!schedule || schedule.isDayOff || !schedule.startTime || !schedule.endTime) {
     return { scheduledStart: null, scheduledEnd: null };
   }
-  const scheduledStart = parseDateInTZ(dateStr, schedule.startTime);
-  let scheduledEnd = parseDateInTZ(dateStr, schedule.endTime);
+  const scheduledStart = parseDateInTZ(dateStr, schedule.startTime, tz);
+  let scheduledEnd = parseDateInTZ(dateStr, schedule.endTime, tz);
   if (scheduledEnd <= scheduledStart) {
     scheduledEnd.setDate(scheduledEnd.getDate() + 1);
   }
@@ -181,8 +197,9 @@ export function computeDailyPayroll(args: {
   dailyRate: number;
   hrConfig: HrConfig;
   dateStr: string;
+  tz?: string;
 }): DailyPayrollResult {
-  const { punchesForDay, scheduleForDay, dailyRate, hrConfig, dateStr } = args;
+  const { punchesForDay, scheduleForDay, dailyRate, hrConfig, dateStr, tz } = args;
   const jornadaHoras = Number(hrConfig.overtimeDailyThresholdHours) || 8;
   const multiplier = Number(hrConfig.overtimeMultiplier) || 1.5;
   const graceMinutes = hrConfig.latenessGraceMinutes || 0;
@@ -196,7 +213,7 @@ export function computeDailyPayroll(args: {
   const hasSchedule = scheduleForDay && !scheduleForDay.isDayOff && scheduleForDay.startTime && scheduleForDay.endTime;
   const isDayOff = scheduleForDay?.isDayOff === true;
 
-  const { scheduledStart, scheduledEnd } = getScheduleTimesForDate(dateStr, scheduleForDay || null);
+  const { scheduledStart, scheduledEnd } = getScheduleTimesForDate(dateStr, scheduleForDay || null, tz);
 
   const schedStartStr = scheduledStart ? formatTimeStr(scheduledStart) : null;
   const schedEndStr = scheduledEnd ? formatTimeStr(scheduledEnd) : null;
@@ -571,8 +588,9 @@ export function computeRangePayroll(args: {
   dateTo: string;
   hrConfig: HrConfig;
   overtimeApprovalsMap?: Record<string, "APPROVED" | "REJECTED" | "PENDING">;
+  tz?: string;
 }): EmployeePayrollResult[] {
-  const { employees, schedulesMap, punchesMap, extrasMap, servicePoolMap, extraTypesKindMap, dateFrom, dateTo, hrConfig } = args;
+  const { employees, schedulesMap, punchesMap, extrasMap, servicePoolMap, extraTypesKindMap, dateFrom, dateTo, hrConfig, tz } = args;
   const dates = getDateRange(dateFrom, dateTo);
 
   const socialChargesEnabled = hrConfig.socialChargesEnabled === true;
@@ -590,6 +608,7 @@ export function computeRangePayroll(args: {
         dailyRate,
         hrConfig,
         dateStr,
+        tz,
       });
     }
     return dailyCache[key];

@@ -974,6 +974,7 @@ export const businessConfig = pgTable("business_config", {
   orderDailyStart: integer("order_daily_start").default(1).notNull(),
   orderGlobalStart: integer("order_global_start").default(1).notNull(),
   invoiceStart: integer("invoice_start").default(1).notNull(),
+  timezone: varchar("timezone", { length: 100 }).notNull().default("America/Costa_Rica"),
 });
 
 export const printers = pgTable("printers", {

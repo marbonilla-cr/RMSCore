@@ -13,6 +13,7 @@ import { registerShortageRoutes } from "./shortage-routes";
 import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
+import { getTenantTimezone, getBusinessDateInTZ, getNowInTZ, invalidateTimezoneCache } from "./utils/timezone";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import * as qbo from "./quickbooks";
 import { tenantMiddleware } from "./middleware/tenant";
@@ -27,7 +28,7 @@ declare module "express-session" {
   }
 }
 
-async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: number | null) {
+async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: number | null, schema?: string) {
   let order = await storage.getOpenOrderForTable(tableId);
   if (order) return order;
   try {
@@ -35,7 +36,7 @@ async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: nu
       tableId,
       status: "OPEN",
       responsibleWaiterId,
-      businessDate: getBusinessDate(),
+      businessDate: await getBusinessDate(schema),
     });
   } catch (e: any) {
     order = await storage.getOpenOrderForTable(tableId);
@@ -189,13 +190,13 @@ function generateQrDailyToken(tableCode: string, date: string): string {
   return crypto.createHmac("sha256", secret).update(`${tableCode}:${date}`).digest("hex").substring(0, 16);
 }
 
-function getBusinessDateCR(): string {
-  const now = new Date();
-  const crTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Costa_Rica" }));
-  if (crTime.getHours() < 5) {
-    crTime.setDate(crTime.getDate() - 1);
+async function getBusinessDateCR(schema?: string): Promise<string> {
+  const tz = await getTenantTimezone(schema || process.env.TENANT_SCHEMA || "public");
+  const now = getNowInTZ(tz);
+  if (now.getHours() < 5) {
+    now.setDate(now.getDate() - 1);
   }
-  return crTime.toISOString().split("T")[0];
+  return now.toISOString().split("T")[0];
 }
 
 // Auth middleware
@@ -247,8 +248,9 @@ function requirePermission(...permissionKeys: string[]) {
   };
 }
 
-function getBusinessDate(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+async function getBusinessDate(schema?: string): Promise<string> {
+  const tz = await getTenantTimezone(schema || process.env.TENANT_SCHEMA || "public");
+  return getBusinessDateInTZ(tz);
 }
 
 async function sendHrAlertEmail(settings: any, subject: string, textBody: string) {
@@ -704,8 +706,9 @@ export async function registerRoutes(
       }
 
       const settings = await storage.getHrSettings();
-      const now = new Date();
-      const businessDate = getBusinessDate();
+      const tz = await getTenantTimezone(req.tenantSchema);
+      const now = getNowInTZ(tz);
+      const businessDate = await getBusinessDate(req.tenantSchema);
 
       if (action === "clock_in") {
         const openPunch = await storage.getOpenPunchForEmployee(employeeId);
@@ -731,7 +734,7 @@ export async function registerRoutes(
         const dayOffset = weekDay === 0 ? 6 : weekDay - 1;
         const mondayDate = new Date(now);
         mondayDate.setDate(mondayDate.getDate() - dayOffset);
-        const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+        const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: tz });
         const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
         let hasScheduleToday = false;
         if (schedule) {
@@ -1203,6 +1206,7 @@ export async function registerRoutes(
     try {
       const parsed = insertBusinessConfigSchema.parse(req.body);
       const config = await storage.upsertBusinessConfig(parsed);
+      invalidateTimezoneCache(req.tenantSchema);
       res.json(config);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1569,7 +1573,7 @@ export async function registerRoutes(
 
       const kdsTickets: Map<string, number> = new Map();
       const createdTicketIds: number[] = [];
-      const bd = getBusinessDate();
+      const bd = await getBusinessDate(req.tenantSchema);
 
       for (const item of items) {
         const product = productsById.get(item.productId);
@@ -1745,8 +1749,8 @@ export async function registerRoutes(
     const orderIds = parentOrders.map(o => o.id);
     const waiterIds = Array.from(new Set(parentOrders.filter(o => o.responsibleWaiterId).map(o => o.responsibleWaiterId!)));
 
-    const now = new Date();
-    const crNow = new Date(now.toLocaleString("en-US", { timeZone: "America/Costa_Rica" }));
+    const tzSnap = await getTenantTimezone(req.tenantSchema);
+    const crNow = getNowInTZ(tzSnap);
     const todayStr = `${crNow.getFullYear()}-${String(crNow.getMonth() + 1).padStart(2, '0')}-${String(crNow.getDate()).padStart(2, '0')}`;
     const tomorrowDate = new Date(crNow);
     tomorrowDate.setDate(tomorrowDate.getDate() + 1);
@@ -2026,7 +2030,7 @@ export async function registerRoutes(
             tableId: destTableId,
             status: "OPEN",
             responsibleWaiterId: sourceOrder.responsibleWaiterId,
-            businessDate: getBusinessDateCR(),
+            businessDate: await getBusinessDateCR(req.tenantSchema),
           }).returning();
           destOrder = newOrder;
         }
@@ -2182,7 +2186,7 @@ export async function registerRoutes(
       const productMap = new Map(allProducts.map(p => [p.id, p]));
       const taxLinksMap = new Map(allProdTaxLinks.map(r => [r.pid, r.links]));
 
-      let order = await getOrCreateOrderForTable(tableId, userId);
+      let order = await getOrCreateOrderForTable(tableId, userId, req.tenantSchema);
 
       const [existingItems] = await Promise.all([
         storage.getOrderItems(order.id),
@@ -2208,7 +2212,7 @@ export async function registerRoutes(
 
       const kdsTickets: Map<string, number> = new Map();
       const createdTicketIds: number[] = [];
-      const businessDate = getBusinessDate();
+      const businessDate = await getBusinessDate(req.tenantSchema);
       const now = new Date();
 
       for (const item of items) {
@@ -2649,7 +2653,7 @@ export async function registerRoutes(
       }
 
       await storage.createVoidedItem({
-        businessDate: order.businessDate || getBusinessDate(),
+        businessDate: order.businessDate || await getBusinessDate(req.tenantSchema),
         tableId: order.tableId,
         tableNameSnapshot: table?.tableName || null,
         orderId,
@@ -2831,7 +2835,7 @@ export async function registerRoutes(
           tableId: table.id,
           status: "OPEN",
           responsibleWaiterId: null,
-          businessDate: getBusinessDate(),
+          businessDate: await getBusinessDate(req.tenantSchema),
         });
       }
       await storage.updateOrder(order.id, { guestCount });
@@ -2915,7 +2919,7 @@ export async function registerRoutes(
       if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
 
       // Get or create order (defensive: prevents duplicates via race condition)
-      let order = await getOrCreateOrderForTable(table.id, null);
+      let order = await getOrCreateOrderForTable(table.id, null, req.tenantSchema);
 
       // Get max round number
       const existingItems = await storage.getOrderItems(order.id);
@@ -2985,7 +2989,7 @@ export async function registerRoutes(
 
         // Sales ledger
         await storage.createSalesLedgerItem({
-          businessDate: getBusinessDate(),
+          businessDate: await getBusinessDate(req.tenantSchema),
           tableId: table.id,
           tableNameSnapshot: table.tableName,
           orderId: order.id,
@@ -3279,7 +3283,7 @@ export async function registerRoutes(
       );
       const productMap = new Map(allProducts.map(p => [p.id, p]));
       const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
-      const bd = getBusinessDate();
+      const bd = await getBusinessDate(req.tenantSchema);
       const entries: any[] = [];
       for (const item of activeItems) {
         const itemKey = item.id;
@@ -3493,7 +3497,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
       }
 
-      const bd = getBusinessDate();
+      const bd = await getBusinessDate(req.tenantSchema);
       const now = new Date();
 
       const payment = await storage.createPayment({
@@ -3585,7 +3589,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
       }
 
-      const bd = getBusinessDate();
+      const bd = await getBusinessDate(req.tenantSchema);
       const now = new Date();
 
       const paymentValues = legs.map((leg: any) => ({
@@ -3664,7 +3668,7 @@ export async function registerRoutes(
     const canViewReport = userPerms.includes("POS_VIEW_CASH_REPORT");
 
     if (!session.closedAt) {
-      const totalsByMethod = canViewReport ? await storage.getPaymentsByDateGrouped(getBusinessDate()) : undefined;
+      const totalsByMethod = canViewReport ? await storage.getPaymentsByDateGrouped(await getBusinessDate(req.tenantSchema)) : undefined;
       const result: any = { id: session.id, openingCash: session.openingCash, closedAt: session.closedAt, openedByUserId: session.openedByUserId };
       if (canViewReport) {
         result.expectedCash = session.expectedCash;
@@ -3713,7 +3717,7 @@ export async function registerRoutes(
       const expected = parseFloat(session.expectedCash?.toString() || session.openingCash);
       const difference = countedCash - expected;
 
-      const totalsByMethod = await storage.getPaymentsByDateGrouped(getBusinessDate());
+      const totalsByMethod = await storage.getPaymentsByDateGrouped(await getBusinessDate(req.tenantSchema));
 
       const updated = await storage.updateCashSession(session.id, {
         closedAt: new Date(),
@@ -3999,7 +4003,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
       }
 
-      const bd = getBusinessDate();
+      const bd = await getBusinessDate(req.tenantSchema);
       const now = new Date();
 
       const payment = await storage.createPayment({
@@ -4348,7 +4352,7 @@ export async function registerRoutes(
       const smtpUser = process.env.SMTP_USER;
       const smtpPass = process.env.SMTP_PASS;
       const smtpFrom = process.env.SMTP_FROM || (smtpUser ? `La Antigua Lechería <${smtpUser}>` : undefined);
-      const dateStr = getBusinessDate();
+      const dateStr = await getBusinessDate(req.tenantSchema);
 
       if (smtpHost && smtpUser && smtpPass) {
         try {
@@ -4479,11 +4483,12 @@ export async function registerRoutes(
           .where(inArray(salesLedgerItems.orderItemId, activeItemIds));
       }
 
+      const fallbackBizDate = order.businessDate || await getBusinessDate(req.tenantSchema);
       const voidInserts = activeItems.map(item => {
         const product = productMap.get(item.productId);
         const category = allCategories.find(c => c.id === product?.categoryId);
         return {
-          businessDate: order.businessDate || getBusinessDate(),
+          businessDate: fallbackBizDate,
           tableId: order.tableId,
           tableNameSnapshot: table?.tableName || null,
           orderId,
@@ -4828,7 +4833,7 @@ export async function registerRoutes(
   app.post("/api/qbo/export", requireRole("MANAGER"), async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const date = getBusinessDate();
+      const date = await getBusinessDate(req.tenantSchema);
 
       const job = await storage.createQboExportJob({
         businessDate: date,
@@ -4878,7 +4883,7 @@ export async function registerRoutes(
 
   // ==================== QBO: GET EXPORT JOBS ====================
   app.get("/api/qbo/export", requireRole("MANAGER"), async (_req, res) => {
-    const today = getBusinessDate();
+    const today = await getBusinessDate(req.tenantSchema);
     const jobs = await storage.getQboExportJobs(today);
     res.json(jobs);
   });
@@ -4890,10 +4895,10 @@ export async function registerRoutes(
     const dateTo = typeof req.query.to === "string" ? req.query.to : undefined;
     const hourFrom = typeof req.query.hourFrom === "string" ? parseInt(req.query.hourFrom) : undefined;
     const hourTo = typeof req.query.hourTo === "string" ? parseInt(req.query.hourTo) : undefined;
-    const resolvedFrom = dateFrom || getBusinessDate();
+    const resolvedFrom = dateFrom || await getBusinessDate(req.tenantSchema);
     const resolvedTo = dateTo || resolvedFrom;
     const [data, ledgerDetails, paymentMethodTotals] = await Promise.all([
-      storage.getDashboardData(dateFrom, dateTo, hourFrom, hourTo),
+      storage.getDashboardData(dateFrom, dateTo, hourFrom, hourTo, req.tenantSchema, await getTenantTimezone(req.tenantSchema)),
       resolvedFrom === resolvedTo
         ? storage.getLedgerItemsForDate(resolvedFrom)
         : storage.getLedgerItemsForDateRange(resolvedFrom, resolvedTo),
@@ -5042,8 +5047,9 @@ export async function registerRoutes(
       if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta. Marque salida primero." });
       
       const settings = await storage.getHrSettings();
-      const now = new Date();
-      const businessDate = getBusinessDate();
+      const tzSelf = await getTenantTimezone(req.tenantSchema);
+      const now = getNowInTZ(tzSelf);
+      const businessDate = await getBusinessDate(req.tenantSchema);
       
       let geoVerified = false;
       if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockin && settings.businessLat && settings.businessLng) {
@@ -5066,7 +5072,7 @@ export async function registerRoutes(
       const dayOffset = weekDay === 0 ? 6 : weekDay - 1;
       const mondayDate = new Date(now);
       mondayDate.setDate(mondayDate.getDate() - dayOffset);
-      const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" });
+      const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: tzSelf });
       
       let hasScheduleToday = false;
       const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
@@ -5209,7 +5215,7 @@ export async function registerRoutes(
       if (!employeeId || !action) return res.status(400).json({ message: "employeeId and action required" });
       
       const now = new Date();
-      const businessDate = getBusinessDate();
+      const businessDate = await getBusinessDate(req.tenantSchema);
       const settings = await storage.getHrSettings();
       
       if (action === "clock_in") {
@@ -5355,7 +5361,7 @@ export async function registerRoutes(
     if (date) {
       return res.json(await storage.getTimePunchesByDate(date as string));
     }
-    return res.json(await storage.getTimePunchesByDate(getBusinessDate()));
+    return res.json(await storage.getTimePunchesByDate(await getBusinessDate(req.tenantSchema)));
   });
 
   app.get("/api/hr/punches/my", requirePermission("HR_VIEW_SELF"), async (req, res) => {
@@ -5825,6 +5831,7 @@ export async function registerRoutes(
       }
 
       const emptyServicePool: Record<string, number> = {};
+      const tzPayroll = await getTenantTimezone(req.tenantSchema);
       const payrollResult = computeRangePayroll({
         employees: empData,
         schedulesMap,
@@ -5836,6 +5843,7 @@ export async function registerRoutes(
         dateTo,
         hrConfig,
         overtimeApprovalsMap,
+        tz: tzPayroll,
       });
 
       const servicePoolMap: Record<string, number> = {};
@@ -6113,7 +6121,7 @@ export async function registerRoutes(
       const tableCode = req.params.tableCode as string;
       const table = await storage.getTableByCode(tableCode);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
-      const today = getBusinessDateCR();
+      const today = await getBusinessDateCR(req.tenantSchema);
       const token = generateQrDailyToken(tableCode, today);
       res.json({ token, date: today });
     } catch (err: any) {
@@ -6990,10 +6998,10 @@ export async function registerRoutes(
         slots.push({ time: timeStr, available: isAvailable, seatsAvailable: freeSeats });
       }
 
-      const today = getBusinessDate();
+      const today = await getBusinessDate(req.tenantSchema);
       if (date === today) {
-        const now = new Date();
-        const crTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Costa_Rica" }));
+        const tzRes = await getTenantTimezone(req.tenantSchema);
+        const crTime = getNowInTZ(tzRes);
         const currentMinutes = crTime.getHours() * 60 + crTime.getMinutes();
         for (const slot of slots) {
           if (timeToMinutes(slot.time) <= currentMinutes + 30) {
