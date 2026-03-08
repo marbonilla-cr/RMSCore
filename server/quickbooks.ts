@@ -135,6 +135,12 @@ export async function getAuthUrl(): Promise<string> {
   });
 
   const creds = await getCredentials();
+  console.log('[QBO AUTH]', { clientId: creds?.clientId, hasSecret: !!creds?.clientSecret });
+
+  if (!creds.clientId || !creds.clientSecret) {
+    throw new Error("Credenciales QBO no configuradas o no se pueden desencriptar");
+  }
+
   const scopes = "com.intuit.quickbooks.accounting";
   const state = crypto.randomBytes(16).toString("hex");
   oauthStateStore.set(state, Date.now());
