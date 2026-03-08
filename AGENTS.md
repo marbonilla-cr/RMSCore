@@ -235,6 +235,58 @@ sin análisis completo y confirmación explícita del usuario:
 
 ---
 
+## REGLA #11 — Timezone (CRÍTICO)
+
+NUNCA usar `new Date()` directamente para lógica de negocio de tiempo.
+
+### Lo correcto:
+- Importar siempre desde `server/utils/timezone.ts`
+- Obtener timezone del tenant: `const tz = await getTenantTimezone(req.tenantSchema)`
+- Fecha de negocio: `getBusinessDateInTZ(tz)`
+- Hora actual en timezone del tenant: `getNowInTZ(tz)`
+
+### Lo que NUNCA debes hacer:
+- Hardcodear `'America/Costa_Rica'` en ningún archivo
+- Hardcodear `-06:00` o cualquier offset UTC
+- Usar `new Date()` para calcular business_date, turnos, clockout, o cualquier fecha de negocio
+- Duplicar getBusinessDate() — existe una sola versión en server/utils/timezone.ts
+
+### Por qué es crítico:
+Un error de timezone causó que todos los empleados fueran deslogueados
+automáticamente a las 12:00 PM hora local el 07/03/2026, afectando
+los registros de nómina de todo el personal. Este tipo de error
+tiene impacto directo en pagos a empleados.
+
+### Dónde vive la timezone:
+- Configurada por tenant en `business_config.timezone`
+- Default: `America/Costa_Rica`
+- Cache en memoria: 5 minutos (invalidar con `invalidateTimezoneCache(schema)` al actualizar)
+
+---
+
+## REGLA #12 — Antes de cualquier cambio en HR o Nómina
+
+Los módulos de RRHH y Nómina afectan directamente el pago de empleados reales.
+
+Antes de modificar cualquier archivo en:
+- server/hr-jobs.ts
+- server/payroll.ts
+- server/routes.ts (secciones HR)
+- Tablas: hr_time_punches, hr_weekly_schedules, hr_schedule_days
+
+DEBES:
+1. Explicar al usuario exactamente qué va a cambiar
+2. Esperar confirmación explícita
+3. Identificar si el cambio afecta datos históricos
+4. Crear migración en /migrations/ si hay cambios de schema
+
+NUNCA:
+- Modificar worked_minutes de registros existentes sin confirmación
+- Cambiar la lógica de cálculo de horas sin confirmación
+- Alterar el job de auto-clockout sin revisión completa del impacto
+
+---
+
 ## ARCHIVOS CLAVE — NO ELIMINAR NI RENOMBRAR
 
 - `server/middleware/tenant.ts` — identificación de tenant por subdominio
