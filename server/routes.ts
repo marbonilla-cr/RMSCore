@@ -1738,7 +1738,7 @@ export async function registerRoutes(
   });
 
   // ==================== WAITER: TABLES ====================
-  app.get("/api/waiter/tables", requireRole("WAITER", "MANAGER"), async (_req, res) => {
+  app.get("/api/waiter/tables", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
       storage.getAllTables(),
