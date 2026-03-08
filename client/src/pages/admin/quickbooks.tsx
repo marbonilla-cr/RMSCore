@@ -261,6 +261,7 @@ function ConnectionTab() {
       const data = await res.json();
       window.location.href = data.url;
     },
+    onError: (err: any) => toast({ title: "Error de conexión", description: err.message, variant: "destructive" }),
   });
 
   const disconnectMut = useMutation({
