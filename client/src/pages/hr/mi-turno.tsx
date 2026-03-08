@@ -38,14 +38,14 @@ function formatTime(dateStr: string | undefined | null): string {
   if (!dateStr) return "-";
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return "-";
-  return d.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return d.toLocaleTimeString("es-CR", { timeZone: "America/Costa_Rica", hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
 function formatDay(dateStr: string | undefined | null): string {
   if (!dateStr) return "-";
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return "-";
-  return d.toLocaleDateString("es-CR", { weekday: "short", day: "numeric", month: "short" });
+  return d.toLocaleDateString("es-CR", { timeZone: "America/Costa_Rica", weekday: "short", day: "numeric", month: "short" });
 }
 
 function formatElapsed(startStr: string): string {

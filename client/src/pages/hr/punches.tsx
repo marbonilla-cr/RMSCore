@@ -80,17 +80,17 @@ function todayStr(): string {
 
 function formatTime(dateStr: string): string {
   const d = new Date(dateStr);
-  return d.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString("es-CR", { timeZone: "America/Costa_Rica", hour: "2-digit", minute: "2-digit" });
 }
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
-  return d.toLocaleDateString("es-CR", { day: "2-digit", month: "2-digit" });
+  return d.toLocaleDateString("es-CR", { timeZone: "America/Costa_Rica", day: "2-digit", month: "2-digit" });
 }
 
 function formatFullDate(dateStr: string): string {
   const d = new Date(dateStr);
-  return d.toLocaleDateString("es-CR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return d.toLocaleDateString("es-CR", { timeZone: "America/Costa_Rica", day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 function formatWorked(minutes: number | null | undefined): string {
