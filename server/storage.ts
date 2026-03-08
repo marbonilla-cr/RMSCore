@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { getTenantDb } from "./db-tenant";
 import { eq, and, desc, asc, sql, isNull, ne, inArray, gte, lte, count } from "drizzle-orm";
 import {
   users, tables, categories, products, paymentMethods,
@@ -1355,21 +1356,23 @@ export async function getOrderDetail(orderId: number) {
 }
 
 // Business Config
-export async function getBusinessConfig(): Promise<BusinessConfig | undefined> {
-  const [config] = await db.select().from(businessConfig).limit(1);
+export async function getBusinessConfig(schema?: string): Promise<BusinessConfig | undefined> {
+  const dbInstance = schema ? getTenantDb(schema) : db;
+  const [config] = await dbInstance.select().from(businessConfig).limit(1);
   return config;
 }
 
-export async function upsertBusinessConfig(data: InsertBusinessConfig): Promise<BusinessConfig> {
-  const existing = await getBusinessConfig();
+export async function upsertBusinessConfig(data: InsertBusinessConfig, schema?: string): Promise<BusinessConfig> {
+  const dbInstance = schema ? getTenantDb(schema) : db;
+  const existing = await getBusinessConfig(schema);
   if (existing) {
-    const [updated] = await db.update(businessConfig)
+    const [updated] = await dbInstance.update(businessConfig)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(businessConfig.id, existing.id))
       .returning();
     return updated;
   }
-  const [created] = await db.insert(businessConfig).values(data).returning();
+  const [created] = await dbInstance.insert(businessConfig).values(data).returning();
   return created;
 }
 

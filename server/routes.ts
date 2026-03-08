@@ -1197,15 +1197,20 @@ export async function registerRoutes(
 
 
   // ==================== ADMIN: BUSINESS CONFIG ====================
-  app.get("/api/admin/business-config", requireRole("MANAGER"), async (_req, res) => {
-    const config = await storage.getBusinessConfig();
-    res.json(config || { businessName: "", legalName: "", taxId: "", address: "", phone: "", email: "", legalNote: "" });
+  app.get("/api/admin/business-config", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const config = await storage.getBusinessConfig(req.tenantSchema);
+      res.json(config || {});
+    } catch (error) {
+      console.error('[business-config GET]', error);
+      res.status(500).json({ message: 'Error al cargar configuración' });
+    }
   });
 
   app.put("/api/admin/business-config", requireRole("MANAGER"), async (req, res) => {
     try {
       const parsed = insertBusinessConfigSchema.parse(req.body);
-      const config = await storage.upsertBusinessConfig(parsed);
+      const config = await storage.upsertBusinessConfig(parsed, req.tenantSchema);
       invalidateTimezoneCache(req.tenantSchema);
       res.json(config);
     } catch (err: any) {
@@ -1214,8 +1219,8 @@ export async function registerRoutes(
   });
 
   // Also expose business config for receipt printing (CASHIER + WAITER + MANAGER)
-  app.get("/api/business-config", requireAuth, async (_req, res) => {
-    const config = await storage.getBusinessConfig();
+  app.get("/api/business-config", requireAuth, async (req, res) => {
+    const config = await storage.getBusinessConfig(req.tenantSchema);
     res.json(config || { businessName: "", legalName: "", taxId: "", address: "", phone: "", email: "", legalNote: "" });
   });
 
@@ -2816,7 +2821,7 @@ export async function registerRoutes(
   app.get("/api/qr/:tableCode/info", async (req, res) => {
     const table = await storage.getTableByCode(req.params.tableCode);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
-    const config = await storage.getBusinessConfig();
+    const config = await storage.getBusinessConfig(req.tenantSchema);
     const maxSubaccounts = (config as any)?.maxSubaccounts ?? 15;
     const openOrder = await storage.getOpenOrderForTable(table.id);
     const hasGuestCount = !!(openOrder && openOrder.guestCount && openOrder.guestCount > 0);
@@ -3263,10 +3268,10 @@ export async function registerRoutes(
     }
   }
 
-  async function buildServiceChargeOps(orderId: number, order: any, activeItems: any[]) {
+  async function buildServiceChargeOps(orderId: number, order: any, activeItems: any[], schema?: string) {
     try {
       const [bizConfig, allProducts, existing] = await Promise.all([
-        storage.getBusinessConfig(),
+        storage.getBusinessConfig(schema),
         storage.getAllProducts(),
         storage.getServiceChargeByOrder(orderId),
       ]);
@@ -3520,7 +3525,7 @@ export async function registerRoutes(
         await db.transaction(async (tx) => {
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
         });
-        await buildServiceChargeOps(orderId, order, activeItems);
+        await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema);
       }
 
       if (pm?.paymentCode === "CASH" && cashSession) {
@@ -3626,7 +3631,7 @@ export async function registerRoutes(
         await db.transaction(async (tx) => {
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
         });
-        await buildServiceChargeOps(orderId, order, activeItems);
+        await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema);
         await maybeAutoCloseParentOrder(orderId);
       }
 
@@ -4023,7 +4028,7 @@ export async function registerRoutes(
       });
 
       const splitActiveOIs = splitOIs.filter(oi => oi.status !== "VOIDED");
-      await buildServiceChargeOps(orderId, order!, splitActiveOIs);
+      await buildServiceChargeOps(orderId, order!, splitActiveOIs, req.tenantSchema);
 
       if (pm?.paymentCode === "CASH" && cashSession) {
         const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + splitTotal;
@@ -4067,7 +4072,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });
       }
 
-      const config = await storage.getBusinessConfig();
+      const config = await storage.getBusinessConfig(req.tenantSchema);
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
@@ -4206,7 +4211,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });
       }
 
-      const config = await storage.getBusinessConfig();
+      const config = await storage.getBusinessConfig(req.tenantSchema);
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
@@ -6374,7 +6379,7 @@ export async function registerRoutes(
         secure: process.env.SMTP_SECURE === "true",
         auth: { user: smtpUser, pass: smtpPass },
       });
-      const config = await storage.getBusinessConfig();
+      const config = await storage.getBusinessConfig(req.tenantSchema);
       const businessName = config?.businessName || "Restaurante";
       await transporter.sendMail({
         from: process.env.SMTP_FROM || smtpUser,

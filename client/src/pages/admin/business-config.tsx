@@ -64,7 +64,7 @@ export default function AdminBusinessConfigPage() {
     timezone: "America/Costa_Rica",
   });
 
-  const { data: config, isLoading } = useQuery<BusinessConfigData>({
+  const { data: config, isLoading, isError, error } = useQuery<BusinessConfigData>({
     queryKey: ["/api/admin/business-config"],
   });
 
@@ -112,6 +112,24 @@ export default function AdminBusinessConfigPage() {
       <div className="p-4 space-y-4">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-[400px] w-full" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-4">
+        <div className="bg-destructive/15 border border-destructive text-destructive rounded-md p-4 flex flex-col gap-2">
+          <p data-testid="text-config-error">Error al cargar configuración: {error?.message}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="button-retry-config"
+            onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/admin/business-config"] })}
+          >
+            Reintentar
+          </Button>
+        </div>
       </div>
     );
   }
