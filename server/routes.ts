@@ -707,7 +707,8 @@ export async function registerRoutes(
 
       const settings = await storage.getHrSettings();
       const tz = await getTenantTimezone(req.tenantSchema);
-      const now = getNowInTZ(tz);
+      const now = new Date();
+      const localNow = getNowInTZ(tz);
       const businessDate = await getBusinessDate(req.tenantSchema);
 
       if (action === "clock_in") {
@@ -727,12 +728,12 @@ export async function registerRoutes(
           geoVerified = true;
         }
 
-        const weekDay = now.getDay();
+        const weekDay = localNow.getDay();
         let lateMinutes = 0;
         let scheduledStartAt: Date | undefined;
         let scheduledEndAt: Date | undefined;
         const dayOffset = weekDay === 0 ? 6 : weekDay - 1;
-        const mondayDate = new Date(now);
+        const mondayDate = new Date(localNow);
         mondayDate.setDate(mondayDate.getDate() - dayOffset);
         const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: tz });
         const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
@@ -743,15 +744,15 @@ export async function registerRoutes(
           if (todaySchedule && !todaySchedule.isDayOff && todaySchedule.startTime) {
             hasScheduleToday = true;
             const [h, m] = todaySchedule.startTime.split(":").map(Number);
-            scheduledStartAt = new Date(now);
+            scheduledStartAt = new Date(localNow);
             scheduledStartAt.setHours(h, m, 0, 0);
             if (todaySchedule.endTime) {
               const [eh, em] = todaySchedule.endTime.split(":").map(Number);
-              scheduledEndAt = new Date(now);
+              scheduledEndAt = new Date(localNow);
               scheduledEndAt.setHours(eh, em, 0, 0);
             }
             const graceMinutes = settings?.latenessGraceMinutes || 0;
-            const diffMs = now.getTime() - scheduledStartAt.getTime();
+            const diffMs = localNow.getTime() - scheduledStartAt.getTime();
             const diffMinutes = Math.floor(diffMs / 60000);
             if (diffMinutes > graceMinutes) lateMinutes = diffMinutes - graceMinutes;
           }
@@ -5053,7 +5054,8 @@ export async function registerRoutes(
       
       const settings = await storage.getHrSettings();
       const tzSelf = await getTenantTimezone(req.tenantSchema);
-      const now = getNowInTZ(tzSelf);
+      const now = new Date();
+      const localNow = getNowInTZ(tzSelf);
       const businessDate = await getBusinessDate(req.tenantSchema);
       
       let geoVerified = false;
@@ -5069,13 +5071,13 @@ export async function registerRoutes(
         geoVerified = true;
       }
       
-      const weekDay = now.getDay();
+      const weekDay = localNow.getDay();
       let lateMinutes = 0;
       let scheduledStartAt: Date | undefined;
       let scheduledEndAt: Date | undefined;
       
       const dayOffset = weekDay === 0 ? 6 : weekDay - 1;
-      const mondayDate = new Date(now);
+      const mondayDate = new Date(localNow);
       mondayDate.setDate(mondayDate.getDate() - dayOffset);
       const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: tzSelf });
       
@@ -5087,17 +5089,17 @@ export async function registerRoutes(
         if (todaySchedule && !todaySchedule.isDayOff && todaySchedule.startTime) {
           hasScheduleToday = true;
           const [h, m] = todaySchedule.startTime.split(":").map(Number);
-          scheduledStartAt = new Date(now);
+          scheduledStartAt = new Date(localNow);
           scheduledStartAt.setHours(h, m, 0, 0);
           
           if (todaySchedule.endTime) {
             const [eh, em] = todaySchedule.endTime.split(":").map(Number);
-            scheduledEndAt = new Date(now);
+            scheduledEndAt = new Date(localNow);
             scheduledEndAt.setHours(eh, em, 0, 0);
           }
           
           const graceMinutes = settings?.latenessGraceMinutes || 0;
-          const diffMs = now.getTime() - scheduledStartAt.getTime();
+          const diffMs = localNow.getTime() - scheduledStartAt.getTime();
           const diffMinutes = Math.floor(diffMs / 60000);
           if (diffMinutes > graceMinutes) {
             lateMinutes = diffMinutes - graceMinutes;
@@ -5297,7 +5299,11 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Empleado, fecha, hora de entrada y razón son obligatorios" });
       }
 
-      const clockInAt = new Date(`${date}T${clockInTime}:00`);
+      const tz = await getTenantTimezone(req.tenantSchema);
+      const utcRef = new Date();
+      const localRef = new Date(utcRef.toLocaleString('en-US', { timeZone: tz }));
+      const tzOffsetMs = utcRef.getTime() - localRef.getTime();
+      const clockInAt = new Date(new Date(`${date}T${clockInTime}:00`).getTime() + tzOffsetMs);
       if (isNaN(clockInAt.getTime())) {
         return res.status(400).json({ message: "Fecha/hora de entrada inválida" });
       }
@@ -5305,7 +5311,7 @@ export async function registerRoutes(
       let clockOutAt: Date | undefined;
       let workedMinutes: number | undefined;
       if (clockOutTime) {
-        clockOutAt = new Date(`${date}T${clockOutTime}:00`);
+        clockOutAt = new Date(new Date(`${date}T${clockOutTime}:00`).getTime() + tzOffsetMs);
         if (isNaN(clockOutAt.getTime())) {
           return res.status(400).json({ message: "Hora de salida inválida" });
         }
