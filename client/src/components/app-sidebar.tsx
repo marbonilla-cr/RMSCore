@@ -119,6 +119,7 @@ const cashierItems = [
 const dashboardItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Cubo de Ventas", url: "/reports/sales-cube", icon: BarChart3 },
+  { title: "Ledger QBO", url: "/reports/qbo-ledger", icon: FileText },
 ];
 
 const adminItems = [

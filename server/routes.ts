@@ -19,7 +19,7 @@ import * as qbo from "./quickbooks";
 import { tenantMiddleware } from "./middleware/tenant";
 import { registerDispatchRoutes, registerDispatchSession, notifyDispatchReady } from "./dispatch-routes";
 import { registerProvisionRoutes } from "./provision/provision-routes";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
 declare module "express-session" {
@@ -7405,6 +7405,89 @@ export async function registerRoutes(
       });
 
       res.json({ ok: true, availablePortions: newPortions, active: newActive });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== REPORTS: QBO SYNC LEDGER ====================
+  app.get("/api/reports/qbo-ledger", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
+    try {
+      const dateFrom = req.query.date_from as string || new Date().toISOString().split("T")[0];
+      const dateTo = req.query.date_to as string || dateFrom;
+
+      const paidPaymentRows = await db.select({
+        paymentId: payments.id,
+        orderId: payments.orderId,
+        amount: payments.amount,
+        paidAt: payments.paidAt,
+        paymentMethodId: payments.paymentMethodId,
+        businessDate: payments.businessDate,
+      }).from(payments)
+        .where(and(
+          eq(payments.status, "PAID"),
+          gte(payments.businessDate, dateFrom),
+          lte(payments.businessDate, dateTo),
+        ))
+        .orderBy(desc(payments.paidAt));
+
+      if (paidPaymentRows.length === 0) {
+        return res.json([]);
+      }
+
+      const orderIds = [...new Set(paidPaymentRows.map(p => p.orderId))];
+      const paymentIds = paidPaymentRows.map(p => p.paymentId);
+
+      const [orderRows, syncRows, pmRows, ledgerRows] = await Promise.all([
+        db.select({
+          id: orders.id,
+          globalNumber: orders.globalNumber,
+          tableId: orders.tableId,
+        }).from(orders).where(inArray(orders.id, orderIds)),
+        db.select().from(qboSyncLog).where(inArray(qboSyncLog.paymentId, paymentIds)),
+        storage.getAllPaymentMethods(),
+        db.select({
+          orderId: salesLedgerItems.orderId,
+          categoryName: salesLedgerItems.categoryNameSnapshot,
+        }).from(salesLedgerItems).where(inArray(salesLedgerItems.orderId, orderIds)),
+      ]);
+
+      const allTables = await storage.getAllTables();
+      const tableMap = new Map(allTables.map(t => [t.id, t.tableName]));
+      const orderMap = new Map(orderRows.map(o => [o.id, o]));
+      const syncMap = new Map(syncRows.map(s => [s.paymentId, s]));
+      const pmMap = new Map(pmRows.map(m => [m.id, m.paymentName]));
+
+      const catsByOrder = new Map<number, Set<string>>();
+      for (const row of ledgerRows) {
+        if (row.orderId && row.categoryName) {
+          if (!catsByOrder.has(row.orderId)) catsByOrder.set(row.orderId, new Set());
+          catsByOrder.get(row.orderId)!.add(row.categoryName);
+        }
+      }
+
+      const result = paidPaymentRows.map(p => {
+        const order = orderMap.get(p.orderId);
+        const sync = syncMap.get(p.paymentId);
+        const cats = catsByOrder.get(p.orderId);
+        return {
+          paymentId: p.paymentId,
+          orderId: p.orderId,
+          globalNumber: order?.globalNumber ? `G-${order.globalNumber}` : `#${p.orderId}`,
+          businessDate: p.businessDate,
+          paidAt: p.paidAt,
+          tableName: order ? (tableMap.get(order.tableId) || `Mesa ${order.tableId}`) : "",
+          amount: p.amount,
+          paymentMethod: pmMap.get(p.paymentMethodId) || "Desconocido",
+          categories: cats ? [...cats].sort().join(", ") : "",
+          qboStatus: sync?.status || "NOT_SYNCED",
+          qboSyncedAt: sync?.syncedAt || null,
+          qboError: sync?.errorMessage || null,
+          qboSyncLogId: sync?.id || null,
+        };
+      });
+
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

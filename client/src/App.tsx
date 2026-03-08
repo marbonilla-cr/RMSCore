@@ -48,6 +48,7 @@ import InvPurchaseOrdersPage from "@/pages/inventory/purchase-orders";
 import InvPhysicalCountsPage from "@/pages/inventory/physical-counts";
 import InvRecipesPage from "@/pages/inventory/recipes";
 import InvReportsPage from "@/pages/inventory/reports";
+import QboLedgerPage from "@/pages/dashboard/qbo-ledger";
 import InvConversionsPage from "@/pages/inventory/conversions";
 import InvProductionPage from "@/pages/inventory/production";
 import InvStockPage from "@/pages/inventory/stock";
@@ -166,6 +167,7 @@ function AuthenticatedRouter() {
       <Route path="/shortages/active" component={ShortagesActivePage} />
       <Route path="/shortages/audit" component={ShortagesAuditPage} />
       <Route path="/reports/sales-cube" component={SalesCubePage} />
+      <Route path="/reports/qbo-ledger" component={QboLedgerPage} />
       <Route component={NotFound} />
     </Switch>
   );
