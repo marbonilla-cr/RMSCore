@@ -1,0 +1,152 @@
+Error
+Pago #146966
+Orden #343
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:23:19 PM
+Reintentar
+Error
+Pago #146965
+Orden #330
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:23:19 PM
+Reintentar
+Error
+Pago #146964
+Orden #339
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146963
+Orden #339
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146962
+Orden #334
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146961
+Orden #338
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146960
+Orden #337
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146959
+Orden #333
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146958
+Orden #332
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146957
+Orden #331
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146956
+Orden #326
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146955
+Orden #326
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146954
+Orden #313
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146953
+Orden #329
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146952
+Orden #288
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146951
+Orden #327
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146950
+Orden #328
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146949
+Orden #315
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
+Error
+Pago #146948
+Orden #316
+Intentos: 1
+error:1C800064:Provider routines::bad decrypt
+Creado: 3/8/2026, 5:16:47 PM
+Próximo reintento: 3/8/2026, 5:21:56 PM
+Reintentar
