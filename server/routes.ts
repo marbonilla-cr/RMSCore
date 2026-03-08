@@ -3301,7 +3301,7 @@ export async function registerRoutes(
       );
       const productMap = new Map(allProducts.map(p => [p.id, p]));
       const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
-      const bd = await getBusinessDate(req.tenantSchema);
+      const bd = await getBusinessDate(schema);
       const entries: any[] = [];
       for (const item of activeItems) {
         const itemKey = item.id;
