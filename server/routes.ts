@@ -4131,7 +4131,7 @@ export async function registerRoutes(
       const oNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `#${order.id}`);
       const receiptOrderNum = splitLabel ? `${oNum} — ${splitLabel}` : oNum;
 
-      const allPayments = await storage.getPaymentsForOrder(orderId);
+      const allPayments = (await storage.getPaymentsForOrder(orderId)).filter(p => p.status === "PAID");
       const relevantPayments = splitPaymentId
         ? allPayments.filter(p => p.id === splitPaymentId)
         : allPayments;
