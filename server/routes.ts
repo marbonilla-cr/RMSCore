@@ -2865,12 +2865,17 @@ export async function registerRoutes(
       : null;
 
     const catMap = new Map(cats.map(c => [c.id, c]));
+    const topCatSortMap = new Map(
+      cats.filter(c => c.categoryCode.startsWith("TOP-") && c.active)
+        .map(c => [c.categoryCode, c.sortOrder])
+    );
 
     const result = prods
       .filter(p => p.availablePortions === null || p.availablePortions > 0)
       .filter(p => !isEasyMode || (p.easyMode && p.categoryId && easyCatIds!.has(p.categoryId)))
       .map(p => {
         const cat = p.categoryId ? catMap.get(p.categoryId) : null;
+        const parentCode = cat?.parentCategoryCode || null;
         return {
           id: p.id,
           name: p.name,
@@ -2878,10 +2883,17 @@ export async function registerRoutes(
           price: p.price,
           categoryName: cat?.name || null,
           categoryFoodType: cat?.foodType || "comidas",
-          categoryParentCode: cat?.parentCategoryCode || null,
+          categoryParentCode: parentCode,
+          categorySortOrder: cat?.sortOrder ?? 9999,
+          topCategorySortOrder: parentCode ? (topCatSortMap.get(parentCode) ?? 9999) : 9999,
           availablePortions: p.availablePortions,
         };
-      });
+      })
+      .sort((a, b) =>
+        a.topCategorySortOrder - b.topCategorySortOrder
+        || a.categorySortOrder - b.categorySortOrder
+        || a.name.localeCompare(b.name)
+      );
 
     const topCats = cats.filter(c => c.categoryCode.startsWith("TOP-") && c.active)
       .sort((a, b) => a.sortOrder - b.sortOrder)

@@ -18,6 +18,7 @@ interface QRProduct {
   categoryName: string | null;
   categoryFoodType: string;
   categoryParentCode: string | null;
+  categorySortOrder: number;
   availablePortions: number | null;
 }
 interface QRTopCategory { code: string; name: string; }
@@ -460,7 +461,9 @@ export default function QRClientPage() {
       if (!groups.has(cat)) groups.set(cat, []);
       groups.get(cat)!.push(p);
     });
-    return Array.from(groups.entries()).map(([catName, products]) => ({ catName, products }));
+    return Array.from(groups.entries())
+      .map(([catName, products]) => ({ catName, products, sortOrder: products[0]?.categorySortOrder ?? 9999 }))
+      .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [menu, tab, topCats]);
 
   /* ─── Cart helpers ─── */
