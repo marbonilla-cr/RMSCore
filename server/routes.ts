@@ -7242,6 +7242,18 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/qbo/sync-log/:id/retry", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
+    try {
+      const logId = parseInt(req.params.id);
+      if (isNaN(logId)) return res.status(400).json({ message: "ID inválido" });
+      const ok = await qbo.resetSyncEntry(logId);
+      if (!ok) return res.status(404).json({ message: "Entrada no encontrada o no es reintentable" });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/qbo/initial-sync", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const { fromDate } = req.body;

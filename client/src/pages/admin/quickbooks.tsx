@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import {
   Link2, Unlink, Settings2, RefreshCw, Loader2, CheckCircle2, XCircle,
-  Clock, AlertTriangle, ArrowUpDown, Play, Eye, EyeOff, Key, Shield
+  Clock, AlertTriangle, ArrowUpDown, Play, Eye, EyeOff, Key, Shield,
+  Ban, SkipForward, RotateCcw
 } from "lucide-react";
 
 type TabId = "credentials" | "connection" | "accounting" | "mappings" | "sync";
@@ -620,6 +621,16 @@ function SyncTab() {
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  const retrySingleMut = useMutation({
+    mutationFn: (logId: number) => apiRequest("POST", `/api/qbo/sync-log/${logId}/retry`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/qbo/sync-log"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/qbo/sync-stats"] });
+      toast({ title: "Reintento", description: "Entrada marcada para reintento" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const initialSyncMut = useMutation({
     mutationFn: () => apiRequest("POST", "/api/qbo/initial-sync", { fromDate: syncFromDate }),
     onSuccess: async (res) => {
@@ -728,6 +739,8 @@ function SyncTab() {
                 <SelectItem value="PENDING">Pendientes</SelectItem>
                 <SelectItem value="FAILED">Fallidos</SelectItem>
                 <SelectItem value="VOIDED">Anulados</SelectItem>
+                <SelectItem value="ABANDONED">Abandonados</SelectItem>
+                <SelectItem value="SKIPPED">Omitidos</SelectItem>
               </SelectContent>
             </Select>
           </CardTitle>
@@ -762,6 +775,18 @@ function SyncTab() {
                     {log.nextRetryAt && log.status === "FAILED" && (
                       <span>Próximo reintento: {new Date(log.nextRetryAt).toLocaleString()}</span>
                     )}
+                    {(log.status === "ABANDONED" || log.status === "FAILED") && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => retrySingleMut.mutate(log.id)}
+                        disabled={retrySingleMut.isPending}
+                        data-testid={`button-retry-single-${log.id}`}
+                      >
+                        <RotateCcw className="h-3 w-3 mr-1" />Reintentar
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -783,6 +808,10 @@ function StatusBadge({ status }: { status: string }) {
       return <Badge variant="destructive" className="text-xs"><XCircle className="h-3 w-3 mr-1" />Error</Badge>;
     case "VOIDED":
       return <Badge variant="outline" className="text-xs"><AlertTriangle className="h-3 w-3 mr-1" />Anulado</Badge>;
+    case "ABANDONED":
+      return <Badge variant="destructive" className="bg-orange-600 text-xs"><Ban className="h-3 w-3 mr-1" />Abandonado</Badge>;
+    case "SKIPPED":
+      return <Badge variant="secondary" className="text-xs"><SkipForward className="h-3 w-3 mr-1" />Omitido</Badge>;
     default:
       return <Badge variant="secondary" className="text-xs">{status}</Badge>;
   }

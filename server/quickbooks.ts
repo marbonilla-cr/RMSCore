@@ -361,6 +361,17 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
   const items = await storage.getOrderItems(effectiveOrderId);
   const activeItems = items.filter(i => i.status !== "VOIDED");
 
+  if (activeItems.length === 0) {
+    const msg = `Todos los ítems anulados en orden #${effectiveOrderId} — nada que sincronizar`;
+    console.log(`[QBO] ${msg}`);
+    await db.update(qboSyncLog).set({
+      status: "SKIPPED",
+      errorMessage: msg,
+      syncedAt: new Date(),
+    }).where(eq(qboSyncLog.paymentId, paymentId));
+    return "";
+  }
+
   const pm = await storage.getPaymentMethod(payment.paymentMethodId);
 
   const mappings = await db.select().from(qboCategoryMapping);
@@ -535,6 +546,7 @@ export async function retryPendingSync(): Promise<number> {
     )
     .limit(20);
 
+  const backoffMinutes = [5, 15, 60, 240, 1440];
   let processed = 0;
   for (const log of pendingLogs) {
     try {
@@ -542,9 +554,39 @@ export async function retryPendingSync(): Promise<number> {
       processed++;
     } catch (err: any) {
       console.error(`[QBO] Retry failed for payment ${log.paymentId}:`, err.message);
+      const newAttempts = (log.attempts || 0) + 1;
+      if (newAttempts >= 5) {
+        await db.update(qboSyncLog).set({
+          status: "ABANDONED",
+          errorMessage: err.message?.substring(0, 500),
+          attempts: newAttempts,
+          nextRetryAt: null,
+        }).where(eq(qboSyncLog.id, log.id));
+        console.warn(`[QBO] Payment ${log.paymentId} abandoned after ${newAttempts} attempts`);
+      } else {
+        const nextRetry = new Date(Date.now() + (backoffMinutes[Math.min(newAttempts - 1, backoffMinutes.length - 1)] * 60 * 1000));
+        await db.update(qboSyncLog).set({
+          status: "FAILED",
+          errorMessage: err.message?.substring(0, 500),
+          attempts: newAttempts,
+          nextRetryAt: nextRetry,
+        }).where(eq(qboSyncLog.id, log.id));
+      }
     }
   }
   return processed;
+}
+
+export async function resetSyncEntry(logId: number): Promise<boolean> {
+  const [entry] = await db.select().from(qboSyncLog).where(eq(qboSyncLog.id, logId)).limit(1);
+  if (!entry || (entry.status !== "ABANDONED" && entry.status !== "FAILED")) return false;
+  await db.update(qboSyncLog).set({
+    status: "PENDING",
+    attempts: 0,
+    errorMessage: null,
+    nextRetryAt: null,
+  }).where(eq(qboSyncLog.id, logId));
+  return true;
 }
 
 export async function enqueueSyncForPayment(paymentId: number, orderId: number): Promise<void> {
