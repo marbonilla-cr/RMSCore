@@ -1,0 +1,139 @@
+Objective
+
+Replace the current hours-prorated service charge distribution with two simple report-only modes selectable in the payroll report UI:
+
+1) BOLSA
+For each day in range:
+- Sum all assigned service amounts for valid waiters that day = poolDay
+- Count unique waiter employee IDs with assigned service > 0 that day
+- Each eligible waiter gets (poolDay / eligibleCount) * serviceRate
+- Sum daily allocations across the selected date range
+
+2) VENTA_MESERO
+For each day in range:
+- Each waiter gets (their own assigned service amount that day) * serviceRate
+- Sum daily allocations across the selected date range
+
+Important rules
+- This is report logic only. Do not persist payroll results to DB.
+- Remove all dependency on worked hours, punches, schedules, and computeDailyPayroll for service distribution.
+- Exclude employeeId = 0 or null from both allocation modes.
+- Exclude unassigned service from distribution; report it separately as serviceUnassignedTotal.
+- If BOLSA mode has poolDay > 0 but zero eligible waiters, send that day’s pool to serviceUnassignedTotal and do not divide.
+- Preserve response compatibility: return { result, serviceUnassignedTotal, allocationModeByDate }.
+- allocationModeByDate should simply return the selected mode for each date in range.
+
+Tasks
+
+T001: Rewrite computeServiceForRange in backend
+
+Blocked By: []
+Details:
+In server/payroll.ts, rewrite computeServiceForRange to accept:
+serviceMode: "BOLSA" | "VENTA_MESERO"
+
+Behavior:
+- Build all service distribution only from serviceLedgerByEmployee or equivalent assigned-service source
+- Remove punchesMap, schedulesMap, computeDailyPayroll calls, and any hours-based logic from service calculation
+- BOLSA:
+  - For each business date in range, compute poolDay = sum of assigned service amounts for valid employee IDs (>0)
+  - eligibleCount = number of unique employee IDs with assigned service > 0
+  - if eligibleCount > 0, assign equal share * serviceRate to each eligible waiter
+  - if eligibleCount = 0, move poolDay to serviceUnassignedTotal
+- VENTA_MESERO:
+  - For each business date, waiter allocation = assignedServiceDay[empId] * serviceRate
+- Keep returning:
+  {
+    result,
+    serviceUnassignedTotal,
+    allocationModeByDate
+  }
+- allocationModeByDate should map every date to either "BOLSA" or "VENTA_MESERO" depending on selected mode
+
+Files:
+- server/payroll.ts
+
+Acceptance:
+- Both modes produce correct totals without using punches or schedules
+- No division by zero
+- Unassigned service is reported separately, never silently distributed
+
+T002: Update payroll-report endpoint to accept serviceMode
+
+Blocked By: [T001]
+Details:
+In server/routes.ts payroll-report endpoint:
+- Accept query param serviceMode = BOLSA | VENTA_MESERO
+- Default to BOLSA if missing or invalid
+- Pass serviceMode into computeServiceForRange
+- Remove the service punches/schedules fetch block because service calculation no longer depends on worked hours
+- Include serviceMode in response JSON
+
+Files:
+- server/routes.ts
+
+Acceptance:
+- API returns correct service totals for either mode
+- Response includes selected serviceMode
+- Endpoint no longer depends on punches/schedules for service logic
+
+T003: Add service mode selector to payroll report UI
+
+Blocked By: [T002]
+Details:
+In client/src/pages/hr/reports.tsx:
+- Add state:
+  serviceMode: "BOLSA" | "VENTA_MESERO"
+  default = "BOLSA"
+- In the service config section, add two toggle buttons:
+  - Bolsa
+  - Venta por Mesero
+- Include serviceMode in API query params
+- Include serviceMode in React Query queryKey
+- Show selected mode clearly in the report UI
+
+Files:
+- client/src/pages/hr/reports.tsx
+
+Acceptance:
+- User can switch between both modes
+- Changing mode invalidates cache and reloads report
+- Report clearly reflects selected allocation mode
+
+T004: Add visibility of calculation context in report
+
+Blocked By: [T002, T003]
+Details:
+In the payroll report response rendering:
+- Show selected service mode
+- Show service rate used
+- Show serviceUnassignedTotal separately
+- Do not mix unassigned amounts into waiter totals
+
+Files:
+- client/src/pages/hr/reports.tsx
+
+Acceptance:
+- Report is auditable and understandable to operations
+- Unassigned service is visible, not hidden
+
+T005: Verify and deploy
+
+Blocked By: [T001, T002, T003, T004]
+Details:
+- Restart dev server
+- Verify clean startup
+- Test both modes with:
+  1. normal day with multiple waiters
+  2. day with one waiter
+  3. day with unassigned service
+  4. day with zero eligible waiters
+- Suggest deployment after validation
+
+Files:
+- none
+
+Acceptance:
+- Server runs cleanly
+- Both service modes produce expected results
+- No hidden dependency on hours remains

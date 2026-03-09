@@ -1,0 +1,191 @@
+Objective
+
+Replace the current hours-prorated service charge distribution with two simple report-only modes selectable in the payroll report UI.
+
+The two modes are:
+
+1) BOLSA
+For each day in the selected range:
+- Sum all assigned service for valid waiters = poolDay
+- Count eligible waiters for that day
+- Each eligible waiter gets an equal share of that pool
+- Then apply the service distribution percentage configured in the HR config module
+- Sum all daily allocations across the selected date range
+
+Formula:
+distributedAmountPerWaiterPerDay = (poolDay / eligibleCount) * serviceDistributionPctFromHrConfig
+
+2) VENTA_MESERO
+For each day in the selected range:
+- Each waiter gets their own assigned service for that day
+- Then apply the service distribution percentage configured in the HR config module
+- Sum all daily allocations across the selected date range
+
+Formula:
+distributedAmountPerWaiterPerDay = assignedServiceDay[empId] * serviceDistributionPctFromHrConfig
+
+Important rules
+
+- This is report logic only. Do not persist payroll results to DB.
+- Remove all dependency on worked hours, punches, schedules, and computeDailyPayroll for service distribution.
+- Valid waiters = employeeId > 0 with assigned service > 0 for that day.
+- Exclude employeeId = 0 or null from both allocation modes.
+- Exclude unassigned service from distribution; report it separately as serviceUnassignedTotal.
+- If BOLSA mode has poolDay > 0 but zero eligible waiters, send that day’s pool to serviceUnassignedTotal.
+- Preserve response compatibility: return { result, serviceUnassignedTotal, allocationModeByDate }.
+- allocationModeByDate should map every date in the range to the selected mode only.
+- Use the existing assigned service-by-employee/day source already used by payroll reporting. Do not introduce a new service source.
+- The percentage applied to service distribution must always come from the existing HR config module.
+- Do not hardcode the percentage.
+- Do not ask the user to manually enter a percentage in the payroll report UI.
+- The selected mode (BOLSA or VENTA_MESERO) only changes the distribution base, not the percentage source.
+- Keep using the current HR configuration source already defined today for service distribution.
+- The report must display the exact percentage used from HR config for auditability.
+
+Tasks
+
+T001: Rewrite computeServiceForRange in backend
+
+Blocked By: []
+Details:
+In server/payroll.ts, rewrite computeServiceForRange to accept:
+serviceMode: "BOLSA" | "VENTA_MESERO"
+
+Also ensure the calculation reads the current service distribution percentage from the existing HR config source already used by the payroll module.
+
+Remove:
+- punchesMap
+- schedulesMap
+- computeDailyPayroll calls
+- any hours-based service logic
+
+Behavior:
+- Build service distribution only from the existing assigned service source by employee and day
+- Read serviceDistributionPctFromHrConfig from the current HR config module / existing payroll config source
+- Do not hardcode any service percentage
+
+BOLSA:
+- For each date:
+  - poolDay = sum of assigned service for valid waiters (employeeId > 0 and assigned service > 0)
+  - eligibleCount = unique valid employee IDs with assigned service > 0 that day
+  - if eligibleCount > 0:
+    - each eligible waiter gets (poolDay / eligibleCount) * serviceDistributionPctFromHrConfig
+  - if eligibleCount = 0:
+    - move poolDay to serviceUnassignedTotal
+
+VENTA_MESERO:
+- For each date:
+  - each waiter gets assignedServiceDay[empId] * serviceDistributionPctFromHrConfig
+
+Return:
+{
+  result,
+  serviceUnassignedTotal,
+  allocationModeByDate
+}
+
+Where:
+- result = per-employee service totals for the selected date range
+- serviceUnassignedTotal = total unassigned service excluded from distribution
+- allocationModeByDate = map of each date to the selected mode
+
+Files:
+- server/payroll.ts
+
+Acceptance:
+- Both modes are correct without punches/schedules
+- No division by zero
+- Unassigned service is reported separately
+- No hours-based dependency remains in service calculation
+- The percentage used comes from HR config, not hardcoded values
+
+T002: Update payroll-report endpoint to accept serviceMode
+
+Blocked By: [T001]
+Details:
+In server/routes.ts:
+- Accept query param serviceMode = BOLSA | VENTA_MESERO
+- Default to BOLSA if missing or invalid
+- Pass serviceMode into computeServiceForRange
+- Remove the service punches/schedules fetch block since service no longer depends on hours
+- Include serviceMode in response JSON
+- Include the service distribution percentage used in the response JSON so frontend can display it clearly
+
+Files:
+- server/routes.ts
+
+Acceptance:
+- API returns correct service totals for either mode
+- Response includes serviceMode used
+- Response includes serviceDistributionPctUsed from HR config
+- No punches/schedules dependency remains for service logic
+
+T003: Add service mode selector to payroll report UI
+
+Blocked By: [T002]
+Details:
+In client/src/pages/hr/reports.tsx:
+- Add state:
+  serviceMode: "BOLSA" | "VENTA_MESERO"
+  default = "BOLSA"
+- Add two toggle buttons in the service config section:
+  - Bolsa
+  - Venta por Mesero
+- Include serviceMode in API query params
+- Include serviceMode in React Query queryKey
+- Do not add any manual percentage input in the report UI
+
+Files:
+- client/src/pages/hr/reports.tsx
+
+Acceptance:
+- User can switch modes
+- Cache invalidates on mode change
+- Report updates correctly
+- Percentage is not manually editable here
+
+T004: Add visibility of calculation context in report
+
+Blocked By: [T002, T003]
+Details:
+In client/src/pages/hr/reports.tsx:
+- Show selected service mode label in the report
+- Show the service distribution percentage used, clearly labeled as coming from HR config
+- Show serviceUnassignedTotal separately
+- Do not mix unassigned amounts into waiter totals
+- Keep the report auditable and easy to explain operationally
+
+Suggested labels:
+- Modo de distribución: Bolsa / Venta por Mesero
+- Porcentaje de servicio aplicado: XX% (desde Configuración HR)
+- Servicio no asignado: ₡X
+
+Files:
+- client/src/pages/hr/reports.tsx
+
+Acceptance:
+- Report is auditable
+- Unassigned service is clearly visible
+- Waiter totals only include distributed/assigned amounts
+- The applied percentage is clearly shown as sourced from HR config
+
+T005: Verify and deploy
+
+Blocked By: [T001, T002, T003, T004]
+Details:
+- Restart dev server
+- Verify clean startup
+- Test these cases:
+  1. normal day with multiple waiters
+  2. day with one waiter
+  3. day with no service
+  4. day with unassigned service
+  5. day with poolDay > 0 but zero eligible waiters
+  6. both modes using the same HR-configured percentage
+- Suggest deployment after validation
+
+Acceptance:
+- Server runs cleanly
+- Both modes work as expected
+- No hidden dependency on punches/schedules remains
+- The exact percentage used always comes from HR config
