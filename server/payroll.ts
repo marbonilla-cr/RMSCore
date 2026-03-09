@@ -155,12 +155,12 @@ function getTimezoneOffset(tz: string): string {
     timeZoneName: 'shortOffset'
   }).formatToParts(new Date());
   const offsetPart = parts.find(p => p.type === 'timeZoneName')?.value || 'GMT-6';
-  const match = offsetPart.match(/GMT([+-]\d+(?::\d+)?)/);
+  const match = offsetPart.match(/GMT([+-])(\d+)(?::(\d+))?/);
   if (!match) return '-06:00';
-  const raw = match[1];
-  if (raw.includes(':')) return raw.padStart(6, '+');
-  const hours = parseInt(raw);
-  return `${hours >= 0 ? '+' : ''}${String(hours).padStart(2, '0')}:00`;
+  const sign = match[1];
+  const hours = match[2].padStart(2, '0');
+  const minutes = (match[3] || '00').padStart(2, '0');
+  return `${sign}${hours}:${minutes}`;
 }
 
 function parseDateInTZ(dateStr: string, timeStr: string, tz?: string): Date {
