@@ -114,30 +114,28 @@ export async function ensurePublicTables(): Promise<void> {
     console.log("[tenant-seed] ✓ Tablas globales verificadas/creadas");
 
     // ── Registrar Tenant 1 (el restaurante propio) ──────────────────────────
-    const existing = await client.query(
+    const upsertRes = await client.query(`
+      INSERT INTO tenants
+        (slug, business_name, schema_name, plan, status, is_active, billing_email, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, 'ACTIVE', true, $5, NOW(), NOW())
+      ON CONFLICT (slug) DO NOTHING
+    `, [
+      OWN_TENANT.slug,
+      OWN_TENANT.businessName,
+      OWN_TENANT.schemaName,
+      OWN_TENANT.plan,
+      OWN_TENANT.billingEmail,
+    ]);
+
+    const tenantRow = await client.query(
       `SELECT id FROM tenants WHERE slug = $1`,
       [OWN_TENANT.slug]
     );
+    const tenantId = tenantRow.rows[0].id;
 
-    let tenantId: number;
-
-    if (existing.rows.length === 0) {
-      const res = await client.query(`
-        INSERT INTO tenants
-          (slug, business_name, schema_name, plan, status, is_active, billing_email, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, 'ACTIVE', true, $5, NOW(), NOW())
-        RETURNING id
-      `, [
-        OWN_TENANT.slug,
-        OWN_TENANT.businessName,
-        OWN_TENANT.schemaName,
-        OWN_TENANT.plan,
-        OWN_TENANT.billingEmail,
-      ]);
-      tenantId = res.rows[0].id;
+    if (upsertRes.rowCount && upsertRes.rowCount > 0) {
       console.log(`[tenant-seed] ✓ Tenant 1 registrado: ${OWN_TENANT.businessName} (id=${tenantId})`);
     } else {
-      tenantId = existing.rows[0].id;
       console.log(`[tenant-seed] ✓ Tenant 1 ya existe (id=${tenantId}) — sin cambios`);
     }
 
