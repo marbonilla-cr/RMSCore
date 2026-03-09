@@ -248,9 +248,10 @@ function PayrollTab() {
   const serviceTo = useDefaultService ? defaultServiceTo : customServiceTo;
 
   const queryParams = `?dateFrom=${actualFrom}&dateTo=${actualTo}&serviceFrom=${serviceFrom}&serviceTo=${serviceTo}`;
-  const { data, isLoading } = useQuery<PayrollReport>({
+  const { data, isFetching, refetch } = useQuery<PayrollReport>({
     queryKey: ["/api/hr/payroll-report", queryParams],
-    enabled: !!actualFrom && !!actualTo && !!serviceFrom && !!serviceTo,
+    enabled: false,
+    staleTime: Infinity,
   });
 
   const { data: extraTypes } = useQuery<ExtraType[]>({
@@ -262,7 +263,8 @@ function PayrollTab() {
     queryFn: () =>
       fetch(`/api/hr/overtime-approvals?dateFrom=${actualFrom}&dateTo=${actualTo}`, { credentials: "include" })
         .then(r => r.json()),
-    enabled: !!actualFrom && !!actualTo,
+    enabled: false,
+    staleTime: Infinity,
   });
 
   const approvalsMap = useMemo(() => {
@@ -470,6 +472,18 @@ function PayrollTab() {
           )}
         </div>
 
+        <Button
+          onClick={() => { refetch(); refetchApprovals(); }}
+          disabled={isFetching || !actualFrom || !actualTo || !serviceFrom || !serviceTo}
+          data-testid="button-generate-report"
+        >
+          {isFetching ? (
+            <><Loader2 className="h-4 w-4 animate-spin mr-2" />Generando...</>
+          ) : (
+            "Generar reporte"
+          )}
+        </Button>
+
         <div className="text-xs text-muted-foreground space-y-1">
           <p data-testid="text-planilla-range">Salarios: <strong>{actualFrom}</strong> → <strong>{actualTo}</strong></p>
           <p data-testid="text-service-range">
@@ -485,7 +499,7 @@ function PayrollTab() {
           </p>
         </div>
 
-        {isLoading ? (
+        {isFetching ? (
           <div className="flex justify-center p-4"><Loader2 className="h-6 w-6 animate-spin" /></div>
         ) : data?.employees && data.employees.length > 0 ? (
           <div className="overflow-x-auto">
