@@ -91,37 +91,10 @@ interface ServicePayout {
 }
 
 export default function HrReportsPage() {
-  const [activeTab, setActiveTab] = useState<"payroll" | "overtime" | "service">("payroll");
-
   return (
     <div className="admin-page full-width">
       <h1 className="admin-page-title" data-testid="text-reports-title">Reportes HR</h1>
-
-      <div className="flex gap-2 flex-wrap">
-        <Button
-          variant={activeTab === "payroll" ? "default" : "outline"}
-          data-testid="button-tab-payroll"
-          onClick={() => setActiveTab("payroll")}
-        >
-          Planilla
-        </Button>
-        <Button
-          variant={activeTab === "overtime" ? "default" : "outline"}
-          data-testid="button-tab-overtime"
-          onClick={() => setActiveTab("overtime")}
-        >
-          Horas Extra
-        </Button>
-        <Button
-          variant={activeTab === "service" ? "default" : "outline"}
-          data-testid="button-tab-service"
-          onClick={() => setActiveTab("service")}
-        >
-          Cargo por Servicio
-        </Button>
-      </div>
-
-      {activeTab === "payroll" ? <PayrollTab /> : activeTab === "overtime" ? <OvertimeTab /> : <ServiceChargeTab />}
+      <PayrollTab />
     </div>
   );
 }
@@ -406,49 +379,21 @@ function PayrollTab() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between flex-wrap gap-2">
-          <span>Planilla</span>
-          {data?.hrConfigSnapshot && (
-            <div className="flex items-center gap-1" data-testid="badge-hr-config">
-              <Info className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground font-normal">
-                Jornada: {data.hrConfigSnapshot.jornadaOrdinariaHorasPorDia}h | Extra: ×{data.hrConfigSnapshot.multiplicadorHoraExtra}
-                {data.hrConfigSnapshot.overtimeRequiresApproval ? " (req. aprob.)" : ""}
-                {" | "}Servicio: {(data.hrConfigSnapshot.servicePercentDefault * 100).toFixed(0)}% | Gracia: {data.hrConfigSnapshot.latenessGraceMinutes}min
-                {showCCSS && ` | CCSS: ${data.hrConfigSnapshot.ccssEmployeeRate}%/${data.hrConfigSnapshot.ccssEmployerRate}%`}
-              </span>
-            </div>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex gap-4 flex-wrap items-end">
-          <div className="flex gap-2">
-            <Button size="sm" variant={mode === "weekly" ? "default" : "outline"} onClick={() => setMode("weekly")} data-testid="button-mode-weekly">Semanal</Button>
-            <Button size="sm" variant={mode === "range" ? "default" : "outline"} onClick={() => setMode("range")} data-testid="button-mode-range">Rango</Button>
-          </div>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle className="text-lg mr-2">Planilla</CardTitle>
+          <Button size="sm" variant={mode === "weekly" ? "default" : "outline"} onClick={() => setMode("weekly")} className="h-7 text-xs" data-testid="button-mode-weekly">Semanal</Button>
+          <Button size="sm" variant={mode === "range" ? "default" : "outline"} onClick={() => setMode("range")} className="h-7 text-xs" data-testid="button-mode-range">Rango</Button>
           {mode === "weekly" ? (
-            <div className="space-y-1">
-              <Label>Semana (Lunes)</Label>
-              <Input type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)} data-testid="input-payroll-weekStart" />
-            </div>
+            <Input type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)} className="h-7 text-xs w-36" data-testid="input-payroll-weekStart" />
           ) : (
             <>
-              <div className="space-y-1">
-                <Label>Desde</Label>
-                <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} data-testid="input-payroll-dateFrom" />
-              </div>
-              <div className="space-y-1">
-                <Label>Hasta</Label>
-                <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} data-testid="input-payroll-dateTo" />
-              </div>
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-7 text-xs w-36" data-testid="input-payroll-dateFrom" />
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-7 text-xs w-36" data-testid="input-payroll-dateTo" />
             </>
           )}
-        </div>
-
-        <div className="flex gap-4 flex-wrap items-end border rounded p-3 bg-muted/30">
-          <div className="flex items-center gap-2">
+          <span className="text-muted-foreground text-xs">|</span>
+          <div className="flex items-center gap-1">
             <Checkbox
               id="use-default-service"
               checked={useDefaultService}
@@ -459,82 +404,88 @@ function PayrollTab() {
                   setCustomServiceTo(defaultServiceTo);
                 }
               }}
+              className="h-3.5 w-3.5"
               data-testid="checkbox-default-service"
             />
-            <Label htmlFor="use-default-service" className="text-sm">2 semanas de fondo</Label>
-          </div>
-          <div className="flex items-center gap-1">
-            <Label className="text-xs mr-1">Distribución:</Label>
-            <Button
-              size="sm"
-              variant={serviceMode === "BOLSA" ? "default" : "outline"}
-              onClick={() => setServiceMode("BOLSA")}
-              className="h-7 text-xs px-3"
-              data-testid="button-service-mode-bolsa"
-            >
-              Bolsa
-            </Button>
-            <Button
-              size="sm"
-              variant={serviceMode === "VENTA_MESERO" ? "default" : "outline"}
-              onClick={() => setServiceMode("VENTA_MESERO")}
-              className="h-7 text-xs px-3"
-              data-testid="button-service-mode-venta"
-            >
-              Venta por Mesero
-            </Button>
+            <Label htmlFor="use-default-service" className="text-xs">2sem fondo</Label>
           </div>
           {!useDefaultService && (
             <>
-              <div className="space-y-1">
-                <Label className="text-xs">Servicio desde</Label>
-                <Input type="date" value={customServiceFrom} onChange={(e) => setCustomServiceFrom(e.target.value)} className="h-8 text-sm" data-testid="input-service-from" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Servicio hasta</Label>
-                <Input type="date" value={customServiceTo} onChange={(e) => setCustomServiceTo(e.target.value)} className="h-8 text-sm" data-testid="input-service-to" />
-              </div>
+              <Input type="date" value={customServiceFrom} onChange={(e) => setCustomServiceFrom(e.target.value)} className="h-7 text-xs w-36" data-testid="input-service-from" />
+              <Input type="date" value={customServiceTo} onChange={(e) => setCustomServiceTo(e.target.value)} className="h-7 text-xs w-36" data-testid="input-service-to" />
             </>
           )}
+          <span className="text-muted-foreground text-xs">|</span>
+          <Button
+            size="sm"
+            variant={serviceMode === "BOLSA" ? "default" : "outline"}
+            onClick={() => setServiceMode("BOLSA")}
+            className="h-7 text-xs px-2"
+            data-testid="button-service-mode-bolsa"
+          >
+            Bolsa
+          </Button>
+          <Button
+            size="sm"
+            variant={serviceMode === "VENTA_MESERO" ? "default" : "outline"}
+            onClick={() => setServiceMode("VENTA_MESERO")}
+            className="h-7 text-xs px-2"
+            data-testid="button-service-mode-venta"
+          >
+            Venta por Mesero
+          </Button>
+          <span className="text-muted-foreground text-xs">|</span>
+          <Button
+            size="sm"
+            onClick={() => { refetch(); refetchApprovals(); }}
+            disabled={isFetching || !actualFrom || !actualTo || !serviceFrom || !serviceTo}
+            className="h-7 text-xs px-3"
+            data-testid="button-generate-report"
+          >
+            {isFetching ? (
+              <><Loader2 className="h-3 w-3 animate-spin mr-1" />Generando...</>
+            ) : (
+              "Generar reporte"
+            )}
+          </Button>
         </div>
-
-        <Button
-          onClick={() => { refetch(); refetchApprovals(); }}
-          disabled={isFetching || !actualFrom || !actualTo || !serviceFrom || !serviceTo}
-          data-testid="button-generate-report"
-        >
-          {isFetching ? (
-            <><Loader2 className="h-4 w-4 animate-spin mr-2" />Generando...</>
-          ) : (
-            "Generar reporte"
-          )}
-        </Button>
-
-        <div className="text-xs text-muted-foreground space-y-1">
-          <p data-testid="text-planilla-range">Salarios: <strong>{actualFrom}</strong> → <strong>{actualTo}</strong></p>
-          <p data-testid="text-service-range">
-            Servicio corresponde a: <strong>{serviceFrom}</strong> → <strong>{serviceTo}</strong>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground mt-1">
+          <span data-testid="text-planilla-range">Salarios: <strong>{actualFrom}</strong> → <strong>{actualTo}</strong></span>
+          <span data-testid="text-service-range">
+            Servicio: <strong>{serviceFrom}</strong> → <strong>{serviceTo}</strong>
             {(() => {
               const diffDays = Math.round((new Date(serviceTo + "T12:00:00").getTime() - new Date(serviceFrom + "T12:00:00").getTime()) / 86400000) + 1;
               return diffDays !== 7 ? (
-                <span className="inline-flex items-center gap-1 ml-2 text-amber-600">
-                  <AlertTriangle className="h-3 w-3" /> Rango no semanal ({diffDays} días)
+                <span className="inline-flex items-center gap-0.5 ml-1 text-amber-600">
+                  <AlertTriangle className="h-3 w-3" /> ({diffDays}d)
                 </span>
               ) : null;
             })()}
-          </p>
+          </span>
           {data && (
-            <p data-testid="text-service-context">
-              Modo de distribución: <strong>{data.serviceMode === "VENTA_MESERO" ? "Venta por Mesero" : "Bolsa"}</strong>
-              {" | "}Porcentaje aplicado: <strong>{data.serviceDistributionPctUsed?.toFixed(0) ?? "—"}%</strong> (desde Configuración HR)
+            <>
+              <span data-testid="text-service-context">
+                {data.serviceMode === "VENTA_MESERO" ? "Venta/Mesero" : "Bolsa"} al {data.serviceDistributionPctUsed?.toFixed(0) ?? "—"}%
+              </span>
               {(data.serviceUnassignedTotal ?? 0) > 0 && (
-                <span className="ml-2 text-amber-600">
-                  | Servicio no asignado: <strong>₡{(data.serviceUnassignedTotal ?? 0).toLocaleString("es-CR", { minimumFractionDigits: 2 })}</strong>
+                <span className="text-amber-600" data-testid="text-service-unassigned">
+                  No asignado: ₡{(data.serviceUnassignedTotal ?? 0).toLocaleString("es-CR", { minimumFractionDigits: 2 })}
                 </span>
               )}
-            </p>
+            </>
+          )}
+          {data?.hrConfigSnapshot && (
+            <span className="flex items-center gap-0.5" data-testid="badge-hr-config">
+              <Info className="h-3 w-3" />
+              Jornada: {data.hrConfigSnapshot.jornadaOrdinariaHorasPorDia}h | ×{data.hrConfigSnapshot.multiplicadorHoraExtra}
+              {data.hrConfigSnapshot.overtimeRequiresApproval ? " (aprob.)" : ""}
+              {" | "}Gracia: {data.hrConfigSnapshot.latenessGraceMinutes}min
+              {showCCSS && ` | CCSS: ${data.hrConfigSnapshot.ccssEmployeeRate}%/${data.hrConfigSnapshot.ccssEmployerRate}%`}
+            </span>
           )}
         </div>
+      </CardHeader>
+      <CardContent className="space-y-4 pt-0">
 
         {isFetching ? (
           <div className="flex justify-center p-4"><Loader2 className="h-6 w-6 animate-spin" /></div>
