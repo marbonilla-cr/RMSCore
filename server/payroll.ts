@@ -412,91 +412,63 @@ export function computeServiceForDay(args: {
 }
 
 export function computeServiceForRange(args: {
-  servicePoolMap: Record<string, number>;
-  employees: { id: number; displayName: string; role: string; dailyRate: string | number | null }[];
-  punchesMap: Record<string, PunchRecord[]>;
-  schedulesMap: Record<string, ScheduleDay>;
   hrConfig: HrConfig;
   serviceFrom: string;
   serviceTo: string;
-  serviceLedgerByEmployee?: Record<string, Record<number, number>>;
-}): { result: Record<number, number>; serviceUnassignedTotal: number; allocationModeByDate: Record<string, "HOURS_PRORATED" | "LEDGER_DIRECT" | "UNASSIGNED"> } {
-  const { employees, punchesMap, schedulesMap, hrConfig, serviceFrom, serviceTo, serviceLedgerByEmployee } = args;
+  serviceLedgerByEmployee: Record<string, Record<number, number>>;
+  serviceMode: "BOLSA" | "VENTA_MESERO";
+}): { result: Record<number, number>; serviceUnassignedTotal: number; allocationModeByDate: Record<string, "BOLSA" | "VENTA_MESERO" | "UNASSIGNED"> } {
+  const { hrConfig, serviceFrom, serviceTo, serviceLedgerByEmployee, serviceMode } = args;
   const employeeRate = Number(hrConfig.serviceChargeRate) || 0;
   const dates = getDateRange(serviceFrom, serviceTo);
   const result: Record<number, number> = {};
   let serviceUnassignedTotal = 0;
-  const allocationModeByDate: Record<string, "HOURS_PRORATED" | "LEDGER_DIRECT" | "UNASSIGNED"> = {};
-
-  const eligibleIdsByDate: Record<string, Set<number>> = {};
-  if (serviceLedgerByEmployee) {
-    for (const dateStr of Object.keys(serviceLedgerByEmployee)) {
-      eligibleIdsByDate[dateStr] = new Set(
-        Object.keys(serviceLedgerByEmployee[dateStr])
-          .map(k => Number(k))
-          .filter(id => Number.isFinite(id) && id > 0)
-      );
-    }
-  }
+  const allocationModeByDate: Record<string, "BOLSA" | "VENTA_MESERO" | "UNASSIGNED"> = {};
 
   for (const dateStr of dates) {
-    const ledgerDay = serviceLedgerByEmployee?.[dateStr] || {};
-    const poolDay = Object.values(ledgerDay).reduce((s, v) => s + Number(v), 0);
-    const unassignedDay = Number(ledgerDay[0] || 0);
+    const ledgerDay = serviceLedgerByEmployee[dateStr] || {};
 
-    if (poolDay <= 0) {
+    const eligibleEntries: { empId: number; amount: number }[] = [];
+    let unassignedDay = 0;
+    for (const [key, val] of Object.entries(ledgerDay)) {
+      const empId = Number(key);
+      const amt = Number(val);
+      if (!Number.isFinite(empId) || empId <= 0) {
+        unassignedDay += amt;
+        continue;
+      }
+      if (amt > 0) {
+        eligibleEntries.push({ empId, amount: amt });
+      }
+    }
+
+    const poolDay = eligibleEntries.reduce((s, e) => s + e.amount, 0);
+
+    if (poolDay <= 0 && unassignedDay <= 0) {
       allocationModeByDate[dateStr] = "UNASSIGNED";
       continue;
     }
 
-    const eligibleIds = eligibleIdsByDate[dateStr];
-    if (!eligibleIds || eligibleIds.size === 0) {
-      serviceUnassignedTotal = round2(serviceUnassignedTotal + poolDay);
+    serviceUnassignedTotal = round2(serviceUnassignedTotal + unassignedDay);
+
+    if (eligibleEntries.length === 0) {
       allocationModeByDate[dateStr] = "UNASSIGNED";
       continue;
     }
 
-    const payablePool = round2(poolDay - unassignedDay);
-
-    const eligiblesConMin: { employeeId: number; paidWorkedMinutes: number }[] = [];
-    for (const empId of eligibleIds) {
-      const emp = employees.find(e => e.id === empId);
-      if (!emp) continue;
-      const key = `${empId}_${dateStr}`;
-      const daily = computeDailyPayroll({
-        punchesForDay: punchesMap[key] || [],
-        scheduleForDay: schedulesMap[key] || null,
-        dailyRate: Number(emp.dailyRate) || 0,
-        hrConfig,
-        dateStr,
-      });
-      if (daily.paidWorkedMinutes > 0) {
-        eligiblesConMin.push({ employeeId: empId, paidWorkedMinutes: daily.paidWorkedMinutes });
+    if (serviceMode === "BOLSA") {
+      const share = round2((poolDay / eligibleEntries.length) * employeeRate);
+      for (const e of eligibleEntries) {
+        result[e.empId] = round2((result[e.empId] || 0) + share);
       }
-    }
-
-    const sumMin = eligiblesConMin.reduce((s, e) => s + e.paidWorkedMinutes, 0);
-
-    const employeePool = round2(payablePool * employeeRate);
-    const employeeUnassigned = round2(unassignedDay * employeeRate);
-
-    if (employeePool > 0 && sumMin > 0) {
-      for (const e of eligiblesConMin) {
-        const weight = e.paidWorkedMinutes / sumMin;
-        result[e.employeeId] = round2((result[e.employeeId] || 0) + round2(employeePool * weight));
-      }
-      serviceUnassignedTotal = round2(serviceUnassignedTotal + employeeUnassigned);
-      allocationModeByDate[dateStr] = "HOURS_PRORATED";
     } else {
-      for (const empId of eligibleIds) {
-        const amt = round2(Number(ledgerDay[empId] || 0) * employeeRate);
-        if (amt > 0) {
-          result[empId] = round2((result[empId] || 0) + amt);
-        }
+      for (const e of eligibleEntries) {
+        const amt = round2(e.amount * employeeRate);
+        result[e.empId] = round2((result[e.empId] || 0) + amt);
       }
-      serviceUnassignedTotal = round2(serviceUnassignedTotal + employeeUnassigned);
-      allocationModeByDate[dateStr] = "LEDGER_DIRECT";
     }
+
+    allocationModeByDate[dateStr] = serviceMode;
   }
 
   return { result, serviceUnassignedTotal, allocationModeByDate };

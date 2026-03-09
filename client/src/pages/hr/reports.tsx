@@ -196,6 +196,9 @@ interface PayrollEmployee {
 interface PayrollReport {
   planillaRange?: { from: string; to: string };
   serviceRange?: { from: string; to: string };
+  serviceMode?: "BOLSA" | "VENTA_MESERO";
+  serviceDistributionPctUsed?: number;
+  serviceUnassignedTotal?: number;
   hrConfigSnapshot: {
     jornadaOrdinariaHorasPorDia: number;
     multiplicadorHoraExtra: number;
@@ -239,6 +242,7 @@ function PayrollTab() {
   const [useDefaultService, setUseDefaultService] = useState(true);
   const [customServiceFrom, setCustomServiceFrom] = useState("");
   const [customServiceTo, setCustomServiceTo] = useState("");
+  const [serviceMode, setServiceMode] = useState<"BOLSA" | "VENTA_MESERO">("BOLSA");
 
   const actualFrom = mode === "weekly" ? weekStart : dateFrom;
   const actualTo = mode === "weekly" ? getSundayStr(weekStart) : dateTo;
@@ -248,7 +252,7 @@ function PayrollTab() {
   const serviceFrom = useDefaultService ? defaultServiceFrom : customServiceFrom;
   const serviceTo = useDefaultService ? defaultServiceTo : customServiceTo;
 
-  const queryParams = `?dateFrom=${actualFrom}&dateTo=${actualTo}&serviceFrom=${serviceFrom}&serviceTo=${serviceTo}`;
+  const queryParams = `?dateFrom=${actualFrom}&dateTo=${actualTo}&serviceFrom=${serviceFrom}&serviceTo=${serviceTo}&serviceMode=${serviceMode}`;
   const { data, isFetching, refetch } = useQuery<PayrollReport>({
     queryKey: ["/api/hr/payroll-report", queryParams],
     enabled: false,
@@ -459,6 +463,27 @@ function PayrollTab() {
             />
             <Label htmlFor="use-default-service" className="text-sm">2 semanas de fondo</Label>
           </div>
+          <div className="flex items-center gap-1">
+            <Label className="text-xs mr-1">Distribución:</Label>
+            <Button
+              size="sm"
+              variant={serviceMode === "BOLSA" ? "default" : "outline"}
+              onClick={() => setServiceMode("BOLSA")}
+              className="h-7 text-xs px-3"
+              data-testid="button-service-mode-bolsa"
+            >
+              Bolsa
+            </Button>
+            <Button
+              size="sm"
+              variant={serviceMode === "VENTA_MESERO" ? "default" : "outline"}
+              onClick={() => setServiceMode("VENTA_MESERO")}
+              className="h-7 text-xs px-3"
+              data-testid="button-service-mode-venta"
+            >
+              Venta por Mesero
+            </Button>
+          </div>
           {!useDefaultService && (
             <>
               <div className="space-y-1">
@@ -498,6 +523,17 @@ function PayrollTab() {
               ) : null;
             })()}
           </p>
+          {data && (
+            <p data-testid="text-service-context">
+              Modo de distribución: <strong>{data.serviceMode === "VENTA_MESERO" ? "Venta por Mesero" : "Bolsa"}</strong>
+              {" | "}Porcentaje aplicado: <strong>{data.serviceDistributionPctUsed?.toFixed(0) ?? "—"}%</strong> (desde Configuración HR)
+              {(data.serviceUnassignedTotal ?? 0) > 0 && (
+                <span className="ml-2 text-amber-600">
+                  | Servicio no asignado: <strong>₡{(data.serviceUnassignedTotal ?? 0).toLocaleString("es-CR", { minimumFractionDigits: 2 })}</strong>
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         {isFetching ? (

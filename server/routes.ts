@@ -5852,52 +5852,23 @@ export async function registerRoutes(
         tz: tzPayroll,
       });
 
-      const servicePoolMap: Record<string, number> = {};
       const serviceLedgerByEmployee: Record<string, Record<number, number>> = {};
       for (const entry of serviceLedger) {
         const d = entry.businessDate;
-        servicePoolMap[d] = (servicePoolMap[d] || 0) + Number(entry.serviceAmount);
         const empId = entry.responsibleWaiterEmployeeId || 0;
         if (!serviceLedgerByEmployee[d]) serviceLedgerByEmployee[d] = {};
         serviceLedgerByEmployee[d][empId] = (serviceLedgerByEmployee[d][empId] || 0) + Number(entry.serviceAmount);
       }
 
-      let servicePunchesMap: Record<string, PunchRecord[]> = punchesMap;
-      let serviceSchedulesMap: Record<string, ScheduleDay> = schedulesMap;
-      const serviceOverlaps = serviceFrom >= dateFrom && serviceTo <= dateTo;
-      if (!serviceOverlaps) {
-        const [servicePunches, serviceSchedDays] = await Promise.all([
-          storage.getPunchesForDateRange(serviceFrom, serviceTo),
-          storage.getAllSchedulesForDateRange(serviceFrom, serviceTo),
-        ]);
-        servicePunchesMap = {};
-        for (const p of servicePunches) {
-          const key = `${p.employeeId}_${p.businessDate}`;
-          if (!servicePunchesMap[key]) servicePunchesMap[key] = [];
-          servicePunchesMap[key].push(p as unknown as PunchRecord);
-        }
-        serviceSchedulesMap = {};
-        for (const sd of serviceSchedDays) {
-          const weekMonday = new Date(sd.weekStartDate + "T12:00:00");
-          let dayOffset = sd.dayOfWeek === 0 ? 6 : sd.dayOfWeek - 1;
-          const actualDate = new Date(weekMonday);
-          actualDate.setDate(actualDate.getDate() + dayOffset);
-          const dateStr = actualDate.toISOString().slice(0, 10);
-          if (dateStr >= serviceFrom && dateStr <= serviceTo) {
-            serviceSchedulesMap[`${sd.employeeId}_${dateStr}`] = sd as ScheduleDay;
-          }
-        }
-      }
+      const serviceModeParam = (req.query.serviceMode as string || "").toUpperCase();
+      const serviceMode: "BOLSA" | "VENTA_MESERO" = serviceModeParam === "VENTA_MESERO" ? "VENTA_MESERO" : "BOLSA";
 
       const { result: serviceByEmployee, serviceUnassignedTotal, allocationModeByDate } = computeServiceForRange({
-        servicePoolMap,
-        employees: empData,
-        punchesMap: servicePunchesMap,
-        schedulesMap: serviceSchedulesMap,
         hrConfig,
         serviceFrom,
         serviceTo,
         serviceLedgerByEmployee,
+        serviceMode,
       });
 
       const enrichedEmployees = payrollResult.map(emp => {
@@ -5933,6 +5904,8 @@ export async function registerRoutes(
       res.json({
         planillaRange: { from: dateFrom, to: dateTo },
         serviceRange: { from: serviceFrom, to: serviceTo },
+        serviceMode,
+        serviceDistributionPctUsed: Number(hrConfig.serviceChargeRate) * 100,
         serviceUnassignedTotal,
         allocationModeByDate,
         hrConfigSnapshot: {
