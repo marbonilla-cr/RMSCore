@@ -1,0 +1,76 @@
+En el deploy anterior se hizo idempotente la construcción de tablas (migraciones DDL). Ahora el problema está en los seeds de datos: el servidor intenta insertar registros iniciales en cada startup y falla cuando esos registros ya existen en Railway, causando errores en cascada que afectan pago, mesas, split y otras operaciones críticas.
+El error más reciente es:
+[tenant-seed] ERROR: duplicate key value violates unique constraint "tenants_schema_name_key"
+[startup] Error en tenant seed: duplicate key value violates unique constraint "tenants_schema_name_key"
+Adicionalmente, al cambiar a modo "Rango" en el reporte de planilla la pantalla se congela porque el fetch se dispara automáticamente sin confirmación del usuario.
+
+T001 — Auditoría y fix de todos los seeds de startup
+Archivos a revisar (buscar en todo el proyecto, no solo estos):
+
+server/provision/seed-own-tenant.ts
+server/provision/tenant-seed.ts
+Cualquier función llamada desde server/index.ts al arrancar
+Seeds de roles, permisos, categorías TOP, métodos de pago, business config, HR settings, o cualquier otro dato inicial
+
+Para cada seed encontrado, verificar:
+
+¿Usa INSERT ... ON CONFLICT DO NOTHING? Si sí, ¿cubre todos los unique constraints de esa tabla, no solo el primero?
+¿Usa un INSERT directo sin protección? → Bug garantizado en Railway
+¿Tiene un try/catch que silencia el error pero no lo resuelve? → También es un bug
+
+Patrón correcto a aplicar donde falte:
+Para tablas con un único unique constraint:
+sqlINSERT INTO tabla (col1, col2, ...)
+VALUES (val1, val2, ...)
+ON CONFLICT (unique_col) DO NOTHING
+Para tablas con múltiples unique constraints (como public.tenants que tiene tanto slug como schema_name):
+typescript// SELECT-first pattern — verificar TODAS las columnas únicas antes de insertar
+const existing = await db.execute(sql`
+  SELECT id FROM public.tenants
+  WHERE slug = ${slug} OR schema_name = ${schemaName}
+  LIMIT 1
+`);
+
+if (existing.rows.length === 0) {
+  // INSERT solo si no existe por ninguna de las dos columnas únicas
+  await db.execute(sql`
+    INSERT INTO public.tenants (slug, business_name, schema_name, plan, is_active, created_at)
+    VALUES (${slug}, ${businessName}, ${schemaName}, ${plan}, true, NOW())
+  `);
+  console.log('[tenant-seed] Tenant propio creado:', slug);
+} else {
+  console.log('[tenant-seed] Tenant propio ya existe, omitiendo INSERT');
+}
+Criterio de aceptación:
+
+El servidor puede hacer deploy múltiples veces seguidas en Railway sin ningún error de duplicate key en ningún seed
+El log de startup muestra mensajes como [seed] ya existe, omitiendo en lugar de errores
+No se modificó ninguna tabla de base de datos ni migraciones DDL
+No se tocó ninguna lógica de negocio, solo los bloques de INSERT inicial
+
+
+T002 — Fix planilla report: pantalla se congela al cambiar a modo "Rango"
+Archivo: client/src/pages/hr/reports.tsx
+Problema: Al hacer clic en "Rango", React Query dispara inmediatamente el fetch de planilla para los últimos 7 días sin que el usuario confirme. Es una query pesada que congela la UI.
+Fix: Agregar enabled: false al useQuery de planilla y un botón explícito "Generar reporte" como único trigger del fetch:
+typescriptconst { data, isFetching, refetch } = useQuery({
+  queryKey: ['hr-report-planilla', reportParams],
+  queryFn: () => fetchPlanillaReport(reportParams),
+  enabled: false,
+  staleTime: Infinity,
+});
+El botón "Generar reporte" llama a refetch(). El cambio de modo o de fechas no dispara ningún fetch automático. Mientras isFetching es true, el botón muestra "Generando..." y se deshabilita para evitar doble submit.
+Criterio de aceptación:
+
+Cambiar entre "Semana" y "Rango" no congela la pantalla ni dispara fetch automático
+El reporte solo carga al presionar "Generar reporte"
+El botón muestra estado de carga mientras el fetch está en progreso
+
+
+T003 — Verificación y deploy
+
+Reiniciar el servidor de desarrollo y confirmar startup limpio sin ningún error de duplicate key en ningún seed
+Verificar que /hr/reportes no se congela al cambiar de modo
+Hacer Deploy en Replit para que los cambios lleguen a Railway vía GitHub
+
+Restricciones importantes: Solo cambios en lógica de aplicación. No modificar migraciones DDL, esquema de tablas, ni lógica de negocio existente.
