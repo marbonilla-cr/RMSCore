@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Loader2, Clock, LogIn, LogOut, MapPin, AlertCircle, CalendarDays } from "lucide-react";
+import { Loader2, Clock, LogIn, LogOut, CalendarDays } from "lucide-react";
 
 interface PunchStatus {
   clockedIn: boolean;
@@ -88,13 +88,13 @@ function formatScheduleTime(time: string): string {
 
 const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const MIN_CLOCK_OUT_MINUTES = 60;
 
 export default function MiTurno() {
   const { toast } = useToast();
-  const [geoLoading, setGeoLoading] = useState(false);
-  const [geoError, setGeoError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState("");
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string; coords: any } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; confirmNoSchedule?: boolean } | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   const { start: weekStart, end: weekEnd } = getWeekRange();
   const todayDow = new Date().getDay();
@@ -127,18 +127,30 @@ export default function MiTurno() {
       setElapsed("");
       return;
     }
-    const update = () => setElapsed(formatElapsed(status.clockInTime!));
+    const update = () => {
+      setElapsed(formatElapsed(status.clockInTime!));
+      setNow(Date.now());
+    };
     update();
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
   }, [status?.clockedIn, status?.clockInTime]);
 
+  const minutesSinceClockIn = useMemo(() => {
+    if (!status?.clockedIn || !status.clockInTime) return 0;
+    const diff = now - new Date(status.clockInTime).getTime();
+    return Math.floor(diff / 60000);
+  }, [status?.clockedIn, status?.clockInTime, now]);
+
+  const canClockOut = status?.clockedIn && minutesSinceClockIn >= MIN_CLOCK_OUT_MINUTES;
+  const remainingMinutes = Math.max(0, MIN_CLOCK_OUT_MINUTES - minutesSinceClockIn);
+
   const clockInMutation = useMutation({
-    mutationFn: async (coords: { lat: number; lng: number; accuracy: number; confirmNoSchedule?: boolean }) => {
-      const res = await apiRequest("POST", "/api/hr/clock-in", coords);
+    mutationFn: async (body: { confirmNoSchedule?: boolean }) => {
+      const res = await apiRequest("POST", "/api/hr/clock-in", body);
       const data = await res.json();
       if (data.requireConfirm) {
-        throw Object.assign(new Error("requireConfirm"), { confirmData: data, coords });
+        throw Object.assign(new Error("requireConfirm"), { confirmData: data });
       }
       return data;
     },
@@ -149,7 +161,7 @@ export default function MiTurno() {
     },
     onError: (err: any) => {
       if (err.confirmData) {
-        setConfirmDialog({ message: err.confirmData.message, coords: err.coords });
+        setConfirmDialog({ message: err.confirmData.message });
         return;
       }
       toast({ title: "Error al registrar entrada", description: err.message, variant: "destructive" });
@@ -157,8 +169,8 @@ export default function MiTurno() {
   });
 
   const clockOutMutation = useMutation({
-    mutationFn: async (coords: { lat: number; lng: number; accuracy: number }) => {
-      await apiRequest("POST", "/api/hr/clock-out", coords);
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/hr/clock-out", {});
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/my-punch"] });
@@ -170,47 +182,7 @@ export default function MiTurno() {
     },
   });
 
-  const getLocationAndPunch = useCallback((type: "in" | "out") => {
-    setGeoError(null);
-    setGeoLoading(true);
-
-    if (!navigator.geolocation) {
-      setGeoError("Geolocalización no disponible en este dispositivo.");
-      setGeoLoading(false);
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const coords = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-        };
-        setGeoLoading(false);
-        if (type === "in") {
-          clockInMutation.mutate(coords);
-        } else {
-          clockOutMutation.mutate(coords);
-        }
-      },
-      (err) => {
-        setGeoLoading(false);
-        let msg = "Error al obtener ubicación.";
-        if (err.code === err.PERMISSION_DENIED) {
-          msg = "Permiso de ubicación denegado. Activa la ubicación en tu navegador.";
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          msg = "Ubicación no disponible.";
-        } else if (err.code === err.TIMEOUT) {
-          msg = "Tiempo de espera agotado al obtener ubicación.";
-        }
-        setGeoError(msg);
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
-  }, [clockInMutation, clockOutMutation]);
-
-  const isBusy = geoLoading || clockInMutation.isPending || clockOutMutation.isPending;
+  const isBusy = clockInMutation.isPending || clockOutMutation.isPending;
 
   if (statusLoading) {
     return (
@@ -289,52 +261,42 @@ export default function MiTurno() {
             )}
           </div>
 
-          {geoError && (
-            <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-geo-error">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
-              <span>{geoError}</span>
-            </div>
-          )}
+          <div className="flex flex-col gap-3">
+            <Button
+              size="lg"
+              className="w-full"
+              disabled={isBusy || !!status?.clockedIn}
+              onClick={() => clockInMutation.mutate({})}
+              data-testid="button-clock-in"
+            >
+              {clockInMutation.isPending ? (
+                <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              ) : (
+                <LogIn className="h-5 w-5 mr-2" />
+              )}
+              Registrar Entrada
+            </Button>
 
-          <div className="flex justify-center">
-            {status?.clockedIn ? (
-              <Button
-                size="lg"
-                variant="destructive"
-                className="w-full"
-                disabled={isBusy}
-                onClick={() => getLocationAndPunch("out")}
-                data-testid="button-clock-out"
-              >
-                {isBusy ? (
-                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                ) : (
-                  <LogOut className="h-5 w-5 mr-2" />
-                )}
-                Registrar Salida
-              </Button>
-            ) : (
-              <Button
-                size="lg"
-                className="w-full"
-                disabled={isBusy}
-                onClick={() => getLocationAndPunch("in")}
-                data-testid="button-clock-in"
-              >
-                {isBusy ? (
-                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                ) : (
-                  <LogIn className="h-5 w-5 mr-2" />
-                )}
-                Registrar Entrada
-              </Button>
+            <Button
+              size="lg"
+              className="w-full"
+              disabled={isBusy || !canClockOut}
+              onClick={() => clockOutMutation.mutate()}
+              data-testid="button-clock-out"
+            >
+              {clockOutMutation.isPending ? (
+                <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              ) : (
+                <LogOut className="h-5 w-5 mr-2" />
+              )}
+              Registrar Salida
+            </Button>
+            {status?.clockedIn && !canClockOut && (
+              <p className="text-xs text-center text-muted-foreground" data-testid="text-clock-out-wait">
+                Disponible en {remainingMinutes} min
+              </p>
             )}
           </div>
-
-          <p className="text-xs text-center text-muted-foreground flex items-center justify-center gap-1">
-            <MapPin className="h-3 w-3" />
-            Se registrará tu ubicación
-          </p>
         </CardContent>
       </Card>
 
@@ -403,11 +365,8 @@ export default function MiTurno() {
             </Button>
             <Button
               onClick={() => {
-                if (confirmDialog) {
-                  const coords = { ...confirmDialog.coords, confirmNoSchedule: true };
-                  setConfirmDialog(null);
-                  clockInMutation.mutate(coords);
-                }
+                setConfirmDialog(null);
+                clockInMutation.mutate({ confirmNoSchedule: true });
               }}
               data-testid="button-confirm-clock-in"
             >

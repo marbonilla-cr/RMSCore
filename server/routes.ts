@@ -5059,7 +5059,7 @@ export async function registerRoutes(
   app.post("/api/hr/clock-in", requirePermission("HR_CLOCK_IN_OUT_ALLOW"), async (req, res) => {
     try {
       const employeeId = req.session.userId!;
-      const { lat, lng, accuracy, confirmNoSchedule } = req.body;
+      const { confirmNoSchedule } = req.body;
       
       const openPunch = await storage.getOpenPunchForEmployee(employeeId);
       if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta. Marque salida primero." });
@@ -5069,19 +5069,6 @@ export async function registerRoutes(
       const now = new Date();
       const localNow = getNowInTZ(tzSelf);
       const businessDate = await getBusinessDate(req.tenantSchema);
-      
-      let geoVerified = false;
-      if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockin && settings.businessLat && settings.businessLng) {
-        if (!lat || !lng) return res.status(400).json({ message: "Ubicación requerida para marcar entrada" });
-        if (accuracy && Number(accuracy) > (settings.geoAccuracyMaxMeters || 100)) {
-          return res.status(400).json({ message: `Precisión GPS insuficiente (${Math.round(Number(accuracy))}m). Intente en un área abierta.` });
-        }
-        const distance = haversineDistance(Number(settings.businessLat), Number(settings.businessLng), Number(lat), Number(lng));
-        if (distance > (settings.geoRadiusMeters || 120)) {
-          return res.status(403).json({ message: `Fuera del rango permitido (${Math.round(distance)}m de ${settings.geoRadiusMeters || 120}m). Solicite override al gerente.` });
-        }
-        geoVerified = true;
-      }
       
       const weekDay = localNow.getDay();
       let lateMinutes = 0;
@@ -5130,10 +5117,10 @@ export async function registerRoutes(
         scheduledStartAt: scheduledStartAt || null,
         scheduledEndAt: scheduledEndAt || null,
         lateMinutes,
-        clockinGeoLat: lat ? String(lat) : null,
-        clockinGeoLng: lng ? String(lng) : null,
-        clockinGeoAccuracyM: accuracy ? String(accuracy) : null,
-        clockinGeoVerified: geoVerified,
+        clockinGeoLat: null,
+        clockinGeoLng: null,
+        clockinGeoAccuracyM: null,
+        clockinGeoVerified: false,
       });
       
       const auditAction = hasScheduleToday ? "CLOCK_IN" : "CLOCK_IN_NO_SCHEDULE_CONFIRMED";
@@ -5165,25 +5152,11 @@ export async function registerRoutes(
   app.post("/api/hr/clock-out", requirePermission("HR_CLOCK_IN_OUT_ALLOW"), async (req, res) => {
     try {
       const employeeId = req.session.userId!;
-      const { lat, lng, accuracy } = req.body;
       
       const openPunch = await storage.getOpenPunchForEmployee(employeeId);
       
       const settings = await storage.getHrSettings();
       const now = new Date();
-      
-      let geoVerified = false;
-      if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockout && settings.businessLat && settings.businessLng) {
-        if (!lat || !lng) return res.status(400).json({ message: "Ubicación requerida para marcar salida" });
-        if (accuracy && Number(accuracy) > (settings.geoAccuracyMaxMeters || 100)) {
-          return res.status(400).json({ message: `Precisión GPS insuficiente (${Math.round(Number(accuracy))}m). Intente en un área abierta.` });
-        }
-        const distance = haversineDistance(Number(settings.businessLat), Number(settings.businessLng), Number(lat), Number(lng));
-        if (distance > (settings.geoRadiusMeters || 120)) {
-          return res.status(403).json({ message: `Fuera del rango permitido (${Math.round(distance)}m de ${settings.geoRadiusMeters || 120}m). Solicite override al gerente.` });
-        }
-        geoVerified = true;
-      }
 
       if (!openPunch) {
         await storage.createAuditEvent({
@@ -5192,6 +5165,12 @@ export async function registerRoutes(
           metadata: { note: "Attempted clock-out without prior clock-in (HR)" },
         });
         return res.status(400).json({ message: "No puede marcar salida si no ha marcado entrada primero." });
+      }
+
+      const elapsedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
+      const elapsedMinutes = Math.floor(elapsedMs / 60000);
+      if (elapsedMinutes < 60) {
+        return res.status(400).json({ message: "Debe esperar al menos 1 hora desde la entrada para marcar salida." });
       }
       
       const workedMs = now.getTime() - new Date(openPunch.clockInAt).getTime();
@@ -5205,10 +5184,10 @@ export async function registerRoutes(
         clockOutType: "MANUAL",
         workedMinutes,
         overtimeMinutesDaily,
-        clockoutGeoLat: lat ? String(lat) : null,
-        clockoutGeoLng: lng ? String(lng) : null,
-        clockoutGeoAccuracyM: accuracy ? String(accuracy) : null,
-        clockoutGeoVerified: geoVerified,
+        clockoutGeoLat: null,
+        clockoutGeoLng: null,
+        clockoutGeoAccuracyM: null,
+        clockoutGeoVerified: false,
       });
       
       await storage.createAuditEvent({
@@ -5364,7 +5343,11 @@ export async function registerRoutes(
   // -- My current punch status --
   app.get("/api/hr/my-punch", requireAuth, async (req, res) => {
     const punch = await storage.getOpenPunchForEmployee(req.session.userId!);
-    res.json(punch || null);
+    if (punch) {
+      res.json({ clockedIn: true, clockInTime: punch.clockInAt, punchId: punch.id });
+    } else {
+      res.json({ clockedIn: false });
+    }
   });
 
   // -- Time Punches queries --
