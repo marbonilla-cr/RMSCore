@@ -140,7 +140,8 @@ function getSundayStr(mondayStr: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function formatColones(n: number): string {
+function formatColones(n: number | null | undefined): string {
+  if (n == null) return "₡0.00";
   return "₡" + n.toLocaleString("es-CR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
