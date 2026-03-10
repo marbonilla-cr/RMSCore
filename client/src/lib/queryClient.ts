@@ -1,7 +1,10 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 let onUnauthorized: (() => void) | null = null;
-let sessionToken: string | null = null;
+const SESSION_TOKEN_KEY = "rms_session_token";
+let sessionToken: string | null = (() => {
+  try { return localStorage.getItem(SESSION_TOKEN_KEY); } catch { return null; }
+})();
 
 export function setOnUnauthorized(handler: () => void) {
   onUnauthorized = handler;
@@ -9,6 +12,13 @@ export function setOnUnauthorized(handler: () => void) {
 
 export function setSessionToken(token: string | null) {
   sessionToken = token;
+  try {
+    if (token) {
+      localStorage.setItem(SESSION_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(SESSION_TOKEN_KEY);
+    }
+  } catch {}
 }
 
 export function getSessionToken(): string | null {

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
-import { setOnUnauthorized, queryClient, setSessionToken } from "./queryClient";
+import { setOnUnauthorized, queryClient, setSessionToken, getSessionToken } from "./queryClient";
 
 interface AuthUser {
   id: number;
@@ -47,7 +47,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const fetchUser = async () => {
       try {
-        const res = await fetch("/api/auth/me", { credentials: "include" });
+        const headers: Record<string, string> = {};
+        const savedToken = getSessionToken();
+        if (savedToken) {
+          headers["X-Session-Token"] = savedToken;
+        }
+        const res = await fetch("/api/auth/me", { credentials: "include", headers });
         if (!mounted) return;
         if (res.ok) {
           const data = await res.json();
@@ -58,7 +63,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(data);
           }
         } else {
-          if (mounted) setUser(null);
+          if (mounted) {
+            setUser(null);
+            setSessionToken(null);
+          }
         }
       } catch {
         if (mounted) setUser(null);
