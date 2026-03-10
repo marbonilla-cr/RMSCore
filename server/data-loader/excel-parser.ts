@@ -9,7 +9,7 @@ export interface ParseResult {
 }
 
 export function parseExcelBuffer(buffer: Buffer): ParseResult {
-  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const workbook = XLSX.read(buffer, { type: "buffer", codepage: 65001 });
 
   const sheets: Record<string, Record<string, any>[]> = {};
   const unmappedColumns: Record<string, string[]> = {};

@@ -107,7 +107,6 @@ const SHEET_VALIDATORS: Record<string, (data: Record<string, any>, lookups: Reco
   products: (data, lookups) => {
     const errors: ValidationError[] = [];
     const e1 = requireField(data, "product_name"); if (e1) errors.push(e1);
-    const e2 = requireField(data, "price"); if (e2) errors.push(e2);
     const e3 = requireNonNegative(data, "price"); if (e3) errors.push(e3);
     const e4 = referenceExists(data.category, lookups.categories, "category", "Categories");
     if (e4) errors.push(e4);
