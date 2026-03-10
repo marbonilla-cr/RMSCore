@@ -52,10 +52,11 @@ export function registerDataLoaderRoutes(app: any) {
       }
 
       const sheetsFound = Object.keys(parseResult.sheets);
+      const sheetsArrayLiteral = `{${sheetsFound.join(",")}}`;
 
       await db.execute(sql`
         UPDATE data_loader_sessions 
-        SET status = 'parsed', sheets_found = ${sheetsFound}, updated_at = NOW()
+        SET status = 'parsed', sheets_found = ${sheetsArrayLiteral}::text[], updated_at = NOW()
         WHERE id = ${sessionId}
       `);
 
