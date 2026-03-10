@@ -1,0 +1,180 @@
+Hoja	Fila	Campo	Error
+products	1	category	category "Adicionales" no existe en Categories
+products	2	category	category "Adicionales" no existe en Categories
+products	3	category	category "Adicionales" no existe en Categories
+products	4	category	category "Adicionales" no existe en Categories
+products	5	category	category "Adicionales" no existe en Categories
+products	6	category	category "Adicionales" no existe en Categories
+products	7	category	category "Adicionales" no existe en Categories
+products	8	category	category "Adicionales" no existe en Categories
+products	9	category	category "Adicionales" no existe en Categories
+products	10	category	category "Adicionales" no existe en Categories
+products	11	category	category "Adicionales" no existe en Categories
+products	12	category	category "Adicionales" no existe en Categories
+products	13	category	category "Adicionales" no existe en Categories
+products	14	category	category "Cervezas" no existe en Categories
+products	15	category	category "Cervezas" no existe en Categories
+products	16	category	category "Cervezas" no existe en Categories
+products	17	category	category "Cervezas" no existe en Categories
+products	18	category	category "Cervezas" no existe en Categories
+products	19	category	category "Cervezas" no existe en Categories
+products	20	category	category "Cervezas" no existe en Categories
+products	21	category	category "Cervezas" no existe en Categories
+products	22	category	category "Cervezas" no existe en Categories
+products	23	category	category "Cervezas" no existe en Categories
+products	24	category	category "Cervezas" no existe en Categories
+products	25	category	category "Cervezas" no existe en Categories
+products	26	category	category "Cervezas" no existe en Categories
+products	27	category	category "Cervezas" no existe en Categories
+products	28	category	category "Cervezas" no existe en Categories
+products	29	category	category "Cervezas" no existe en Categories
+products	30	category	category "Cervezas" no existe en Categories
+products	31	category	category "Cervezas" no existe en Categories
+products	32	category	category "Cervezas" no existe en Categories
+products	33	category	category "Cervezas" no existe en Categories
+products	34	category	category "Cervezas" no existe en Categories
+products	35	category	category "Cervezas" no existe en Categories
+products	36	category	category "Cl√°sicos" no existe en Categories
+products	37	category	category "Cl√°sicos" no existe en Categories
+products	38	category	category "Cl√°sicos" no existe en Categories
+products	39	category	category "Clásicos" no existe en Categories
+products	40	category	category "Clásicos" no existe en Categories
+products	41	category	category "Clásicos" no existe en Categories
+products	42	category	category "Clásicos" no existe en Categories
+products	43	category	category "Clásicos" no existe en Categories
+products	44	category	category "Clásicos" no existe en Categories
+products	45	price	price es requerido
+products	45	category	category "Clásicos" no existe en Categories
+products	46	price	price es requerido
+products	46	category	category "Clásicos" no existe en Categories
+products	47	price	price es requerido
+products	47	category	category "Clásicos" no existe en Categories
+products	48	category	category "Clásicos" no existe en Categories
+products	49	category	category "Clásicos" no existe en Categories
+products	50	category	category "Clásicos" no existe en Categories
+products	51	category	category "Clásicos" no existe en Categories
+products	52	category	category "Clásicos" no existe en Categories
+products	53	price	price es requerido
+products	53	category	category "Clásicos" no existe en Categories
+products	54	category	category "Clásicos" no existe en Categories
+products	55	category	category "Clásicos" no existe en Categories
+products	56	category	category "Cocteles" no existe en Categories
+products	57	category	category "Cocteles" no existe en Categories
+products	58	category	category "Cocteles" no existe en Categories
+products	59	category	category "Cocteles" no existe en Categories
+products	60	category	category "Cocteles" no existe en Categories
+products	61	category	category "Cocteles" no existe en Categories
+products	62	category	category "Cocteles" no existe en Categories
+products	63	category	category "Cocteles" no existe en Categories
+products	64	category	category "Cocteles" no existe en Categories
+products	65	category	category "Cocteles" no existe en Categories
+products	66	category	category "Cocteles" no existe en Categories
+products	67	category	category "Cocteles" no existe en Categories
+products	68	category	category "Destilados" no existe en Categories
+products	69	category	category "Destilados" no existe en Categories
+products	70	category	category "Destilados" no existe en Categories
+products	71	category	category "Destilados" no existe en Categories
+products	72	category	category "Destilados" no existe en Categories
+products	73	category	category "Destilados" no existe en Categories
+products	74	category	category "Destilados" no existe en Categories
+products	75	category	category "Destilados" no existe en Categories
+products	76	category	category "Destilados" no existe en Categories
+products	77	category	category "Destilados" no existe en Categories
+products	78	category	category "Destilados" no existe en Categories
+products	79	category	category "Destilados" no existe en Categories
+products	80	category	category "Gaseosas" no existe en Categories
+products	81	category	category "Gaseosas" no existe en Categories
+products	82	category	category "Gaseosas" no existe en Categories
+products	83	category	category "Gaseosas" no existe en Categories
+products	84	category	category "Gaseosas" no existe en Categories
+products	85	category	category "Gaseosas" no existe en Categories
+products	86	category	category "Gaseosas" no existe en Categories
+products	87	category	category "Gaseosas" no existe en Categories
+products	88	category	category "Gaseosas" no existe en Categories
+products	89	category	category "Gaseosas" no existe en Categories
+products	90	category	category "Hamburguesas" no existe en Categories
+products	91	category	category "Hamburguesas" no existe en Categories
+products	92	category	category "Hamburguesas" no existe en Categories
+products	93	category	category "Hamburguesas" no existe en Categories
+products	94	category	category "Hamburguesas" no existe en Categories
+products	95	category	category "Hamburguesas" no existe en Categories
+products	96	category	category "Hamburguesas" no existe en Categories
+products	97	category	category "Hamburguesas" no existe en Categories
+products	98	category	category "Hamburguesas" no existe en Categories
+products	99	category	category "Hamburguesas" no existe en Categories
+products	100	category	category "Hamburguesas" no existe en Categories
+products	101	category	category "Hamburguesas" no existe en Categories
+products	102	price	price es requerido
+products	102	category	category "Hamburguesas" no existe en Categories
+products	103	category	category "Hamburguesas" no existe en Categories
+products	104	price	price es requerido
+products	104	category	category "Hamburguesas" no existe en Categories
+products	105	category	category "Hamburguesas" no existe en Categories
+products	106	category	category "Hamburguesas" no existe en Categories
+products	107	price	price es requerido
+products	107	category	category "Hamburguesas" no existe en Categories
+products	108	category	category "Hamburguesas" no existe en Categories
+products	109	category	category "Hamburguesas" no existe en Categories
+products	110	category	category "Hamburguesas" no existe en Categories
+products	111	category	category "Hamburguesas" no existe en Categories
+products	112	category	category "Hamburguesas" no existe en Categories
+products	113	category	category "Hamburguesas" no existe en Categories
+products	114	price	price es requerido
+products	114	category	category "Hamburguesas" no existe en Categories
+products	115	category	category "Hamburguesas" no existe en Categories
+products	116	price	price es requerido
+products	116	category	category "Hamburguesas" no existe en Categories
+products	117	category	category "Hamburguesas" no existe en Categories
+products	118	category	category "Hamburguesas" no existe en Categories
+products	119	category	category "Hamburguesas" no existe en Categories
+products	120	category	category "Hamburguesas" no existe en Categories
+products	121	category	category "Hamburguesas" no existe en Categories
+products	122	category	category "Hamburguesas" no existe en Categories
+products	123	category	category "Men√∫ de ni√±os" no existe en Categories
+products	124	category	category "Men√∫ de ni√±os" no existe en Categories
+products	125	category	category "Men√∫ de ni√±os" no existe en Categories
+products	126	category	category "Men√∫ ejecutivo" no existe en Categories
+products	127	category	category "Men√∫ ejecutivo" no existe en Categories
+products	128	category	category "Men√∫ ejecutivo" no existe en Categories
+products	129	category	category "Men√∫ ejecutivo" no existe en Categories
+products	130	category	category "Men√∫ ejecutivo" no existe en Categories
+products	131	category	category "Men√∫ ejecutivo" no existe en Categories
+products	132	category	category "Men√∫ ejecutivo" no existe en Categories
+products	133	category	category "Men√∫ ejecutivo" no existe en Categories
+products	134	category	category "Milkshakes" no existe en Categories
+products	135	category	category "Milkshakes" no existe en Categories
+products	136	category	category "Milkshakes" no existe en Categories
+products	137	category	category "Milkshakes" no existe en Categories
+products	138	category	category "Milkshakes" no existe en Categories
+products	139	category	category "Milkshakes" no existe en Categories
+products	140	category	category "Milkshakes" no existe en Categories
+products	141	category	category "Milkshakes" no existe en Categories
+products	142	category	category "Milkshakes" no existe en Categories
+products	143	category	category "Milkshakes" no existe en Categories
+products	144	category	category "Naturales" no existe en Categories
+products	145	category	category "Naturales" no existe en Categories
+products	146	category	category "Naturales" no existe en Categories
+products	147	category	category "Naturales" no existe en Categories
+products	148	category	category "Naturales" no existe en Categories
+products	149	category	category "Naturales" no existe en Categories
+products	150	category	category "Naturales" no existe en Categories
+products	151	category	category "Naturales" no existe en Categories
+products	152	category	category "Naturales" no existe en Categories
+products	153	category	category "Naturales" no existe en Categories
+products	154	category	category "Naturales" no existe en Categories
+products	155	category	category "Naturales" no existe en Categories
+products	156	category	category "Naturales" no existe en Categories
+products	157	category	category "Naturales" no existe en Categories
+products	158	category	category "Naturales" no existe en Categories
+products	159	category	category "Naturales" no existe en Categories
+products	160	category	category "Naturales" no existe en Categories
+products	161	category	category "Naturales" no existe en Categories
+products	162	category	category "Pa'compartir" no existe en Categories
+products	163	category	category "Pa'picar" no existe en Categories
+products	164	category	category "Pa'picar" no existe en Categories
+products	165	category	category "Tropicales" no existe en Categories
+products	166	category	category "Tropicales" no existe en Categories
+products	167	category	category "Tropicales" no existe en Categories
+products	168	category	category "Tropicales" no existe en Categories
+products	169	category	category "Tropicales" no existe en Categories
+products	170	category	category "Tropicales" no existe en Categories
