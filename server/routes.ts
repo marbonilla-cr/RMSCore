@@ -6138,6 +6138,17 @@ export async function registerRoutes(
 
   const BRIDGE_TOKEN = process.env.PRINT_BRIDGE_TOKEN || "bridge-token-local";
 
+  const wsHandshakeTracker = new Map<string, { count: number; resetAt: number }>();
+  const WS_HANDSHAKE_MAX = 30;
+  const WS_HANDSHAKE_WINDOW = 60000;
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of wsHandshakeTracker) {
+      if (entry.resetAt <= now) wsHandshakeTracker.delete(ip);
+    }
+  }, 60000);
+
   httpServer.on("upgrade", (request, socket, head) => {
     const urlPath = (request.url || "").split("?")[0];
     if (urlPath !== "/ws") {
@@ -6145,15 +6156,33 @@ export async function registerRoutes(
       return;
     }
 
+    const ip = request.socket.remoteAddress || "unknown";
+    const now = Date.now();
+    const tracker = wsHandshakeTracker.get(ip);
+    if (tracker && tracker.resetAt > now) {
+      if (tracker.count >= WS_HANDSHAKE_MAX) {
+        socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      tracker.count++;
+    } else {
+      wsHandshakeTracker.set(ip, { count: 1, resetAt: now + WS_HANDSHAKE_WINDOW });
+    }
+
     const urlParams = new URLSearchParams((request.url || "").split("?")[1] || "");
     const bridgeToken = urlParams.get("bridge_token") || request.headers["x-bridge-token"] as string;
-    console.log("[Bridge] URL recibida:", request.url);
-    console.log("[Bridge] Token recibido:", bridgeToken);
-    console.log("[Bridge] Token esperado:", BRIDGE_TOKEN);
     if (bridgeToken && bridgeToken === BRIDGE_TOKEN) {
+      console.log("[WS] bridge connected");
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request, "bridge");
       });
+      return;
+    }
+    if (bridgeToken) {
+      console.log("[WS] bridge auth failed");
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
       return;
     }
 

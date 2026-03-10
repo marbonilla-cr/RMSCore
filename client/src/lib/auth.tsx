@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { setOnUnauthorized, queryClient, setSessionToken, getSessionToken } from "./queryClient";
+import { wsManager } from "./ws";
 
 interface AuthUser {
   id: number;
@@ -32,6 +33,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const forceLogout = useCallback(() => {
     if (loggingOut.current) return;
     loggingOut.current = true;
+    wsManager.pause();
     setUser(null);
     setSessionToken(null);
     queryClient.clear();
@@ -99,6 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       queryClient.setQueryData(["/api/auth/my-permissions"], { permissions: data.permissions, role: data.user.role });
     }
     setUser(data.user);
+    wsManager.resume();
   };
 
   const login = async (username: string, password: string): Promise<AuthUser> => {
@@ -134,6 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
+    wsManager.pause();
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setUser(null);
     setSessionToken(null);
@@ -148,6 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden" && user) {
+        wsManager.pause();
         navigator.sendBeacon("/api/auth/logout");
         setUser(null);
         setSessionToken(null);
