@@ -44,8 +44,12 @@ export default function UploadPanel({ onUploadComplete }: UploadPanelProps) {
     },
     onSuccess: (data: UploadResult) => {
       setUploadResult(data);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/data-loader/sessions"] });
-      toast({ title: "Archivo cargado", description: `${data.sheetsFound.length} hojas encontradas` });
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      toast({
+        title: "✓ Archivo cargado exitosamente",
+        description: `${data.sheetsFound.length} hojas, ${Object.values(data.rowCounts).reduce((a, b) => a + b, 0)} filas totales`,
+      });
       onUploadComplete(data.sessionId);
     },
     onError: (error: any) => {

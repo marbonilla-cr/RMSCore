@@ -110,7 +110,7 @@ export default function StagingGrid({ sessionId, rows, sheetsFound, onRefresh }:
       await apiRequest("DELETE", `/api/admin/data-loader/staging/${rowId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/data-loader/sessions", sessionId] });
+      toast({ title: "Fila eliminada" });
       onRefresh();
     },
   });
@@ -129,9 +129,8 @@ export default function StagingGrid({ sessionId, rows, sheetsFound, onRefresh }:
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/data-loader/sessions", sessionId] });
-      onRefresh();
       toast({ title: "Fila agregada" });
+      onRefresh();
     },
   });
 

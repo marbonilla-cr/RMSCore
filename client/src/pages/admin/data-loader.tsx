@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, FileSpreadsheet, Clock, CheckCircle2, XCircle, AlertCircle, Trash2 } from "lucide-react";
+import { Loader2, FileSpreadsheet, Clock, Trash2 } from "lucide-react";
 import UploadPanel from "@/components/data-loader/upload-panel";
 import StagingGrid from "@/components/data-loader/staging-grid";
 import ValidationPanel from "@/components/data-loader/validation-panel";
@@ -33,12 +33,13 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
 export default function DataLoaderPage() {
   const { toast } = useToast();
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+  const sessionDetailRef = useRef<HTMLDivElement>(null);
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<Session[]>({
     queryKey: ["/api/admin/data-loader/sessions"],
   });
 
-  const { data: sessionData, isLoading: sessionLoading } = useQuery<{
+  const { data: sessionData, isLoading: sessionLoading, isFetching: sessionFetching } = useQuery<{
     session: Session;
     rows: Record<string, any[]>;
   }>({
@@ -69,27 +70,31 @@ export default function DataLoaderPage() {
     }
   };
 
-  const handleUploadComplete = (sessionId: number) => {
-    setSelectedSessionId(sessionId);
-  };
-
-  const handleRefresh = () => {
+  const refreshAll = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/data-loader/sessions"] });
     if (selectedSessionId) {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/data-loader/sessions", selectedSessionId],
       });
     }
-  };
+  }, [selectedSessionId]);
 
-  const handleValidated = () => {
-    handleRefresh();
+  const handleUploadComplete = useCallback((sessionId: number) => {
+    setSelectedSessionId(sessionId);
     queryClient.invalidateQueries({ queryKey: ["/api/admin/data-loader/sessions"] });
-  };
+    queryClient.invalidateQueries({
+      queryKey: ["/api/admin/data-loader/sessions", sessionId],
+    });
+    setTimeout(() => {
+      sessionDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 300);
+  }, []);
 
-  const handleImported = () => {
-    handleRefresh();
-    queryClient.invalidateQueries({ queryKey: ["/api/admin/data-loader/sessions"] });
-  };
+  useEffect(() => {
+    if (selectedSessionId && sessionDetailRef.current) {
+      sessionDetailRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [selectedSessionId]);
 
   return (
     <div className="p-4 max-w-7xl mx-auto space-y-6">
@@ -168,62 +173,63 @@ export default function DataLoaderPage() {
         </Card>
       )}
 
-      {selectedSessionId && sessionData && (
-        <>
+      {selectedSessionId && (
+        <div ref={sessionDetailRef}>
           <Separator />
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold" data-testid="text-session-title">
-                Sesión: {sessionData.session.file_name}
-              </h2>
-              <Badge
-                variant={
-                  (STATUS_CONFIG[sessionData.session.status] || STATUS_CONFIG.uploaded).variant
-                }
-              >
-                {(STATUS_CONFIG[sessionData.session.status] || STATUS_CONFIG.uploaded).label}
-              </Badge>
+          {sessionLoading ? (
+            <div className="flex items-center gap-2 p-8 justify-center">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span className="text-sm">Cargando datos de la sesión...</span>
             </div>
-
-            {sessionLoading ? (
-              <div className="flex items-center gap-2 p-4">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">Cargando datos...</span>
-              </div>
-            ) : (
-              <>
-                <StagingGrid
-                  sessionId={selectedSessionId}
-                  rows={sessionData.rows}
-                  sheetsFound={sessionData.session.sheets_found || []}
-                  onRefresh={handleRefresh}
-                />
-
-                <Separator />
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <h3 className="text-sm font-semibold mb-2">Validación</h3>
-                    <ValidationPanel
-                      sessionId={selectedSessionId}
-                      sessionStatus={sessionData.session.status}
-                      onValidated={handleValidated}
-                    />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold mb-2">Importación</h3>
-                    <ImportStatus
-                      sessionId={selectedSessionId}
-                      sessionStatus={sessionData.session.status}
-                      onImported={handleImported}
-                    />
-                  </div>
+          ) : sessionData ? (
+            <div className="space-y-4 mt-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold" data-testid="text-session-title">
+                  Sesión: {sessionData.session.file_name}
+                </h2>
+                <div className="flex items-center gap-2">
+                  {sessionFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                  <Badge
+                    variant={
+                      (STATUS_CONFIG[sessionData.session.status] || STATUS_CONFIG.uploaded).variant
+                    }
+                  >
+                    {(STATUS_CONFIG[sessionData.session.status] || STATUS_CONFIG.uploaded).label}
+                  </Badge>
                 </div>
-              </>
-            )}
-          </div>
-        </>
+              </div>
+
+              <StagingGrid
+                sessionId={selectedSessionId}
+                rows={sessionData.rows}
+                sheetsFound={sessionData.session.sheets_found || []}
+                onRefresh={refreshAll}
+              />
+
+              <Separator />
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Validación</h3>
+                  <ValidationPanel
+                    sessionId={selectedSessionId}
+                    sessionStatus={sessionData.session.status}
+                    onValidated={refreshAll}
+                  />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Importación</h3>
+                  <ImportStatus
+                    sessionId={selectedSessionId}
+                    sessionStatus={sessionData.session.status}
+                    onImported={refreshAll}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
       )}
     </div>
   );
