@@ -168,11 +168,13 @@ export async function validateSession(sessionId: number): Promise<ValidationResu
     });
   }
 
+  const categoryRows = (rowsBySheet.categories || []).map(r => r.data);
+  const categoriesSet = buildLookupSet(categoryRows, "category_name");
+  const subcategoriesSet = buildLookupSet(categoryRows, "parent_category");
+  for (const val of subcategoriesSet) categoriesSet.add(val);
+
   const lookups: Record<string, Set<string>> = {
-    categories: buildLookupSet(
-      (rowsBySheet.categories || []).map(r => r.data),
-      "category_name"
-    ),
+    categories: categoriesSet,
     taxes: buildLookupSet(
       (rowsBySheet.taxes || []).map(r => r.data),
       "tax_name"
