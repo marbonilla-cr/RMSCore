@@ -61,13 +61,15 @@ export async function getBusinessDate(schema?: string): Promise<string> {
 }
 
 // Users
-export async function getUser(id: number) {
-  const [user] = await db.select().from(users).where(eq(users.id, id));
+export async function getUser(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [user] = await d.select().from(users).where(eq(users.id, id));
   return user;
 }
 
-export async function getUserByUsername(username: string) {
-  const [user] = await db.select().from(users).where(eq(users.username, username));
+export async function getUserByUsername(username: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [user] = await d.select().from(users).where(eq(users.username, username));
   return user;
 }
 
@@ -135,8 +137,9 @@ export async function resetPassword(userId: number, hashedPassword: string) {
   await db.update(users).set({ password: hashedPassword, resetToken: null, resetTokenExpires: null }).where(eq(users.id, userId));
 }
 
-export async function getAllUsersWithPin() {
-  return db.select({
+export async function getAllUsersWithPin(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select({
     id: users.id,
     username: users.username,
     displayName: users.displayName,
@@ -168,8 +171,9 @@ export async function lockPinUser(userId: number, minutes: number = 5) {
   return user;
 }
 
-export async function clearPinLock(userId: number) {
-  const [user] = await db.update(users).set({
+export async function clearPinLock(userId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [user] = await d.update(users).set({
     pinFailedAttempts: 0,
     pinLockedUntil: null,
   }).where(eq(users.id, userId)).returning();
@@ -309,8 +313,9 @@ export async function getRolePermissions(role: string) {
   return db.select().from(rolePermissions).where(eq(rolePermissions.role, role));
 }
 
-export async function getPermissionKeysForRole(role: string): Promise<string[]> {
-  const rows = await db.select({ key: rolePermissions.permissionKey }).from(rolePermissions).where(eq(rolePermissions.role, role));
+export async function getPermissionKeysForRole(role: string, dbInstance?: typeof db): Promise<string[]> {
+  const d = dbInstance || db;
+  const rows = await d.select({ key: rolePermissions.permissionKey }).from(rolePermissions).where(eq(rolePermissions.role, role));
   return rows.map(r => r.key);
 }
 
@@ -912,8 +917,9 @@ export async function updateSalesLedgerItems(orderItemId: number, data: any) {
 }
 
 // Audit Events
-export async function createAuditEvent(data: InsertAuditEvent) {
-  await db.insert(auditEvents).values(data);
+export async function createAuditEvent(data: InsertAuditEvent, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.insert(auditEvents).values(data);
 }
 
 // Split Accounts

@@ -290,7 +290,9 @@ async function createAdminUser(schemaName: string, data: { email: string; passwo
   const username = data.email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
   const pinHash = data.pin ? await bcrypt.hash(data.pin, 10) : null;
   await publicPool.query(
-    `INSERT INTO "${schemaName}".users (username,password,display_name,role,active,email,pin) VALUES ($1,$2,$3,'MANAGER',true,$4,$5) ON CONFLICT DO NOTHING`,
+    `INSERT INTO "${schemaName}".users (username,password,display_name,role,active,email,pin)
+     VALUES ($1,$2,$3,'MANAGER',true,$4,$5)
+     ON CONFLICT (username) DO UPDATE SET password=$2, display_name=$3, email=$4, pin=$5, active=true`,
     [username, hash, data.displayName, data.email, pinHash]
   );
   return username;

@@ -442,7 +442,8 @@ export async function registerRoutes(
     if (!checkLoginRateLimit(req, res)) return;
     try {
       const { username, password } = loginSchema.parse(req.body);
-      const user = await storage.getUserByUsername(username);
+      const tdb = req.db;
+      const user = await storage.getUserByUsername(username, tdb);
       if (!user || !user.active) {
         return res.status(401).json({ message: "Usuario o contraseña incorrectos" });
       }
@@ -452,14 +453,15 @@ export async function registerRoutes(
       }
       clearLoginRateLimit(req);
       req.session.userId = user.id;
-      await storage.createAuditEvent({ actorType: "USER", actorUserId: user.id, action: "LOGIN_PASSWORD", entityType: "USER", entityId: user.id, metadata: {} });
+      (req.session as any).tenantSchema = req.tenantSchema;
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: user.id, action: "LOGIN_PASSWORD", entityType: "USER", entityId: user.id, metadata: {} }, tdb);
       const { password: _, pin: _p, ...safeUser } = user;
       req.session.save(async (err) => {
         if (err) {
           console.error("[SESSION] save error (password login):", err);
           return res.status(500).json({ message: "Error de sesión" });
         }
-        const perms = await storage.getPermissionKeysForRole(user.role);
+        const perms = await storage.getPermissionKeysForRole(user.role, tdb);
         res.json({ user: { ...safeUser, hasPin: !!user.pin }, permissions: perms, sessionToken: req.sessionID });
       });
     } catch (err: any) {
@@ -471,7 +473,7 @@ export async function registerRoutes(
     try {
       const username = (req.query.username as string || "").trim().toLowerCase();
       if (!username) return res.json({ exists: false, hasPin: false, displayName: "" });
-      const user = await storage.getUserByUsername(username);
+      const user = await storage.getUserByUsername(username, req.db);
       if (!user || !user.active) return res.json({ exists: false, hasPin: false, displayName: "" });
       res.json({ exists: true, hasPin: !!user.pin, displayName: user.displayName });
     } catch { res.json({ exists: false, hasPin: false, displayName: "" }); }
@@ -531,7 +533,7 @@ export async function registerRoutes(
 
   app.post("/api/auth/logout", async (req, res) => {
     if (req.session.userId) {
-      await storage.createAuditEvent({ actorType: "USER", actorUserId: req.session.userId, action: "LOGOUT", entityType: "USER", entityId: req.session.userId, metadata: {} });
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: req.session.userId, action: "LOGOUT", entityType: "USER", entityId: req.session.userId, metadata: {} }, req.db);
     }
     req.session.destroy(() => {});
     res.json({ ok: true });
@@ -541,10 +543,11 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "No autenticado" });
     }
-    const user = await storage.getUser(req.session.userId);
+    const tdb = req.db;
+    const user = await storage.getUser(req.session.userId, tdb);
     if (!user) return res.status(401).json({ message: "No autenticado" });
     const { password: _, pin: _p, ...safeUser } = user;
-    const perms = await storage.getPermissionKeysForRole(user.role);
+    const perms = await storage.getPermissionKeysForRole(user.role, tdb);
     res.json({ ...safeUser, hasPin: !!user.pin, permissions: perms });
   });
 
@@ -553,7 +556,8 @@ export async function registerRoutes(
     if (!checkLoginRateLimit(req, res)) return;
     try {
       const { pin } = pinLoginSchema.parse(req.body);
-      const allUsers = await storage.getAllUsersWithPin();
+      const tdb = req.db;
+      const allUsers = await storage.getAllUsersWithPin(tdb);
       const usersWithPin = allUsers.filter(u => u.pin && u.active);
 
       for (const u of usersWithPin) {
@@ -562,11 +566,12 @@ export async function registerRoutes(
         }
         const match = await storage.verifyPin(pin, u.pin!);
         if (match) {
-          await storage.clearPinLock(u.id);
+          await storage.clearPinLock(u.id, tdb);
           clearLoginRateLimit(req);
           req.session.userId = u.id;
-          await storage.createAuditEvent({ actorType: "USER", actorUserId: u.id, action: "LOGIN_PIN", entityType: "USER", entityId: u.id, metadata: {} });
-          const fullUser = await storage.getUser(u.id);
+          (req.session as any).tenantSchema = req.tenantSchema;
+          await storage.createAuditEvent({ actorType: "USER", actorUserId: u.id, action: "LOGIN_PIN", entityType: "USER", entityId: u.id, metadata: {} }, tdb);
+          const fullUser = await storage.getUser(u.id, tdb);
           if (!fullUser) return res.status(500).json({ message: "Error interno" });
           const { password: _, pin: _p, ...safeUser } = fullUser;
           return req.session.save(async (err) => {
@@ -574,14 +579,12 @@ export async function registerRoutes(
               console.error("[SESSION] save error (PIN login):", err);
               return res.status(500).json({ message: "Error de sesión" });
             }
-            const perms = await storage.getPermissionKeysForRole(fullUser.role);
+            const perms = await storage.getPermissionKeysForRole(fullUser.role, tdb);
             res.json({ user: { ...safeUser, hasPin: true }, permissions: perms, sessionToken: req.sessionID });
           });
         }
       }
 
-      // PIN not matched - we can't identify the user, so we can't increment a specific user's failed attempts
-      // Just return generic error
       res.status(401).json({ message: "PIN incorrecto" });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -617,7 +620,8 @@ export async function registerRoutes(
         }
       }
 
-      const allUsers = await storage.getAllUsersWithPin();
+      const tdb = req.db;
+      const allUsers = await storage.getAllUsersWithPin(tdb);
       const usersWithPin = allUsers.filter(u => u.pin && u.active);
 
       let matchedUser: any = null;
@@ -644,12 +648,12 @@ export async function registerRoutes(
           entityType: "USER",
           entityId: null,
           metadata: { ip, reason: "PIN incorrecto o no encontrado" },
-        });
+        }, tdb);
 
         return res.status(403).json({ message: "PIN de autorización incorrecto" });
       }
 
-      const perms = await storage.getPermissionKeysForRole(matchedUser.role);
+      const perms = await storage.getPermissionKeysForRole(matchedUser.role, tdb);
       if (!perms.includes("VOID_AUTHORIZE")) {
         if (entry && entry.resetAt > now) {
           entry.count++;
@@ -664,7 +668,7 @@ export async function registerRoutes(
           entityType: "USER",
           entityId: matchedUser.id,
           metadata: { ip, reason: "Usuario no tiene permiso VOID_AUTHORIZE", matchedUserId: matchedUser.id },
-        });
+        }, tdb);
 
         return res.status(403).json({ message: "El usuario no tiene permiso para autorizar anulaciones" });
       }
