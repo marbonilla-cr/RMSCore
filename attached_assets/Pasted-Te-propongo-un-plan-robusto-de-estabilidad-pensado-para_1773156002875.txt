@@ -1,0 +1,362 @@
+Te propongo un plan robusto de estabilidad, pensado para corregir el problema actual de WebSocket, eliminar los 4xx floods, y fortalecer la arquitectura, sin cambiar la arquitectura existente. Solo introduce mejoras de control, resiliencia y observabilidad usando buenas prácticas de sistemas en producción. ⚙️
+
+⸻
+
+EPIC — Real-Time Stability & Connection Resilience
+
+Objetivo:
+Garantizar que el sistema de WebSocket y la comunicación cliente-servidor sean resilientes, eficientes y seguros, evitando floods de reconexión, errores masivos 4xx, y ruido en logs, sin alterar la arquitectura actual del sistema.
+
+El sistema debe soportar:
+
+• deploys
+• expiración de sesión
+• pérdida de conexión
+• reconexiones múltiples
+• clientes inactivos
+
+sin degradar el backend.
+
+⸻
+
+Arquitectura resultante (sin romper la actual)
+
+Arquitectura actual (se mantiene):
+
+Frontend
+   ↓
+WSManager
+   ↓
+WebSocket
+   ↓
+Server WS bridge
+   ↓
+Event broadcast
+
+Arquitectura mejorada:
+
+Frontend
+   ↓
+ConnectionController
+   ↓
+WSManager (state machine + backoff)
+   ↓
+WebSocket
+   ↓
+Server WS Bridge
+   ↓
+Connection Guard
+   ↓
+Event Broadcast
+
+No cambia endpoints ni eventos.
+Solo se agregan controles de resiliencia.
+
+⸻
+
+Pilar 1 — Cliente resiliente (WSManager robusto)
+
+Objetivo: evitar loops, sockets duplicados y reconexiones agresivas.
+
+Mejoras
+
+1️⃣ State machine de conexión
+
+Estados:
+
+DISCONNECTED
+CONNECTING
+CONNECTED
+PAUSED
+
+Evita abrir múltiples sockets.
+
+⸻
+
+2️⃣ Exponential reconnect backoff
+
+Reconexión:
+
+500ms
+1s
+2s
+4s
+8s
+16s
+30s (max)
+
+Reduce floods.
+
+⸻
+
+3️⃣ Auth-aware connection
+
+Nunca abrir WebSocket sin token.
+
+if (!token) pause()
+
+
+⸻
+
+4️⃣ Pause / resume control
+
+Logout:
+
+pause()
+disconnect()
+
+Login:
+
+resume()
+
+
+⸻
+
+5️⃣ Single socket enforcement
+
+connect() debe abortar si:
+
+state === CONNECTING
+state === CONNECTED
+
+
+⸻
+
+Resultado:
+
+• elimina floods
+• reduce carga del backend
+• mantiene conexión estable
+
+⸻
+
+Pilar 2 — Protección del servidor WS
+
+Objetivo: evitar que clientes defectuosos o bots saturen el servidor.
+
+Mejoras
+
+1️⃣ Connection guard
+
+Limitar conexiones por usuario.
+
+Ejemplo:
+
+max 3 conexiones por user
+
+Evita tormentas de sockets.
+
+⸻
+
+2️⃣ Auth validation before upgrade
+
+Validar token antes de aceptar el WebSocket.
+
+Si falla:
+
+close connection immediately
+
+
+⸻
+
+3️⃣ Rate limit de handshake
+
+Limitar intentos WS por IP.
+
+Ejemplo:
+
+10 conexiones / minuto
+
+Esto protege contra floods.
+
+⸻
+
+4️⃣ Cleanup automático
+
+Eliminar sockets cerrados:
+
+onclose -> remove from connection registry
+
+Evita fugas de memoria.
+
+⸻
+
+Pilar 3 — Observabilidad real
+
+Objetivo: detectar problemas antes de que afecten al sistema.
+
+Agregar métricas internas.
+
+Métricas recomendadas
+
+WebSocket:
+
+active_connections
+reconnect_attempts
+auth_failures
+socket_disconnects
+
+HTTP:
+
+4xx_rate
+5xx_rate
+response_time_p95
+
+
+⸻
+
+Logging disciplinado
+
+Regla:
+
+Nunca loggear:
+
+tokens
+cookies
+headers sensibles
+
+Logs ejemplo:
+
+WS auth failed
+WS reconnect scheduled
+WS connection opened
+
+
+⸻
+
+Pilar 4 — Protección contra deploys
+
+Uno de los mayores problemas ocurre durante deploys.
+
+Cuando el servidor reinicia:
+
+• todos los sockets se cierran
+• clientes reconectan simultáneamente
+
+Esto genera tormentas.
+
+Solución:
+
+reconnect jitter
+
+Agregar variación aleatoria.
+
+Ejemplo:
+
+delay = reconnectDelay + random(0-500ms)
+
+Esto distribuye las reconexiones.
+
+⸻
+
+Pilar 5 — Degradación elegante
+
+Si WebSocket falla completamente:
+
+El sistema debe seguir funcionando.
+
+Fallback:
+
+polling cada 10s
+
+Esto solo se activa si WS falla repetidamente.
+
+⸻
+
+Pilar 6 — Test de estabilidad
+
+Antes de cerrar la implementación ejecutar pruebas simples.
+
+Test 1 — Logout
+
+Logout debe producir:
+
+0 reconnect attempts
+
+
+⸻
+
+Test 2 — Deploy simulation
+
+Cerrar servidor WS.
+
+Esperado:
+
+clientes reconectan gradualmente
+no flood
+
+
+⸻
+
+Test 3 — Token expirado
+
+Cliente intenta reconectar.
+
+Esperado:
+
+pause connection
+redirect login
+
+
+⸻
+
+Test 4 — Multi-tab
+
+Abrir 5 tabs.
+
+Esperado:
+
+máx 3 sockets
+otros bloqueados
+
+
+⸻
+
+Definition of Done
+
+✔ No más floods de 4xx
+✔ Reconexión exponencial estable
+✔ Solo un socket activo por cliente
+✔ Logs limpios sin tokens
+✔ Reconexión gradual tras deploy
+✔ Sistema funcional incluso sin WS
+
+⸻
+
+Impacto real del plan
+
+Cambios pequeños en código:
+
+ws.ts
+auth.tsx
+routes.ts
+
+Líneas modificadas aproximadas:
+
+60–120
+
+Arquitectura:
+
+sin cambios estructurales
+
+Base de datos:
+
+sin cambios
+
+
+⸻
+
+Resultado
+
+El sistema pasa de ser frágil ante reconexiones a tener:
+
+• resiliencia
+• estabilidad
+• control de tráfico
+• observabilidad
+
+Es el mismo patrón usado por sistemas POS grandes como Square y Toast para manejar miles de conexiones en restaurantes.
+
+⸻
+
+Si quieres, puedo también mostrarte el siguiente problema que casi siempre aparece después de arreglar WebSockets en sistemas POS (y que conviene prevenir ahora). Es un bug de event storm en broadcast que suele aparecer cuando el sistema empieza a crecer.
