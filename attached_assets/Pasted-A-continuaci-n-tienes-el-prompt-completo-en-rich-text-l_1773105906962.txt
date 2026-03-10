@@ -1,0 +1,701 @@
+A continuación tienes el prompt completo en rich text, listo para copiar y pegar directamente en Replit Agent.
+No contiene notas externas ni instrucciones para ti.
+Define scope, arquitectura, tareas, endpoints, validaciones, orden de importación, system check y criterios de aceptación para asegurar que el módulo quede 100% funcional.
+
+⸻
+
+RMS — Tenant Bootstrap Data Loader
+
+Deterministic Import System (Production-Ready v1)
+
+⸻
+
+Objective
+
+Implement a Tenant Bootstrap Data Loader module that allows a tenant administrator to upload a Master Excel file containing the initial operational data required to start using the RMS.
+
+The system must perform the following pipeline:
+
+Excel Upload
+↓
+Excel Parser
+↓
+Column Alias Mapper
+↓
+Ledger Staging Tables
+↓
+Inline Data Editor
+↓
+Validation Engine
+↓
+Transactional Import
+↓
+System Check
+↓
+Tenant Ready
+
+The goal is to enable rapid tenant bootstrap with minimal manual configuration.
+
+This version must NOT use AI.
+
+All parsing and column mapping must be deterministic using alias mappings.
+
+⸻
+
+Scope Restriction
+
+The agent MUST NOT modify any RMS core modules.
+
+The following areas are strictly forbidden to modify:
+	•	POS
+	•	Orders
+	•	Inventory
+	•	Payroll
+	•	KDS
+	•	Reservations
+	•	Reporting
+	•	Loyalty
+	•	Kitchen printers
+	•	Menu rendering logic
+
+The agent may ONLY create or modify the following paths:
+
+server/data-loader/*
+migrations/0004_data_loader_staging.sql
+client/src/pages/admin/data-loader.tsx
+client/src/components/data-loader/*
+client/src/App.tsx (add route only)
+client/src/components/app-sidebar.tsx (add navigation item only)
+server/routes.ts (register router only)
+
+No other files may be changed.
+
+⸻
+
+Architectural Principles
+	1.	Runs inside tenant scope only
+	2.	Never writes directly to production tables
+	3.	Uses staging ledger tables
+	4.	Import must be fully transactional
+	5.	Validation must happen before import
+	6.	System check must run before tenant activation
+	7.	Import must follow a strict dependency order
+
+⸻
+
+Production Architecture
+
+Module structure:
+
+server/
+ └ data-loader/
+      column-aliases.ts
+      excel-parser.ts
+      validation-engine.ts
+      import-engine.ts
+      system-check.ts
+      data-loader-routes.ts
+      excel-template.ts
+
+client/
+ └ pages/admin/
+      data-loader.tsx
+
+client/
+ └ components/data-loader/
+      upload-panel.tsx
+      staging-grid.tsx
+      validation-panel.tsx
+      import-status.tsx
+
+
+⸻
+
+Master Excel Structure
+
+The Excel file must support the following sheets.
+
+Missing sheets are allowed and must be skipped gracefully.
+
+Business
+Taxes
+PaymentMethods
+Employees
+Categories
+Products
+ModifierGroups
+Modifiers
+ProductModifiers
+Tables
+HRConfig
+
+Maximum file size:
+
+5 MB
+
+Maximum rows per sheet:
+
+2000 rows
+
+
+⸻
+
+Sheet Definitions
+
+Business (single row)
+
+Columns:
+
+name
+currency
+timezone
+address
+service_percentage
+default_tax
+
+
+⸻
+
+Taxes
+
+Columns:
+
+tax_name
+percentage
+inclusive
+
+
+⸻
+
+PaymentMethods
+
+Columns:
+
+payment_name
+type
+active
+
+
+⸻
+
+Employees
+
+Columns:
+
+employee_name
+role
+active
+
+
+⸻
+
+Categories
+
+Columns:
+
+category_name
+parent_category
+
+
+⸻
+
+Products
+
+Columns:
+
+product_name
+category
+price
+tax
+
+
+⸻
+
+ModifierGroups
+
+Columns:
+
+group_name
+required
+max_select
+
+
+⸻
+
+Modifiers
+
+Columns:
+
+modifier_name
+group_name
+price
+
+
+⸻
+
+ProductModifiers
+
+Columns:
+
+product_name
+group_name
+
+
+⸻
+
+Tables
+
+Columns:
+
+table_name
+area
+capacity
+
+
+⸻
+
+HRConfig (single row)
+
+Columns:
+
+service_percentage
+
+
+⸻
+
+Import Dependency Order
+
+The import engine must process sheets in the following strict order:
+
+1 business
+2 taxes
+3 payment_methods
+4 employees
+5 categories
+6 products
+7 modifier_groups
+8 modifiers
+9 product_modifiers
+10 tables
+11 hr_config
+
+This order must be enforced to guarantee referential integrity.
+
+⸻
+
+Database Migration
+
+Create migration:
+
+migrations/0004_data_loader_staging.sql
+
+
+⸻
+
+Table: data_loader_sessions
+
+Schema:
+
+id SERIAL PRIMARY KEY
+tenant_id INTEGER
+status TEXT
+file_name TEXT
+sheets_found TEXT[]
+error_message TEXT
+created_by INTEGER
+created_at TIMESTAMP
+updated_at TIMESTAMP
+
+Allowed status values:
+
+uploaded
+parsed
+staged
+validated
+imported
+failed
+
+
+⸻
+
+Table: data_loader_staging
+
+Schema:
+
+id SERIAL PRIMARY KEY
+session_id INTEGER REFERENCES data_loader_sessions(id) ON DELETE CASCADE
+sheet_name TEXT NOT NULL
+row_index INTEGER
+data_json JSONB
+validation_status TEXT
+validation_errors JSONB
+imported BOOLEAN DEFAULT FALSE
+created_at TIMESTAMP
+updated_at TIMESTAMP
+
+Indexes:
+
+INDEX(session_id)
+INDEX(session_id, sheet_name)
+
+Validation status constraint:
+
+CHECK(validation_status IN ('PENDING','VALID','INVALID'))
+
+
+⸻
+
+Column Alias Mapping
+
+Create file:
+
+server/data-loader/column-aliases.ts
+
+Alias mappings must support flexible Excel headers.
+
+Examples:
+
+product_name → product, nombre, producto, name
+price → price, precio, cost, costo
+category → category, categoria
+tax → tax, impuesto, tax_name
+employee_name → employee, empleado, nombre
+group_name → group, grupo
+modifier_name → modifier, modificador
+payment_name → payment, pago
+table_name → table, mesa
+category_name → categoria, category
+percentage → porcentaje, rate
+inclusive → inclusivo, included
+required → obligatorio, requerido
+max_select → max, max_selections
+parent_category → parent, categoria_padre
+area → zona, section
+capacity → capacidad, seats
+active → activo
+role → rol, puesto
+type → tipo
+service_percentage → porcentaje_servicio
+default_tax → impuesto_default
+timezone → zona_horaria
+currency → moneda
+address → direccion
+
+Header normalization must:
+
+lowercase
+trim whitespace
+remove accents
+
+Unknown columns must be preserved but flagged.
+
+⸻
+
+Excel Parser
+
+Create file:
+
+server/data-loader/excel-parser.ts
+
+Responsibilities:
+	•	Read Excel using SheetJS
+	•	Detect sheets
+	•	Map sheet names using aliases
+	•	Normalize headers using alias mapper
+	•	Convert rows to JSON
+	•	Skip empty rows
+	•	Skip missing sheets
+
+Output format:
+
+{
+ sheets: Record<string, object[]>,
+ unmappedColumns: Record<string,string[]>
+}
+
+
+⸻
+
+API Endpoints
+
+Create router:
+
+server/data-loader/data-loader-routes.ts
+
+Register router in:
+
+server/routes.ts
+
+Base route:
+
+/api/admin/data-loader
+
+
+⸻
+
+Upload Excel
+
+Endpoint:
+
+POST /upload
+
+Body:
+
+{
+ fileData: base64,
+ fileName: string
+}
+
+Behavior:
+
+1 Create session (status=uploaded)
+
+2 Parse Excel (status=parsed)
+
+3 Insert rows into staging (status=staged)
+
+4 Return session metadata
+
+Response:
+
+{
+ sessionId
+ sheetsFound
+ rowCounts
+ unmappedColumns
+}
+
+
+⸻
+
+List Sessions
+
+GET /sessions
+
+Returns previous import sessions.
+
+⸻
+
+Get Session Data
+
+GET /sessions/:id
+
+Returns staging rows grouped by sheet.
+
+⸻
+
+Edit Staging Row
+
+PATCH /staging/:rowId
+
+Updates data_json.
+
+Resets validation_status to:
+
+PENDING
+
+
+⸻
+
+Delete Staging Row
+
+DELETE /staging/:rowId
+
+Removes staging row.
+
+⸻
+
+Add Row
+
+POST /sessions/:id/add-row
+
+Body:
+
+{
+ sheetName
+ dataJson
+}
+
+
+⸻
+
+Validation Engine
+
+Create file:
+
+server/data-loader/validation-engine.ts
+
+Endpoint:
+
+POST /sessions/:id/validate
+
+Validation rules:
+
+Required fields must exist.
+
+Referential validations:
+
+product.category must exist in categories
+product.tax must exist in taxes
+modifier.group_name must exist in modifier_groups
+product_modifiers.product_name must exist in products
+product_modifiers.group_name must exist in modifier_groups
+
+Validation result stored in staging rows.
+
+Session status becomes:
+
+validated
+
+
+⸻
+
+Import Engine
+
+Create file:
+
+server/data-loader/import-engine.ts
+
+Endpoint:
+
+POST /sessions/:id/import
+
+Rules:
+	•	Allowed only if session.status = validated
+	•	Execute full DB transaction
+	•	Follow strict import order
+
+Pseudo process:
+
+BEGIN
+
+insert business
+insert taxes
+insert payment_methods
+insert employees
+insert categories
+insert products
+insert modifier_groups
+insert modifiers
+insert product_modifiers
+insert tables
+insert hr_config
+
+COMMIT
+
+On failure:
+
+ROLLBACK
+session.status = failed
+
+
+⸻
+
+System Check
+
+Create file:
+
+server/data-loader/system-check.ts
+
+Function:
+
+runTenantBootstrapCheck(tenant_id)
+
+Validation:
+
+business exists
+>=1 employee
+>=1 category
+>=1 product
+>=1 payment method
+>=1 tax
+
+If successful:
+
+tenant_ready = true
+
+
+⸻
+
+Excel Template Endpoint
+
+Create endpoint:
+
+GET /api/admin/data-loader/template
+
+Generates downloadable Excel template containing all sheets and correct columns.
+
+⸻
+
+UI Page
+
+Create page:
+
+client/src/pages/admin/data-loader.tsx
+
+UI features:
+
+Excel upload
+Session history
+Staging data grid
+Inline editing
+Validation button
+Import button
+Status indicator
+
+Components:
+
+upload-panel
+staging-grid
+validation-panel
+import-status
+
+
+⸻
+
+Acceptance Criteria
+
+The module is considered complete when:
+
+1 Excel upload works.
+
+2 Sheets are parsed correctly.
+
+3 Staging rows appear in UI.
+
+4 Inline edits persist.
+
+5 Validation detects errors.
+
+6 Referential validation works.
+
+7 Transactional import inserts all data.
+
+8 Import rollback works.
+
+9 System check runs successfully.
+
+10 Tenant becomes operational.
+
+⸻
+
+Definition of Done
+
+The module is complete when:
+
+Migration runs without errors
+Excel upload works
+Parser handles missing sheets
+Alias mapping works
+Staging ledger populated
+Inline editing works
+Validation engine operational
+Transactional import implemented
+System check executed
+Tenant marked ready
+Excel template downloadable
+All endpoints tested
+No RMS core modules modified
+
+
+⸻

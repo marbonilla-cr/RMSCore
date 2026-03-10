@@ -1,0 +1,428 @@
+Voy a estructurarlo como especificación técnica + prompt listo para el agente de Replit, manteniendo la lógica del RMS que ya definieron: multi-tenant, módulos desacoplados, y evitando escribir directamente en tablas productivas hasta que pase validación.
+
+⸻
+
+RMS — AI Data Loader
+
+Tenant Bootstrap Import System
+
+1. Objetivo
+
+Construir un AI Data Loader que permita a un nuevo tenant cargar toda la información inicial del sistema mediante un archivo Excel único.
+
+El sistema debe:
+	1.	aceptar un Excel maestro
+	2.	usar IA para interpretar y organizar los datos
+	3.	cargar la información en un ledger intermedio
+	4.	permitir edición directa por el usuario
+	5.	validar los datos
+	6.	ejecutar un import transaccional
+	7.	realizar verificación automática del sistema
+	8.	activar el tenant para operación
+
+El AI Data Loader no escribe directamente en tablas productivas.
+Todo pasa primero por un entorno intermedio dentro del tenant.
+
+⸻
+
+2. Arquitectura
+
+El módulo vive dentro del tenant, no en el core global del RMS.
+
+Arquitectura:
+
+Tenant
+ ├── ai_data_loader
+ │
+ ├── staging_ledger_tables
+ │
+ ├── validation_engine
+ │
+ ├── import_executor
+ │
+ └── system_check_agent
+
+Flujo:
+
+Excel Upload
+      ↓
+AI Parser
+      ↓
+Ledger Staging Tables
+      ↓
+Inline Editor UI
+      ↓
+Validation Engine
+      ↓
+Transactional Import
+      ↓
+System Check Agent
+      ↓
+Tenant Ready
+
+
+⸻
+
+3. Staging Ledger (entorno intermedio)
+
+Se crean tablas de staging dentro del tenant.
+
+Nunca se escriben datos directamente a:
+
+products
+employees
+orders
+taxes
+tables
+etc
+
+Primero se cargan en staging.
+
+Tablas de staging
+
+staging_business
+staging_taxes
+staging_payment_methods
+staging_employees
+staging_menu_categories
+staging_products
+staging_modifier_groups
+staging_modifiers
+staging_product_modifiers
+staging_tables
+staging_printer_routes
+staging_kds_stations
+staging_inventory_items
+staging_recipes
+staging_hr_config
+
+Todas incluyen:
+
+id
+tenant_id
+row_source
+data_json
+validation_status
+validation_errors
+created_at
+updated_at
+
+
+⸻
+
+4. Excel maestro
+
+El cliente sube un solo Excel.
+
+Hojas:
+
+01_Business
+02_Taxes
+03_PaymentMethods
+04_Employees
+05_MenuCategories
+06_Products
+07_ModifierGroups
+08_Modifiers
+09_ProductModifiers
+10_Tables
+11_PrinterRoutes
+12_KDSStations
+13_InventoryItems
+14_Recipes
+15_HRConfig
+
+Si una hoja no existe → se ignora.
+
+⸻
+
+5. Adaptación por plan
+
+El sistema detecta el plan del tenant.
+
+BASIC
+
+Importa:
+
+Business
+Taxes
+PaymentMethods
+Employees
+MenuCategories
+Products
+ModifierGroups
+Modifiers
+ProductModifiers
+Tables
+HRConfig
+
+PRO
+
+Incluye además:
+
+PrinterRoutes
+KDSStations
+InventoryItems
+Recipes
+
+ENTERPRISE
+
+Incluye además:
+
+multi-location configs
+advanced HR
+loyalty
+reservations
+accounting integrations
+
+
+⸻
+
+6. AI Parser
+
+El parser usa IA para:
+	•	detectar columnas
+	•	mapear nombres
+	•	corregir errores comunes
+	•	normalizar estructuras
+
+Ejemplo:
+
+"precio"
+"price"
+"cost"
+
+→ product_price
+
+"categoria"
+"category"
+"grupo"
+
+→ category_name
+
+⸻
+
+7. UI Ledger Inline
+
+Después del parseo se muestra una interfaz tipo spreadsheet.
+
+Cada hoja aparece como tabla editable.
+
+Ejemplo:
+
+Products
+-------------------------------------------
+Name       | Category | Price | Tax | SKU
+-------------------------------------------
+Burger     | Food     | 8.50  | 13% | 1001
+Pizza      | Food     | 9.50  | 13% | 1002
+
+El usuario puede:
+	•	editar campos
+	•	agregar filas
+	•	eliminar filas
+	•	corregir errores
+
+⸻
+
+8. Validation Engine
+
+Antes del import se ejecutan validaciones.
+
+Validaciones típicas
+
+Business
+
+name required
+currency required
+
+Products
+
+name required
+price >= 0
+category must exist
+
+Employees
+
+name required
+role required
+
+Taxes
+
+percentage between 0 and 100
+
+
+⸻
+
+9. Import transaccional
+
+Cuando el usuario confirma:
+
+BEGIN TRANSACTION
+
+Se ejecutan imports en orden:
+
+business
+taxes
+payment_methods
+employees
+menu_categories
+products
+modifier_groups
+modifiers
+product_modifiers
+tables
+
+Si ocurre error:
+
+ROLLBACK
+
+Si todo funciona:
+
+COMMIT
+
+
+⸻
+
+10. System Check Agent
+
+Después del import el sistema entra en modo verificación automática.
+
+Checks:
+
+products count > 0
+employees count > 0
+tax exists
+payment method exists
+tables exist
+
+Checks de integridad:
+
+products.category_id valid
+modifiers.group_id valid
+product_modifier_relations valid
+
+Si todo pasa:
+
+tenant_status = ACTIVE
+
+
+⸻
+
+11. Aprovisionamiento automático
+
+Si el tenant tiene:
+
+Print Bridge
+
+El sistema ejecuta:
+
+printer provisioning
+route generation
+station mapping
+
+Android Print Server
+
+Se generan:
+
+printer configs
+print routes
+device tokens
+
+Todo automáticamente.
+
+⸻
+
+12. Seguridad
+
+El Data Loader solo es accesible para:
+
+tenant_admin
+system_admin
+
+Y solo afecta ese tenant.
+
+Nunca toca:
+
+core RMS
+otros tenants
+
+
+⸻
+
+13. Prompt listo para el agente de Replit
+
+Este prompt puede usarse directamente para que el agente construya el módulo.
+
+Build a new RMS module called AI Data Loader.
+
+Requirements:
+
+The module must run inside a tenant environment and never write directly to production tables.
+
+The system must accept a single Excel file containing multiple sheets.
+
+Sheets may include:
+
+Business
+Taxes
+PaymentMethods
+Employees
+MenuCategories
+Products
+ModifierGroups
+Modifiers
+ProductModifiers
+Tables
+PrinterRoutes
+KDSStations
+InventoryItems
+Recipes
+HRConfig
+
+If a sheet is missing it should be ignored.
+
+Step 1
+Create staging tables for each entity with structure:
+
+id
+tenant_id
+row_source
+data_json
+validation_status
+validation_errors
+created_at
+updated_at
+
+Step 2
+Build an Excel parser that reads each sheet and stores rows into the corresponding staging table.
+
+Step 3
+Create an AI normalization layer that maps flexible column names into the RMS schema.
+
+Step 4
+Create a UI component that displays staging data as editable tables (spreadsheet style).
+
+Users must be able to edit fields inline before import.
+
+Step 5
+Create a validation engine that validates required fields and relationships.
+
+Step 6
+Create a transactional import executor that moves validated staging data into production tables.
+
+Step 7
+After import run a system verification agent that checks integrity and readiness.
+
+Step 8
+If all checks pass mark tenant as ACTIVE.
+
+Ensure all operations are tenant isolated.
+
+Do not modify core RMS schemas.
+
+
+⸻
+
+Si quieres, en el siguiente paso puedo diseñarte también el Excel maestro perfecto para RMS (la plantilla exacta que se le entrega al cliente).
+Ese archivo bien diseñado te ahorra horas de soporte por cada onboarding.

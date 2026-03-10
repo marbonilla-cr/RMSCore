@@ -1,0 +1,304 @@
+Te propongo estructurarlo como un backlog ejecutable para el agente, con una sola Epic, varias Historias de Usuario, tareas técnicas claras, criterios de aceptación verificables y Definition of Done (DoD). La idea es que cada historia termine en algo funcional y conecte con la siguiente.
+
+⸻
+
+EPIC
+
+E-DL-001 — AI Data Loader para Bootstrap de Tenant
+
+Descripción
+Como administrador de un nuevo tenant, quiero cargar un archivo Excel con los datos iniciales del negocio para que el sistema los interprete, los valide en un ledger intermedio y luego los importe al RMS de forma segura.
+
+Objetivo técnico
+	•	No escribir datos directamente en tablas productivas.
+	•	Usar staging tables dentro del tenant.
+	•	Permitir edición antes de importar.
+	•	Ejecutar importación transaccional.
+	•	Ejecutar verificación automática del sistema antes de activar el tenant.
+
+⸻
+
+HU-DL-001
+
+Subir Excel maestro
+
+Historia
+
+Como usuario administrador
+quiero subir un archivo Excel con los datos del negocio
+para que el sistema lo procese.
+
+Tareas
+	•	Crear endpoint POST /tenant/data-loader/upload
+	•	Aceptar .xlsx
+	•	Validar tamaño máximo
+	•	Guardar archivo en almacenamiento temporal del tenant
+	•	Registrar el upload en data_loader_sessions
+
+Criterios de aceptación
+	1.	El sistema acepta archivos .xlsx.
+	2.	Si el archivo no es Excel, el sistema lo rechaza.
+	3.	El archivo se guarda asociado al tenantId.
+	4.	Se crea un registro de sesión.
+
+Definition of Done
+	•	Endpoint funcional
+	•	Archivo almacenado
+	•	Sesión registrada
+	•	Manejo de errores implementado
+
+⸻
+
+HU-DL-002
+
+Interpretación del Excel con IA
+
+Historia
+
+Como sistema
+quiero que la IA lea el Excel y detecte las tablas y columnas
+para organizar la información en el ledger.
+
+Tareas
+	•	Crear servicio aiExcelParser
+	•	Leer hojas del Excel
+	•	Mapear columnas conocidas
+	•	Generar estructura JSON normalizada
+
+Estructura objetivo
+
+{
+ business: {},
+ taxes: [],
+ payment_methods: [],
+ employees: [],
+ categories: [],
+ products: [],
+ modifier_groups: [],
+ modifiers: [],
+ tables: []
+}
+
+Criterios de aceptación
+	1.	El sistema reconoce las hojas estándar.
+	2.	Si faltan columnas opcionales, se ignoran.
+	3.	Si faltan columnas críticas, se reporta error.
+
+Definition of Done
+	•	Parser implementado
+	•	JSON normalizado generado
+	•	Manejo de errores activo
+
+⸻
+
+HU-DL-003
+
+Cargar datos en staging ledger
+
+Historia
+
+Como sistema
+quiero cargar los datos procesados en tablas de staging
+para que puedan revisarse antes del import.
+
+Tareas
+
+Crear tablas:
+
+staging_business
+staging_taxes
+staging_payment_methods
+staging_employees
+staging_menu_categories
+staging_products
+staging_modifier_groups
+staging_modifiers
+staging_tables
+
+Criterios de aceptación
+	1.	Los datos se guardan solo en staging.
+	2.	Las tablas productivas no se modifican.
+	3.	Cada registro queda asociado al data_loader_session_id.
+
+Definition of Done
+	•	Tablas staging creadas
+	•	Inserciones correctas
+	•	Relación con sesión funcionando
+
+⸻
+
+HU-DL-004
+
+UI ledger editable
+
+Historia
+
+Como usuario
+quiero revisar y editar los datos cargados
+antes de confirmar el import.
+
+Tareas
+	•	Crear página Data Loader
+	•	Mostrar tablas tipo ledger
+	•	Permitir edición inline
+	•	Guardar cambios en staging
+
+Criterios de aceptación
+	1.	El usuario puede editar cualquier campo.
+	2.	Los cambios se guardan en staging.
+	3.	El usuario puede eliminar filas.
+
+Definition of Done
+	•	UI funcional
+	•	Edición inline funcionando
+	•	Persistencia correcta
+
+⸻
+
+HU-DL-005
+
+Motor de validación
+
+Historia
+
+Como sistema
+quiero validar los datos antes de importar
+para evitar inconsistencias.
+
+Validaciones mínimas
+
+business.name required
+tax.rate required
+product.name required
+product.category required
+employee.name required
+payment_methods.name required
+
+Criterios de aceptación
+	1.	Si falta un campo crítico, se bloquea el import.
+	2.	El sistema muestra errores por fila.
+	3.	El usuario puede corregirlos.
+
+Definition of Done
+	•	Validaciones activas
+	•	UI de errores implementada
+	•	Bloqueo de import funcionando
+
+⸻
+
+HU-DL-006
+
+Import transaccional
+
+Historia
+
+Como sistema
+quiero importar los datos del staging a las tablas productivas
+de forma transaccional.
+
+Tareas
+
+Orden de import:
+
+business
+taxes
+payment_methods
+employees
+categories
+products
+modifier_groups
+modifiers
+tables
+
+Reglas
+	•	Usar transacción SQL
+	•	Si falla una tabla → rollback completo
+
+Criterios de aceptación
+	1.	Si todo es válido, los datos aparecen en producción.
+	2.	Si falla algo, no se importa nada.
+	3.	No quedan registros parciales.
+
+Definition of Done
+	•	Transacción implementada
+	•	Rollback probado
+	•	Import completo funcionando
+
+⸻
+
+HU-DL-007
+
+System Check Agent
+
+Historia
+
+Como sistema
+quiero ejecutar un checklist automático después del import
+para confirmar que el tenant está listo.
+
+Validaciones
+
+business exists
+taxes configured
+payment_methods configured
+at least 1 employee
+at least 1 category
+at least 1 product
+
+Criterios de aceptación
+	1.	Si todo está correcto, el sistema marca el tenant como listo.
+	2.	Si algo falta, muestra advertencias.
+
+Definition of Done
+	•	Checklist ejecutado
+	•	Resultado visible
+	•	Estado del tenant actualizado
+
+⸻
+
+HU-DL-008
+
+Activación del tenant
+
+Historia
+
+Como sistema
+quiero activar el tenant cuando todo está correcto
+para que pueda operar.
+
+Tareas
+
+Actualizar:
+
+tenant.status = ACTIVE
+tenant.bootstrap_complete = true
+
+Criterios de aceptación
+	1.	Solo se activa si el system check pasa.
+	2.	El tenant puede operar inmediatamente.
+
+Definition of Done
+	•	Estado actualizado
+	•	Tenant operativo
+
+⸻
+
+Definition of Done GLOBAL del EPIC
+
+El epic se considera completo cuando:
+	•	Se puede subir un Excel.
+	•	La IA interpreta los datos.
+	•	Los datos se cargan en staging.
+	•	El usuario puede editarlos.
+	•	El sistema valida errores.
+	•	El import es transaccional.
+	•	Se ejecuta el system check.
+	•	El tenant queda listo para operar.
+
+⸻
+
+Si quieres, también puedo prepararte la segunda parte crítica que casi todos los RMS olvidan:
+
+El diseño del Excel maestro (columnas exactas para cada hoja).
+
+Ese documento le ahorra semanas al onboarding porque los clientes saben exactamente cómo llenar el archivo.

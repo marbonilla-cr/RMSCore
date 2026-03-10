@@ -1,0 +1,516 @@
+El plan de Replit está bien encaminado, pero le faltan algunas definiciones críticas que evitarán errores comunes del agente:
+	1.	Tipado consistente (UUID vs serial) para evitar problemas en multi-tenant.
+	2.	Estructura exacta de cada hoja del Excel maestro (columnas obligatorias y opcionales).
+	3.	Mapeo explícito Excel → ledger → tablas productivas.
+	4.	Validaciones mínimas obligatorias antes del import.
+	5.	Sistema de rollback si el import falla.
+	6.	Restricción de alcance para que el agente no modifique otros módulos.
+
+Abajo tienes el prompt completo corregido, listo para darle al agente.
+
+⸻
+
+RMS — Tenant Bootstrap Data Loader
+
+Deterministic Import System (v1)
+
+Scope restriction
+
+This implementation is strictly limited to the Data Loader module.
+
+The agent must NOT modify any existing RMS core modules including:
+	•	POS
+	•	Orders
+	•	Inventory
+	•	Payroll
+	•	KDS
+	•	Reservations
+	•	Loyalty
+	•	Reporting
+
+Only the following paths may be created or modified:
+
+server/data-loader/*
+migrations/0004_data_loader_staging.sql
+client/src/pages/data-loader/*
+client/src/components/data-loader/*
+
+No other files may be changed.
+
+⸻
+
+Objective
+
+Build a Tenant Bootstrap Data Loader module that allows a tenant administrator to upload a Master Excel file containing the initial operational data required to start using RMS.
+
+The system must:
+	1.	Accept an Excel upload
+	2.	Parse sheets
+	3.	Map columns using deterministic alias mapping
+	4.	Load rows into staging ledger tables
+	5.	Provide inline editing for verification
+	6.	Validate referential integrity
+	7.	Execute transactional import
+	8.	Run automated system check
+	9.	Mark tenant ready
+
+This version must not use AI.
+
+Parsing must be deterministic.
+
+⸻
+
+Architectural Principles
+	1.	Runs inside tenant scope
+	2.	Never writes directly to production tables
+	3.	Uses staging ledger tables
+	4.	Import must be transactional
+	5.	Validation must happen before import
+	6.	System check must run before activation
+
+⸻
+
+System Flow
+
+Excel Upload
+↓
+Excel Parser
+↓
+Column Alias Mapper
+↓
+Ledger Staging Tables
+↓
+Inline Editor
+↓
+Validation Engine
+↓
+Transactional Import
+↓
+System Check
+↓
+Tenant Ready
+
+
+⸻
+
+Master Excel Structure
+
+The Excel must contain these sheets.
+
+Missing sheets are allowed and skipped.
+
+Business
+Taxes
+PaymentMethods
+Employees
+Categories
+Products
+ModifierGroups
+Modifiers
+ProductModifiers
+Tables
+HRConfig
+
+
+⸻
+
+Sheet definitions
+
+Business
+
+Single row.
+
+Columns:
+
+name
+currency
+timezone
+address
+service_percentage
+default_tax
+
+
+⸻
+
+Taxes
+
+Columns:
+
+tax_name
+percentage
+inclusive
+
+Example:
+
+VAT | 13 | false
+
+
+⸻
+
+PaymentMethods
+
+Columns:
+
+payment_name
+type
+active
+
+Example:
+
+Cash | cash | true
+Card | card | true
+
+
+⸻
+
+Employees
+
+Columns:
+
+employee_name
+role
+active
+
+Example:
+
+Juan Perez | waiter | true
+Maria Soto | manager | true
+
+
+⸻
+
+Categories
+
+Columns:
+
+category_name
+parent_category
+
+Example:
+
+Burgers | Food
+Beer | Drinks
+
+
+⸻
+
+Products
+
+Columns:
+
+product_name
+category
+price
+tax
+
+Example:
+
+Classic Burger | Burgers | 4500 | VAT
+
+
+⸻
+
+ModifierGroups
+
+Columns:
+
+group_name
+required
+max_select
+
+Example:
+
+Burger Extras | false | 3
+
+
+⸻
+
+Modifiers
+
+Columns:
+
+modifier_name
+group_name
+price
+
+Example:
+
+Cheese | Burger Extras | 500
+Bacon | Burger Extras | 700
+
+
+⸻
+
+ProductModifiers
+
+Columns:
+
+product_name
+group_name
+
+Example:
+
+Classic Burger | Burger Extras
+
+
+⸻
+
+Tables
+
+Columns:
+
+table_name
+area
+capacity
+
+Example:
+
+T1 | Main | 4
+T2 | Main | 2
+
+
+⸻
+
+HRConfig
+
+Single row.
+
+Columns:
+
+service_percentage
+
+Example:
+
+10
+
+
+⸻
+
+Staging database schema
+
+Migration file:
+
+migrations/0004_data_loader_staging.sql
+
+data_loader_sessions
+
+id UUID PRIMARY KEY
+tenant_id UUID
+status TEXT
+file_name TEXT
+sheets_found TEXT[]
+error_message TEXT
+created_by UUID
+created_at TIMESTAMP
+updated_at TIMESTAMP
+
+status values:
+
+uploaded
+parsed
+staged
+validated
+imported
+failed
+
+
+⸻
+
+data_loader_staging
+
+id UUID PRIMARY KEY
+session_id UUID REFERENCES data_loader_sessions(id) ON DELETE CASCADE
+sheet_name TEXT
+row_index INTEGER
+data_json JSONB
+validation_status TEXT
+validation_errors JSONB
+imported BOOLEAN DEFAULT false
+created_at TIMESTAMP
+updated_at TIMESTAMP
+
+validation_status values:
+
+PENDING
+VALID
+INVALID
+
+Indexes:
+
+(session_id)
+(session_id, sheet_name)
+
+
+⸻
+
+Deterministic alias mapper
+
+File:
+
+server/data-loader/column-aliases.ts
+
+Example mapping:
+
+product_name → ["product", "nombre", "producto", "name"]
+price → ["price", "precio", "cost"]
+category → ["category", "categoria"]
+modifier_name → ["modifier", "modificador"]
+employee_name → ["employee", "empleado", "name"]
+
+The parser must normalize all headers.
+
+⸻
+
+Backend parser service
+
+File:
+
+server/data-loader/excel-parser.ts
+
+Responsibilities:
+	•	Read Excel using SheetJS
+	•	Detect sheets
+	•	Normalize headers
+	•	Convert rows to JSON
+	•	Store rows in staging
+
+⸻
+
+Validation engine
+
+File:
+
+server/data-loader/validation.ts
+
+Checks:
+	1.	Required columns present
+	2.	Category referenced by product exists
+	3.	Modifier group referenced exists
+	4.	Product referenced by ProductModifiers exists
+	5.	Tax referenced by product exists
+
+Invalid rows must store errors in:
+
+validation_errors
+
+
+⸻
+
+Inline editor
+
+Frontend page:
+
+/admin/data-loader
+
+Features:
+	•	Table view of staging rows
+	•	Filter by sheet
+	•	Edit JSON fields inline
+	•	Re-run validation
+	•	Import button enabled only when all rows VALID
+
+⸻
+
+Transactional import
+
+File:
+
+server/data-loader/importer.ts
+
+Rules:
+	•	Wrap entire import in DB transaction
+	•	Insert data into production tables
+	•	If any error occurs → rollback
+
+⸻
+
+System check
+
+File:
+
+server/data-loader/system-check.ts
+
+Verify:
+
+business exists
+tax exists
+payment method exists
+category exists
+product exists
+employee exists
+
+If all pass:
+
+tenant status = READY
+
+
+⸻
+
+Tasks
+
+T001
+
+Create migration + install xlsx
+
+T002
+
+Column alias mapper
+
+T003
+
+Excel parser
+
+T004
+
+Staging loader
+
+T005
+
+Validation engine
+
+T006
+
+Inline editor UI
+
+T007
+
+Transactional importer
+
+T008
+
+System check
+
+⸻
+
+Acceptance Criteria
+	1.	Excel upload creates a session
+	2.	Rows appear in staging
+	3.	Validation flags errors
+	4.	Inline edits update rows
+	5.	Import runs transactionally
+	6.	Rollback occurs on failure
+	7.	System check validates environment
+	8.	Tenant marked ready
+
+⸻
+
+Definition of Done
+
+Implementation is complete when:
+	•	Excel upload works
+	•	Staging rows created
+	•	Validation engine operational
+	•	Inline editor functional
+	•	Import runs in transaction
+	•	System check passes
+	•	Tenant becomes operational
+
+⸻
+
+Si quieres, en el siguiente paso también puedo darte algo muy útil para evitar que el agente se equivoque:
+
+1️⃣ Plantilla Excel real descargable para clientes
+2️⃣ Mapa visual Excel → Staging → RMS tables
+3️⃣ Lista de errores típicos del import y cómo detectarlos automáticamente
+
+Eso reduce muchísimo los bugs en onboarding.

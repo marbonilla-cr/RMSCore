@@ -1,0 +1,314 @@
+Está muy cerca de estar completo, pero todavía faltan 3 piezas pequeñas pero críticas para que el agente no deje el sistema a medio conectar. Si lo ejecutas exactamente como está ahora, el riesgo es que construya parser y staging, pero no termine el flujo completo.
+
+Te señalo lo que falta y cómo debe quedar.
+
+⸻
+
+1. Falta terminar T004 (Upload endpoint)
+
+Tu texto quedó cortado en:
+
+Details…
+
+Debe quedar explícito así:
+
+T004 — Upload endpoint + staging writer
+
+Blocked By: [T001, T003]
+
+Details:
+
+Create Express router:
+
+server/data-loader/data-loader-routes.ts
+
+Endpoint:
+
+POST /api/admin/data-loader/upload
+
+Input:
+
+{
+  fileData: base64,
+  fileName: string
+}
+
+Validations:
+
+file extension must be .xlsx
+max file size 5MB
+
+Flow:
+	1.	create session
+
+status = uploaded
+
+	2.	parse Excel via excel-parser
+
+status = parsed
+
+	3.	insert rows into data_loader_staging
+
+validation_status = PENDING
+
+	4.	update session
+
+status = staged
+
+Return:
+
+{
+ sessionId,
+ sheetsFound,
+ rowCounts,
+ unmappedColumns
+}
+
+Error handling:
+
+session.status = failed
+error_message populated
+
+Register router in:
+
+server/routes.ts
+
+Acceptance:
+	•	Excel upload creates session
+	•	rows appear in staging
+	•	invalid file rejected
+
+⸻
+
+2. Falta el Validation Task (T005)
+
+Esto es obligatorio para que el flujo funcione.
+
+T005 — Validation Engine
+
+Blocked By: [T004]
+
+Create:
+
+server/data-loader/validation-engine.ts
+
+Endpoint:
+
+POST /api/admin/data-loader/sessions/:id/validate
+
+Process:
+
+Iterate all staging rows and validate:
+
+Required fields:
+
+business.name
+taxes.tax_name
+payment_methods.payment_name
+employees.employee_name
+categories.category_name
+products.product_name
+modifier_groups.group_name
+modifiers.modifier_name
+tables.table_name
+
+Referential validation:
+
+product.category exists in categories
+product.tax exists in taxes
+modifier.group_name exists in modifier_groups
+product_modifiers.product_name exists in products
+product_modifiers.group_name exists in modifier_groups
+
+Update row:
+
+validation_status = VALID
+or
+validation_status = INVALID
+validation_errors JSON
+
+If no invalid rows exist:
+
+session.status = validated
+
+Acceptance:
+	•	invalid rows flagged
+	•	validation errors visible
+	•	session moves to validated only if clean
+
+⸻
+
+3. Falta el Import Engine (T006)
+
+Esto ejecuta el bootstrap real.
+
+T006 — Transactional Import Engine
+
+Blocked By: [T005]
+
+Create:
+
+server/data-loader/import-engine.ts
+
+Endpoint:
+
+POST /api/admin/data-loader/sessions/:id/import
+
+Rules:
+
+Import only allowed if:
+
+session.status = validated
+
+Start transaction.
+
+Insert in strict order:
+
+business
+taxes
+payment_methods
+employees
+categories
+products
+modifier_groups
+modifiers
+product_modifiers
+tables
+hr_config
+
+Mark staging rows:
+
+imported = true
+
+Commit transaction.
+
+On failure:
+
+ROLLBACK
+session.status = failed
+
+Acceptance:
+	•	data appears in production tables
+	•	staging rows marked imported
+	•	rollback works
+
+⸻
+
+4. Falta el System Check (T007)
+
+Esto activa el tenant.
+
+T007 — System Check
+
+Blocked By: [T006]
+
+Create:
+
+server/data-loader/system-check.ts
+
+Function:
+
+runTenantBootstrapCheck(tenant_id)
+
+Verify minimum operational data:
+
+business exists
+>=1 employee
+>=1 category
+>=1 product
+>=1 payment method
+>=1 tax
+
+If OK:
+
+tenant_ready = true
+session.status = imported
+
+Else:
+
+return error list
+
+
+⸻
+
+5. Falta el Excel Template Endpoint
+
+Esto evita errores de usuario.
+
+T008 — Excel Template Generator
+
+Create:
+
+server/data-loader/excel-template.ts
+
+Endpoint:
+
+GET /api/admin/data-loader/template
+
+Generate Excel with sheets:
+
+Business
+Taxes
+PaymentMethods
+Employees
+Categories
+Products
+ModifierGroups
+Modifiers
+ProductModifiers
+Tables
+HRConfig
+
+Each sheet must contain correct headers.
+
+⸻
+
+Con estos 5 bloques el sistema queda completo
+
+Arquitectura final:
+
+Upload
+↓
+Parser
+↓
+Alias Mapping
+↓
+Staging Ledger
+↓
+Inline Editing
+↓
+Validation Engine
+↓
+Transactional Import
+↓
+System Check
+↓
+Tenant Ready
+
+
+⸻
+
+Veredicto final
+
+Tu diseño ahora es correcto para producción SaaS multi-tenant.
+
+Tiene:
+
+✔ staging layer
+✔ alias mapping
+✔ referential validation
+✔ transactional import
+✔ rollback
+✔ system readiness check
+✔ template generation
+
+Esto es exactamente el patrón que usan:
+	•	ERP loaders
+	•	restaurant POS onboarding
+	•	enterprise bootstrap systems
+
+⸻
+
+Si quieres, en el siguiente paso puedo también darte algo muy útil para lo que estás construyendo:
+
+el Excel maestro perfecto para restaurantes (50+ campos) que permitiría que un restaurante quede completamente configurado en un solo import.

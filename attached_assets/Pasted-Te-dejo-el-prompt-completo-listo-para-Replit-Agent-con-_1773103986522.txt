@@ -1,0 +1,518 @@
+Te dejo el prompt completo listo para Replit Agent, con mapeo determinístico (sin IA), arquitectura por etapas, historias, criterios de aceptación y Definition of Done para asegurar que todo quede funcional de extremo a extremo.
+
+⸻
+
+RMS — AI Data Loader (Deterministic v1)
+
+Tenant Bootstrap Import System
+
+Objetivo
+
+Construir un Data Loader para bootstrap de tenants que permita cargar un Excel maestro, mapear columnas mediante un sistema determinístico con alias, organizar la información en tablas de staging tipo ledger, permitir edición antes de importar, validar los datos y ejecutar un import transaccional seguro hacia las tablas productivas.
+
+Esta primera versión no usa IA.
+El parser será determinístico con alias flexibles.
+
+La capa de IA podrá agregarse posteriormente.
+
+⸻
+
+Principios arquitectónicos
+	1.	El Data Loader vive dentro del tenant, no en el core global.
+	2.	Nunca escribe directamente en tablas productivas.
+	3.	Usa staging tables tipo ledger.
+	4.	El import final es transaccional.
+	5.	El sistema ejecuta un system check automático antes de activar el tenant.
+
+⸻
+
+Flujo completo
+
+Excel Upload
+     ↓
+Deterministic Parser
+     ↓
+Column Alias Mapper
+     ↓
+Ledger Staging Tables
+     ↓
+Inline Data Editor
+     ↓
+Validation Engine
+     ↓
+Transactional Import
+     ↓
+System Check
+     ↓
+Tenant Ready
+
+
+⸻
+
+EPIC
+
+E-DL-001
+
+Tenant Bootstrap Data Loader
+
+Construir un sistema que permita cargar la configuración inicial de un tenant mediante Excel.
+
+El sistema debe:
+	•	aceptar un Excel
+	•	interpretar columnas mediante alias
+	•	cargar staging ledger
+	•	permitir edición
+	•	validar integridad
+	•	ejecutar import transaccional
+	•	ejecutar verificación automática
+
+⸻
+
+Historias de Usuario
+
+⸻
+
+HU-DL-001
+
+Subida del Excel
+
+Historia
+
+Como administrador de tenant
+quiero subir un archivo Excel
+para iniciar el proceso de importación de datos.
+
+Implementación
+
+Endpoint:
+
+POST /tenant/data-loader/upload
+
+Aceptar:
+
+.xlsx
+
+Guardar archivo en almacenamiento temporal del tenant.
+
+Registrar sesión de import.
+
+Tabla
+
+data_loader_sessions
+
+id
+tenant_id
+file_path
+status
+created_at
+
+Status posibles:
+
+uploaded
+parsed
+staged
+validated
+imported
+failed
+
+
+⸻
+
+Criterios de aceptación
+	1.	El sistema acepta archivos .xlsx.
+	2.	Si el archivo no es Excel, el sistema rechaza la carga.
+	3.	Se crea una sesión de import.
+	4.	El archivo se asocia al tenantId.
+
+⸻
+
+Definition of Done
+	•	endpoint funcional
+	•	archivo almacenado
+	•	sesión registrada
+	•	manejo de errores implementado
+
+⸻
+
+HU-DL-002
+
+Parser determinístico del Excel
+
+Historia
+
+Como sistema
+quiero leer el Excel y detectar las tablas
+para convertirlo en estructuras normalizadas.
+
+⸻
+
+Implementación
+
+Servicio:
+
+services/excelParser.ts
+
+Librería recomendada:
+
+xlsx
+
+Leer todas las hojas del Excel.
+
+Cada hoja se convierte en JSON.
+
+Ejemplo:
+
+[
+ { "nombre": "Hamburguesa", "precio": 8.5 },
+ { "nombre": "Pizza", "precio": 10 }
+]
+
+
+⸻
+
+Criterios de aceptación
+	1.	Todas las hojas del Excel se convierten a JSON.
+	2.	El parser detecta encabezados.
+	3.	Filas vacías se ignoran.
+
+⸻
+
+Definition of Done
+	•	parser estable
+	•	manejo de archivos grandes
+	•	logs de parsing
+
+⸻
+
+HU-DL-003
+
+Mapeo determinístico de columnas
+
+Historia
+
+Como sistema
+quiero mapear columnas del Excel al esquema RMS
+usando alias conocidos.
+
+⸻
+
+Implementación
+
+Archivo:
+
+config/columnAliases.ts
+
+Ejemplo:
+
+export const aliases = {
+
+product_name: [
+"name",
+"nombre",
+"producto",
+"product"
+],
+
+price: [
+"price",
+"precio",
+"costo"
+],
+
+category: [
+"category",
+"categoria"
+],
+
+employee_name: [
+"employee",
+"empleado",
+"name"
+]
+
+}
+
+El sistema debe normalizar encabezados.
+
+lowercase
+trim
+remove accents
+
+
+⸻
+
+Criterios de aceptación
+	1.	Columnas con alias válidos se mapean automáticamente.
+	2.	Columnas desconocidas se marcan como unmapped.
+	3.	El sistema reporta columnas faltantes obligatorias.
+
+⸻
+
+Definition of Done
+	•	alias engine funcional
+	•	normalización de encabezados
+	•	reporte de errores
+
+⸻
+
+HU-DL-004
+
+Ledger de staging
+
+Historia
+
+Como sistema
+quiero guardar los datos en tablas de staging
+para permitir edición antes del import.
+
+⸻
+
+Tablas de staging
+
+staging_business
+staging_taxes
+staging_payment_methods
+staging_employees
+staging_menu_categories
+staging_products
+staging_modifier_groups
+staging_modifiers
+staging_product_modifiers
+staging_tables
+
+Cada registro incluye:
+
+id
+tenant_id
+data_json
+validation_status
+created_at
+
+
+⸻
+
+Criterios de aceptación
+	1.	Los datos se almacenan en staging.
+	2.	No se escriben datos en tablas productivas.
+	3.	Cada fila tiene estado de validación.
+
+⸻
+
+Definition of Done
+	•	staging tables creadas
+	•	inserción funcional
+	•	aislamiento por tenant
+
+⸻
+
+HU-DL-005
+
+Editor inline del ledger
+
+Historia
+
+Como usuario
+quiero revisar y editar los datos
+antes de importar.
+
+⸻
+
+Implementación UI
+
+Pantalla:
+
+Admin → Data Loader
+
+Vista tipo spreadsheet.
+
+Columnas = campos
+Filas = registros
+
+Permitir:
+
+editar
+copiar
+pegar
+eliminar fila
+
+
+⸻
+
+Criterios de aceptación
+	1.	El usuario puede editar datos.
+	2.	Cambios se guardan en staging.
+	3.	Se muestran errores de validación.
+
+⸻
+
+Definition of Done
+	•	UI editable
+	•	guardado funcional
+	•	validación visible
+
+⸻
+
+HU-DL-006
+
+Motor de validación
+
+Historia
+
+Como sistema
+quiero validar integridad de datos
+antes del import.
+
+⸻
+
+Validaciones
+
+Ejemplos:
+
+productos deben tener nombre
+productos deben tener precio
+categorías deben existir
+empleados deben tener nombre
+impuestos deben tener porcentaje
+
+
+⸻
+
+Resultado
+
+{
+ "valid": true,
+ "errors": []
+}
+
+
+⸻
+
+Criterios de aceptación
+	1.	Datos inválidos bloquean el import.
+	2.	Errores muestran fila y campo.
+	3.	Validación ejecutable múltiples veces.
+
+⸻
+
+Definition of Done
+	•	motor de validación
+	•	mensajes claros
+	•	pruebas unitarias
+
+⸻
+
+HU-DL-007
+
+Import transaccional
+
+Historia
+
+Como sistema
+quiero mover datos de staging a tablas productivas
+de forma segura.
+
+⸻
+
+Implementación
+
+Servicio:
+
+services/importExecutor.ts
+
+Proceso:
+
+BEGIN TRANSACTION
+insert business
+insert taxes
+insert payment methods
+insert categories
+insert products
+insert modifiers
+insert employees
+COMMIT
+
+Si falla:
+
+ROLLBACK
+
+
+⸻
+
+Criterios de aceptación
+	1.	El import es atómico.
+	2.	Si falla un paso, nada se escribe.
+	3.	Logs detallados.
+
+⸻
+
+Definition of Done
+	•	transacción funcional
+	•	rollback probado
+	•	logs completos
+
+⸻
+
+HU-DL-008
+
+System Check
+
+Historia
+
+Como sistema
+quiero verificar que el tenant quedó operativo.
+
+⸻
+
+Validaciones
+
+negocio existe
+al menos un método de pago
+al menos un producto
+al menos un usuario
+
+
+⸻
+
+Resultado
+
+{
+ status: "ready"
+}
+
+
+⸻
+
+Criterios de aceptación
+	1.	El sistema detecta configuraciones faltantes.
+	2.	Reporta checklist.
+	3.	Si todo pasa, tenant queda activo.
+
+⸻
+
+Definition of Done
+	•	system check implementado
+	•	reporte visible
+	•	activación automática
+
+⸻
+
+Resultado final esperado
+
+Un nuevo tenant puede:
+
+1️⃣ subir Excel
+2️⃣ revisar datos
+3️⃣ validar
+4️⃣ importar
+5️⃣ empezar a vender
+
+sin configuración manual.
+
+⸻
+
+Si quieres, en el siguiente paso puedo darte también:
+	•	estructura exacta del Excel maestro
+	•	todas las columnas recomendadas
+	•	plantilla lista para descargar
+
+Eso acelera muchísimo el onboarding de clientes.

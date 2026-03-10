@@ -1,0 +1,499 @@
+Te dejo el prompt completo para Replit Agent, con todo lo necesario para que el módulo quede 100% funcional: estructura del Excel maestro, mapeo determinístico, tablas de staging (ledger), flujo completo, tareas, criterios de aceptación y Definition of Done. Está escrito para que el agente no tenga que inventar nada.
+
+⸻
+
+RMS — Tenant Bootstrap Data Loader
+
+Deterministic v1 (No AI)
+
+Objective
+
+Build a Tenant Bootstrap Data Loader that allows a new tenant to upload a Master Excel file containing initial operational data.
+
+The system must:
+	1.	Accept an Excel file
+	2.	Parse sheets using a deterministic column alias mapper
+	3.	Load rows into staging ledger tables
+	4.	Provide an inline editor for review
+	5.	Validate referential integrity
+	6.	Execute a transactional import
+	7.	Run an automatic system check
+	8.	Mark tenant ready for operation
+
+This version does not use AI.
+Parsing uses deterministic alias mapping.
+
+AI-assisted parsing can be added in a future version.
+
+⸻
+
+Architectural Principles
+	•	Runs inside the tenant scope
+	•	Never writes directly to production tables
+	•	Uses ledger staging tables
+	•	Import must be transactional
+	•	A system check agent validates the environment
+
+⸻
+
+System Flow
+
+Excel Upload
+↓
+Excel Parser
+↓
+Column Alias Mapper
+↓
+Ledger Staging Tables
+↓
+Inline Editor
+↓
+Validation Engine
+↓
+Transactional Import
+↓
+System Check
+↓
+Tenant Ready
+
+
+⸻
+
+MASTER EXCEL STRUCTURE
+
+The Excel file must contain the following sheets.
+
+Missing sheets are allowed but will be skipped.
+
+Business
+Taxes
+PaymentMethods
+Employees
+Categories
+Products
+ModifierGroups
+Modifiers
+ProductModifiers
+Tables
+HRConfig
+
+
+⸻
+
+SHEET STRUCTURES
+
+Business
+
+One row only.
+
+Columns:
+
+name
+currency
+timezone
+address
+service_percentage
+default_tax_name
+
+Example:
+
+name	currency	timezone	address	service_percentage	default_tax_name
+La Antigua Lecheria	CRC	America/Costa_Rica	Cartago	10	IVA
+
+
+⸻
+
+Taxes
+
+name
+percentage
+inclusive
+
+Example:
+
+name	percentage	inclusive
+IVA	13	false
+
+
+⸻
+
+PaymentMethods
+
+name
+type
+active
+
+Example:
+
+name	type	active
+Cash	cash	true
+Card	card	true
+
+
+⸻
+
+Employees
+
+employee_name
+role
+email
+active
+
+Example:
+
+employee_name	role	email	active
+Admin	admin	admin@restaurant.com	true
+
+
+⸻
+
+Categories
+
+category_name
+parent_category
+
+Example:
+
+category_name	parent_category
+Hamburguesas	
+Bebidas	
+
+
+⸻
+
+Products
+
+product_name
+category
+price
+tax_name
+active
+
+Example:
+
+product_name	category	price	tax_name	active
+Hamburguesa Clasica	Hamburguesas	4500	IVA	true
+
+
+⸻
+
+ModifierGroups
+
+group_name
+selection_type
+required
+
+Example:
+
+group_name	selection_type	required
+Tipo de Pan	single	true
+
+
+⸻
+
+Modifiers
+
+modifier_name
+group_name
+price_delta
+
+Example:
+
+modifier_name	group_name	price_delta
+Pan Brioche	Tipo de Pan	0
+
+
+⸻
+
+ProductModifiers
+
+product_name
+group_name
+
+Example:
+
+product_name	group_name
+Hamburguesa Clasica	Tipo de Pan
+
+
+⸻
+
+Tables
+
+table_name
+area
+capacity
+
+Example:
+
+table_name	area	capacity
+M1	Main	4
+
+
+⸻
+
+HRConfig
+
+service_distribution_pct
+
+Example:
+
+service_distribution_pct
+0.7
+
+
+⸻
+
+COLUMN ALIAS MAP
+
+Parser must normalize column names.
+
+Example alias map:
+
+product_name → ["product","producto","name","nombre"]
+price → ["price","precio","costo"]
+category → ["category","categoria"]
+employee_name → ["employee","empleado","name"]
+tax_name → ["tax","impuesto"]
+group_name → ["group","grupo"]
+modifier_name → ["modifier","modificador"]
+
+Aliases are case-insensitive.
+
+⸻
+
+STAGING LEDGER TABLES
+
+Migration file:
+
+migrations/0004_data_loader_staging.sql
+
+
+⸻
+
+data_loader_sessions
+
+Tracks import sessions.
+
+id UUID PK
+tenant_id UUID
+status TEXT
+file_name TEXT
+sheets_found TEXT[]
+error_message TEXT
+created_by UUID
+created_at TIMESTAMP
+updated_at TIMESTAMP
+
+Status values:
+
+uploaded
+parsed
+staged
+validated
+imported
+failed
+
+
+⸻
+
+data_loader_staging
+
+Stores each parsed row.
+
+id UUID PK
+session_id UUID FK
+sheet_name TEXT
+row_index INTEGER
+data_json JSONB
+validation_status TEXT
+validation_errors JSONB
+imported BOOLEAN
+created_at TIMESTAMP
+updated_at TIMESTAMP
+
+Indexes:
+
+(session_id)
+(session_id, sheet_name)
+
+
+⸻
+
+TASKS
+
+⸻
+
+T001 — Create staging migration
+
+Create staging schema and install Excel parser.
+
+Tasks:
+	•	Create migration 0004_data_loader_staging.sql
+	•	Install xlsx (SheetJS)
+	•	Ensure migration runs at startup
+
+Acceptance Criteria:
+	•	Tables exist
+	•	Migration executes without errors
+	•	Excel library loads
+
+Definition of Done:
+	•	Migration committed
+	•	Tables visible in DB
+	•	Server starts successfully
+
+⸻
+
+T002 — Excel parser service
+
+Create parser:
+
+server/data-loader/excel-parser.ts
+
+Responsibilities:
+	•	Read workbook
+	•	Detect sheets
+	•	Convert rows to JSON
+	•	Normalize headers via alias map
+
+Acceptance:
+	•	Parser reads all sheets
+	•	Rows converted to JSON
+
+DoD:
+	•	Parser returns structured output
+	•	No crash on missing sheets
+
+⸻
+
+T003 — Column alias mapper
+
+Create:
+
+server/data-loader/column-aliases.ts
+
+Responsibilities:
+	•	Normalize column names
+	•	Map alias → canonical field
+
+Acceptance:
+	•	Aliases correctly resolved
+	•	Unknown columns ignored
+
+DoD:
+	•	Alias mapping tested
+
+⸻
+
+T004 — Staging writer
+
+Insert rows into staging table.
+
+File:
+
+server/data-loader/staging-writer.ts
+
+Acceptance:
+	•	Rows stored with sheet_name
+	•	session_id linked
+
+DoD:
+	•	All rows visible in staging
+
+⸻
+
+T005 — Inline ledger editor API
+
+Create endpoints:
+
+GET /data-loader/session/:id
+PATCH /data-loader/row/:id
+
+Acceptance:
+	•	Client can edit row data
+
+DoD:
+	•	Edits persist in staging
+
+⸻
+
+T006 — Validation engine
+
+Validation rules:
+
+Products.category must exist in Categories
+Products.tax_name must exist in Taxes
+Modifiers.group_name must exist
+
+Acceptance:
+	•	Invalid rows flagged
+	•	Errors stored in validation_errors
+
+DoD:
+	•	validation_status updated
+
+⸻
+
+T007 — Transactional import
+
+Create importer:
+
+server/data-loader/importer.ts
+
+Import order:
+
+Business
+Taxes
+PaymentMethods
+Categories
+Employees
+Products
+ModifierGroups
+Modifiers
+ProductModifiers
+Tables
+HRConfig
+
+Acceptance:
+	•	Import runs inside DB transaction
+
+DoD:
+	•	Rollback on error
+
+⸻
+
+T008 — System check
+
+Verify tenant is operational.
+
+Checks:
+
+business exists
+tax exists
+payment methods exist
+at least one employee exists
+at least one product exists
+
+Acceptance:
+	•	Failures reported
+
+DoD:
+	•	Tenant flagged ready
+
+⸻
+
+FINAL RESULT
+
+After successful import:
+
+tenant.status = READY
+
+The tenant can immediately:
+	•	open POS
+	•	create orders
+	•	process payments
+
+⸻
+
+Si quieres, también puedo prepararte el Excel maestro oficial del RMS listo para entregar a clientes, con todas las hojas y columnas correctas para que el import funcione sin errores.

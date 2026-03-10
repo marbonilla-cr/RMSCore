@@ -1,0 +1,157 @@
+El plan está muy sólido, pero antes de ejecutarlo conviene cerrar algunos puntos que todavía pueden provocar fallos en la primera implementación. Son ajustes pequeños, pero importantes.
+
+⸻
+
+Ajustes recomendados
+
+1. Corrección en el CHECK de validation_status
+
+En SQL la sintaxis correcta es:
+
+CHECK (validation_status IN ('PENDING','VALID','INVALID'))
+
+En el plan aparece como CHECK(IN PENDING/VALID/INVALID) y eso fallará en la migración.
+
+⸻
+
+2. Definir valores por defecto para validation_status
+
+Para evitar filas sin estado cuando se insertan desde el parser:
+
+validation_status TEXT DEFAULT 'PENDING'
+CHECK (validation_status IN ('PENDING','VALID','INVALID'))
+
+
+⸻
+
+3. Asegurar tenant_id en staging
+
+El módulo es multi-tenant. Aunque el session_id ya vincula, es buena práctica agregar:
+
+tenant_id INTEGER
+
+en data_loader_staging para trazabilidad y seguridad.
+
+⸻
+
+4. Validación mínima obligatoria antes del import
+
+El validation-engine debe validar como mínimo:
+	•	Business: name, currency
+	•	Taxes: tax_name, percentage
+	•	PaymentMethods: payment_name
+	•	Employees: employee_name
+	•	Categories: category_name
+	•	Products: product_name, price
+	•	ModifierGroups: group_name
+	•	Modifiers: modifier_name, group_name
+	•	ProductModifiers: product_name, group_name
+	•	Tables: table_name
+
+Además:
+	•	product.category debe existir en categories
+	•	product.tax debe existir en taxes
+	•	modifier.group_name debe existir en modifier_groups
+	•	product_modifiers.product_name debe existir en products
+
+Si no se define esto, el agente solo validará estructura, no relaciones.
+
+⸻
+
+5. Definir explícitamente el endpoint de validación
+
+Debe existir:
+
+POST /api/admin/data-loader/sessions/:id/validate
+
+Función:
+	1.	recorrer todas las filas staging
+	2.	ejecutar validation-engine
+	3.	actualizar validation_status y validation_errors
+	4.	si no hay errores → session.status = validated
+
+⸻
+
+6. Definir explícitamente el endpoint de import
+
+Debe existir:
+
+POST /api/admin/data-loader/sessions/:id/import
+
+Reglas:
+	•	solo si session.status = validated
+	•	ejecutar transacción
+	•	usar el Import Dependency Order
+	•	marcar filas como imported = true
+
+Si ocurre error:
+
+ROLLBACK
+session.status = failed
+
+
+⸻
+
+7. Definir el System Check
+
+Crear función:
+
+runTenantBootstrapCheck(tenant_id)
+
+Debe validar mínimo:
+	•	existe business
+	•	existe ≥1 employee
+	•	existe ≥1 category
+	•	existe ≥1 product
+	•	existe ≥1 payment_method
+	•	existe ≥1 tax
+
+Si todo está correcto:
+
+session.status = imported
+tenant_ready = true
+
+
+⸻
+
+8. Límite de archivo en endpoint upload
+
+En POST /upload:
+	•	validar extensión .xlsx
+	•	tamaño máximo 5MB
+
+⸻
+
+9. Definir endpoint para descargar plantilla Excel
+
+Muy recomendable para producción:
+
+GET /api/admin/data-loader/template
+
+Debe generar un Excel con todas las hojas y columnas correctas.
+
+Esto evita errores de usuario.
+
+⸻
+
+Veredicto técnico
+
+Con esos ajustes:
+	•	arquitectura ✔
+	•	staging ledger ✔
+	•	alias mapping ✔
+	•	edición inline ✔
+	•	validación ✔
+	•	import transaccional ✔
+	•	system check ✔
+
+El módulo queda listo para ejecutarse en producción.
+
+Tu diseño es correcto para SaaS multi-tenant y el enfoque de staging + validación previa es el mismo que se usa en sistemas empresariales para cargas masivas.
+
+⸻
+
+Si quieres, en el siguiente paso puedo ayudarte a:
+	•	definir la plantilla Excel exacta que generará el endpoint /template
+	•	optimizar el validation-engine para evitar N+1 queries
+	•	o diseñar la evolución futura del Data Loader con IA sin romper esta versión determinística.
