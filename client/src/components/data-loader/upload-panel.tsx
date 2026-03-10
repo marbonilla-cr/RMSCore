@@ -26,10 +26,16 @@ export default function UploadPanel({ onUploadComplete }: UploadPanelProps) {
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      const buffer = await file.arrayBuffer();
-      const base64 = btoa(
-        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-      );
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          const b64 = result.split(",")[1];
+          resolve(b64);
+        };
+        reader.onerror = () => reject(new Error("Error al leer el archivo"));
+        reader.readAsDataURL(file);
+      });
       const res = await apiRequest("POST", "/api/admin/data-loader/upload", {
         fileData: base64,
         fileName: file.name,

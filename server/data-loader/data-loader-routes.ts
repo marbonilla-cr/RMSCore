@@ -86,7 +86,33 @@ export function registerDataLoaderRoutes(app: any) {
       });
     } catch (error: any) {
       console.error("Data loader upload error:", error);
+      try {
+        const { fileData: _fd, ...safeBody } = req.body || {};
+        console.error("Data loader upload context:", JSON.stringify(safeBody));
+      } catch (_) {}
       res.status(500).json({ message: error.message || "Error interno" });
+    }
+  });
+
+  router.delete("/sessions/:id", async (req: Request, res: Response) => {
+    try {
+      const sessionId = Number(req.params.id);
+      const [session] = (await db.execute(sql`
+        SELECT id, status FROM data_loader_sessions WHERE id = ${sessionId}
+      `)).rows;
+
+      if (!session) {
+        return res.status(404).json({ message: "Sesión no encontrada" });
+      }
+      if (session.status === "imported") {
+        return res.status(400).json({ message: "No se puede eliminar una sesión ya importada" });
+      }
+
+      await db.execute(sql`DELETE FROM data_loader_sessions WHERE id = ${sessionId}`);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Data loader delete session error:", error);
+      res.status(500).json({ message: error.message });
     }
   });
 

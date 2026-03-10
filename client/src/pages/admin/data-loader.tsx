@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, FileSpreadsheet, Clock, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Loader2, FileSpreadsheet, Clock, CheckCircle2, XCircle, AlertCircle, Trash2 } from "lucide-react";
 import UploadPanel from "@/components/data-loader/upload-panel";
 import StagingGrid from "@/components/data-loader/staging-grid";
 import ValidationPanel from "@/components/data-loader/validation-panel";
@@ -29,6 +31,7 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
 };
 
 export default function DataLoaderPage() {
+  const { toast } = useToast();
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<Session[]>({
@@ -42,6 +45,29 @@ export default function DataLoaderPage() {
     queryKey: ["/api/admin/data-loader/sessions", selectedSessionId],
     enabled: !!selectedSessionId,
   });
+
+  const deleteSessionMutation = useMutation({
+    mutationFn: async (sessionId: number) => {
+      await apiRequest("DELETE", `/api/admin/data-loader/sessions/${sessionId}`);
+    },
+    onSuccess: (_data, sessionId) => {
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId(null);
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/data-loader/sessions"] });
+      toast({ title: "Sesión eliminada" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleDeleteSession = (e: React.MouseEvent, sessionId: number) => {
+    e.stopPropagation();
+    if (confirm("¿Eliminar esta sesión y todos sus datos?")) {
+      deleteSessionMutation.mutate(sessionId);
+    }
+  };
 
   const handleUploadComplete = (sessionId: number) => {
     setSelectedSessionId(sessionId);
@@ -121,6 +147,18 @@ export default function DataLoaderPage() {
                       <Badge variant={config.variant} data-testid={`badge-session-status-${session.id}`}>
                         {config.label}
                       </Badge>
+                      {session.status !== "imported" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-red-600"
+                          onClick={(e) => handleDeleteSession(e, session.id)}
+                          disabled={deleteSessionMutation.isPending}
+                          data-testid={`button-delete-session-${session.id}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 );
