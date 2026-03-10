@@ -1,0 +1,554 @@
+Eres el agente de Replit trabajando en RMSCore. Stack: Express + TypeScript +
+Drizzle ORM + PostgreSQL multi-tenant (req.tenantSchema en cada request).
+El proyecto ya tiene una tabla "printers" con campos: id, name, type,
+ipAddress, port, paperWidth, enabled. El Admin Panel ya tiene la página
+client/src/pages/admin/printers.tsx funcionando con esos campos.
+
+OBJETIVO: Implementar el Módulo de Impresión WiFi. Hacer el sistema de
+impresión completamente configurable por tenant desde el Admin Panel,
+sin valores hardcodeados. Agregar soporte para "print bridges" — tablets
+Android que actúan como puente entre el servidor y las impresoras TCP/IP.
+
+NO tocar la lógica existente de impresión de recibos (print-receipt.ts).
+NO modificar el flujo de POS ni de comandas. Solo agregar infraestructura
+nueva de bridges y configuración.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASO 1 — MIGRACIÓN SQL
+Crear /migrations/0010_print_bridges.sql
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS print_bridges (
+  id           SERIAL PRIMARY KEY,
+  bridge_id    VARCHAR(100) NOT NULL UNIQUE,
+  display_name VARCHAR(200) NOT NULL,
+  token        VARCHAR(255) NOT NULL UNIQUE,
+  is_active    BOOLEAN NOT NULL DEFAULT true,
+  last_seen_at TIMESTAMP,
+  created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+--> statement-breakpoint
+ALTER TABLE printers
+  ADD COLUMN IF NOT EXISTS bridge_id VARCHAR(100);
+
+--> statement-breakpoint
+INSERT INTO print_bridges (bridge_id, display_name, token, is_active)
+SELECT 'bridge-001', 'Bridge Principal', 'bridge-token-local', true
+WHERE NOT EXISTS (
+  SELECT 1 FROM print_bridges WHERE bridge_id = 'bridge-001'
+);
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASO 2 — SCHEMA DRIZZLE
+En shared/schema.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Agregar el campo bridgeId a la tabla printers existente:
+  bridgeId: varchar("bridge_id", { length: 100 }),
+
+Agregar la nueva tabla printBridges:
+
+export const printBridges = pgTable("print_bridges", {
+  id:          serial("id").primaryKey(),
+  bridgeId:    varchar("bridge_id", { length: 100 }).notNull().unique(),
+  displayName: varchar("display_name", { length: 200 }).notNull(),
+  token:       varchar("token", { length: 255 }).notNull().unique(),
+  isActive:    boolean("is_active").notNull().default(true),
+  lastSeenAt:  timestamp("last_seen_at"),
+  createdAt:   timestamp("created_at").defaultNow(),
+});
+
+export type PrintBridge       = typeof printBridges.$inferSelect;
+export type InsertPrintBridge = typeof printBridges.$inferInsert;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASO 3 — CREAR server/services/print-service.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+import { getTenantDb } from '../db-tenant';
+import { printers, printBridges } from '../../shared/schema';
+import { eq, and } from 'drizzle-orm';
+import type { WebSocket } from 'ws';
+import { pool } from '../db';
+
+// Mapa global: token → conexión activa del bridge
+const bridgeConnections = new Map<string, {
+  ws:           WebSocket;
+  bridgeId:     string;
+  tenantSchema: string;
+  connectedAt:  Date;
+}>();
+
+export function registerBridge(
+  token: string,
+  bridgeId: string,
+  tenantSchema: string,
+  ws: WebSocket
+): void {
+  bridgeConnections.set(token, {
+    ws, bridgeId, tenantSchema, connectedAt: new Date()
+  });
+  console.log(`[print] Bridge registrado: ${bridgeId} (${tenantSchema})`);
+  getTenantDb(tenantSchema)
+    .update(printBridges)
+    .set({ lastSeenAt: new Date() })
+    .where(eq(printBridges.bridgeId, bridgeId))
+    .execute()
+    .catch(() => {});
+}
+
+export function unregisterBridge(token: string): void {
+  const c = bridgeConnections.get(token);
+  if (c) console.log(`[print] Bridge desconectado: ${c.bridgeId}`);
+  bridgeConnections.delete(token);
+}
+
+export async function validateBridgeToken(
+  token: string,
+  tenantSchema: string
+): Promise<{ valid: boolean; bridgeId?: string }> {
+  // Retrocompatibilidad: Surface Go sigue funcionando sin cambios
+  if (token && token === process.env.PRINT_BRIDGE_TOKEN) {
+    return { valid: true, bridgeId: 'bridge-001' };
+  }
+  try {
+    const db   = getTenantDb(tenantSchema);
+    const rows = await db
+      .select()
+      .from(printBridges)
+      .where(and(
+        eq(printBridges.token, token),
+        eq(printBridges.isActive, true)
+      ));
+    if (!rows.length) return { valid: false };
+    return { valid: true, bridgeId: rows[0].bridgeId };
+  } catch {
+    return { valid: false };
+  }
+}
+
+export async function authenticateBridgeByMessage(
+  token: string,
+  ws: WebSocket
+): Promise<boolean> {
+  try {
+    const { rows: tenants } = await pool.query(
+      `SELECT schema_name FROM public.tenants
+       WHERE is_active = true ORDER BY id`
+    );
+    for (const tenant of tenants) {
+      const result = await validateBridgeToken(token, tenant.schema_name);
+      if (result.valid && result.bridgeId) {
+        registerBridge(token, result.bridgeId, tenant.schema_name, ws);
+        ws.on('close', () => unregisterBridge(token));
+        ws.send(JSON.stringify({
+          type:     'CONNECTED',
+          bridgeId: result.bridgeId,
+          schema:   tenant.schema_name,
+        }));
+        return true;
+      }
+    }
+  } catch (err: any) {
+    console.error('[print] Error en authenticateBridgeByMessage:', err.message);
+  }
+  return false;
+}
+
+export async function dispatchPrintJob(
+  tenantSchema: string,
+  printerId: number,
+  payload: string,        // base64 ESC/POS
+  jobType: string = 'receipt'
+): Promise<{ success: boolean; error?: string }> {
+  const db = getTenantDb(tenantSchema);
+
+  const [printer] = await db
+    .select()
+    .from(printers)
+    .where(and(eq(printers.id, printerId), eq(printers.enabled, true)));
+
+  if (!printer)
+    return { success: false, error: 'Impresora no encontrada o inactiva' };
+  if (!printer.bridgeId)
+    return { success: false, error: 'Impresora sin bridge asignado' };
+
+  const [bridge] = await db
+    .select()
+    .from(printBridges)
+    .where(and(
+      eq(printBridges.bridgeId, printer.bridgeId),
+      eq(printBridges.isActive, true)
+    ));
+
+  if (!bridge)
+    return { success: false, error: 'Bridge no configurado' };
+
+  const conn = bridgeConnections.get(bridge.token);
+  if (!conn || conn.ws.readyState !== 1 /* WebSocket.OPEN */)
+    return { success: false, error: `Bridge "${bridge.displayName}" no conectado` };
+
+  conn.ws.send(JSON.stringify({
+    type:        'PRINT_JOB',
+    printerId,
+    printerIp:   printer.ipAddress,
+    printerPort: printer.port        ?? 9100,
+    paperWidth:  printer.paperWidth  ?? 80,
+    jobType,
+    payload,
+  }));
+
+  return { success: true };
+}
+
+export function isBridgeConnected(tenantSchema: string): boolean {
+  for (const conn of bridgeConnections.values()) {
+    if (conn.tenantSchema === tenantSchema && conn.ws.readyState === 1)
+      return true;
+  }
+  return false;
+}
+
+export function getConnectedBridgesForTenant(tenantSchema: string) {
+  return Array.from(bridgeConnections.entries())
+    .filter(([, c]) => c.tenantSchema === tenantSchema)
+    .map(([, c]) => ({
+      bridgeId:    c.bridgeId,
+      connectedAt: c.connectedAt,
+    }));
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASO 4 — ACTUALIZAR EL WEBSOCKET HANDLER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+En el archivo donde está wss.on('connection', ...), agregar soporte para
+DOS flujos de autenticación de bridge. Buscar el bloque que verifica
+PRINT_BRIDGE_TOKEN y reemplazarlo completo con esto:
+
+Agregar imports al inicio del archivo:
+  import {
+    registerBridge,
+    unregisterBridge,
+    validateBridgeToken,
+    authenticateBridgeByMessage,
+  } from './services/print-service';
+
+Dentro de wss.on('connection', async (ws, req) => { ... }):
+
+  // ── FLUJO A: header X-Bridge-Token (Surface Go / Node.js) ──
+  const headerToken = req.headers['x-bridge-token'] as string | undefined;
+  if (headerToken) {
+    let ok = false;
+    try {
+      const { rows: tenants } = await pool.query(
+        `SELECT schema_name FROM public.tenants
+         WHERE is_active = true ORDER BY id`
+      );
+      for (const t of tenants) {
+        const result = await validateBridgeToken(headerToken, t.schema_name);
+        if (result.valid && result.bridgeId) {
+          registerBridge(headerToken, result.bridgeId, t.schema_name, ws);
+          ws.on('close', () => unregisterBridge(headerToken));
+          ws.on('message', (data) => {
+            try {
+              const msg = JSON.parse(data.toString());
+              if (msg.type === 'PING')
+                ws.send(JSON.stringify({ type: 'PONG' }));
+              if (msg.type === 'PRINT_ACK')
+                console.log(`[print] ACK bridge=${result.bridgeId} printer=${msg.printerId} ok=${msg.success}`);
+            } catch {}
+          });
+          ws.send(JSON.stringify({
+            type: 'CONNECTED', bridgeId: result.bridgeId
+          }));
+          ok = true;
+          break;
+        }
+      }
+      if (!ok) { ws.close(1008, 'Token inválido'); return; }
+    } catch (err: any) {
+      console.error('[ws] Error auth bridge header:', err.message);
+      ws.close(1011, 'Error interno');
+    }
+    return; // Es un bridge — no continuar con lógica de usuarios
+  }
+
+  // ── FLUJO B: sin header — puede ser bridge Capacitor o usuario normal ──
+  // Los bridges Capacitor no pueden mandar headers custom (restricción del browser).
+  // Mandan { type: 'AUTH', token } como primer mensaje.
+  // Damos 5s para que llegue ese mensaje antes de asumir que es un usuario normal.
+
+  let bridgeAuthResolved = false;
+  const authTimeout = setTimeout(() => {
+    bridgeAuthResolved = true; // tiempo agotado, asumir usuario normal
+  }, 5000);
+
+  const originalMessageHandler = /* guardar referencia al handler existente
+    de mensajes de usuarios si existe, para restaurarlo después */ null;
+
+  ws.on('message', async (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+
+      // Intento de auth de bridge Capacitor
+      if (!bridgeAuthResolved && msg.type === 'AUTH') {
+        clearTimeout(authTimeout);
+        bridgeAuthResolved = true;
+        const authenticated = await authenticateBridgeByMessage(msg.token, ws);
+        if (!authenticated) {
+          ws.send(JSON.stringify({
+            type: 'AUTH_ERROR', message: 'Token inválido'
+          }));
+          ws.close(1008);
+        }
+        return;
+      }
+
+      // Mensajes de bridge ya autenticado (Flujo B post-auth)
+      if (msg.type === 'PING') {
+        ws.send(JSON.stringify({ type: 'PONG' }));
+        return;
+      }
+      if (msg.type === 'PRINT_ACK') {
+        console.log(`[print] ACK printer=${msg.printerId} ok=${msg.success}`);
+        return;
+      }
+
+      // ── Aquí va el handler existente de mensajes de usuarios normales ──
+      // NO borrar la lógica existente de mensajes de la app
+
+    } catch {}
+  });
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASO 5 — RUTAS API ADMIN
+En el archivo de rutas admin, agregar DESPUÉS de las rutas existentes
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Agregar imports:
+  import {
+    isBridgeConnected,
+    getConnectedBridgesForTenant,
+    dispatchPrintJob,
+  } from '../services/print-service';
+  import { printBridges } from '../../shared/schema';
+  import { eq } from 'drizzle-orm';
+  import crypto from 'crypto';
+
+// REEMPLAZAR el handler de GET /api/admin/print-bridge/status
+// (ruta que ya existe — solo cambiar el body del handler):
+router.get('/print-bridge/status', requireAuth, (req, res) => {
+  res.json({ available: isBridgeConnected(req.tenantSchema) });
+});
+
+// AGREGAR las siguientes rutas nuevas:
+
+router.get('/print-bridges', requireAuth, async (req, res) => {
+  try {
+    const db   = getTenantDb(req.tenantSchema);
+    const rows = await db.select({
+      id:          printBridges.id,
+      bridgeId:    printBridges.bridgeId,
+      displayName: printBridges.displayName,
+      isActive:    printBridges.isActive,
+      lastSeenAt:  printBridges.lastSeenAt,
+      createdAt:   printBridges.createdAt,
+    }).from(printBridges).orderBy(printBridges.createdAt);
+
+    const live = new Set(
+      getConnectedBridgesForTenant(req.tenantSchema).map(c => c.bridgeId)
+    );
+    res.json(rows.map(b => ({ ...b, isConnected: live.has(b.bridgeId) })));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/print-bridges', requireAuth, async (req, res) => {
+  try {
+    const { displayName } = req.body;
+    if (!displayName?.trim())
+      return res.status(400).json({ error: 'displayName requerido' });
+    const db       = getTenantDb(req.tenantSchema);
+    const token    = `rms-${crypto.randomBytes(20).toString('hex')}`;
+    const bridgeId = `bridge-${crypto.randomBytes(4).toString('hex')}`;
+    const [created] = await db
+      .insert(printBridges)
+      .values({ bridgeId, displayName: displayName.trim(), token, isActive: true })
+      .returning();
+    res.status(201).json(created); // token completo solo en creación
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/print-bridges/:id', requireAuth, async (req, res) => {
+  try {
+    const db      = getTenantDb(req.tenantSchema);
+    const updates: any = {};
+    if (req.body.displayName !== undefined) updates.displayName = req.body.displayName;
+    if (req.body.isActive    !== undefined) updates.isActive    = req.body.isActive;
+    const [updated] = await db
+      .update(printBridges).set(updates)
+      .where(eq(printBridges.id, parseInt(req.params.id)))
+      .returning();
+    const { token: _t, ...safe } = updated;
+    res.json(safe);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/print-bridges/:id/regenerate-token', requireAuth, async (req, res) => {
+  try {
+    const db    = getTenantDb(req.tenantSchema);
+    const token = `rms-${crypto.randomBytes(20).toString('hex')}`;
+    await db.update(printBridges).set({ token })
+      .where(eq(printBridges.id, parseInt(req.params.id)));
+    res.json({ token }); // completo — el admin debe copiarlo ahora
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/printers/:id/test', requireAuth, async (req, res) => {
+  try {
+    const testPayload = Buffer.concat([
+      Buffer.from('\x1B\x40'),            // Init impresora
+      Buffer.from('\x1B\x61\x01'),        // Centrar
+      Buffer.from('\x1B\x21\x30'),        // Texto doble tamaño
+      Buffer.from('RMSCore\n'),
+      Buffer.from('\x1B\x21\x00'),        // Texto normal
+      Buffer.from('Prueba de impresion\n'),
+      Buffer.from(new Date().toLocaleString('es-CR') + '\n\n\n'),
+      Buffer.from('\x1D\x56\x41\x10'),    // Corte parcial
+    ]).toString('base64');
+
+    const result = await dispatchPrintJob(
+      req.tenantSchema,
+      parseInt(req.params.id),
+      testPayload,
+      'test'
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ACTUALIZAR el PATCH existente de /api/admin/printers/:id:
+// Agregar estas líneas en el objeto de updates antes del .execute():
+//   if (body.bridgeId !== undefined) updates.bridgeId = body.bridgeId || null;
+// Esto permite asignar/desasignar el bridge desde el formulario.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PASO 6 — ACTUALIZAR client/src/pages/admin/printers.tsx
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+El archivo ya existe con campos: name, type, ipAddress, port,
+paperWidth, enabled. Mantener TODO lo existente y AGREGAR:
+
+1. Nuevo query de bridges (polling 15s):
+   const { data: bridgesList = [] } = useQuery({
+     queryKey: ["/api/admin/print-bridges"],
+     refetchInterval: 15000,
+   });
+
+2. Agregar al form state inicial: bridgeId: ""
+
+3. Agregar en openEdit(): bridgeId: printer.bridgeId ?? ""
+
+4. Agregar al formulario antes del Switch de "Activa":
+   <div className="space-y-1">
+     <Label>Bridge asignado</Label>
+     <Select
+       value={form.bridgeId || "none"}
+       onValueChange={(v) => setForm({ ...form, bridgeId: v === "none" ? "" : v })}
+     >
+       <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
+       <SelectContent>
+         <SelectItem value="none">Sin asignar</SelectItem>
+         {bridgesList.map((b: any) => (
+           <SelectItem key={b.bridgeId} value={b.bridgeId}>
+             <span className="flex items-center gap-2">
+               <span
+                 className="inline-block w-2 h-2 rounded-full"
+                 style={{ background: b.isConnected ? '#2ecc71' : '#e74c3c' }}
+               />
+               {b.displayName}
+             </span>
+           </SelectItem>
+         ))}
+       </SelectContent>
+     </Select>
+   </div>
+
+5. AGREGAR sección "Print Bridges" como Card ENCIMA de la lista de
+   impresoras. Estados locales necesarios:
+     const [bridgeOpen, setBridgeOpen] = useState(false);
+     const [bridgeName, setBridgeName] = useState("");
+     const [newToken, setNewToken] = useState<string | null>(null);
+
+   Mutation para crear bridge:
+   const createBridgeMutation = useMutation({
+     mutationFn: (displayName: string) =>
+       apiRequest("POST", "/api/admin/print-bridges", { displayName }).then(r => r.json()),
+     onSuccess: (data) => {
+       queryClient.invalidateQueries({ queryKey: ["/api/admin/print-bridges"] });
+       setNewToken(data.token); // mostrar token completo
+       setBridgeName("");
+     },
+     onError: (err: any) =>
+       toast({ title: "Error", description: err.message, variant: "destructive" }),
+   });
+
+   La Card de bridges incluye:
+   - Header: "Print Bridges" + botón "Nuevo Bridge" (abre Dialog)
+   - Lista de bridges: nombre, badge verde/rojo conectado, última conexión
+   - Dialog "Nuevo Bridge":
+     * Campo nombre del bridge
+     * Botón Crear
+     * Si newToken !== null: mostrar Alert con el token completo,
+       botón Copiar (navigator.clipboard.writeText), y texto en rojo:
+       "Copia este token ahora. No podrás verlo de nuevo."
+     * Botón Cerrar que limpia newToken y cierra el dialog
+
+6. AGREGAR botón de test junto al botón editar en cada impresora:
+   Mutation:
+   const testPrinterMutation = useMutation({
+     mutationFn: (id: number) =>
+       apiRequest("POST", `/api/admin/printers/${id}/test`).then(r => r.json()),
+     onSuccess: (data) =>
+       toast({ title: data.success ? "✓ Impresión enviada" : "Error: " + data.error }),
+     onError: (err: any) =>
+       toast({ title: "Error", description: err.message, variant: "destructive" }),
+   });
+
+   Botón (junto al ícono de editar):
+   <Button size="icon" variant="ghost"
+     onClick={() => testPrinterMutation.mutate(printer.id)}
+     title="Probar impresión"
+     data-testid={`button-test-printer-${printer.id}`}
+   >
+     <Send className="w-4 h-4" />
+   </Button>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITERIOS DE ACEPTACIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+□ Migración SQL aplica sin errores al hacer deploy
+□ La Surface Go sigue conectándose sin ningún cambio
+  (bridge-token-local válido por fallback a PRINT_BRIDGE_TOKEN env var)
+□ GET /api/admin/print-bridges devuelve lista con isConnected
+□ POST /api/admin/print-bridges devuelve token completo solo en creación
+□ PATCH /api/admin/printers/:id guarda bridgeId correctamente
+□ El formulario de impresora muestra selector de bridge con estado live
+□ La sección Print Bridges muestra verde/rojo según conexión
+□ Al crear un bridge el token aparece una sola vez con botón copiar
+□ POST /api/admin/printers/:id/test devuelve { success: true } cuando
+  el bridge está conectado, o { success: false, error: "..." } si no
+□ El botón de test por impresora muestra toast con resultado

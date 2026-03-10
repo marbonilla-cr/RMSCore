@@ -26,7 +26,7 @@ The system is built as a PWA with a mobile-first approach, ensuring broad access
     -   **Timezone Management:** Tenant-aware timezone system via `server/utils/timezone.ts`. Each tenant stores its timezone in `business_config.timezone` (default: `America/Costa_Rica`). All business date calculations use `getTenantTimezone(schema)`, `getBusinessDateInTZ(tz)`, `getNowInTZ(tz)`. Cache with 5-min TTL, invalidated on business config save. NEVER hardcode `America/Costa_Rica` — always use the utility functions.
     -   **Payment Integrity:** Robust payment validation, voiding, cash session management, and tax snapshotting.
     -   **Order Consecutives:** Daily and global order numbering.
-    -   **Multi-Printer Support:** Configurable auto-printing.
+    -   **Multi-Printer Support:** Configurable auto-printing. WiFi Print Bridge system (`server/services/print-service.ts`) supports tablet-based bridges (Android Capacitor + Surface Go Node.js) connecting via WebSocket to relay ESC/POS jobs to TCP/IP printers. Bridge CRUD via `/api/admin/print-bridges`. Each printer can be assigned a `bridgeId`. Dual auth flows: header-based (X-Bridge-Token) and message-based (AUTH type). Migration: `0010_print_bridges.sql`. Schema: `printBridges` table + `printers.bridgeId` field.
     -   **HTML Sanitization:** Global middleware to strip HTML tags from request bodies.
     -   **Performance Optimizations:** Database connection pooling, batch transactions for inventory deduction, parallel queries for hot endpoints, specialized API endpoints for reduced payload sizes (e.g., POS tables snapshot), and optimized payment/item addition flows. Extensive database indexing.
     -   **Dynamic Polling:** Uses WebSocket connectivity to adjust polling frequency for real-time data.

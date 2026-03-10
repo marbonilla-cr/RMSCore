@@ -20,6 +20,18 @@ import { tenantMiddleware } from "./middleware/tenant";
 import { registerDispatchRoutes, registerDispatchSession, notifyDispatchReady } from "./dispatch-routes";
 import { registerProvisionRoutes } from "./provision/provision-routes";
 import { registerDataLoaderRoutes } from "./data-loader/data-loader-routes";
+import {
+  registerBridge,
+  unregisterBridge,
+  validateBridgeToken,
+  authenticateBridgeByMessage,
+  isBridgeConnected,
+  getConnectedBridgesForTenant,
+  dispatchPrintJobViaBridge,
+} from "./services/print-service";
+import { printBridges as printBridgesTable } from "../shared/schema";
+import { pool } from "./db";
+import { getTenantDb } from "./db-tenant";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
@@ -1254,6 +1266,7 @@ export async function registerRoutes(
       const data = { ...req.body };
       if (data.port !== undefined) data.port = Number(data.port) || 9100;
       if (data.paperWidth !== undefined) data.paperWidth = Number(data.paperWidth) || 80;
+      if (data.bridgeId !== undefined) data.bridgeId = data.bridgeId || null;
       const printer = await storage.updatePrinter(parseInt(req.params.id as string), data);
       if (!printer) return res.status(404).json({ message: "Impresora no encontrada" });
       res.json(printer);
@@ -6138,6 +6151,10 @@ export async function registerRoutes(
 
   const BRIDGE_TOKEN = process.env.PRINT_BRIDGE_TOKEN || "bridge-token-local";
 
+  const isBridgeToken = (token: string): boolean => {
+    return token === BRIDGE_TOKEN;
+  };
+
   const wsHandshakeTracker = new Map<string, { count: number; resetAt: number }>();
   const WS_HANDSHAKE_MAX = 30;
   const WS_HANDSHAKE_WINDOW = 60000;
@@ -6172,17 +6189,10 @@ export async function registerRoutes(
 
     const urlParams = new URLSearchParams((request.url || "").split("?")[1] || "");
     const bridgeToken = urlParams.get("bridge_token") || request.headers["x-bridge-token"] as string;
-    if (bridgeToken && bridgeToken === BRIDGE_TOKEN) {
-      console.log("[WS] bridge connected");
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit("connection", ws, request, "bridge");
-      });
-      return;
-    }
     if (bridgeToken) {
-      console.log("[WS] bridge auth failed");
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request, "bridge_header");
+      });
       return;
     }
 
@@ -6208,11 +6218,92 @@ export async function registerRoutes(
     }
   });
 
-  wss.on("connection", (ws, _request, clientType?: string) => {
+  wss.on("connection", async (ws, _request, clientType?: string) => {
+    if (clientType === "bridge_header") {
+      const headerToken = _request.headers['x-bridge-token'] as string
+        || new URLSearchParams((_request.url || "").split("?")[1] || "").get("bridge_token")
+        || "";
+      let ok = false;
+      try {
+        const { rows: tenants } = await pool.query(
+          `SELECT schema_name FROM public.tenants
+           WHERE is_active = true ORDER BY id`
+        );
+        for (const t of tenants) {
+          const result = await validateBridgeToken(headerToken, t.schema_name);
+          if (result.valid && result.bridgeId) {
+            registerBridge(headerToken, result.bridgeId, t.schema_name, ws);
+            printBridges.set(result.bridgeId, ws);
+            ws.on('close', () => {
+              unregisterBridge(headerToken);
+              printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
+            });
+            ws.on('error', () => {
+              printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
+            });
+            ws.on('message', (data) => {
+              try {
+                const msg = JSON.parse(data.toString());
+                if (msg.type === 'PING' || msg.type === 'ping')
+                  ws.send(JSON.stringify({ type: 'PONG' }));
+                if (msg.type === 'PRINT_ACK')
+                  console.log(`[print] ACK bridge=${result.bridgeId} printer=${msg.printerId} ok=${msg.success}`);
+                if (msg.type === "print_bridge_register") {
+                  const bridgeId = msg.payload?.bridgeId || "unknown";
+                  printBridges.set(bridgeId, ws);
+                  console.log(`[PrintBridge] Registrado: ${bridgeId}`);
+                  ws.send(JSON.stringify({ type: "pong" }));
+                }
+              } catch {}
+            });
+            ws.send(JSON.stringify({
+              type: 'CONNECTED', bridgeId: result.bridgeId
+            }));
+            ok = true;
+            break;
+          }
+        }
+        if (!ok) { ws.close(1008, 'Token inválido'); return; }
+      } catch (err: any) {
+        console.error('[ws] Error auth bridge header:', err.message);
+        ws.close(1011, 'Error interno');
+      }
+      return;
+    }
+
     wsClients.add(ws);
-    ws.on("message", (raw) => {
+
+    let bridgeAuthResolved = false;
+    const authTimeout = setTimeout(() => {
+      bridgeAuthResolved = true;
+    }, 5000);
+
+    ws.on("message", async (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
+
+        if (!bridgeAuthResolved && msg.type === 'AUTH') {
+          clearTimeout(authTimeout);
+          bridgeAuthResolved = true;
+          const authenticated = await authenticateBridgeByMessage(msg.token, ws);
+          if (!authenticated) {
+            ws.send(JSON.stringify({
+              type: 'AUTH_ERROR', message: 'Token inválido'
+            }));
+            ws.close(1008);
+          }
+          return;
+        }
+
+        if (msg.type === 'PING') {
+          ws.send(JSON.stringify({ type: 'PONG' }));
+          return;
+        }
+        if (msg.type === 'PRINT_ACK') {
+          console.log(`[print] ACK printer=${msg.printerId} ok=${msg.success}`);
+          return;
+        }
+
         if (msg.type === "ping") {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "pong" }));
@@ -6243,9 +6334,8 @@ export async function registerRoutes(
     });
   });
 
-  app.get("/api/admin/print-bridge/status", requireRole("MANAGER"), (_req, res) => {
-    const dispatch = (app as any).dispatchPrintJob;
-    res.json({ available: typeof dispatch === "function" });
+  app.get("/api/admin/print-bridge/status", requireRole("MANAGER"), (req, res) => {
+    res.json({ available: isBridgeConnected(req.tenantSchema) });
   });
 
   app.post("/api/admin/print-bridge/test", requireRole("MANAGER"), async (_req, res) => {
@@ -6264,6 +6354,99 @@ export async function registerRoutes(
       return res.status(503).json({ ok: false, error: "No hay bridge conectado" });
     }
     return res.json({ ok: true });
+  });
+
+  app.get("/api/admin/print-bridges", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const tdb = getTenantDb(req.tenantSchema);
+      const rows = await tdb.select({
+        id: printBridgesTable.id,
+        bridgeId: printBridgesTable.bridgeId,
+        displayName: printBridgesTable.displayName,
+        isActive: printBridgesTable.isActive,
+        lastSeenAt: printBridgesTable.lastSeenAt,
+        createdAt: printBridgesTable.createdAt,
+      }).from(printBridgesTable).orderBy(printBridgesTable.createdAt);
+
+      const live = new Set(
+        getConnectedBridgesForTenant(req.tenantSchema).map(c => c.bridgeId)
+      );
+      res.json(rows.map(b => ({ ...b, isConnected: live.has(b.bridgeId) })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/print-bridges", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const { displayName } = req.body;
+      if (!displayName?.trim())
+        return res.status(400).json({ error: 'displayName requerido' });
+      const tdb = getTenantDb(req.tenantSchema);
+      const token = `rms-${crypto.randomBytes(20).toString('hex')}`;
+      const bridgeId = `bridge-${crypto.randomBytes(4).toString('hex')}`;
+      const [created] = await tdb
+        .insert(printBridgesTable)
+        .values({ bridgeId, displayName: displayName.trim(), token, isActive: true })
+        .returning();
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/admin/print-bridges/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const tdb = getTenantDb(req.tenantSchema);
+      const updates: any = {};
+      if (req.body.displayName !== undefined) updates.displayName = req.body.displayName;
+      if (req.body.isActive !== undefined) updates.isActive = req.body.isActive;
+      const [updated] = await tdb
+        .update(printBridgesTable).set(updates)
+        .where(eq(printBridgesTable.id, parseInt(req.params.id)))
+        .returning();
+      const { token: _t, ...safe } = updated;
+      res.json(safe);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/print-bridges/:id/regenerate-token", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const tdb = getTenantDb(req.tenantSchema);
+      const token = `rms-${crypto.randomBytes(20).toString('hex')}`;
+      await tdb.update(printBridgesTable).set({ token })
+        .where(eq(printBridgesTable.id, parseInt(req.params.id)));
+      res.json({ token });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/printers/:id/test", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const testPayload = Buffer.concat([
+        Buffer.from('\x1B\x40'),
+        Buffer.from('\x1B\x61\x01'),
+        Buffer.from('\x1B\x21\x30'),
+        Buffer.from('RMSCore\n'),
+        Buffer.from('\x1B\x21\x00'),
+        Buffer.from('Prueba de impresion\n'),
+        Buffer.from(new Date().toLocaleString('es-CR') + '\n\n\n'),
+        Buffer.from('\x1D\x56\x41\x10'),
+      ]).toString('base64');
+
+      const result = await dispatchPrintJobViaBridge(
+        req.tenantSchema,
+        parseInt(req.params.id),
+        testPayload,
+        'test'
+      );
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.post("/api/admin/fix-loyverse-timestamps", requireRole("MANAGER"), async (_req, res) => {

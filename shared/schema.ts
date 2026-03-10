@@ -985,8 +985,22 @@ export const printers = pgTable("printers", {
   port: integer("port").notNull().default(9100),
   paperWidth: integer("paper_width").notNull().default(80),
   enabled: boolean("enabled").notNull().default(true),
+  bridgeId: varchar("bridge_id", { length: 100 }),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+export const printBridges = pgTable("print_bridges", {
+  id: serial("id").primaryKey(),
+  bridgeId: varchar("bridge_id", { length: 100 }).notNull().unique(),
+  displayName: varchar("display_name", { length: 200 }).notNull(),
+  token: varchar("token", { length: 255 }).notNull().unique(),
+  isActive: boolean("is_active").notNull().default(true),
+  lastSeenAt: timestamp("last_seen_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type PrintBridge = typeof printBridges.$inferSelect;
+export type InsertPrintBridge = typeof printBridges.$inferInsert;
 
 export const insertBusinessConfigSchema = createInsertSchema(businessConfig).omit({ id: true, updatedAt: true });
 export const insertPrinterSchema = createInsertSchema(printers).omit({ id: true, createdAt: true });

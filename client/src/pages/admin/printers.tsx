@@ -4,13 +4,14 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Printer, Loader2, Wifi, Send } from "lucide-react";
+import { Plus, Pencil, Trash2, Printer, Loader2, Wifi, Send, Copy, Router } from "lucide-react";
 import type { Printer as PrinterType } from "@shared/schema";
 
 const PRINTER_TYPES = [
@@ -32,10 +33,20 @@ export default function AdminPrintersPage() {
     port: 9100,
     paperWidth: 80,
     enabled: true,
+    bridgeId: "",
   });
+
+  const [bridgeOpen, setBridgeOpen] = useState(false);
+  const [bridgeName, setBridgeName] = useState("");
+  const [newToken, setNewToken] = useState<string | null>(null);
 
   const { data: printersList = [], isLoading } = useQuery<PrinterType[]>({
     queryKey: ["/api/admin/printers"],
+  });
+
+  const { data: bridgesList = [] } = useQuery<any[]>({
+    queryKey: ["/api/admin/print-bridges"],
+    refetchInterval: 15000,
   });
 
   const saveMutation = useMutation({
@@ -87,8 +98,29 @@ export default function AdminPrintersPage() {
     },
   });
 
+  const testPrinterMutation = useMutation({
+    mutationFn: (id: number) =>
+      apiRequest("POST", `/api/admin/printers/${id}/test`).then(r => r.json()),
+    onSuccess: (data) =>
+      toast({ title: data.success ? "Impresión enviada" : "Error: " + data.error }),
+    onError: (err: any) =>
+      toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const createBridgeMutation = useMutation({
+    mutationFn: (displayName: string) =>
+      apiRequest("POST", "/api/admin/print-bridges", { displayName }).then(r => r.json()),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/print-bridges"] });
+      setNewToken(data.token);
+      setBridgeName("");
+    },
+    onError: (err: any) =>
+      toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const resetForm = () => {
-    setForm({ name: "", type: "caja", ipAddress: "", port: 9100, paperWidth: 80, enabled: true });
+    setForm({ name: "", type: "caja", ipAddress: "", port: 9100, paperWidth: 80, enabled: true, bridgeId: "" });
     setEditing(null);
     setOpen(false);
   };
@@ -102,6 +134,7 @@ export default function AdminPrintersPage() {
       port: printer.port,
       paperWidth: printer.paperWidth,
       enabled: printer.enabled,
+      bridgeId: (printer as any).bridgeId ?? "",
     });
     setOpen(true);
   };
@@ -223,6 +256,32 @@ export default function AdminPrintersPage() {
                 </Select>
               </div>
 
+              <div className="space-y-1">
+                <Label>Bridge asignado</Label>
+                <Select
+                  value={form.bridgeId || "none"}
+                  onValueChange={(v) => setForm({ ...form, bridgeId: v === "none" ? "" : v })}
+                >
+                  <SelectTrigger data-testid="select-bridge">
+                    <SelectValue placeholder="Sin asignar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin asignar</SelectItem>
+                    {bridgesList.map((b: any) => (
+                      <SelectItem key={b.bridgeId} value={b.bridgeId}>
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="inline-block w-2 h-2 rounded-full"
+                            style={{ background: b.isConnected ? '#2ecc71' : '#e74c3c' }}
+                          />
+                          {b.displayName}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="flex items-center gap-2">
                 <Switch
                   id="enabled"
@@ -246,6 +305,120 @@ export default function AdminPrintersPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      <Card className="mb-4">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Router className="w-5 h-5" />
+              <CardTitle className="text-base">Print Bridges</CardTitle>
+            </div>
+            <Dialog open={bridgeOpen} onOpenChange={(o) => {
+              if (!o) { setNewToken(null); setBridgeName(""); }
+              setBridgeOpen(o);
+            }}>
+              <DialogTrigger asChild>
+                <Button size="sm" data-testid="button-add-bridge">
+                  <Plus className="w-4 h-4 mr-1" />
+                  Nuevo Bridge
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Nuevo Print Bridge</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  {newToken === null ? (
+                    <>
+                      <div className="space-y-1">
+                        <Label>Nombre del Bridge</Label>
+                        <Input
+                          data-testid="input-bridge-name"
+                          value={bridgeName}
+                          onChange={(e) => setBridgeName(e.target.value)}
+                          placeholder="Tablet Cocina"
+                        />
+                      </div>
+                      <Button
+                        onClick={() => bridgeName.trim() && createBridgeMutation.mutate(bridgeName.trim())}
+                        disabled={!bridgeName.trim() || createBridgeMutation.isPending}
+                        data-testid="button-create-bridge"
+                      >
+                        {createBridgeMutation.isPending && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+                        Crear
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Alert>
+                        <AlertDescription>
+                          <p className="font-mono text-xs break-all mb-2" data-testid="text-new-token">{newToken}</p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              navigator.clipboard.writeText(newToken);
+                              toast({ title: "Token copiado" });
+                            }}
+                            data-testid="button-copy-token"
+                          >
+                            <Copy className="w-4 h-4 mr-1" />
+                            Copiar
+                          </Button>
+                          <p className="text-red-600 dark:text-red-400 text-sm mt-2 font-medium">
+                            Copia este token ahora. No podrás verlo de nuevo.
+                          </p>
+                        </AlertDescription>
+                      </Alert>
+                      <Button
+                        variant="outline"
+                        onClick={() => { setNewToken(null); setBridgeOpen(false); }}
+                        data-testid="button-close-bridge-dialog"
+                      >
+                        Cerrar
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {bridgesList.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No hay bridges configurados</p>
+          ) : (
+            <div className="space-y-2">
+              {bridgesList.map((b: any) => (
+                <div key={b.id} className="flex items-center justify-between p-2 rounded border" data-testid={`card-bridge-${b.id}`}>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ background: b.isConnected ? '#2ecc71' : '#e74c3c' }}
+                      data-testid={`indicator-bridge-${b.id}`}
+                    />
+                    <div>
+                      <span className="font-medium text-sm" data-testid={`text-bridge-name-${b.id}`}>{b.displayName}</span>
+                      <div className="text-xs text-muted-foreground">
+                        {b.isConnected ? (
+                          <Badge variant="secondary" className="text-xs">Conectado</Badge>
+                        ) : (
+                          <span>
+                            {b.lastSeenAt
+                              ? `Última conexión: ${new Date(b.lastSeenAt).toLocaleString('es-CR')}`
+                              : "Sin conexión previa"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {!b.isActive && <Badge variant="outline">Inactivo</Badge>}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {isLoading ? (
         <div className="space-y-3">
@@ -284,10 +457,26 @@ export default function AdminPrintersPage() {
                         </span>
                         <span className="mx-1">·</span>
                         <span>{printer.paperWidth}mm</span>
+                        {(printer as any).bridgeId && (
+                          <>
+                            <span className="mx-1">·</span>
+                            <Router className="w-3 h-3" />
+                            <span>{bridgesList.find((b: any) => b.bridgeId === (printer as any).bridgeId)?.displayName || (printer as any).bridgeId}</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => testPrinterMutation.mutate(printer.id)}
+                      title="Probar impresión"
+                      data-testid={`button-test-printer-${printer.id}`}
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
