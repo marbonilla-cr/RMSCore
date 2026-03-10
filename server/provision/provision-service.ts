@@ -61,6 +61,12 @@ export async function createTenant(input: CreateTenantInput) {
     if (existing.rows.length) throw new Error(`El slug "${input.slug}" ya está en uso`);
 
     schemaName = generateSchemaName();
+    const RESERVED_SCHEMAS = [
+      'public', 'information_schema', 'pg_catalog', 'pg_toast'
+    ];
+    if (RESERVED_SCHEMAS.includes(schemaName) || schemaName.length < 8) {
+      throw new Error(`Generated schema name is invalid: ${schemaName}`);
+    }
     const trialEndsAt = input.plan === "TRIAL" ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null;
 
     const tenantResult = await publicPool.query(
@@ -154,6 +160,13 @@ export async function reprovisionTenant(tenantId: number, input: ReprovisionInpu
   if (rows.length === 0) throw new Error(`Tenant ${tenantId} no encontrado`);
 
   const tenant = rows[0];
+  if (tenant.schema_name === 'public') {
+    throw new Error(
+      'SAFETY: Cannot reprovision Tenant 1 (schema: public). ' +
+      'This operation would destroy all restaurant data. ' +
+      'Use the Deploy 2 migration procedure instead.'
+    );
+  }
   if (tenant.status !== "FAILED" && tenant.status !== "ACTIVE") {
     throw new Error(
       `Solo se puede re-provisionar tenants FAILED o ACTIVE. Status actual: ${tenant.status}`

@@ -8,7 +8,7 @@ import { startHrBackgroundJobs } from "./hr-jobs";
 import { retryPendingSync } from "./quickbooks";
 import { runTenantLifecycleCheck } from "./provision/provision-service";
 import { ensurePublicTables } from "./provision/seed-own-tenant";
-import { propagateMigrations } from "./provision/migrate-tenants";
+import { syncAllTenantsAtStartup } from "./provision/migrate-tenants";
 import { setTimezonePool } from "./utils/timezone";
 import { pool } from "./db";
 
@@ -140,7 +140,7 @@ app.use((req, res, next) => {
   ensurePublicTables().catch(err => {
     console.error("[startup] Error en tenant seed:", err.message);
   });
-  propagateMigrations().catch(err => {
+  syncAllTenantsAtStartup().catch(err => {
     console.error("[startup] Error en migración de tenants:", err.message);
   });
   await registerRoutes(httpServer, app);

@@ -20,7 +20,11 @@ export function getTenantDb(schemaName: string) {
   });
 
   tenantPool.on("connect", (client) => {
-    client.query(`SET search_path TO "${schemaName}", public`);
+    if (schemaName === 'public') {
+      client.query(`SET search_path TO "public"`);
+    } else {
+      client.query(`SET search_path TO "${schemaName}"`);
+    }
   });
 
   const tenantDb = drizzle(tenantPool, { schema });

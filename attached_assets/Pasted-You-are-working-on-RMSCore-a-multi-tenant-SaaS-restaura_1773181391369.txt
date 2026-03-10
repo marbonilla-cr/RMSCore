@@ -1,0 +1,292 @@
+You are working on RMSCore, a multi-tenant SaaS restaurant management platform.
+
+╔══════════════════════════════════════════════════════════════════╗
+║  CONSTRAINTS — NON-NEGOTIABLE                                   ║
+╠══════════════════════════════════════════════════════════════════╣
+║  • Schema "public" = Tenant 1. NEVER drop, truncate, or alter  ║
+║    its data tables (orders, payments, users, sales_ledger_*,   ║
+║    hr_*, inventory_*, etc.)                                     ║
+║  • Do NOT modify files in /migrations/ — only ADD new ones.    ║
+║  • Do NOT touch: suspendTenant, reactivateTenant,              ║
+║    changeTenantPlan, activateAddon, ensurePublicTables,         ║
+║    getMigrationStatus, markMigrationsAsApplied, or any         ║
+║    frontend file (superadmin.tsx). These work correctly.        ║
+║  • The tracking table is public.schema_migrations — keep this  ║
+║    name exactly. Do NOT rename it.                              ║
+╚══════════════════════════════════════════════════════════════════╝
+
+════════════════════════════════════════════════════════════════════
+CONTEXT — WHAT EXISTS AND WHAT IS BROKEN
+════════════════════════════════════════════════════════════════════
+
+The migration system is partially built and works well in concept.
+These are the exact bugs to fix:
+
+BUG 1 — search_path fallback in migrate-tenants.ts
+  Current: SET LOCAL search_path TO "${schemaName}", public
+  Effect:  Any missing table in a tenant schema falls through and
+           reads Tenant 1's data silently. This caused tenant 3 to
+           see all of Tenant 1's data.
+
+BUG 2 — search_path fallback in db-tenant.ts
+  Current: client.query('SET search_path TO "${schemaName}", public')
+  Effect:  All runtime queries for non-public tenants have the same
+           fallthrough vulnerability.
+
+BUG 3 — Single-query migration execution in migrate-tenants.ts
+  Current: client.query(sql) sends the entire .sql file as one query.
+  Effect:  The 31KB baseline migration with 74 CREATE TABLE statements
+           may fail silently or partially, creating incomplete schemas.
+
+BUG 4 — No guard against reprovisioning public schema
+  In provision-service.ts, reprovisionTenant() has no check for
+  schema_name = 'public'. This could destroy Tenant 1's data.
+
+MISSING — Auto-sync at server startup
+  Migrations are only applied manually via Superadmin UI. New
+  migrations deployed to Railway never reach existing tenants
+  automatically.
+
+MISSING — Hard-delete endpoint for tenants
+  Superadmin can only suspend tenants. Cannot clean up broken
+  or test tenants.
+
+MISSING — Backfill for Tenant 1 in schema_migrations
+  The public schema has all tables but zero rows in
+  public.schema_migrations for schema_name='public'. This means
+  the system thinks Tenant 1 has 0 migrations applied and N pending,
+  which is incorrect.
+
+════════════════════════════════════════════════════════════════════
+TASK T001 — Fix migrate-tenants.ts
+════════════════════════════════════════════════════════════════════
+File: server/provision/migrate-tenants.ts
+
+Make exactly these two changes and nothing else:
+
+CHANGE 1 — Fix search_path in applyMigration():
+  Remove ", public" from the SET LOCAL search_path line.
+
+  Current:
+    await client.query(`SET LOCAL search_path TO "${schemaName}", public`);
+
+  Replace with:
+    if (schemaName === 'public') {
+      await client.query(`SET LOCAL search_path TO "public"`);
+    } else {
+      await client.query(`SET LOCAL search_path TO "${schemaName}"`);
+    }
+
+CHANGE 2 — Split SQL by statement-breakpoint in applyMigration():
+  Current:
+    await client.query(sql);
+
+  Replace with:
+    const statements = sql
+      .split('--> statement-breakpoint')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    for (let i = 0; i < statements.length; i++) {
+      try {
+        await client.query(statements[i]);
+      } catch (err: any) {
+        throw new Error(
+          `Statement ${i + 1}/${statements.length} failed: ` +
+          `${statements[i].substring(0, 200)} — ${err.message}`
+        );
+      }
+    }
+
+No other changes to migrate-tenants.ts. The functions
+getMigrationStatus, markMigrationsAsApplied, propagateMigrations,
+getAppliedMigrations, getMigrationFiles are correct — do not touch.
+
+ACCEPTANCE: applyMigration() sets an isolated search_path with no
+public fallback for non-public schemas, and executes each SQL
+statement individually with clear error reporting.
+
+════════════════════════════════════════════════════════════════════
+TASK T002 — Fix db-tenant.ts
+════════════════════════════════════════════════════════════════════
+File: server/db-tenant.ts
+
+Make exactly one change:
+
+Current:
+  tenantPool.on("connect", (client) => {
+    client.query(`SET search_path TO "${schemaName}", public`);
+  });
+
+Replace with:
+  tenantPool.on("connect", (client) => {
+    if (schemaName === 'public') {
+      client.query(`SET search_path TO "public"`);
+    } else {
+      client.query(`SET search_path TO "${schemaName}"`);
+    }
+  });
+
+No other changes to db-tenant.ts.
+
+ACCEPTANCE: Tenant connections for non-public schemas have no
+public fallback. A missing table throws an error instead of
+silently reading Tenant 1's data.
+
+════════════════════════════════════════════════════════════════════
+TASK T003 — Add guards to provision-service.ts
+════════════════════════════════════════════════════════════════════
+File: server/provision/provision-service.ts
+
+Make exactly two additions:
+
+ADDITION 1 — Guard in reprovisionTenant():
+  Immediately after the line: const tenant = rows[0];
+  add:
+
+    if (tenant.schema_name === 'public') {
+      throw new Error(
+        'SAFETY: Cannot reprovision Tenant 1 (schema: public). ' +
+        'This operation would destroy all restaurant data. ' +
+        'Use the Deploy 2 migration procedure instead.'
+      );
+    }
+
+ADDITION 2 — Guard in createTenant():
+  After the line: schemaName = generateSchemaName();
+  add:
+
+    const RESERVED_SCHEMAS = [
+      'public', 'information_schema', 'pg_catalog', 'pg_toast'
+    ];
+    if (RESERVED_SCHEMAS.includes(schemaName) || schemaName.length < 8) {
+      throw new Error(`Generated schema name is invalid: ${schemaName}`);
+    }
+
+No other changes to provision-service.ts.
+
+ACCEPTANCE: reprovisionTenant() on the public schema throws
+immediately. createTenant() validates the generated schema name.
+
+════════════════════════════════════════════════════════════════════
+TASK T004 — Add backfill + auto-sync at server startup
+════════════════════════════════════════════════════════════════════
+File: server/provision/migrate-tenants.ts (ADD new export functions)
+File: server/index.ts (ADD startup call)
+
+PART A — Add these two new exported functions at the END of
+server/provision/migrate-tenants.ts. Do not modify any existing
+function:
+
+  /**
+   * Backfills schema_migrations for a schema that already has all
+   * tables but no migration log entries. Marks all available
+   * migrations as applied WITHOUT re-executing their SQL.
+   * Safe to call multiple times — ON CONFLICT DO NOTHING.
+   */
+  export async function backfillMigrationLog(
+    schemaName: string
+  ): Promise<number> {
+    const files = getMigrationFiles();
+    if (files.length === 0) return 0;
+
+    const applied = await getAppliedMigrations(schemaName);
+    const toBackfill = files.filter(f => !applied.has(f));
+
+    if (toBackfill.length === 0) return 0;
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const filename of toBackfill) {
+        await client.query(
+          `INSERT INTO public.schema_migrations (schema_name, filename)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [schemaName, filename]
+        );
+      }
+      await client.query('COMMIT');
+      console.log(
+        `[migrate] Backfilled ${toBackfill.length} entries ` +
+        `for schema: ${schemaName}`
+      );
+      return toBackfill.length;
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Runs at server startup. Backfills Tenant 1 (public schema),
+   * then syncs all other active tenants by applying pending
+   * migrations. Never crashes the server — errors are logged.
+   */
+  export async function syncAllTenantsAtStartup(): Promise<void> {
+    try {
+      console.log('[migrate] Starting startup sync...');
+
+      // Ensure schema_migrations table exists
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS public.schema_migrations (
+          id          SERIAL PRIMARY KEY,
+          schema_name TEXT NOT NULL,
+          filename    TEXT NOT NULL,
+          applied_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+          UNIQUE (schema_name, filename)
+        )
+      `);
+
+      // Backfill Tenant 1 — marks all migrations as applied
+      // without re-executing SQL on the live public schema
+      await backfillMigrationLog('public');
+
+      // Sync all other active tenants
+      const { rows } = await pool.query(
+        `SELECT id, slug, schema_name FROM public.tenants
+         WHERE is_active = true AND schema_name != 'public'
+         ORDER BY created_at`
+      );
+
+      for (const tenant of rows) {
+        try {
+          await propagateMigrations(tenant.schema_name);
+        } catch (err: any) {
+          // CRITICAL: log but never crash — Tenant 1 must stay up
+          console.error(
+            `[migrate] ERROR syncing tenant ${tenant.slug}: `,
+            err.message
+          );
+        }
+      }
+
+      console.log('[migrate] Startup sync complete ✓');
+    } catch (err: any) {
+      // Even a total failure must not crash the server
+      console.error('[migrate] Startup sync failed:', err.message);
+    }
+  }
+
+PART B — In server/index.ts, find the server startup sequence.
+Before app.listen() or before the server starts accepting requests,
+add:
+
+  import { syncAllTenantsAtStartup } from './provision/migrate-tenants';
+
+  await syncAllTenantsAtStartup();
+
+If the file does not already use top-level await, wrap in the
+existing async init function or IIFE pattern already present in
+the file. Do not restructure the startup file — just insert the
+call in the right place.
+
+ACCEPTANCE: Every server start logs:
+  [migrate] Starting startup sync...
+  [migrate] Backfilled N entries for schema: public  (first run only)
+  [migrate] Startup sync complete ✓
+A sync failure for any non-Tenant-1 tenant is logged but does not
+prevent the server from starting.
+
+════════════════════════════════════════════════════════════

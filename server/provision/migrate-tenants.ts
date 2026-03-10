@@ -30,8 +30,26 @@ async function applyMigration(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(`SET LOCAL search_path TO "${schemaName}", public`);
-    await client.query(sql);
+    if (schemaName === 'public') {
+      await client.query(`SET LOCAL search_path TO "public"`);
+    } else {
+      await client.query(`SET LOCAL search_path TO "${schemaName}"`);
+    }
+    const statements = sql
+      .split('--> statement-breakpoint')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    for (let i = 0; i < statements.length; i++) {
+      try {
+        await client.query(statements[i]);
+      } catch (err: any) {
+        throw new Error(
+          `Statement ${i + 1}/${statements.length} failed: ` +
+          `${statements[i].substring(0, 200)} — ${err.message}`
+        );
+      }
+    }
     await client.query(
       `INSERT INTO public.schema_migrations (schema_name, filename)
        VALUES ($1, $2) ON CONFLICT DO NOTHING`,
@@ -162,5 +180,79 @@ export async function markMigrationsAsApplied(
     throw new Error(`[migrate] Error marcando migraciones para ${schemaName}: ${err.message}`);
   } finally {
     client.release();
+  }
+}
+
+export async function backfillMigrationLog(
+  schemaName: string
+): Promise<number> {
+  const files = getMigrationFiles();
+  if (files.length === 0) return 0;
+
+  const applied = await getAppliedMigrations(schemaName);
+  const toBackfill = files.filter(f => !applied.has(f));
+
+  if (toBackfill.length === 0) return 0;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const filename of toBackfill) {
+      await client.query(
+        `INSERT INTO public.schema_migrations (schema_name, filename)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [schemaName, filename]
+      );
+    }
+    await client.query('COMMIT');
+    console.log(
+      `[migrate] Backfilled ${toBackfill.length} entries ` +
+      `for schema: ${schemaName}`
+    );
+    return toBackfill.length;
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function syncAllTenantsAtStartup(): Promise<void> {
+  try {
+    console.log('[migrate] Starting startup sync...');
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS public.schema_migrations (
+        id          SERIAL PRIMARY KEY,
+        schema_name TEXT NOT NULL,
+        filename    TEXT NOT NULL,
+        applied_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (schema_name, filename)
+      )
+    `);
+
+    await backfillMigrationLog('public');
+
+    const { rows } = await pool.query(
+      `SELECT id, slug, schema_name FROM public.tenants
+       WHERE is_active = true AND schema_name != 'public'
+       ORDER BY created_at`
+    );
+
+    for (const tenant of rows) {
+      try {
+        await propagateMigrations(tenant.schema_name);
+      } catch (err: any) {
+        console.error(
+          `[migrate] ERROR syncing tenant ${tenant.slug}: `,
+          err.message
+        );
+      }
+    }
+
+    console.log('[migrate] Startup sync complete ✓');
+  } catch (err: any) {
+    console.error('[migrate] Startup sync failed:', err.message);
   }
 }
