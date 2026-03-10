@@ -6,9 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, FileSpreadsheet, Clock, Trash2 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Loader2, FileSpreadsheet, Clock, Trash2, BookOpen, Table2 } from "lucide-react";
 import UploadPanel from "@/components/data-loader/upload-panel";
 import StagingGrid from "@/components/data-loader/staging-grid";
+import ReviewLedger from "@/components/data-loader/review-ledger";
 import ValidationPanel from "@/components/data-loader/validation-panel";
 import ImportStatus from "@/components/data-loader/import-status";
 
@@ -200,12 +202,32 @@ export default function DataLoaderPage() {
                 </div>
               </div>
 
-              <StagingGrid
-                sessionId={selectedSessionId}
-                rows={sessionData.rows}
-                sheetsFound={sessionData.session.sheets_found || []}
-                onRefresh={refreshAll}
-              />
+              <Tabs defaultValue="ledger">
+                <TabsList>
+                  <TabsTrigger value="ledger" className="gap-1.5" data-testid="tab-ledger">
+                    <BookOpen className="h-3.5 w-3.5" />
+                    Ledger
+                  </TabsTrigger>
+                  <TabsTrigger value="raw" className="gap-1.5" data-testid="tab-raw">
+                    <Table2 className="h-3.5 w-3.5" />
+                    Datos Crudos
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="ledger" className="mt-3">
+                  <ReviewLedger
+                    sessionId={selectedSessionId}
+                    onEdited={refreshAll}
+                  />
+                </TabsContent>
+                <TabsContent value="raw" className="mt-3">
+                  <StagingGrid
+                    sessionId={selectedSessionId}
+                    rows={sessionData.rows}
+                    sheetsFound={sessionData.session.sheets_found || []}
+                    onRefresh={refreshAll}
+                  />
+                </TabsContent>
+              </Tabs>
 
               <Separator />
 

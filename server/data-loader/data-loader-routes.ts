@@ -271,6 +271,102 @@ export function registerDataLoaderRoutes(app: any) {
     }
   });
 
+  router.get("/sessions/:id/ledger", async (req: Request, res: Response) => {
+    try {
+      const sessionId = Number(req.params.id);
+
+      const [session] = (await db.execute(sql`
+        SELECT id, status FROM data_loader_sessions WHERE id = ${sessionId}
+      `)).rows;
+
+      if (!session) {
+        return res.status(404).json({ message: "Sesión no encontrada" });
+      }
+
+      const allRows = await db.execute(sql`
+        SELECT id, sheet_name, row_index, data_json, validation_status
+        FROM data_loader_staging
+        WHERE session_id = ${sessionId}
+        ORDER BY sheet_name, row_index
+      `);
+
+      const grouped: Record<string, { rowId: number; rowIndex: number; data: Record<string, any>; validationStatus: string }[]> = {};
+      for (const row of allRows.rows) {
+        const sheet = row.sheet_name as string;
+        if (!grouped[sheet]) grouped[sheet] = [];
+        grouped[sheet].push({
+          rowId: row.id as number,
+          rowIndex: row.row_index as number,
+          data: row.data_json as Record<string, any>,
+          validationStatus: row.validation_status as string,
+        });
+      }
+
+      const business = (grouped.business || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const taxes = (grouped.taxes || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const paymentMethods = (grouped.payment_methods || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const employees = (grouped.employees || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const categories = (grouped.categories || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const products = (grouped.products || []).map(r => ({ rowId: r.rowId, validationStatus: r.validationStatus, ...r.data }));
+      const modifierGroups = (grouped.modifier_groups || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const modifiers = (grouped.modifiers || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const productModifiers = (grouped.product_modifiers || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const tables = (grouped.tables || []).map(r => ({ rowId: r.rowId, ...r.data }));
+      const hrConfig = (grouped.hr_config || []).map(r => ({ rowId: r.rowId, ...r.data }));
+
+      const categoryTree: Record<string, string[]> = {};
+      for (const cat of categories) {
+        const parent = cat.category_name || "Sin padre";
+        const child = cat.parent_category || "";
+        if (!categoryTree[parent]) categoryTree[parent] = [];
+        if (child) categoryTree[parent].push(child);
+      }
+
+      const productsByCategory: Record<string, typeof products> = {};
+      for (const prod of products) {
+        const cat = prod.category || "Sin categoría";
+        if (!productsByCategory[cat]) productsByCategory[cat] = [];
+        productsByCategory[cat].push(prod);
+      }
+
+      const modifiersByGroup: Record<string, typeof modifiers> = {};
+      for (const mod of modifiers) {
+        const grp = mod.group_name || "Sin grupo";
+        if (!modifiersByGroup[grp]) modifiersByGroup[grp] = [];
+        modifiersByGroup[grp].push(mod);
+      }
+
+      res.json({
+        business,
+        taxes,
+        paymentMethods,
+        employees,
+        categories,
+        categoryTree,
+        products,
+        productsByCategory,
+        modifierGroups,
+        modifiers,
+        modifiersByGroup,
+        productModifiers,
+        tables,
+        hrConfig,
+        stats: {
+          totalCategories: categories.length,
+          totalProducts: products.length,
+          totalEmployees: employees.length,
+          totalTables: tables.length,
+          totalModifierGroups: modifierGroups.length,
+          totalModifiers: modifiers.length,
+          totalTaxes: taxes.length,
+          totalPaymentMethods: paymentMethods.length,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   router.get("/system-check", async (_req: Request, res: Response) => {
     try {
       const result = await runTenantBootstrapCheck();
