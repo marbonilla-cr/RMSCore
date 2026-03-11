@@ -1,15 +1,19 @@
 /**
  * server/db-tenant.ts
- * Pool de conexión por tenant. NO modifica server/db.ts.
+ * Pool de conexión por tenant.
+ * Para "public", reutiliza el pool global de server/db.ts.
  */
 
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "@shared/schema";
+import { db as globalDb } from "./db";
 
 const dbCache = new Map<string, ReturnType<typeof drizzle>>();
 
 export function getTenantDb(schemaName: string) {
+  if (schemaName === "public") return globalDb;
+
   if (dbCache.has(schemaName)) return dbCache.get(schemaName)!;
 
   const tenantPool = new Pool({
@@ -20,11 +24,7 @@ export function getTenantDb(schemaName: string) {
   });
 
   tenantPool.on("connect", (client) => {
-    if (schemaName === 'public') {
-      client.query(`SET search_path TO "public"`);
-    } else {
-      client.query(`SET search_path TO "${schemaName}"`);
-    }
+    client.query(`SET search_path TO "${schemaName}"`);
   });
 
   const tenantDb = drizzle(tenantPool, { schema });
