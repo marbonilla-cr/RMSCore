@@ -223,13 +223,13 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 function requireRole(...roles: string[]) {
   return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
-    const user = await storage.getUser(req.session.userId);
+    const user = await storage.getUser(req.session.userId, req.db);
     if (!user) return res.status(403).json({ message: "Sin permisos" });
     if (roles.includes(user.role)) {
       (req as any).user = user;
       return next();
     }
-    const userPerms = await storage.getPermissionKeysForRole(user.role);
+    const userPerms = await storage.getPermissionKeysForRole(user.role, req.db);
     const moduleMap: Record<string, string> = {
       WAITER: "MODULE_TABLES_VIEW",
       KITCHEN: "MODULE_KDS_VIEW",
@@ -248,10 +248,10 @@ function requireRole(...roles: string[]) {
 function requirePermission(...permissionKeys: string[]) {
   return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.session.userId) return res.status(401).json({ message: "No autenticado" });
-    const user = await storage.getUser(req.session.userId);
+    const user = await storage.getUser(req.session.userId, req.db);
     if (!user) return res.status(401).json({ message: "No autenticado" });
     (req as any).user = user;
-    const userPerms = await storage.getPermissionKeysForRole(user.role);
+    const userPerms = await storage.getPermissionKeysForRole(user.role, req.db);
     for (const key of permissionKeys) {
       if (!userPerms.includes(key)) {
         return res.status(403).json({ message: "Sin permiso" });
@@ -495,13 +495,13 @@ export async function registerRoutes(
     try {
       const { email } = req.body;
       if (!email) return res.json({ message: "ok" });
-      const allUsers = await storage.getAllUsers();
+      const allUsers = await storage.getAllUsers(req.db);
       const user = allUsers.find(u => u.email?.toLowerCase() === email.toLowerCase() && u.active);
       if (user) {
         const crypto = await import("crypto");
         const resetToken = crypto.randomBytes(32).toString("hex");
         const expires = new Date(Date.now() + 60 * 60 * 1000);
-        await storage.setResetToken(user.id, resetToken, expires);
+        await storage.setResetToken(user.id, resetToken, expires, req.db);
         const host = req.get("host") || "localhost:5000";
         const proto = req.get("x-forwarded-proto") || req.protocol;
         const resetUrl = `${proto}://${host}/reset-password?token=${resetToken}`;
@@ -531,11 +531,11 @@ export async function registerRoutes(
       const { token, newPassword } = req.body;
       if (!token || !newPassword) return res.status(400).json({ message: "Datos incompletos" });
       if (newPassword.length < 6) return res.status(400).json({ message: "La contraseña debe tener al menos 6 caracteres" });
-      const user = await storage.getUserByResetToken(token);
+      const user = await storage.getUserByResetToken(token, req.db);
       if (!user) return res.status(400).json({ message: "Token inválido o expirado" });
       const bcrypt = await import("bcryptjs");
       const hashedPassword = await bcrypt.hash(newPassword, 10);
-      await storage.resetPassword(user.id, hashedPassword);
+      await storage.resetPassword(user.id, hashedPassword, req.db);
       res.json({ message: "Contraseña actualizada" });
     } catch (err: any) {
       console.error("[auth] reset-password error:", err.message);
@@ -700,7 +700,7 @@ export async function registerRoutes(
       if (!pin || !action) return res.status(400).json({ message: "PIN y acción requeridos" });
       if (action !== "clock_in" && action !== "clock_out") return res.status(400).json({ message: "Acción inválida" });
 
-      const allUsers = await storage.getAllUsersWithPin();
+      const allUsers = await storage.getAllUsersWithPin(req.db);
       const usersWithPin = allUsers.filter(u => u.pin && u.active);
 
       let matchedUser: any = null;
@@ -865,8 +865,8 @@ export async function registerRoutes(
   app.post("/api/auth/enroll-pin", requireAuth, async (req, res) => {
     try {
       const { pin } = enrollPinSchema.parse(req.body);
-      await storage.enrollPin(req.session.userId!, pin);
-      await storage.createAuditEvent({ actorType: "USER", actorUserId: req.session.userId!, action: "PIN_SET", entityType: "USER", entityId: req.session.userId!, metadata: {} });
+      await storage.enrollPin(req.session.userId!, pin, req.db);
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: req.session.userId!, action: "PIN_SET", entityType: "USER", entityId: req.session.userId!, metadata: {} }, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -875,15 +875,15 @@ export async function registerRoutes(
 
   // My permissions
   app.get("/api/auth/my-permissions", requireAuth, async (req, res) => {
-    const user = await storage.getUser(req.session.userId!);
+    const user = await storage.getUser(req.session.userId!, req.db);
     if (!user) return res.status(401).json({ message: "No autenticado" });
-    const perms = await storage.getPermissionKeysForRole(user.role);
+    const perms = await storage.getPermissionKeysForRole(user.role, req.db);
     res.json({ permissions: perms, role: user.role });
   });
 
   // ==================== ADMIN: EMPLOYEES ====================
-  app.get("/api/admin/employees", requireRole("MANAGER"), async (_req, res) => {
-    const allUsers = await storage.getAllUsers();
+  app.get("/api/admin/employees", requireRole("MANAGER"), async (req, res) => {
+    const allUsers = await storage.getAllUsers(req.db);
     const safe = allUsers.map(u => {
       const { password: _, pin: _p, ...rest } = u;
       return { ...rest, hasPin: !!u.pin };
@@ -897,9 +897,9 @@ export async function registerRoutes(
       if (!username || !password || !displayName || !role) {
         return res.status(400).json({ message: "Campos requeridos: username, password, displayName, role" });
       }
-      const existing = await storage.getUserByUsername(username);
+      const existing = await storage.getUserByUsername(username, req.db);
       if (existing) return res.status(400).json({ message: "Username ya existe" });
-      const user = await storage.createUser({ username, password, displayName, role, active: active !== false, email: email || null, dailyRate: dailyRate || null });
+      const user = await storage.createUser({ username, password, displayName, role, active: active !== false, email: email || null, dailyRate: dailyRate || null }, req.db);
       const { password: _, pin: _p, ...safeUser } = user;
       res.json({ ...safeUser, hasPin: !!user.pin });
     } catch (err: any) {
@@ -918,15 +918,15 @@ export async function registerRoutes(
       if (email !== undefined) updates.email = email;
       if (req.body.dailyRate !== undefined) updates.dailyRate = req.body.dailyRate;
       if (username !== undefined) {
-        const existing = await storage.getUserByUsername(username);
+        const existing = await storage.getUserByUsername(username, req.db);
         if (existing && existing.id !== id) return res.status(400).json({ message: "Username ya existe" });
         updates.username = username;
       }
       if (active === false) {
         const actor = (req as any).user;
-        await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "USER_DISABLED", entityType: "USER", entityId: id, metadata: {} });
+        await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "USER_DISABLED", entityType: "USER", entityId: id, metadata: {} }, req.db);
       }
-      const user = await storage.updateUser(id, updates);
+      const user = await storage.updateUser(id, updates, req.db);
       const { password: _, pin: _p, ...safeUser } = user;
       res.json({ ...safeUser, hasPin: !!user.pin });
     } catch (err: any) {
@@ -939,9 +939,9 @@ export async function registerRoutes(
       const id = parseInt(req.params.id as string);
       const { password } = req.body;
       if (!password) return res.status(400).json({ message: "Password requerido" });
-      await storage.updateUser(id, { password });
+      await storage.updateUser(id, { password }, req.db);
       const actor = (req as any).user;
-      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PASSWORD_RESET", entityType: "USER", entityId: id, metadata: {} });
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PASSWORD_RESET", entityType: "USER", entityId: id, metadata: {} }, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -951,9 +951,9 @@ export async function registerRoutes(
   app.post("/api/admin/employees/:id/reset-pin", requireRole("MANAGER"), async (req, res) => {
     try {
       const id = parseInt(req.params.id as string);
-      await storage.resetPin(id);
+      await storage.resetPin(id, req.db);
       const actor = (req as any).user;
-      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PIN_RESET", entityType: "USER", entityId: id, metadata: {} });
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PIN_RESET", entityType: "USER", entityId: id, metadata: {} }, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -963,9 +963,9 @@ export async function registerRoutes(
   app.post("/api/admin/employees/:id/generate-pin", requireRole("MANAGER"), async (req, res) => {
     try {
       const id = parseInt(req.params.id as string);
-      const pin = await storage.generateAndSetPin(id);
+      const pin = await storage.generateAndSetPin(id, req.db);
       const actor = (req as any).user;
-      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PIN_GENERATED", entityType: "USER", entityId: id, metadata: {} });
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PIN_GENERATED", entityType: "USER", entityId: id, metadata: {} }, req.db);
       res.json({ pin });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -973,16 +973,16 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: PERMISSIONS ====================
-  app.get("/api/admin/permissions", requireRole("MANAGER"), async (_req, res) => {
-    const perms = await storage.getAllPermissions();
+  app.get("/api/admin/permissions", requireRole("MANAGER"), async (req, res) => {
+    const perms = await storage.getAllPermissions(req.db);
     res.json(perms);
   });
 
-  app.get("/api/admin/role-permissions", requireRole("MANAGER"), async (_req, res) => {
+  app.get("/api/admin/role-permissions", requireRole("MANAGER"), async (req, res) => {
     const roles = ["MANAGER", "FARM_MANAGER", "CASHIER", "WAITER", "KITCHEN", "STAFF"];
     const result: Record<string, string[]> = {};
     for (const role of roles) {
-      result[role] = await storage.getPermissionKeysForRole(role);
+      result[role] = await storage.getPermissionKeysForRole(role, req.db);
     }
     res.json(result);
   });
@@ -992,9 +992,9 @@ export async function registerRoutes(
       const role = req.params.role as string;
       const { permissions } = req.body;
       if (!Array.isArray(permissions)) return res.status(400).json({ message: "permissions debe ser un array" });
-      await storage.setRolePermissions(role, permissions);
+      await storage.setRolePermissions(role, permissions, req.db);
       const actor = (req as any).user;
-      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "ROLE_PERMISSIONS_CHANGED", entityType: "ROLE", metadata: { role, permissions } });
+      await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "ROLE_PERMISSIONS_CHANGED", entityType: "ROLE", metadata: { role, permissions } }, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -2603,7 +2603,7 @@ export async function registerRoutes(
             return res.status(429).json({ message: `Demasiados intentos. Intente de nuevo en ${Math.ceil(retryAfter / 60)} minutos.` });
           }
 
-          const allUsers = await storage.getAllUsersWithPin();
+          const allUsers = await storage.getAllUsersWithPin(req.db);
           const usersWithPin = allUsers.filter(u => u.pin && u.active);
 
           let matchedUser: any = null;
@@ -5791,7 +5791,7 @@ export async function registerRoutes(
         ccssIncludeService: settings?.ccssIncludeService === true,
       };
 
-      const employees = await storage.getAllUsers();
+      const employees = await storage.getAllUsers(req.db);
       const activeEmployees = employees.filter(e => e.active !== false);
       const empData = activeEmployees.map(e => ({
         id: e.id,
@@ -5970,7 +5970,7 @@ export async function registerRoutes(
     if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom and dateTo required" });
     
     const punches = await storage.getTimePunchesByDateRange(dateFrom as string, dateTo as string);
-    const employees = await storage.getAllUsers();
+    const employees = await storage.getAllUsers(req.db);
     
     const report: Record<number, {
       employeeId: number;
@@ -6105,8 +6105,8 @@ export async function registerRoutes(
   });
 
   // -- All active employees (for HR schedule management) --
-  app.get("/api/hr/employees", requirePermission("HR_VIEW_TEAM", "HR_MANAGE_SCHEDULES"), async (_req, res) => {
-    const allUsers = await storage.getAllUsers();
+  app.get("/api/hr/employees", requirePermission("HR_VIEW_TEAM", "HR_MANAGE_SCHEDULES"), async (req, res) => {
+    const allUsers = await storage.getAllUsers(req.db);
     res.json(allUsers.filter(u => u.active).map(u => ({ id: u.id, displayName: u.displayName, role: u.role, username: u.username })));
   });
 

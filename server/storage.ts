@@ -73,21 +73,24 @@ export async function getUserByUsername(username: string, dbInstance?: typeof db
   return user;
 }
 
-export async function getAllUsers() {
-  return db.select().from(users).orderBy(asc(users.displayName));
+export async function getAllUsers(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(users).orderBy(asc(users.displayName));
 }
 
-export async function createUser(data: InsertUser) {
+export async function createUser(data: InsertUser, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   const hash = await bcrypt.hash(data.password, 10);
-  const [user] = await db.insert(users).values({ ...data, password: hash }).returning();
+  const [user] = await d.insert(users).values({ ...data, password: hash }).returning();
   return user;
 }
 
-export async function updateUser(id: number, data: Partial<InsertUser>) {
+export async function updateUser(id: number, data: Partial<InsertUser>, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (data.password) {
     data.password = await bcrypt.hash(data.password, 10);
   }
-  const [user] = await db.update(users).set(data).where(eq(users.id, id)).returning();
+  const [user] = await d.update(users).set(data).where(eq(users.id, id)).returning();
   return user;
 }
 
@@ -96,14 +99,16 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 // PIN Auth
-export async function enrollPin(userId: number, pin: string) {
+export async function enrollPin(userId: number, pin: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   const hash = await bcrypt.hash(pin, 10);
-  const [user] = await db.update(users).set({ pin: hash, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
+  const [user] = await d.update(users).set({ pin: hash, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
   return user;
 }
 
-export async function resetPin(userId: number) {
-  const [user] = await db.update(users).set({ pin: null, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
+export async function resetPin(userId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [user] = await d.update(users).set({ pin: null, pinFailedAttempts: 0, pinLockedUntil: null }).where(eq(users.id, userId)).returning();
   return user;
 }
 
@@ -116,25 +121,28 @@ export function generateRandomPin(): string {
   return pin;
 }
 
-export async function generateAndSetPin(userId: number): Promise<string> {
+export async function generateAndSetPin(userId: number, dbInstance?: typeof db): Promise<string> {
   const pin = generateRandomPin();
-  await enrollPin(userId, pin);
+  await enrollPin(userId, pin, dbInstance);
   return pin;
 }
 
-export async function setResetToken(userId: number, token: string, expires: Date) {
-  await db.update(users).set({ resetToken: token, resetTokenExpires: expires }).where(eq(users.id, userId));
+export async function setResetToken(userId: number, token: string, expires: Date, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.update(users).set({ resetToken: token, resetTokenExpires: expires }).where(eq(users.id, userId));
 }
 
-export async function getUserByResetToken(token: string) {
-  const [user] = await db.select().from(users).where(
+export async function getUserByResetToken(token: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [user] = await d.select().from(users).where(
     and(eq(users.resetToken, token), gte(users.resetTokenExpires, new Date()))
   );
   return user || null;
 }
 
-export async function resetPassword(userId: number, hashedPassword: string) {
-  await db.update(users).set({ password: hashedPassword, resetToken: null, resetTokenExpires: null }).where(eq(users.id, userId));
+export async function resetPassword(userId: number, hashedPassword: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.update(users).set({ password: hashedPassword, resetToken: null, resetTokenExpires: null }).where(eq(users.id, userId));
 }
 
 export async function getAllUsersWithPin(dbInstance?: typeof db) {
@@ -155,16 +163,18 @@ export async function verifyPin(pin: string, hash: string) {
   return bcrypt.compare(pin, hash);
 }
 
-export async function incrementPinFailed(userId: number) {
-  const [user] = await db.update(users).set({
+export async function incrementPinFailed(userId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [user] = await d.update(users).set({
     pinFailedAttempts: sql`${users.pinFailedAttempts} + 1`,
   }).where(eq(users.id, userId)).returning();
   return user;
 }
 
-export async function lockPinUser(userId: number, minutes: number = 5) {
+export async function lockPinUser(userId: number, minutes: number = 5, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   const until = new Date(Date.now() + minutes * 60 * 1000);
-  const [user] = await db.update(users).set({
+  const [user] = await d.update(users).set({
     pinLockedUntil: until,
     pinFailedAttempts: 0,
   }).where(eq(users.id, userId)).returning();
@@ -240,12 +250,13 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "VOID_AUTHORIZE", description: "Autorizar anulaciones de items enviados a cocina" },
 ];
 
-export async function ensureSystemPermissions() {
-  const existing = await db.select({ key: permissions.key }).from(permissions);
+export async function ensureSystemPermissions(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const existing = await d.select({ key: permissions.key }).from(permissions);
   const existingKeys = new Set(existing.map(p => p.key));
   const missing = SYSTEM_PERMISSIONS.filter(p => !existingKeys.has(p.key));
   if (missing.length > 0) {
-    await db.insert(permissions).values(missing);
+    await d.insert(permissions).values(missing);
     console.log(`[system] Added ${missing.length} missing permissions: ${missing.map(p => p.key).join(", ")}`);
   }
 }
@@ -285,15 +296,16 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   ],
 };
 
-export async function seedDefaultRolePermissions() {
+export async function seedDefaultRolePermissions(dbInstance?: typeof db) {
+  const d = dbInstance || db;
   let totalInserted = 0;
   for (const [role, keys] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
-    const existing = await db.select({ key: rolePermissions.permissionKey })
+    const existing = await d.select({ key: rolePermissions.permissionKey })
       .from(rolePermissions).where(eq(rolePermissions.role, role));
     const existingKeys = new Set(existing.map(r => r.key));
     const missing = keys.filter(k => !existingKeys.has(k));
     if (missing.length > 0) {
-      await db.insert(rolePermissions).values(missing.map(key => ({ role, permissionKey: key })));
+      await d.insert(rolePermissions).values(missing.map(key => ({ role, permissionKey: key })));
       totalInserted += missing.length;
     }
   }
@@ -305,12 +317,14 @@ export async function seedDefaultRolePermissions() {
 }
 
 // Permissions
-export async function getAllPermissions() {
-  return db.select().from(permissions).orderBy(asc(permissions.key));
+export async function getAllPermissions(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(permissions).orderBy(asc(permissions.key));
 }
 
-export async function getRolePermissions(role: string) {
-  return db.select().from(rolePermissions).where(eq(rolePermissions.role, role));
+export async function getRolePermissions(role: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(rolePermissions).where(eq(rolePermissions.role, role));
 }
 
 export async function getPermissionKeysForRole(role: string, dbInstance?: typeof db): Promise<string[]> {
@@ -319,24 +333,25 @@ export async function getPermissionKeysForRole(role: string, dbInstance?: typeof
   return rows.map(r => r.key);
 }
 
-export async function setRolePermissions(role: string, permissionKeys: string[]) {
-  await db.delete(rolePermissions).where(eq(rolePermissions.role, role));
+export async function setRolePermissions(role: string, permissionKeys: string[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.delete(rolePermissions).where(eq(rolePermissions.role, role));
   if (permissionKeys.length > 0) {
-    await db.insert(rolePermissions).values(permissionKeys.map(key => ({ role, permissionKey: key })));
+    await d.insert(rolePermissions).values(permissionKeys.map(key => ({ role, permissionKey: key })));
   }
 }
 
-export async function userHasPermission(userId: number, permissionKey: string): Promise<boolean> {
-  const user = await getUser(userId);
+export async function userHasPermission(userId: number, permissionKey: string, dbInstance?: typeof db): Promise<boolean> {
+  const user = await getUser(userId, dbInstance);
   if (!user) return false;
-  const keys = await getPermissionKeysForRole(user.role);
+  const keys = await getPermissionKeysForRole(user.role, dbInstance);
   return keys.includes(permissionKey);
 }
 
-export async function getEffectivePermissions(userId: number): Promise<string[]> {
-  const user = await getUser(userId);
+export async function getEffectivePermissions(userId: number, dbInstance?: typeof db): Promise<string[]> {
+  const user = await getUser(userId, dbInstance);
   if (!user) return [];
-  return getPermissionKeysForRole(user.role);
+  return getPermissionKeysForRole(user.role, dbInstance);
 }
 
 // Tables
