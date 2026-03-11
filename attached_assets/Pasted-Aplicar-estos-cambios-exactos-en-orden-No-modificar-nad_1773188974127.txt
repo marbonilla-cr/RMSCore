@@ -1,0 +1,68 @@
+Aplicar estos cambios exactos en orden. No modificar nada más.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CAMBIO 1 — migrations/0002_login_reset_trial.sql
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Reemplazar el contenido completo del archivo con esto:
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token varchar(64);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires timestamp;
+
+--> statement-breakpoint
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public'
+    AND table_name = 'tenants'
+  ) THEN
+    ALTER TABLE public.tenants
+      ADD COLUMN IF NOT EXISTS trial_base_plan varchar(20);
+  END IF;
+END $$;
+
+La lógica DO $$ verifica si estamos en un contexto donde tenants existe
+antes de intentar alterarla. Esto hace la migración segura tanto para
+schema public como para schemas de tenants nuevos.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CAMBIO 2 — server/provision/migrate-tenants.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+En la función syncAllTenantsAtStartup(), buscar esta línea exacta:
+  await backfillMigrationLog('public');
+
+Reemplazar por:
+  await propagateMigrations('public');
+
+Solo esa línea. Nada más en ese archivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CAMBIO 3 — Limpiar registro falso en la DB de desarrollo
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ejecutar este SQL directamente en la base de datos:
+
+DELETE FROM public.schema_migrations
+WHERE schema_name = 'public'
+AND filename IN (
+  '0002_login_reset_trial.sql',
+  '0010_print_bridges.sql'
+);
+
+Esto borra los registros que fueron marcados como aplicados sin haberse
+ejecutado. Al reiniciar, propagateMigrations los ejecutará realmente.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VERIFICACIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Después de los 3 cambios, reiniciar la app y confirmar que los logs
+muestran:
+  [migrate] public: 2 pendiente(s)
+  [migrate] ✓ public ← 0002_login_reset_trial.sql
+  [migrate] ✓ public ← 0010_print_bridges.sql
+  [migrate] Startup sync complete ✓
+
+Si los logs muestran eso, hacer deploy a Railway.

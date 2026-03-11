@@ -232,7 +232,7 @@ export async function syncAllTenantsAtStartup(): Promise<void> {
       )
     `);
 
-    await backfillMigrationLog('public');
+    await propagateMigrations('public');
 
     const { rows } = await pool.query(
       `SELECT id, slug, schema_name FROM public.tenants
