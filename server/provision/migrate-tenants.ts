@@ -183,38 +183,22 @@ export async function markMigrationsAsApplied(
   }
 }
 
-export async function backfillMigrationLog(
-  schemaName: string
-): Promise<number> {
+async function verifyMigrations(schemaName: string): Promise<void> {
   const files = getMigrationFiles();
-  if (files.length === 0) return 0;
-
   const applied = await getAppliedMigrations(schemaName);
-  const toBackfill = files.filter(f => !applied.has(f));
+  let warnings = 0;
 
-  if (toBackfill.length === 0) return 0;
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const filename of toBackfill) {
-      await client.query(
-        `INSERT INTO public.schema_migrations (schema_name, filename)
-         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [schemaName, filename]
-      );
+  for (const filename of files) {
+    if (!applied.has(filename)) {
+      console.warn(`[migrate-verify] ⚠ ${schemaName}: ${filename} NO está registrada — debería haberse aplicado`);
+      warnings++;
     }
-    await client.query('COMMIT');
-    console.log(
-      `[migrate] Backfilled ${toBackfill.length} entries ` +
-      `for schema: ${schemaName}`
-    );
-    return toBackfill.length;
-  } catch (err: any) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+  }
+
+  if (warnings > 0) {
+    console.warn(`[migrate-verify] ⚠ ${schemaName}: ${warnings} migración(es) sin registrar`);
+  } else {
+    console.log(`[migrate-verify] ✓ ${schemaName}: verificación completa`);
   }
 }
 
@@ -233,6 +217,7 @@ export async function syncAllTenantsAtStartup(): Promise<void> {
     `);
 
     await propagateMigrations('public');
+    await verifyMigrations('public');
 
     const { rows } = await pool.query(
       `SELECT id, slug, schema_name FROM public.tenants
@@ -243,6 +228,7 @@ export async function syncAllTenantsAtStartup(): Promise<void> {
     for (const tenant of rows) {
       try {
         await propagateMigrations(tenant.schema_name);
+        await verifyMigrations(tenant.schema_name);
       } catch (err: any) {
         console.error(
           `[migrate] ERROR syncing tenant ${tenant.slug}: `,

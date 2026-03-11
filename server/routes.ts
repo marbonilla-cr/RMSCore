@@ -1249,7 +1249,7 @@ export async function registerRoutes(
       res.json(list);
     } catch (err: any) {
       console.error("[printers] GET error:", err.message);
-      res.status(500).json({ message: err.message, debug: { tenantSchema: req.tenantSchema, stack: err.stack?.split('\n').slice(0,3) } });
+      res.status(500).json({ message: err.message });
     }
   });
 
@@ -6384,7 +6384,7 @@ export async function registerRoutes(
       res.json(rows.map(b => ({ ...b, isConnected: live.has(b.bridgeId) })));
     } catch (err: any) {
       console.error("[bridges] GET error:", err.message);
-      res.status(500).json({ error: err.message, debug: { tenantSchema: req.tenantSchema, stack: err.stack?.split('\n').slice(0,3) } });
+      res.status(500).json({ error: err.message });
     }
   });
 
