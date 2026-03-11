@@ -1002,8 +1002,8 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: TABLES ====================
-  app.get("/api/admin/tables", requireRole("MANAGER"), async (_req, res) => {
-    res.json(await storage.getAllTables());
+  app.get("/api/admin/tables", requireRole("MANAGER"), async (req, res) => {
+    res.json(await storage.getAllTables(req.db));
   });
 
   app.post("/api/admin/tables", requireRole("MANAGER"), async (req, res) => {
@@ -1023,7 +1023,7 @@ export async function registerRoutes(
         sortOrder: typeof sortOrder === "number" ? sortOrder : parseInt(String(sortOrder)) || 0,
         capacity: Math.max(1, Math.min(50, typeof capacity === "number" ? capacity : parseInt(String(capacity)) || 4)),
       };
-      const table = await storage.createTable(data);
+      const table = await storage.createTable(data, req.db);
       res.json(table);
     } catch (err: any) {
       const msg = err.message || "Error al crear mesa";
@@ -1042,7 +1042,7 @@ export async function registerRoutes(
       if (req.body.active !== undefined) updates.active = Boolean(req.body.active);
       if (req.body.sortOrder !== undefined) updates.sortOrder = typeof req.body.sortOrder === "number" ? req.body.sortOrder : parseInt(String(req.body.sortOrder)) || 0;
       if (req.body.capacity !== undefined) updates.capacity = Math.max(1, Math.min(50, typeof req.body.capacity === "number" ? req.body.capacity : parseInt(String(req.body.capacity)) || 4));
-      const table = await storage.updateTable(parseInt(req.params.id as string), updates);
+      const table = await storage.updateTable(parseInt(req.params.id as string), updates, req.db);
       res.json(table);
     } catch (err: any) {
       const msg = err.message || "Error al actualizar mesa";
@@ -1055,7 +1055,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/tables/:id/archive", requireRole("MANAGER"), async (req, res) => {
     try {
-      const result = await storage.softDeleteTable(parseInt(req.params.id as string));
+      const result = await storage.softDeleteTable(parseInt(req.params.id as string), req.db);
       if (!result) return res.status(404).json({ message: "Mesa no encontrada" });
       res.json(result);
     } catch (err: any) {
@@ -1064,7 +1064,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/tables/:id/qr", requireRole("MANAGER"), async (req, res) => {
-    const table = await storage.getTable(parseInt(req.params.id as string));
+    const table = await storage.getTable(parseInt(req.params.id as string), req.db);
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     const host = req.headers.host || "localhost:5000";
     const protocol = req.headers["x-forwarded-proto"] || "http";
@@ -1078,7 +1078,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/tables/:id/qr.png", requireRole("MANAGER"), async (req, res) => {
-    const table = await storage.getTable(parseInt(req.params.id as string));
+    const table = await storage.getTable(parseInt(req.params.id as string), req.db);
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     const host = req.headers.host || "localhost:5000";
     const protocol = req.headers["x-forwarded-proto"] || "http";
@@ -1090,8 +1090,8 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: CATEGORIES ====================
-  app.get("/api/admin/categories", requireRole("MANAGER"), async (_req, res) => {
-    res.json(await storage.getAllCategories());
+  app.get("/api/admin/categories", requireRole("MANAGER"), async (req, res) => {
+    res.json(await storage.getAllCategories(req.db));
   });
 
   app.post("/api/admin/categories/seed-tops", requireRole("MANAGER"), async (req, res) => {
@@ -1114,12 +1114,12 @@ export async function registerRoutes(
         { categoryCode: "POS-SALADOS", name: "Salados", parentCategoryCode: "TOP-POSTRES", active: true, sortOrder: 1, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
         { categoryCode: "POS-DULCERIA", name: "Dulces", parentCategoryCode: "TOP-POSTRES", active: true, sortOrder: 2, kdsDestination: "cocina", easyMode: false, foodType: "comidas" },
       ];
-      const existing = await storage.getAllCategories();
+      const existing = await storage.getAllCategories(req.db);
       const created: any[] = [];
       for (const item of [...tops, ...subcats]) {
         const exists = existing.find(c => c.categoryCode === item.categoryCode);
         if (!exists) {
-          const cat = await storage.createCategory(item);
+          const cat = await storage.createCategory(item, req.db);
           created.push(cat);
         } else {
           created.push(exists);
@@ -1133,7 +1133,7 @@ export async function registerRoutes(
 
   app.post("/api/admin/categories", requireRole("MANAGER"), async (req, res) => {
     try {
-      const cat = await storage.createCategory(req.body);
+      const cat = await storage.createCategory(req.body, req.db);
       res.json(cat);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1142,7 +1142,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/categories/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const cat = await storage.updateCategory(parseInt(req.params.id as string), req.body);
+      const cat = await storage.updateCategory(parseInt(req.params.id as string), req.body, req.db);
       res.json(cat);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1150,8 +1150,8 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: PRODUCTS ====================
-  app.get("/api/admin/products", requirePermission("MODULE_PRODUCTS_VIEW"), async (_req, res) => {
-    res.json(await storage.getAllProducts());
+  app.get("/api/admin/products", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
+    res.json(await storage.getAllProducts(req.db));
   });
 
   app.post("/api/admin/products", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
@@ -1159,7 +1159,7 @@ export async function registerRoutes(
       if (!req.body.description || req.body.description.trim() === "") {
         return res.status(400).json({ message: "La descripción es obligatoria" });
       }
-      const product = await storage.createProduct(req.body);
+      const product = await storage.createProduct(req.body, req.db);
       res.json(product);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1171,7 +1171,7 @@ export async function registerRoutes(
       if (req.body.description !== undefined && req.body.description.trim() === "") {
         return res.status(400).json({ message: "La descripción es obligatoria" });
       }
-      const product = await storage.updateProduct(parseInt(req.params.id as string), req.body);
+      const product = await storage.updateProduct(parseInt(req.params.id as string), req.body, req.db);
       res.json(product);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1181,9 +1181,9 @@ export async function registerRoutes(
   app.delete("/api/admin/products/:id", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
     try {
       const id = parseInt(req.params.id as string);
-      const existing = await storage.getProduct(id);
+      const existing = await storage.getProduct(id, req.db);
       if (!existing) return res.status(404).json({ message: "Producto no encontrado" });
-      const result = await storage.smartDeleteProduct(id);
+      const result = await storage.smartDeleteProduct(id, req.db);
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1191,13 +1191,13 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: PAYMENT METHODS ====================
-  app.get("/api/admin/payment-methods", requireRole("MANAGER"), async (_req, res) => {
-    res.json(await storage.getAllPaymentMethods());
+  app.get("/api/admin/payment-methods", requireRole("MANAGER"), async (req, res) => {
+    res.json(await storage.getAllPaymentMethods(req.db));
   });
 
   app.post("/api/admin/payment-methods", requireRole("MANAGER"), async (req, res) => {
     try {
-      const pm = await storage.createPaymentMethod(req.body);
+      const pm = await storage.createPaymentMethod(req.body, req.db);
       res.json(pm);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1206,7 +1206,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/payment-methods/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const pm = await storage.updatePaymentMethod(parseInt(req.params.id as string), req.body);
+      const pm = await storage.updatePaymentMethod(parseInt(req.params.id as string), req.body, req.db);
       res.json(pm);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1454,7 +1454,7 @@ export async function registerRoutes(
   });
 
   // ==================== POS: DISCOUNTS LIST ====================
-  app.get("/api/pos/discounts", requirePermission("POS_PAY"), async (_req, res) => {
+  app.get("/api/pos/discounts", requirePermission("POS_PAY"), async (req, res) => {
     const all = await storage.getAllDiscounts();
     res.json(all.filter(d => d.active));
   });
@@ -1581,7 +1581,7 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const table = order.tableId ? await storage.getTable(order.tableId) : null;
+      const table = order.tableId ? await storage.getTable(order.tableId, req.db) : null;
       const tableId = order.tableId || 0;
       const tableName = table?.tableName || "Mostrador";
 
@@ -1589,8 +1589,8 @@ export async function registerRoutes(
 
       const [existingItems, allCategories, allProductsList, allPtcs, allTaxCats] = await Promise.all([
         storage.getOrderItems(order.id),
-        storage.getAllCategories(),
-        storage.getProductsByIds(productIds),
+        storage.getAllCategories(req.db),
+        storage.getProductsByIds(productIds, req.db),
         storage.getProductTaxCategoriesByProductIds(productIds),
         storage.getAllTaxCategories(),
       ]);
@@ -1771,7 +1771,7 @@ export async function registerRoutes(
   app.get("/api/waiter/tables", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
-      storage.getAllTables(),
+      storage.getAllTables(req.db),
       storage.getAllOpenOrders(),
     ]);
 
@@ -1928,7 +1928,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/waiter/tables/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
-    const table = await storage.getTable(parseInt(req.params.id as string));
+    const table = await storage.getTable(parseInt(req.params.id as string), req.db);
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     res.json(table);
   });
@@ -1937,7 +1937,7 @@ export async function registerRoutes(
     const t0 = Date.now();
     try {
       const tableId = parseInt(req.params.id as string);
-      const table = await storage.getTable(tableId);
+      const table = await storage.getTable(tableId, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const order = await storage.getOpenOrderForTable(tableId);
@@ -2009,8 +2009,8 @@ export async function registerRoutes(
       if (isNaN(srcId) || isNaN(dstId)) return res.status(400).json({ message: "IDs de mesa inválidos" });
       if (srcId === dstId) return res.status(400).json({ message: "La mesa origen y destino no pueden ser la misma" });
 
-      const sourceTable = await storage.getTable(srcId);
-      const destTable = await storage.getTable(dstId);
+      const sourceTable = await storage.getTable(srcId, req.db);
+      const destTable = await storage.getTable(dstId, req.db);
       if (!sourceTable || !sourceTable.active) return res.status(404).json({ message: "Mesa origen no encontrada o inactiva" });
       if (!destTable || !destTable.active) return res.status(404).json({ message: "Mesa destino no encontrada o inactiva" });
 
@@ -2049,8 +2049,8 @@ export async function registerRoutes(
       const sourceOrder = await storage.getOrder(subaccount.orderId);
       if (!sourceOrder || sourceOrder.status === "CLOSED") return res.status(400).json({ message: "Orden origen no válida" });
 
-      const sourceTable = await storage.getTable(sourceOrder.tableId);
-      const destTable = await storage.getTable(destTableId);
+      const sourceTable = await storage.getTable(sourceOrder.tableId, req.db);
+      const destTable = await storage.getTable(destTableId, req.db);
       if (!destTable || !destTable.active) return res.status(404).json({ message: "Mesa destino no encontrada o inactiva" });
       if (sourceOrder.tableId === destTableId) return res.status(400).json({ message: "La subcuenta ya está en esa mesa" });
 
@@ -2165,12 +2165,12 @@ export async function registerRoutes(
     res.json({ order, items, pendingSubmissions: subsWithItems });
   });
 
-  app.get("/api/waiter/menu", requireRole("WAITER", "MANAGER"), async (_req, res) => {
-    res.json(await storage.getActiveProducts());
+  app.get("/api/waiter/menu", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    res.json(await storage.getActiveProducts(req.db));
   });
 
-  app.get("/api/waiter/categories", requireRole("WAITER", "MANAGER"), async (_req, res) => {
-    const allCats = await storage.getAllCategories();
+  app.get("/api/waiter/categories", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    const allCats = await storage.getAllCategories(req.db);
     res.json(allCats.filter(c => c.active));
   });
 
@@ -2209,9 +2209,9 @@ export async function registerRoutes(
       const productIds = Array.from(new Set(items.map((i: any) => i.productId))) as number[];
 
       const [table, allProducts, allCategories, allTaxCats, allProdTaxLinks] = await Promise.all([
-        storage.getTable(tableId),
-        storage.getProductsByIds(productIds),
-        storage.getAllCategories(),
+        storage.getTable(tableId, req.db),
+        storage.getProductsByIds(productIds, req.db),
+        storage.getAllCategories(req.db),
         storage.getAllTaxCategories(),
         Promise.all(productIds.map(pid => storage.getProductTaxCategories(pid).then(links => ({ pid, links })))),
       ]);
@@ -2411,7 +2411,7 @@ export async function registerRoutes(
       const order = await storage.getOpenOrderForTable(sub.tableId);
       if (!order) return res.status(400).json({ message: "Orden no encontrada" });
 
-      const table = await storage.getTable(sub.tableId);
+      const table = await storage.getTable(sub.tableId, req.db);
       if (!table) return res.status(400).json({ message: "Mesa no encontrada" });
 
       // Update waiter on order if not set
@@ -2433,8 +2433,8 @@ export async function registerRoutes(
       const createdTicketIds: number[] = [];
 
       if (subItems.length > 0) {
-        const allCategories = await storage.getAllCategories();
-        const allProducts = await Promise.all(subItems.map(i => storage.getProduct(i.productId)));
+        const allCategories = await storage.getAllCategories(req.db);
+        const allProducts = await Promise.all(subItems.map(i => storage.getProduct(i.productId, req.db)));
         const kdsTickets: Map<string, number> = new Map();
 
         for (let idx = 0; idx < subItems.length; idx++) {
@@ -2668,9 +2668,9 @@ export async function registerRoutes(
       const effectiveQty = (typeof qtyToVoid === "number" && qtyToVoid > 0 && qtyToVoid <= item.qty) ? qtyToVoid : item.qty;
       const isFullVoid = effectiveQty >= item.qty;
 
-      const table = await storage.getTable(order.tableId);
-      const product = await storage.getProduct(item.productId);
-      const allCategories = await storage.getAllCategories();
+      const table = await storage.getTable(order.tableId, req.db);
+      const product = await storage.getProduct(item.productId, req.db);
+      const allCategories = await storage.getAllCategories(req.db);
       const category = allCategories.find(c => c.id === product?.categoryId);
 
       if (isFullVoid) {
@@ -2849,7 +2849,7 @@ export async function registerRoutes(
 
   // ==================== QR CLIENT ====================
   app.get("/api/qr/:tableCode/info", async (req, res) => {
-    const table = await storage.getTableByCode(req.params.tableCode);
+    const table = await storage.getTableByCode(req.params.tableCode, req.db);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
     const config = await storage.getBusinessConfig(req.tenantSchema);
     const maxSubaccounts = (config as any)?.maxSubaccounts ?? 15;
@@ -2860,7 +2860,7 @@ export async function registerRoutes(
 
   app.patch("/api/qr/:tableCode/guest-count", async (req, res) => {
     try {
-      const table = await storage.getTableByCode(req.params.tableCode);
+      const table = await storage.getTableByCode(req.params.tableCode, req.db);
       if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
       const guestCount = parseInt(req.body.guestCount);
       if (isNaN(guestCount) || guestCount < 1) return res.status(400).json({ message: "Cantidad inválida" });
@@ -2883,9 +2883,9 @@ export async function registerRoutes(
   app.get("/api/qr/:tableCode/menu", async (req, res) => {
     const isEasyMode = req.query.mode === "easy";
     const [table, prods, cats] = await Promise.all([
-      storage.getTableByCode(req.params.tableCode as string),
-      storage.getQRProducts(),
-      storage.getAllCategories(),
+      storage.getTableByCode(req.params.tableCode as string, req.db),
+      storage.getQRProducts(req.db),
+      storage.getAllCategories(req.db),
     ]);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
 
@@ -2932,7 +2932,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/qr/:tableCode/my-items", async (req, res) => {
-    const table = await storage.getTableByCode(req.params.tableCode);
+    const table = await storage.getTableByCode(req.params.tableCode, req.db);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
 
     const order = await storage.getOpenOrderForTable(table.id);
@@ -2959,7 +2959,7 @@ export async function registerRoutes(
         return res.status(429).json({ message: "Espere un momento antes de enviar otro pedido" });
       }
 
-      const table = await storage.getTableByCode(tableCode);
+      const table = await storage.getTableByCode(tableCode, req.db);
       if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const { items } = req.body;
@@ -2980,10 +2980,10 @@ export async function registerRoutes(
         status: "PENDING",
       });
 
-      const allCategories = await storage.getAllCategories();
+      const allCategories = await storage.getAllCategories(req.db);
 
       for (const item of items) {
-        const product = await storage.getProduct(item.productId);
+        const product = await storage.getProduct(item.productId, req.db);
         if (!product || !product.active) continue;
 
         if (product.availablePortions !== null && product.availablePortions < item.qty) {
@@ -3264,8 +3264,8 @@ export async function registerRoutes(
   });
 
   // ==================== POS: PAYMENT METHODS (for cashier access) ====================
-  app.get("/api/pos/payment-methods", requirePermission("POS_VIEW"), async (_req, res) => {
-    res.json(await storage.getAllPaymentMethods());
+  app.get("/api/pos/payment-methods", requirePermission("POS_VIEW"), async (req, res) => {
+    res.json(await storage.getAllPaymentMethods(req.db));
   });
 
   async function finalizePaymentTx(tx: any, opts: { orderId: number; itemIds?: number[]; now: Date; closeOrder?: boolean }) {
@@ -3314,7 +3314,7 @@ export async function registerRoutes(
     try {
       const [bizConfig, allProducts, existing] = await Promise.all([
         storage.getBusinessConfig(schema),
-        storage.getAllProducts(),
+        storage.getAllProducts(req.db),
         storage.getServiceChargeByOrder(orderId),
       ]);
       let scRate = 0.10;
@@ -3329,7 +3329,7 @@ export async function registerRoutes(
         existing.filter(x => x.status === "PAID").map(x => x.orderItemId)
       );
       const productMap = new Map(allProducts.map(p => [p.id, p]));
-      const tableName = order.tableId ? (await storage.getTable(order.tableId))?.tableName : null;
+      const tableName = order.tableId ? (await storage.getTable(order.tableId, req.db))?.tableName : null;
       const bd = await getBusinessDate(schema);
       const entries: any[] = [];
       for (const item of activeItems) {
@@ -3374,10 +3374,10 @@ export async function registerRoutes(
   }
 
   // ==================== POS ====================
-  app.get("/api/pos/tables", requirePermission("POS_VIEW"), async (_req, res) => {
+  app.get("/api/pos/tables", requirePermission("POS_VIEW"), async (req, res) => {
     const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
-      storage.getAllTables(),
+      storage.getAllTables(req.db),
       storage.getAllOpenOrders(),
     ]);
     const tableMap = new Map(allTables.map(t => [t.id, t]));
@@ -3453,7 +3453,7 @@ export async function registerRoutes(
     const order = await storage.getOrder(orderId);
     if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-    const table = await storage.getTable(order.tableId);
+    const table = await storage.getTable(order.tableId, req.db);
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
     const [allItems, allMods, allItemDiscounts, allItemTaxes, allSubaccounts] = await Promise.all([
@@ -3527,7 +3527,7 @@ export async function registerRoutes(
 
       const [order, allPMs, cashSession] = await Promise.all([
         storage.getOrder(orderId),
-        storage.getAllPaymentMethods(),
+        storage.getAllPaymentMethods(req.db),
         storage.getActiveCashSession(),
       ]);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
@@ -3613,7 +3613,7 @@ export async function registerRoutes(
 
       const [order, allPMs, cashSession] = await Promise.all([
         storage.getOrder(orderId),
-        storage.getAllPaymentMethods(),
+        storage.getAllPaymentMethods(req.db),
         storage.getActiveCashSession(),
       ]);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
@@ -3786,7 +3786,7 @@ export async function registerRoutes(
     try {
       const orderId = parseInt(req.params.orderId as string);
       const orderPayments = await storage.getPaymentsForOrder(orderId);
-      const allMethods = await storage.getAllPaymentMethods();
+      const allMethods = await storage.getAllPaymentMethods(req.db);
       const methodMap = new Map(allMethods.map(m => [m.id, m.paymentName]));
       const result = orderPayments.map(p => ({
         ...p,
@@ -3996,7 +3996,7 @@ export async function registerRoutes(
       const [splitAccount, splitItemsList, allPMs, cashSession] = await Promise.all([
         storage.getSplitAccount(splitId),
         storage.getSplitItemsForSplit(splitId),
-        storage.getAllPaymentMethods(),
+        storage.getAllPaymentMethods(req.db),
         storage.getActiveCashSession(),
       ]);
 
@@ -4118,7 +4118,7 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const table = await storage.getTable(order.tableId);
+      const table = await storage.getTable(order.tableId, req.db);
       const items = await storage.getOrderItems(orderId);
 
       let targetItems: typeof items;
@@ -4170,7 +4170,7 @@ export async function registerRoutes(
       if (relevantPayments.length > 1) {
         const pmNames: string[] = [];
         for (const pay of relevantPayments) {
-          const pm = await storage.getPaymentMethod(pay.paymentMethodId);
+          const pm = await storage.getPaymentMethod(pay.paymentMethodId, req.db);
           if (pm) {
             pmNames.push(`${pm.paymentName} ₡${Number(pay.amount).toLocaleString()}`);
             if (pm.paymentCode === "CASH") hasCashPayment = true;
@@ -4178,7 +4178,7 @@ export async function registerRoutes(
         }
         paymentMethodName = pmNames.join(" + ");
       } else if (lastPayment) {
-        const pm = await storage.getPaymentMethod(lastPayment.paymentMethodId);
+        const pm = await storage.getPaymentMethod(lastPayment.paymentMethodId, req.db);
         paymentMethodName = pm?.paymentName || "";
         if (pm?.paymentCode === "CASH") hasCashPayment = true;
       }
@@ -4257,7 +4257,7 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const table = await storage.getTable(order.tableId);
+      const table = await storage.getTable(order.tableId, req.db);
       const items = await storage.getOrderItems(orderId);
       const activeItems = items.filter(i => i.status !== "VOIDED");
 
@@ -4376,7 +4376,7 @@ export async function registerRoutes(
 
       const items = await storage.getOrderItems(orderId);
       const activeItems = items.filter(i => i.status !== "VOIDED");
-      const table = await storage.getTable(order.tableId);
+      const table = await storage.getTable(order.tableId, req.db);
       let subtotal = 0;
       const emailItemsData: { name: string; qty: number; lineTotal: number }[] = [];
       for (const i of activeItems) {
@@ -4512,13 +4512,13 @@ export async function registerRoutes(
 
       const [items, table, allCategories] = await Promise.all([
         storage.getOrderItems(orderId),
-        storage.getTable(order.tableId),
-        storage.getAllCategories(),
+        storage.getTable(order.tableId, req.db),
+        storage.getAllCategories(req.db),
       ]);
 
       const activeItems = items.filter(i => i.status !== "VOIDED");
       const productIds = Array.from(new Set(activeItems.map(i => i.productId)));
-      const allProducts = await storage.getProductsByIds(productIds);
+      const allProducts = await storage.getProductsByIds(productIds, req.db);
       const productMap = new Map(allProducts.map(p => [p.id, p]));
 
       const activeItemIds = activeItems.map(i => i.id);
@@ -4636,7 +4636,7 @@ export async function registerRoutes(
 
       await storage.voidPayment(paymentId, userId, req.body.voidReason || "Anulación de pago");
 
-      const pm = (await storage.getAllPaymentMethods()).find(m => m.id === payment.paymentMethodId);
+      const pm = (await storage.getAllPaymentMethods(req.db)).find(m => m.id === payment.paymentMethodId);
       if (pm?.paymentCode === "CASH") {
         const cashSession = await storage.getActiveCashSession();
         if (cashSession) {
@@ -4684,10 +4684,10 @@ export async function registerRoutes(
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
       const [table, items, orderPayments, allPaymentMethods] = await Promise.all([
-        storage.getTable(order.tableId),
+        storage.getTable(order.tableId, req.db),
         storage.getOrderItems(orderId),
         storage.getPaymentsForOrder(orderId),
-        storage.getAllPaymentMethods(),
+        storage.getAllPaymentMethods(req.db),
       ]);
       const pmMap = new Map(allPaymentMethods.map(m => [m.id, m.paymentName]));
       const activeItems = items.filter(i => i.status !== "VOIDED");
@@ -4755,7 +4755,7 @@ export async function registerRoutes(
       const date = (req.query.date as string) || undefined;
       const [paidOrders, allTables] = await Promise.all([
         storage.getPaidOrdersForDate(date),
-        storage.getAllTables(),
+        storage.getAllTables(req.db),
       ]);
       const tableMap = new Map(allTables.map(t => [t.id, t]));
 
@@ -4765,7 +4765,7 @@ export async function registerRoutes(
       const [allItems, allPaymentsList, allPaymentMethods] = await Promise.all([
         storage.getOrderItemsByOrderIds(orderIds),
         storage.getPaymentsByOrderIds(orderIds),
-        storage.getAllPaymentMethods(),
+        storage.getAllPaymentMethods(req.db),
       ]);
       const pmNameMap = new Map(allPaymentMethods.map(m => [m.id, m.paymentName]));
 
@@ -4833,7 +4833,7 @@ export async function registerRoutes(
 
       const orderPayments = await storage.getPaymentsForOrder(orderId);
       const paidPayments = orderPayments.filter(p => p.status === "PAID");
-      const allPMs = await storage.getAllPaymentMethods();
+      const allPMs = await storage.getAllPaymentMethods(req.db);
       const pmMap = new Map(allPMs.map(m => [m.id, m]));
 
       for (const p of paidPayments) {
@@ -6111,7 +6111,7 @@ export async function registerRoutes(
   });
 
   // -- Open punches (for auto-process monitoring) --
-  app.get("/api/hr/open-punches", requirePermission("HR_VIEW_TEAM"), async (_req, res) => {
+  app.get("/api/hr/open-punches", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
     const openPunches = await storage.getAllOpenPunches();
     res.json(openPunches);
   });
@@ -6129,7 +6129,7 @@ export async function registerRoutes(
   app.get("/api/qr/:tableCode/token", async (req, res) => {
     try {
       const tableCode = req.params.tableCode as string;
-      const table = await storage.getTableByCode(tableCode);
+      const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
       const today = await getBusinessDateCR(req.tenantSchema);
       const token = generateQrDailyToken(tableCode, today);
@@ -6636,7 +6636,7 @@ export async function registerRoutes(
         rows = rows.filter(r => reservationCoversTable(r, tid));
       }
 
-      const allTables = await storage.getAllTables();
+      const allTables = await storage.getAllTables(req.db);
       const tableMap = new Map(allTables.map(t => [t.id, { id: t.id, tableName: t.tableName, tableCode: t.tableCode, capacity: t.capacity }]));
 
       const result = rows.map(r => {
@@ -6660,7 +6660,7 @@ export async function registerRoutes(
       const { date, partySize } = req.query;
       if (!date || !partySize) return res.status(400).json({ message: "date y partySize son requeridos" });
       const ps = parseInt(partySize as string);
-      const allTables = await storage.getAllTables();
+      const allTables = await storage.getAllTables(req.db);
       const activeTables = allTables.filter(t => t.active);
 
       const dayReservations = await db.select().from(reservations)
@@ -6836,7 +6836,7 @@ export async function registerRoutes(
   });
 
   // GET /api/reservations/duration-config
-  app.get("/api/reservations/duration-config", requireRole("WAITER", "MANAGER"), async (_req, res) => {
+  app.get("/api/reservations/duration-config", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const configs = await db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
     res.json(configs);
   });
@@ -6862,7 +6862,7 @@ export async function registerRoutes(
   });
 
   // GET /api/reservations/settings
-  app.get("/api/reservations/settings", requireRole("WAITER", "MANAGER"), async (_req, res) => {
+  app.get("/api/reservations/settings", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const rows = await db.select().from(reservationSettings);
     if (rows.length === 0) {
       const [created] = await db.insert(reservationSettings).values({}).returning();
@@ -6968,7 +6968,7 @@ export async function registerRoutes(
   app.post("/api/admin/products/:id/image", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
     try {
       const id = parseInt(req.params.id as string);
-      const product = await storage.getProduct(id);
+      const product = await storage.getProduct(id, req.db);
       if (!product) return res.status(404).json({ message: "Producto no encontrado" });
 
       const { imageData, mimeType } = req.body;
@@ -7013,7 +7013,7 @@ export async function registerRoutes(
       }
 
       const imageUrl = `/product-images/${fileName}`;
-      await storage.updateProduct(id, { imageUrl });
+      await storage.updateProduct(id, { imageUrl }, req.db);
 
       res.json({ imageUrl });
     } catch (err: any) {
@@ -7025,7 +7025,7 @@ export async function registerRoutes(
   app.delete("/api/admin/products/:id/image", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
     try {
       const id = parseInt(req.params.id as string);
-      const product = await storage.getProduct(id);
+      const product = await storage.getProduct(id, req.db);
       if (!product) return res.status(404).json({ message: "Producto no encontrado" });
 
       if (product.imageUrl) {
@@ -7041,7 +7041,7 @@ export async function registerRoutes(
         }
       }
 
-      await storage.updateProduct(id, { imageUrl: null });
+      await storage.updateProduct(id, { imageUrl: null }, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7049,7 +7049,7 @@ export async function registerRoutes(
   });
 
   // GET /api/public/reservations/settings (public - limited info)
-  app.get("/api/public/reservations/settings", async (_req, res) => {
+  app.get("/api/public/reservations/settings", async (req, res) => {
     const rows = await db.select().from(reservationSettings);
     const settings = rows.length > 0 ? rows[0] : { openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30, enabled: true, maxPartySize: 20 };
     res.json({ openTime: settings.openTime, closeTime: settings.closeTime, slotIntervalMinutes: settings.slotIntervalMinutes, enabled: settings.enabled, maxPartySize: settings.maxPartySize ?? 20 });
@@ -7076,7 +7076,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "El sistema de reservaciones no está disponible." });
       }
 
-      const allTables = await storage.getAllTables();
+      const allTables = await storage.getAllTables(req.db);
       const activeTables = allTables.filter(t => t.active).sort((a, b) => a.capacity - b.capacity);
       const totalSeats = activeTables.reduce((sum, t) => sum + t.capacity, 0);
       const maxReservableSeats = Math.max(1, Math.floor(totalSeats * settings.maxOccupancyPercent / 100));
@@ -7174,7 +7174,7 @@ export async function registerRoutes(
         return res.json([]);
       }
 
-      const allTables = await storage.getAllTables();
+      const allTables = await storage.getAllTables(req.db);
       const activeTables = allTables.filter(t => t.active).sort((a, b) => a.capacity - b.capacity);
       const totalSeats = activeTables.reduce((sum, t) => sum + t.capacity, 0);
 
@@ -7259,7 +7259,7 @@ export async function registerRoutes(
       const settings = settingsRows.length > 0 ? settingsRows[0] : { turnoverBufferMinutes: 15 };
       const buffer = settings.turnoverBufferMinutes;
 
-      const allTables = await storage.getAllTables();
+      const allTables = await storage.getAllTables(req.db);
       const activeTables = allTables.filter(t => t.active);
 
       const dayReservations = await db.select().from(reservations)
@@ -7338,7 +7338,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/qbo/disconnect", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.post("/api/qbo/disconnect", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       await qbo.disconnectQBO();
       res.json({ ok: true });
@@ -7347,7 +7347,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/credentials", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.get("/api/qbo/credentials", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const status = await qbo.getCredentialStatus();
       res.json(status);
@@ -7375,7 +7375,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/items", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.get("/api/qbo/items", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const items = await qbo.getQBOItems();
       res.json(items);
@@ -7384,7 +7384,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/accounts", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.get("/api/qbo/accounts", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const accounts = await qbo.getQBOAccounts();
       res.json(accounts);
@@ -7393,7 +7393,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/tax-codes", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.get("/api/qbo/tax-codes", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const codes = await qbo.getQBOTaxCodes();
       res.json(codes);
@@ -7402,7 +7402,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/mappings", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.get("/api/qbo/mappings", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const mappings = await qbo.getMappings();
       res.json(mappings);
@@ -7432,7 +7432,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/sync-stats", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.get("/api/qbo/sync-stats", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const stats = await qbo.getSyncStats();
       res.json(stats);
@@ -7441,7 +7441,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/qbo/retry-pending", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.post("/api/qbo/retry-pending", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const count = await qbo.retryPendingSync();
       res.json({ ok: true, processed: count });
@@ -7474,10 +7474,10 @@ export async function registerRoutes(
   });
 
   // ==================== BASIC INVENTORY CONTROL PANEL ====================
-  app.get("/api/inventory/basic", requirePermission("MODULE_INV_VIEW"), async (_req, res) => {
+  app.get("/api/inventory/basic", requirePermission("MODULE_INV_VIEW"), async (req, res) => {
     try {
-      const allProducts = await storage.getAllProducts();
-      const allCategories = await storage.getAllCategories();
+      const allProducts = await storage.getAllProducts(req.db);
+      const allCategories = await storage.getAllCategories(req.db);
       const categoryMap = new Map(allCategories.map(c => [c.id, c]));
 
       const items = allProducts.map(p => {
@@ -7522,7 +7522,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "productId y action son requeridos" });
       }
 
-      const product = await storage.getProduct(productId);
+      const product = await storage.getProduct(productId, req.db);
       if (!product) return res.status(404).json({ message: "Producto no encontrado" });
 
       let newPortions: number | null = product.availablePortions;
@@ -7568,7 +7568,7 @@ export async function registerRoutes(
         case "SET_REORDER": {
           const rp = value === null || value === undefined || value === "" ? null : parseInt(value);
           if (rp !== null && (isNaN(rp) || rp < 0)) return res.status(400).json({ message: "Punto de reorden inválido" });
-          await storage.updateProduct(productId, { reorderPoint: rp });
+          await storage.updateProduct(productId, { reorderPoint: rp }, req.db);
           await storage.createAuditEvent({
             actorType: "USER",
             actorUserId: userId,
@@ -7588,7 +7588,7 @@ export async function registerRoutes(
       await storage.updateProduct(productId, {
         availablePortions: newPortions,
         active: newActive,
-      });
+      }, req.db);
 
       await storage.createAuditEvent({
         actorType: "USER",
@@ -7653,14 +7653,14 @@ export async function registerRoutes(
           tableId: orders.tableId,
         }).from(orders).where(inArray(orders.id, orderIds)),
         db.select().from(qboSyncLog).where(inArray(qboSyncLog.paymentId, paymentIds)),
-        storage.getAllPaymentMethods(),
+        storage.getAllPaymentMethods(req.db),
         db.select({
           orderId: salesLedgerItems.orderId,
           categoryName: salesLedgerItems.categoryNameSnapshot,
         }).from(salesLedgerItems).where(inArray(salesLedgerItems.orderId, orderIds)),
       ]);
 
-      const allTables = await storage.getAllTables();
+      const allTables = await storage.getAllTables(req.db);
       const tableMap = new Map(allTables.map(t => [t.id, t.tableName]));
       const orderMap = new Map(orderRows.map(o => [o.id, o]));
       const syncMap = new Map(syncRows.map(s => [s.paymentId, s]));

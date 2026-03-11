@@ -100,7 +100,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
   app.get("/api/qr/:tableCode/subaccounts", tokenCheck, async (req, res) => {
     try {
       const tableCode = req.params.tableCode as string;
-      const table = await storage.getTableByCode(tableCode);
+      const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const order = await storage.getOpenOrderForTable(table.id);
@@ -122,7 +122,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const tableCode = req.params.tableCode as string;
       const { label, slotNumber: requestedSlot } = req.body || {};
 
-      const table = await storage.getTableByCode(tableCode);
+      const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const order = await getOrCreateOrderForTable(table.id);
@@ -180,7 +180,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const tableCode = req.params.tableCode as string;
       const { count } = req.body || {};
 
-      const table = await storage.getTableByCode(tableCode);
+      const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const order = await getOrCreateOrderForTable(table.id);
@@ -231,7 +231,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         return res.status(400).json({ message: "Items requeridos" });
       }
 
-      const table = await storage.getTableByCode(tableCode);
+      const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
       const pendingCount = await db.select({ count: sql<number>`count(*)` })
@@ -285,7 +285,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const order = await storage.getOrder(sub.orderId);
       if (!order) return res.status(400).json({ message: "Orden no encontrada" });
 
-      const table = await storage.getTable(sub.tableId);
+      const table = await storage.getTable(sub.tableId, req.db);
       if (!table) return res.status(400).json({ message: "Mesa no encontrada" });
 
       if (!order.responsibleWaiterId) {
@@ -323,7 +323,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       const [existingItems, allCategories, allTaxCats] = await Promise.all([
         storage.getOrderItems(order.id),
-        storage.getAllCategories(),
+        storage.getAllCategories(req.db),
         storage.getAllTaxCategories(),
       ]);
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);

@@ -37,18 +37,18 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
     }
   });
 
-  app.get("/api/shortages/products", requirePermission("SHORTAGES_REPORT"), async (_req: Request, res: Response) => {
+  app.get("/api/shortages/products", requirePermission("SHORTAGES_REPORT"), async (req: Request, res: Response) => {
     try {
-      const products = await storage.getAllProducts();
+      const products = await storage.getAllProducts(req.db);
       res.json(products);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
 
-  app.get("/api/shortages/categories", requirePermission("SHORTAGES_REPORT"), async (_req: Request, res: Response) => {
+  app.get("/api/shortages/categories", requirePermission("SHORTAGES_REPORT"), async (req: Request, res: Response) => {
     try {
-      const categories = await storage.getAllCategories();
+      const categories = await storage.getAllCategories(req.db);
       res.json(categories);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

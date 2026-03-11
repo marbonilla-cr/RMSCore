@@ -355,29 +355,33 @@ export async function getEffectivePermissions(userId: number, dbInstance?: typeo
 }
 
 // Tables
-export async function getAllTables(includeDeleted = false) {
+export async function getAllTables(includeDeleted = false, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (includeDeleted) {
-    return db.select().from(tables).orderBy(asc(tables.sortOrder), asc(tables.id));
+    return d.select().from(tables).orderBy(asc(tables.sortOrder), asc(tables.id));
   }
-  return db.select().from(tables).where(isNull(tables.deletedAt)).orderBy(asc(tables.sortOrder), asc(tables.id));
+  return d.select().from(tables).where(isNull(tables.deletedAt)).orderBy(asc(tables.sortOrder), asc(tables.id));
 }
 
-export async function getTable(id: number) {
-  const [table] = await db.select().from(tables).where(eq(tables.id, id));
+export async function getTable(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [table] = await d.select().from(tables).where(eq(tables.id, id));
   return table;
 }
 
-export async function getTableByCode(code: string) {
-  const [table] = await db.select().from(tables).where(and(eq(tables.tableCode, code), isNull(tables.deletedAt)));
+export async function getTableByCode(code: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [table] = await d.select().from(tables).where(and(eq(tables.tableCode, code), isNull(tables.deletedAt)));
   return table;
 }
 
-export async function softDeleteTable(id: number) {
-  const [table] = await db.select().from(tables).where(eq(tables.id, id));
+export async function softDeleteTable(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [table] = await d.select().from(tables).where(eq(tables.id, id));
   if (!table) return null;
   if (table.deletedAt) return table;
   const suffix = `[DEL-${Date.now().toString(36)}]`;
-  const [updated] = await db.update(tables).set({
+  const [updated] = await d.update(tables).set({
     deletedAt: new Date(),
     tableCode: `${table.tableCode}-${suffix}`,
     tableName: `${table.tableName} ${suffix}`,
@@ -386,76 +390,90 @@ export async function softDeleteTable(id: number) {
   return updated;
 }
 
-export async function createTable(data: InsertTable) {
-  const [table] = await db.insert(tables).values(data).returning();
+export async function createTable(data: InsertTable, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [table] = await d.insert(tables).values(data).returning();
   return table;
 }
 
-export async function updateTable(id: number, data: Partial<InsertTable>) {
-  const [table] = await db.update(tables).set(data).where(eq(tables.id, id)).returning();
+export async function updateTable(id: number, data: Partial<InsertTable>, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [table] = await d.update(tables).set(data).where(eq(tables.id, id)).returning();
   return table;
 }
 
 // Categories
-export async function getAllCategories() {
-  return db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.id));
+export async function getAllCategories(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.id));
 }
 
-export async function getCategory(id: number) {
-  const [cat] = await db.select().from(categories).where(eq(categories.id, id));
+export async function getCategory(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [cat] = await d.select().from(categories).where(eq(categories.id, id));
   return cat;
 }
 
-export async function createCategory(data: InsertCategory) {
-  const [cat] = await db.insert(categories).values(data).returning();
+export async function createCategory(data: InsertCategory, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [cat] = await d.insert(categories).values(data).returning();
   return cat;
 }
 
-export async function updateCategory(id: number, data: Partial<InsertCategory>) {
-  const [cat] = await db.update(categories).set(data).where(eq(categories.id, id)).returning();
+export async function updateCategory(id: number, data: Partial<InsertCategory>, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [cat] = await d.update(categories).set(data).where(eq(categories.id, id)).returning();
   return cat;
 }
 
 // Products
-export async function getAllProducts() {
-  return db.select().from(products).orderBy(asc(products.name));
+export async function getAllProducts(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(products).orderBy(asc(products.name));
 }
 
-export async function getActiveProducts() {
-  return db.select().from(products)
+export async function getActiveProducts(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(products)
     .where(eq(products.active, true))
     .orderBy(asc(products.name));
 }
 
-export async function getQRProducts() {
-  return db.select().from(products)
+export async function getQRProducts(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(products)
     .where(and(eq(products.active, true), eq(products.visibleQr, true)))
     .orderBy(asc(products.name));
 }
 
-export async function getProduct(id: number) {
-  const [product] = await db.select().from(products).where(eq(products.id, id));
+export async function getProduct(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [product] = await d.select().from(products).where(eq(products.id, id));
   return product;
 }
 
-export async function getProductsByIds(ids: number[]) {
+export async function getProductsByIds(ids: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (ids.length === 0) return [];
-  return db.select().from(products).where(inArray(products.id, ids));
+  return d.select().from(products).where(inArray(products.id, ids));
 }
 
-export async function createProduct(data: InsertProduct) {
-  const [product] = await db.insert(products).values(data).returning();
+export async function createProduct(data: InsertProduct, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [product] = await d.insert(products).values(data).returning();
   return product;
 }
 
-export async function updateProduct(id: number, data: Partial<InsertProduct>) {
-  const [product] = await db.update(products).set(data).where(eq(products.id, id)).returning();
+export async function updateProduct(id: number, data: Partial<InsertProduct>, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [product] = await d.update(products).set(data).where(eq(products.id, id)).returning();
   return product;
 }
 
-export async function decrementPortions(productId: number, qty: number, orderItemId?: number, actorUserId?: number) {
+export async function decrementPortions(productId: number, qty: number, orderItemId?: number, actorUserId?: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (orderItemId) {
-    const [existing] = await db.select({ id: auditEvents.id }).from(auditEvents)
+    const [existing] = await d.select({ id: auditEvents.id }).from(auditEvents)
       .where(and(
         eq(auditEvents.action, "BASIC_STOCK_DEDUCT"),
         eq(auditEvents.entityType, "order_item"),
@@ -465,55 +483,59 @@ export async function decrementPortions(productId: number, qty: number, orderIte
     if (existing) return;
   }
 
-  const product = await getProduct(productId);
+  const product = await getProduct(productId, dbInstance);
   if (!product || product.availablePortions === null) return;
   const newPortions = Math.max(0, product.availablePortions - qty);
   const wasActive = product.active;
   const active = newPortions > 0;
-  await db.update(products).set({ availablePortions: newPortions, active }).where(eq(products.id, productId));
+  await d.update(products).set({ availablePortions: newPortions, active }).where(eq(products.id, productId));
 
   if (orderItemId) {
-    await db.insert(auditEvents).values({
+    await createAuditEvent({
       actorType: actorUserId ? "USER" : "SYSTEM",
       actorUserId: actorUserId || null,
       action: "BASIC_STOCK_DEDUCT",
       entityType: "order_item",
       entityId: orderItemId,
       metadata: { productId, productName: product.name, qty, previousPortions: product.availablePortions, newPortions },
-    });
+    }, dbInstance);
   }
 
   if (wasActive && !active) {
-    await db.insert(auditEvents).values({
+    await createAuditEvent({
       actorType: "SYSTEM",
       actorUserId: actorUserId || null,
       action: "BASIC_AUTO_DISABLE",
       entityType: "product",
       entityId: productId,
       metadata: { productName: product.name, lastQtyDeducted: qty, orderItemId: orderItemId || null },
-    });
+    }, dbInstance);
   }
 
   return { productId, newPortions, autoDisabled: wasActive && !active };
 }
 
 // Payment Methods
-export async function getAllPaymentMethods() {
-  return db.select().from(paymentMethods).orderBy(asc(paymentMethods.sortOrder), asc(paymentMethods.id));
+export async function getAllPaymentMethods(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(paymentMethods).orderBy(asc(paymentMethods.sortOrder), asc(paymentMethods.id));
 }
 
-export async function createPaymentMethod(data: InsertPaymentMethod) {
-  const [pm] = await db.insert(paymentMethods).values(data).returning();
+export async function createPaymentMethod(data: InsertPaymentMethod, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [pm] = await d.insert(paymentMethods).values(data).returning();
   return pm;
 }
 
-export async function getPaymentMethod(id: number) {
-  const [pm] = await db.select().from(paymentMethods).where(eq(paymentMethods.id, id));
+export async function getPaymentMethod(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [pm] = await d.select().from(paymentMethods).where(eq(paymentMethods.id, id));
   return pm;
 }
 
-export async function updatePaymentMethod(id: number, data: Partial<InsertPaymentMethod>) {
-  const [pm] = await db.update(paymentMethods).set(data).where(eq(paymentMethods.id, id)).returning();
+export async function updatePaymentMethod(id: number, data: Partial<InsertPaymentMethod>, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [pm] = await d.update(paymentMethods).set(data).where(eq(paymentMethods.id, id)).returning();
   return pm;
 }
 
@@ -2169,32 +2191,35 @@ export async function deleteServiceChargePayoutsByPeriod(periodStart: string, pe
     ));
 }
 
-export async function hasProductRelations(id: number): Promise<boolean> {
+export async function hasProductRelations(id: number, dbInstance?: typeof db): Promise<boolean> {
+  const d = dbInstance || db;
   const checks = await Promise.all([
-    db.select({ c: sql<number>`count(*)` }).from(orderItems).where(eq(orderItems.productId, id)),
-    db.select({ c: sql<number>`count(*)` }).from(salesLedgerItems).where(eq(salesLedgerItems.productId, id)),
-    db.select({ c: sql<number>`count(*)` }).from(voidedItems).where(eq(voidedItems.productId, id)),
-    db.select({ c: sql<number>`count(*)` }).from(invRecipes).where(eq(invRecipes.menuProductId, id)),
-    db.select({ c: sql<number>`count(*)` }).from(invShortages).where(eq(invShortages.menuProductId, id)),
+    d.select({ c: sql<number>`count(*)` }).from(orderItems).where(eq(orderItems.productId, id)),
+    d.select({ c: sql<number>`count(*)` }).from(salesLedgerItems).where(eq(salesLedgerItems.productId, id)),
+    d.select({ c: sql<number>`count(*)` }).from(voidedItems).where(eq(voidedItems.productId, id)),
+    d.select({ c: sql<number>`count(*)` }).from(invRecipes).where(eq(invRecipes.menuProductId, id)),
+    d.select({ c: sql<number>`count(*)` }).from(invShortages).where(eq(invShortages.menuProductId, id)),
   ]);
   return checks.some(r => Number(r[0].c) > 0);
 }
 
-export async function hardDeleteProduct(id: number) {
-  await db.delete(itemModifierGroups).where(eq(itemModifierGroups.productId, id));
-  await db.delete(productTaxCategories).where(eq(productTaxCategories.productId, id));
-  await db.delete(portionReservations).where(eq(portionReservations.productId, id));
-  const [product] = await db.delete(products).where(eq(products.id, id)).returning();
+export async function hardDeleteProduct(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.delete(itemModifierGroups).where(eq(itemModifierGroups.productId, id));
+  await d.delete(productTaxCategories).where(eq(productTaxCategories.productId, id));
+  await d.delete(portionReservations).where(eq(portionReservations.productId, id));
+  const [product] = await d.delete(products).where(eq(products.id, id)).returning();
   return product;
 }
 
-export async function smartDeleteProduct(id: number): Promise<{ product: any; hardDeleted: boolean }> {
-  const hasRelations = await hasProductRelations(id);
+export async function smartDeleteProduct(id: number, dbInstance?: typeof db): Promise<{ product: any; hardDeleted: boolean }> {
+  const d = dbInstance || db;
+  const hasRelations = await hasProductRelations(id, dbInstance);
   if (hasRelations) {
-    const [product] = await db.update(products).set({ active: false }).where(eq(products.id, id)).returning();
+    const [product] = await d.update(products).set({ active: false }).where(eq(products.id, id)).returning();
     return { product, hardDeleted: false };
   }
-  const product = await hardDeleteProduct(id);
+  const product = await hardDeleteProduct(id, dbInstance);
   return { product, hardDeleted: true };
 }
 
