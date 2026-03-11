@@ -4329,14 +4329,14 @@ export async function registerRoutes(
     try {
       const { buildDrawerKickData, sendToPrinter } = await import("./escpos");
       const printersList = await req.db.select().from(printersTable).orderBy(asc(printersTable.name));
-      const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
+      const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled);
       if (!cajaPrinter) {
         return res.json({ ok: false, message: "No hay impresora de caja configurada" });
       }
       const drawerData = buildDrawerKickData();
 
       const dispatch = (app as any).dispatchPrintJob;
-      if (typeof dispatch === "function") {
+      if (cajaPrinter.bridgeId && typeof dispatch === "function") {
         const sent = dispatch({
           jobType: "raw",
           destination: cajaPrinter.type || "caja",
@@ -4346,9 +4346,11 @@ export async function registerRoutes(
           return res.json({ ok: false, message: "No hay Print Bridge conectado" });
         }
         res.json({ ok: true, printer: cajaPrinter.name, via: "bridge" });
-      } else {
+      } else if (cajaPrinter.ipAddress) {
         await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, drawerData);
         res.json({ ok: true, printer: cajaPrinter.name, via: "direct" });
+      } else {
+        return res.json({ ok: false, message: "Impresora de caja sin bridge ni IP configurado" });
       }
     } catch (err: any) {
       res.json({ ok: false, message: err.message });
@@ -6419,6 +6421,28 @@ export async function registerRoutes(
       res.json(safe);
     } catch (err: any) {
       console.error("[bridges] PATCH error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/admin/print-bridges/:id", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const [bridge] = await req.db.select().from(printBridgesTable).where(eq(printBridgesTable.id, id));
+      if (!bridge) return res.status(404).json({ error: "Bridge no encontrado" });
+
+      const connectedIds = new Set(
+        getConnectedBridgesForTenant(req.tenantSchema).map(c => c.bridgeId)
+      );
+      if (connectedIds.has(bridge.bridgeId)) {
+        return res.status(400).json({ error: "No se puede eliminar un bridge conectado. Desconéctelo primero." });
+      }
+
+      await req.db.update(printersTable).set({ bridgeId: null }).where(eq(printersTable.bridgeId, bridge.bridgeId));
+      await req.db.delete(printBridgesTable).where(eq(printBridgesTable.id, id));
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[bridges] DELETE error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });

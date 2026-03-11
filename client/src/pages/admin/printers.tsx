@@ -36,6 +36,7 @@ export default function AdminPrintersPage() {
     bridgeId: "",
   });
 
+  const [deleteBridgeConfirm, setDeleteBridgeConfirm] = useState<number | null>(null);
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeName, setBridgeName] = useState("");
   const [newToken, setNewToken] = useState<string | null>(null);
@@ -77,6 +78,22 @@ export default function AdminPrintersPage() {
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteBridgeMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return apiRequest("DELETE", `/api/admin/print-bridges/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/print-bridges"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/printers"] });
+      toast({ title: "Bridge eliminado" });
+      setDeleteBridgeConfirm(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+      setDeleteBridgeConfirm(null);
     },
   });
 
@@ -412,7 +429,46 @@ export default function AdminPrintersPage() {
                       </div>
                     </div>
                   </div>
-                  {!b.isActive && <Badge variant="outline">Inactivo</Badge>}
+                  <div className="flex items-center gap-1">
+                    {!b.isActive && <Badge variant="outline">Inactivo</Badge>}
+                    {deleteBridgeConfirm === b.id ? (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => {
+                            if (b.isConnected) {
+                              toast({ title: "Error", description: "No se puede eliminar un bridge conectado", variant: "destructive" });
+                              setDeleteBridgeConfirm(null);
+                              return;
+                            }
+                            deleteBridgeMutation.mutate(b.id);
+                          }}
+                          disabled={deleteBridgeMutation.isPending}
+                          data-testid={`button-confirm-delete-bridge-${b.id}`}
+                        >
+                          Eliminar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setDeleteBridgeConfirm(null)}
+                          data-testid={`button-cancel-delete-bridge-${b.id}`}
+                        >
+                          No
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => setDeleteBridgeConfirm(b.id)}
+                        data-testid={`button-delete-bridge-${b.id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
