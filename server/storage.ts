@@ -1153,17 +1153,20 @@ export async function incrementPortions(productId: number, qty: number, orderIte
 }
 
 // QBO Export Jobs
-export async function createQboExportJob(data: InsertQboExportJob) {
-  const [job] = await db.insert(qboExportJobs).values(data).returning();
+export async function createQboExportJob(data: InsertQboExportJob, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [job] = await d.insert(qboExportJobs).values(data).returning();
   return job;
 }
 
-export async function getQboExportJobs(date: string) {
-  return db.select().from(qboExportJobs).where(eq(qboExportJobs.businessDate, date));
+export async function getQboExportJobs(date: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(qboExportJobs).where(eq(qboExportJobs.businessDate, date));
 }
 
-export async function updateQboExportJob(id: number, data: any) {
-  const [job] = await db.update(qboExportJobs).set(data).where(eq(qboExportJobs.id, id)).returning();
+export async function updateQboExportJob(id: number, data: any, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [job] = await d.update(qboExportJobs).set(data).where(eq(qboExportJobs.id, id)).returning();
   return job;
 }
 
@@ -1173,36 +1176,41 @@ export async function getOrder(id: number, dbInstance?: typeof db) {
   return order;
 }
 
-export async function getPaidOrdersForDate(date?: string, schema?: string) {
+export async function getPaidOrdersForDate(date?: string, schema?: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   const targetDate = date || await getBusinessDate(schema);
-  return db.select().from(orders)
+  return d.select().from(orders)
     .where(and(eq(orders.status, "PAID"), eq(orders.businessDate, targetDate)))
     .orderBy(desc(orders.closedAt));
 }
 
-export async function getPayment(id: number) {
-  const [payment] = await db.select().from(payments).where(eq(payments.id, id));
+export async function getPayment(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [payment] = await d.select().from(payments).where(eq(payments.id, id));
   return payment;
 }
 
-export async function getLedgerItemsForDate(date: string, status?: string) {
+export async function getLedgerItemsForDate(date: string, status?: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (status) {
-    return db.select().from(salesLedgerItems)
+    return d.select().from(salesLedgerItems)
       .where(and(eq(salesLedgerItems.businessDate, date), eq(salesLedgerItems.status, status)));
   }
-  return db.select().from(salesLedgerItems)
+  return d.select().from(salesLedgerItems)
     .where(eq(salesLedgerItems.businessDate, date));
 }
 
-export async function getLedgerItemsForDateRange(fromDate: string, toDate: string) {
-  return db.select().from(salesLedgerItems)
+export async function getLedgerItemsForDateRange(fromDate: string, toDate: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(salesLedgerItems)
     .where(and(gte(salesLedgerItems.businessDate, fromDate), lte(salesLedgerItems.businessDate, toDate)));
 }
 
-export async function getPaymentsByDateRangeGrouped(fromDate: string, toDate: string) {
-  const allPayments = await db.select().from(payments)
+export async function getPaymentsByDateRangeGrouped(fromDate: string, toDate: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const allPayments = await d.select().from(payments)
     .where(and(gte(payments.businessDate, fromDate), lte(payments.businessDate, toDate), eq(payments.status, "PAID")));
-  const allMethods = await db.select().from(paymentMethods).where(eq(paymentMethods.active, true)).orderBy(paymentMethods.sortOrder);
+  const allMethods = await d.select().from(paymentMethods).where(eq(paymentMethods.active, true)).orderBy(paymentMethods.sortOrder);
   const methodMap = new Map(allMethods.map(m => [m.id, m.paymentName]));
 
   const grouped: Record<string, number> = {};
@@ -1217,14 +1225,15 @@ export async function getPaymentsByDateRangeGrouped(fromDate: string, toDate: st
 }
 
 // Dashboard queries
-export async function getDashboardData(dateFrom?: string, dateTo?: string, hourFrom?: number, hourTo?: number, schema?: string, tz?: string) {
+export async function getDashboardData(dateFrom?: string, dateTo?: string, hourFrom?: number, hourTo?: number, schema?: string, tz?: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   const today = await getBusinessDate(schema);
   const fromDate = dateFrom || today;
   const toDate = dateTo || fromDate;
 
   let allOrders = fromDate === toDate
-    ? await db.select().from(orders).where(eq(orders.businessDate, fromDate))
-    : await db.select().from(orders).where(
+    ? await d.select().from(orders).where(eq(orders.businessDate, fromDate))
+    : await d.select().from(orders).where(
         and(gte(orders.businessDate, fromDate), lte(orders.businessDate, toDate))
       );
 
@@ -1263,14 +1272,14 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   const paidOrderIds = new Set(paidOrdersFromAllOrders.map(o => o.id));
 
   let crossDayPaidPayments = fromDate === toDate
-    ? await db.select().from(payments).where(and(eq(payments.businessDate, fromDate), eq(payments.status, "PAID")))
-    : await db.select().from(payments).where(and(gte(payments.businessDate, fromDate), lte(payments.businessDate, toDate), eq(payments.status, "PAID")));
+    ? await d.select().from(payments).where(and(eq(payments.businessDate, fromDate), eq(payments.status, "PAID")))
+    : await d.select().from(payments).where(and(gte(payments.businessDate, fromDate), lte(payments.businessDate, toDate), eq(payments.status, "PAID")));
   crossDayPaidPayments = filterByHour(crossDayPaidPayments, "paidAt");
 
   const crossDayOrderIds = Array.from(new Set(crossDayPaidPayments.map(p => p.orderId).filter(id => id && !paidOrderIds.has(id))));
   let crossDayOrders: typeof allOrders = [];
   if (crossDayOrderIds.length > 0) {
-    crossDayOrders = await db.select().from(orders).where(and(inArray(orders.id, crossDayOrderIds as number[]), eq(orders.status, "PAID")));
+    crossDayOrders = await d.select().from(orders).where(and(inArray(orders.id, crossDayOrderIds as number[]), eq(orders.status, "PAID")));
   }
 
   const paidOrders = [...paidOrdersFromAllOrders, ...crossDayOrders];
@@ -1278,9 +1287,9 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   const sumAmount = (orders: any[]) => orders.reduce((s, o) => s + Number(o.totalAmount || 0), 0);
 
   let ledgerItems = fromDate === toDate
-    ? await db.select().from(salesLedgerItems)
+    ? await d.select().from(salesLedgerItems)
         .where(and(eq(salesLedgerItems.businessDate, fromDate), eq(salesLedgerItems.status, "PAID")))
-    : await db.select().from(salesLedgerItems)
+    : await d.select().from(salesLedgerItems)
         .where(and(gte(salesLedgerItems.businessDate, fromDate), lte(salesLedgerItems.businessDate, toDate), eq(salesLedgerItems.status, "PAID")));
   ledgerItems = filterByHour(ledgerItems, "paidAt");
 
@@ -1308,15 +1317,15 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
     .slice(0, 10);
 
   let todayVoidedItems = fromDate === toDate
-    ? await db.select().from(voidedItems).where(eq(voidedItems.businessDate, fromDate))
-    : await db.select().from(voidedItems).where(
+    ? await d.select().from(voidedItems).where(eq(voidedItems.businessDate, fromDate))
+    : await d.select().from(voidedItems).where(
         and(gte(voidedItems.businessDate, fromDate), lte(voidedItems.businessDate, toDate))
       );
   todayVoidedItems = filterByHour(todayVoidedItems, "voidedAt");
   const voidedItemsCount = todayVoidedItems.reduce((s, v) => s + v.qtyVoided, 0);
   const voidedItemsAmount = todayVoidedItems.reduce((s, v) => s + (v.qtyVoided * Number(v.unitPriceSnapshot || 0)), 0);
 
-  const allTables = await getAllTables();
+  const allTables = await getAllTables(false, dbInstance);
   const tableMap = new Map(allTables.map(t => [t.id, t.tableName]));
 
   const mapOrders = (list: typeof allOrders) => list.map(o => ({
@@ -1336,13 +1345,13 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   let totalTaxes = 0;
   const taxBreakdown: { taxName: string; taxRate: number; inclusive: boolean; totalAmount: number }[] = [];
   if (allRelevantOrderIds.length > 0) {
-    const discountRows = await db.select({ amountApplied: orderItemDiscounts.amountApplied })
+    const discountRows = await d.select({ amountApplied: orderItemDiscounts.amountApplied })
       .from(orderItemDiscounts)
       .where(inArray(orderItemDiscounts.orderId, allRelevantOrderIds));
     totalDiscounts = discountRows.reduce((s, d) => s + Number(d.amountApplied || 0), 0);
   }
   if (paidOrderIds_forTax.length > 0) {
-    const taxRows = await db.select({
+    const taxRows = await d.select({
       taxNameSnapshot: orderItemTaxes.taxNameSnapshot,
       taxRateSnapshot: orderItemTaxes.taxRateSnapshot,
       inclusiveSnapshot: orderItemTaxes.inclusiveSnapshot,
@@ -1386,7 +1395,7 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
       const voidedUserIds = Array.from(new Set(todayVoidedItems.map(v => v.voidedByUserId).filter(Boolean))) as number[];
       const voidedUsersMap = new Map<number, string>();
       if (voidedUserIds.length > 0) {
-        const vUsers = await db.select().from(users).where(inArray(users.id, voidedUserIds));
+        const vUsers = await d.select().from(users).where(inArray(users.id, voidedUserIds));
         for (const u of vUsers) voidedUsersMap.set(u.id, u.displayName || u.username);
       }
       return {
@@ -1411,14 +1420,15 @@ export async function getDashboardData(dateFrom?: string, dateTo?: string, hourF
   };
 }
 
-export async function getOrderDetail(orderId: number) {
-  const order = await getOrder(orderId);
+export async function getOrderDetail(orderId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const order = await getOrder(orderId, dbInstance);
   if (!order) return null;
-  const items = await getOrderItems(orderId);
-  const paymentsList = await db.select().from(payments).where(eq(payments.orderId, orderId));
-  const allPayMethods = await db.select().from(paymentMethods);
+  const items = await getOrderItems(orderId, dbInstance);
+  const paymentsList = await d.select().from(payments).where(eq(payments.orderId, orderId));
+  const allPayMethods = await d.select().from(paymentMethods);
   const pmMap = new Map(allPayMethods.map(p => [p.id, p.paymentName]));
-  const allTbls = await getAllTables();
+  const allTbls = await getAllTables(false, dbInstance);
   const tblMap = new Map(allTbls.map(t => [t.id, t.tableName]));
 
   return {
@@ -1474,149 +1484,178 @@ export async function upsertBusinessConfig(data: InsertBusinessConfig, schema?: 
 }
 
 // Printers
-export async function getAllPrinters(): Promise<Printer[]> {
-  return db.select().from(printers).orderBy(asc(printers.name));
+export async function getAllPrinters(dbInstance?: typeof db): Promise<Printer[]> {
+  const d = dbInstance || db;
+  return d.select().from(printers).orderBy(asc(printers.name));
 }
 
-export async function getPrinter(id: number): Promise<Printer | undefined> {
-  const [printer] = await db.select().from(printers).where(eq(printers.id, id));
+export async function getPrinter(id: number, dbInstance?: typeof db): Promise<Printer | undefined> {
+  const d = dbInstance || db;
+  const [printer] = await d.select().from(printers).where(eq(printers.id, id));
   return printer;
 }
 
-export async function createPrinter(data: InsertPrinter): Promise<Printer> {
-  const [printer] = await db.insert(printers).values(data).returning();
+export async function createPrinter(data: InsertPrinter, dbInstance?: typeof db): Promise<Printer> {
+  const d = dbInstance || db;
+  const [printer] = await d.insert(printers).values(data).returning();
   return printer;
 }
 
-export async function updatePrinter(id: number, data: Partial<InsertPrinter>): Promise<Printer> {
-  const [printer] = await db.update(printers).set(data).where(eq(printers.id, id)).returning();
+export async function updatePrinter(id: number, data: Partial<InsertPrinter>, dbInstance?: typeof db): Promise<Printer> {
+  const d = dbInstance || db;
+  const [printer] = await d.update(printers).set(data).where(eq(printers.id, id)).returning();
   return printer;
 }
 
-export async function deletePrinter(id: number): Promise<void> {
-  await db.delete(printers).where(eq(printers.id, id));
+export async function deletePrinter(id: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  await d.delete(printers).where(eq(printers.id, id));
 }
 
 // Modifier Groups
-export async function getAllModifierGroups(): Promise<ModifierGroup[]> {
-  return db.select().from(modifierGroups).orderBy(asc(modifierGroups.sortOrder), asc(modifierGroups.name));
+export async function getAllModifierGroups(dbInstance?: typeof db): Promise<ModifierGroup[]> {
+  const d = dbInstance || db;
+  return d.select().from(modifierGroups).orderBy(asc(modifierGroups.sortOrder), asc(modifierGroups.name));
 }
 
-export async function getModifierGroup(id: number): Promise<ModifierGroup | undefined> {
-  const [g] = await db.select().from(modifierGroups).where(eq(modifierGroups.id, id));
+export async function getModifierGroup(id: number, dbInstance?: typeof db): Promise<ModifierGroup | undefined> {
+  const d = dbInstance || db;
+  const [g] = await d.select().from(modifierGroups).where(eq(modifierGroups.id, id));
   return g;
 }
 
-export async function getModifierGroupByName(name: string): Promise<ModifierGroup | undefined> {
-  const [g] = await db.select().from(modifierGroups).where(eq(modifierGroups.name, name));
+export async function getModifierGroupByName(name: string, dbInstance?: typeof db): Promise<ModifierGroup | undefined> {
+  const d = dbInstance || db;
+  const [g] = await d.select().from(modifierGroups).where(eq(modifierGroups.name, name));
   return g;
 }
 
-export async function createModifierGroup(data: InsertModifierGroup): Promise<ModifierGroup> {
-  const [g] = await db.insert(modifierGroups).values(data).returning();
+export async function createModifierGroup(data: InsertModifierGroup, dbInstance?: typeof db): Promise<ModifierGroup> {
+  const d = dbInstance || db;
+  const [g] = await d.insert(modifierGroups).values(data).returning();
   return g;
 }
 
-export async function updateModifierGroup(id: number, data: Partial<InsertModifierGroup>): Promise<ModifierGroup> {
-  const [g] = await db.update(modifierGroups).set(data).where(eq(modifierGroups.id, id)).returning();
+export async function updateModifierGroup(id: number, data: Partial<InsertModifierGroup>, dbInstance?: typeof db): Promise<ModifierGroup> {
+  const d = dbInstance || db;
+  const [g] = await d.update(modifierGroups).set(data).where(eq(modifierGroups.id, id)).returning();
   return g;
 }
 
 // Modifier Options
-export async function getModifierOptionsByGroup(groupId: number): Promise<ModifierOption[]> {
-  return db.select().from(modifierOptions).where(eq(modifierOptions.groupId, groupId)).orderBy(asc(modifierOptions.sortOrder), asc(modifierOptions.name));
+export async function getModifierOptionsByGroup(groupId: number, dbInstance?: typeof db): Promise<ModifierOption[]> {
+  const d = dbInstance || db;
+  return d.select().from(modifierOptions).where(eq(modifierOptions.groupId, groupId)).orderBy(asc(modifierOptions.sortOrder), asc(modifierOptions.name));
 }
 
-export async function createModifierOption(data: InsertModifierOption): Promise<ModifierOption> {
-  const [o] = await db.insert(modifierOptions).values(data).returning();
+export async function createModifierOption(data: InsertModifierOption, dbInstance?: typeof db): Promise<ModifierOption> {
+  const d = dbInstance || db;
+  const [o] = await d.insert(modifierOptions).values(data).returning();
   return o;
 }
 
-export async function updateModifierOption(id: number, data: Partial<InsertModifierOption>): Promise<ModifierOption> {
-  const [o] = await db.update(modifierOptions).set(data).where(eq(modifierOptions.id, id)).returning();
+export async function updateModifierOption(id: number, data: Partial<InsertModifierOption>, dbInstance?: typeof db): Promise<ModifierOption> {
+  const d = dbInstance || db;
+  const [o] = await d.update(modifierOptions).set(data).where(eq(modifierOptions.id, id)).returning();
   return o;
 }
 
-export async function deleteModifierOption(id: number): Promise<void> {
-  await db.delete(modifierOptions).where(eq(modifierOptions.id, id));
+export async function deleteModifierOption(id: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  await d.delete(modifierOptions).where(eq(modifierOptions.id, id));
 }
 
 // Item ↔ Modifier Group links
-export async function getItemModifierGroups(productId: number) {
-  return db.select().from(itemModifierGroups).where(eq(itemModifierGroups.productId, productId));
+export async function getItemModifierGroups(productId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(itemModifierGroups).where(eq(itemModifierGroups.productId, productId));
 }
 
-export async function linkItemModifierGroup(productId: number, modifierGroupId: number) {
-  const existing = await db.select().from(itemModifierGroups)
+export async function linkItemModifierGroup(productId: number, modifierGroupId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const existing = await d.select().from(itemModifierGroups)
     .where(and(eq(itemModifierGroups.productId, productId), eq(itemModifierGroups.modifierGroupId, modifierGroupId)));
   if (existing.length > 0) return existing[0];
-  const [row] = await db.insert(itemModifierGroups).values({ productId, modifierGroupId }).returning();
+  const [row] = await d.insert(itemModifierGroups).values({ productId, modifierGroupId }).returning();
   return row;
 }
 
-export async function unlinkItemModifierGroup(productId: number, modifierGroupId: number) {
-  await db.delete(itemModifierGroups)
+export async function unlinkItemModifierGroup(productId: number, modifierGroupId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.delete(itemModifierGroups)
     .where(and(eq(itemModifierGroups.productId, productId), eq(itemModifierGroups.modifierGroupId, modifierGroupId)));
 }
 
 // Order Item Modifiers
-export async function getOrderItemModifiers(orderItemId: number): Promise<OrderItemModifier[]> {
-  return db.select().from(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, orderItemId));
+export async function getOrderItemModifiers(orderItemId: number, dbInstance?: typeof db): Promise<OrderItemModifier[]> {
+  const d = dbInstance || db;
+  return d.select().from(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, orderItemId));
 }
 
-export async function createOrderItemModifier(data: InsertOrderItemModifier): Promise<OrderItemModifier> {
-  const [m] = await db.insert(orderItemModifiers).values(data).returning();
+export async function createOrderItemModifier(data: InsertOrderItemModifier, dbInstance?: typeof db): Promise<OrderItemModifier> {
+  const d = dbInstance || db;
+  const [m] = await d.insert(orderItemModifiers).values(data).returning();
   return m;
 }
 
 // Discounts
-export async function getAllDiscounts(): Promise<Discount[]> {
-  return db.select().from(discounts).orderBy(asc(discounts.name));
+export async function getAllDiscounts(dbInstance?: typeof db): Promise<Discount[]> {
+  const d = dbInstance || db;
+  return d.select().from(discounts).orderBy(asc(discounts.name));
 }
 
-export async function getDiscount(id: number): Promise<Discount | undefined> {
-  const [d] = await db.select().from(discounts).where(eq(discounts.id, id));
+export async function getDiscount(id: number, dbInstance?: typeof db): Promise<Discount | undefined> {
+  const di = dbInstance || db;
+  const [d] = await di.select().from(discounts).where(eq(discounts.id, id));
   return d;
 }
 
-export async function createDiscount(data: InsertDiscount): Promise<Discount> {
-  const [d] = await db.insert(discounts).values(data).returning();
+export async function createDiscount(data: InsertDiscount, dbInstance?: typeof db): Promise<Discount> {
+  const di = dbInstance || db;
+  const [d] = await di.insert(discounts).values(data).returning();
   return d;
 }
 
-export async function updateDiscount(id: number, data: Partial<InsertDiscount>): Promise<Discount> {
-  const [d] = await db.update(discounts).set(data).where(eq(discounts.id, id)).returning();
+export async function updateDiscount(id: number, data: Partial<InsertDiscount>, dbInstance?: typeof db): Promise<Discount> {
+  const di = dbInstance || db;
+  const [d] = await di.update(discounts).set(data).where(eq(discounts.id, id)).returning();
   return d;
 }
 
 // Order Discounts
-export async function getOrderDiscounts(orderId: number): Promise<OrderDiscount[]> {
-  return db.select().from(orderDiscounts).where(eq(orderDiscounts.orderId, orderId));
+export async function getOrderDiscounts(orderId: number, dbInstance?: typeof db): Promise<OrderDiscount[]> {
+  const d = dbInstance || db;
+  return d.select().from(orderDiscounts).where(eq(orderDiscounts.orderId, orderId));
 }
 
-export async function createOrderDiscount(data: InsertOrderDiscount): Promise<OrderDiscount> {
-  const [od] = await db.insert(orderDiscounts).values(data).returning();
+export async function createOrderDiscount(data: InsertOrderDiscount, dbInstance?: typeof db): Promise<OrderDiscount> {
+  const d = dbInstance || db;
+  const [od] = await d.insert(orderDiscounts).values(data).returning();
   return od;
 }
 
-export async function deleteOrderDiscount(id: number): Promise<void> {
-  await db.delete(orderDiscounts).where(eq(orderDiscounts.id, id));
+export async function deleteOrderDiscount(id: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  await d.delete(orderDiscounts).where(eq(orderDiscounts.id, id));
 }
 
 // Bulk helpers for seed
-export async function getModifierOptionByGroupAndName(groupId: number, name: string): Promise<ModifierOption | undefined> {
-  const [o] = await db.select().from(modifierOptions)
+export async function getModifierOptionByGroupAndName(groupId: number, name: string, dbInstance?: typeof db): Promise<ModifierOption | undefined> {
+  const d = dbInstance || db;
+  const [o] = await d.select().from(modifierOptions)
     .where(and(eq(modifierOptions.groupId, groupId), eq(modifierOptions.name, name)));
   return o;
 }
 
-export async function getDiscountByName(name: string): Promise<Discount | undefined> {
-  const [d] = await db.select().from(discounts).where(eq(discounts.name, name));
+export async function getDiscountByName(name: string, dbInstance?: typeof db): Promise<Discount | undefined> {
+  const di = dbInstance || db;
+  const [d] = await di.select().from(discounts).where(eq(discounts.name, name));
   return d;
 }
 
-export async function normalizeOrderItemsForSplit(orderId: number) {
-  const items = await db.select().from(orderItems)
+export async function normalizeOrderItemsForSplit(orderId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const items = await d.select().from(orderItems)
     .where(and(eq(orderItems.orderId, orderId), ne(orderItems.status, "VOIDED")));
 
   const toSplit = items.filter(i => i.qty > 1);
@@ -1625,11 +1664,11 @@ export async function normalizeOrderItemsForSplit(orderId: number) {
   const splitItemIds = toSplit.map(i => i.id);
 
   const [allMods, allLedger, allKti, allTaxes, allDiscounts] = await Promise.all([
-    db.select().from(orderItemModifiers).where(inArray(orderItemModifiers.orderItemId, splitItemIds)),
-    db.select().from(salesLedgerItems).where(inArray(salesLedgerItems.orderItemId, splitItemIds)),
-    db.select().from(kitchenTicketItems).where(inArray(kitchenTicketItems.orderItemId, splitItemIds)),
-    db.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, splitItemIds)),
-    db.select().from(orderItemDiscounts).where(inArray(orderItemDiscounts.orderItemId, splitItemIds)),
+    d.select().from(orderItemModifiers).where(inArray(orderItemModifiers.orderItemId, splitItemIds)),
+    d.select().from(salesLedgerItems).where(inArray(salesLedgerItems.orderItemId, splitItemIds)),
+    d.select().from(kitchenTicketItems).where(inArray(kitchenTicketItems.orderItemId, splitItemIds)),
+    d.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, splitItemIds)),
+    d.select().from(orderItemDiscounts).where(inArray(orderItemDiscounts.orderItemId, splitItemIds)),
   ]);
 
   const modsMap = new Map<number, typeof allMods>();
@@ -1645,7 +1684,7 @@ export async function normalizeOrderItemsForSplit(orderId: number) {
 
   let newCount = 0;
 
-  await db.transaction(async (tx) => {
+  await d.transaction(async (tx) => {
     for (const item of toSplit) {
       const originalQty = item.qty;
       const existingModifiers = modsMap.get(item.id) || [];
@@ -1786,24 +1825,28 @@ export async function getAllTaxCategories(dbInstance?: typeof db): Promise<TaxCa
   return d.select().from(taxCategories).orderBy(asc(taxCategories.sortOrder), asc(taxCategories.name));
 }
 
-export async function getTaxCategory(id: number): Promise<TaxCategory | undefined> {
-  const [tc] = await db.select().from(taxCategories).where(eq(taxCategories.id, id));
+export async function getTaxCategory(id: number, dbInstance?: typeof db): Promise<TaxCategory | undefined> {
+  const d = dbInstance || db;
+  const [tc] = await d.select().from(taxCategories).where(eq(taxCategories.id, id));
   return tc;
 }
 
-export async function createTaxCategory(data: InsertTaxCategory): Promise<TaxCategory> {
-  const [tc] = await db.insert(taxCategories).values(data).returning();
+export async function createTaxCategory(data: InsertTaxCategory, dbInstance?: typeof db): Promise<TaxCategory> {
+  const d = dbInstance || db;
+  const [tc] = await d.insert(taxCategories).values(data).returning();
   return tc;
 }
 
-export async function updateTaxCategory(id: number, data: Partial<InsertTaxCategory>): Promise<TaxCategory> {
-  const [tc] = await db.update(taxCategories).set(data).where(eq(taxCategories.id, id)).returning();
+export async function updateTaxCategory(id: number, data: Partial<InsertTaxCategory>, dbInstance?: typeof db): Promise<TaxCategory> {
+  const d = dbInstance || db;
+  const [tc] = await d.update(taxCategories).set(data).where(eq(taxCategories.id, id)).returning();
   return tc;
 }
 
 // ==================== PRODUCT TAX CATEGORIES ====================
-export async function getProductTaxCategories(productId: number) {
-  return db.select().from(productTaxCategories).where(eq(productTaxCategories.productId, productId));
+export async function getProductTaxCategories(productId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(productTaxCategories).where(eq(productTaxCategories.productId, productId));
 }
 
 export async function getProductTaxCategoriesByProductIds(productIds: number[], dbInstance?: typeof db) {
@@ -1812,35 +1855,37 @@ export async function getProductTaxCategoriesByProductIds(productIds: number[], 
   return d.select().from(productTaxCategories).where(inArray(productTaxCategories.productId, productIds));
 }
 
-export async function setProductTaxCategories(productId: number, taxCategoryIds: number[]) {
-  await db.delete(productTaxCategories).where(eq(productTaxCategories.productId, productId));
+export async function setProductTaxCategories(productId: number, taxCategoryIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.delete(productTaxCategories).where(eq(productTaxCategories.productId, productId));
   if (taxCategoryIds.length > 0) {
-    await db.insert(productTaxCategories).values(
+    await d.insert(productTaxCategories).values(
       taxCategoryIds.map(tcId => ({ productId, taxCategoryId: tcId }))
     );
   }
 }
 
-export async function applyTaxToAllProducts(taxCategoryId: number) {
-  const allProds = await db.select({ id: products.id }).from(products);
+export async function applyTaxToAllProducts(taxCategoryId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const allProds = await d.select({ id: products.id }).from(products);
   const productIdSet = new Set(allProds.map(p => p.id));
 
-  const allPtc = await db.select().from(productTaxCategories);
+  const allPtc = await d.select().from(productTaxCategories);
   const orphaned = allPtc.filter(ptc => !productIdSet.has(ptc.productId));
   if (orphaned.length > 0) {
     for (const o of orphaned) {
-      await db.delete(productTaxCategories).where(
+      await d.delete(productTaxCategories).where(
         and(eq(productTaxCategories.productId, o.productId), eq(productTaxCategories.taxCategoryId, o.taxCategoryId))
       );
     }
   }
 
-  const existing = await db.select().from(productTaxCategories)
+  const existing = await d.select().from(productTaxCategories)
     .where(eq(productTaxCategories.taxCategoryId, taxCategoryId));
   const existingSet = new Set(existing.map(e => e.productId));
   const toInsert = allProds.filter(p => !existingSet.has(p.id));
   if (toInsert.length > 0) {
-    await db.insert(productTaxCategories).values(
+    await d.insert(productTaxCategories).values(
       toInsert.map(p => ({ productId: p.id, taxCategoryId }))
     );
   }
@@ -1853,46 +1898,55 @@ export async function applyTaxToAllProducts(taxCategoryId: number) {
 }
 
 // ==================== ORDER ITEM TAXES ====================
-export async function getOrderItemTaxes(orderItemId: number) {
-  return db.select().from(orderItemTaxes).where(eq(orderItemTaxes.orderItemId, orderItemId));
+export async function getOrderItemTaxes(orderItemId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(orderItemTaxes).where(eq(orderItemTaxes.orderItemId, orderItemId));
 }
 
-export async function getOrderItemTaxesByOrder(orderId: number) {
-  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+export async function getOrderItemTaxesByOrder(orderId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const items = await d.select().from(orderItems).where(eq(orderItems.orderId, orderId));
   const itemIds = items.map(i => i.id);
   if (itemIds.length === 0) return [];
-  return db.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, itemIds));
+  return d.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, itemIds));
 }
 
-export async function createOrderItemTax(data: InsertOrderItemTax) {
-  const [row] = await db.insert(orderItemTaxes).values(data).returning();
+export async function createOrderItemTax(data: InsertOrderItemTax, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [row] = await d.insert(orderItemTaxes).values(data).returning();
   return row;
 }
 
-export async function deleteOrderItemTaxesByItem(orderItemId: number) {
-  await db.delete(orderItemTaxes).where(eq(orderItemTaxes.orderItemId, orderItemId));
+export async function deleteOrderItemTaxesByItem(orderItemId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.delete(orderItemTaxes).where(eq(orderItemTaxes.orderItemId, orderItemId));
 }
 
 // ==================== ORDER ITEM DISCOUNTS ====================
-export async function getOrderItemDiscounts(orderItemId: number) {
-  return db.select().from(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, orderItemId));
+export async function getOrderItemDiscounts(orderItemId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, orderItemId));
 }
 
-export async function getOrderItemDiscountsByOrder(orderId: number) {
-  return db.select().from(orderItemDiscounts).where(eq(orderItemDiscounts.orderId, orderId));
+export async function getOrderItemDiscountsByOrder(orderId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(orderItemDiscounts).where(eq(orderItemDiscounts.orderId, orderId));
 }
 
-export async function createOrderItemDiscount(data: InsertOrderItemDiscount) {
-  const [row] = await db.insert(orderItemDiscounts).values(data).returning();
+export async function createOrderItemDiscount(data: InsertOrderItemDiscount, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [row] = await d.insert(orderItemDiscounts).values(data).returning();
   return row;
 }
 
-export async function deleteOrderItemDiscount(id: number) {
-  await db.delete(orderItemDiscounts).where(eq(orderItemDiscounts.id, id));
+export async function deleteOrderItemDiscount(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.delete(orderItemDiscounts).where(eq(orderItemDiscounts.id, id));
 }
 
-export async function deleteOrderItemDiscountsByItem(orderItemId: number) {
-  await db.delete(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, orderItemId));
+export async function deleteOrderItemDiscountsByItem(orderItemId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.delete(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, orderItemId));
 }
 
 export async function getAllOpenOrders(dbInstance?: typeof db) {
@@ -1901,9 +1955,10 @@ export async function getAllOpenOrders(dbInstance?: typeof db) {
     .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "PREPARING", "READY"]));
 }
 
-export async function getActiveItemCountsByOrderIds(orderIds: number[]): Promise<Map<number, number>> {
+export async function getActiveItemCountsByOrderIds(orderIds: number[], dbInstance?: typeof db): Promise<Map<number, number>> {
+  const d = dbInstance || db;
   if (orderIds.length === 0) return new Map();
-  const rows = await db
+  const rows = await d
     .select({ orderId: orderItems.orderId, cnt: count() })
     .from(orderItems)
     .where(and(
@@ -1940,247 +1995,280 @@ export async function getOrderItemTaxesByItemIds(itemIds: number[], dbInstance?:
   return d.select().from(orderItemTaxes).where(inArray(orderItemTaxes.orderItemId, itemIds));
 }
 
-export async function getOrderItemModifiersByOrderIds(orderIds: number[]) {
+export async function getOrderItemModifiersByOrderIds(orderIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (orderIds.length === 0) return [];
-  return db.select({ mod: orderItemModifiers }).from(orderItemModifiers)
+  return d.select({ mod: orderItemModifiers }).from(orderItemModifiers)
     .innerJoin(orderItems, eq(orderItemModifiers.orderItemId, orderItems.id))
     .where(inArray(orderItems.orderId, orderIds))
     .then(rows => rows.map(r => r.mod));
 }
 
-export async function getOrderItemTaxesByOrderIds(orderIds: number[]) {
+export async function getOrderItemTaxesByOrderIds(orderIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (orderIds.length === 0) return [];
-  return db.select({ tax: orderItemTaxes }).from(orderItemTaxes)
+  return d.select({ tax: orderItemTaxes }).from(orderItemTaxes)
     .innerJoin(orderItems, eq(orderItemTaxes.orderItemId, orderItems.id))
     .where(inArray(orderItems.orderId, orderIds))
     .then(rows => rows.map(r => r.tax));
 }
 
-export async function getOrderItemDiscountsByOrderIds(orderIds: number[]) {
+export async function getOrderItemDiscountsByOrderIds(orderIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (orderIds.length === 0) return [];
-  return db.select().from(orderItemDiscounts).where(inArray(orderItemDiscounts.orderId, orderIds));
+  return d.select().from(orderItemDiscounts).where(inArray(orderItemDiscounts.orderId, orderIds));
 }
 
-export async function getSplitItemsByAccountIds(splitIds: number[]) {
+export async function getSplitItemsByAccountIds(splitIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (splitIds.length === 0) return [];
-  return db.select().from(splitItems).where(inArray(splitItems.splitId, splitIds));
+  return d.select().from(splitItems).where(inArray(splitItems.splitId, splitIds));
 }
 
-export async function getVoidedItemsByOrderIds(orderIds: number[]) {
+export async function getVoidedItemsByOrderIds(orderIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (orderIds.length === 0) return [];
-  return db.select().from(voidedItems).where(inArray(voidedItems.orderId, orderIds));
+  return d.select().from(voidedItems).where(inArray(voidedItems.orderId, orderIds));
 }
 
-export async function getPendingSubmissionsByOrderIds(orderIds: number[]) {
+export async function getPendingSubmissionsByOrderIds(orderIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (orderIds.length === 0) return [];
-  return db.select().from(qrSubmissions)
+  return d.select().from(qrSubmissions)
     .where(and(inArray(qrSubmissions.orderId, orderIds), eq(qrSubmissions.status, "SUBMITTED")));
 }
 
-export async function getUsersByIds(userIds: number[]) {
+export async function getUsersByIds(userIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (userIds.length === 0) return [];
-  return db.select().from(users).where(inArray(users.id, userIds));
+  return d.select().from(users).where(inArray(users.id, userIds));
 }
 
-export async function getPaymentsByOrderIds(orderIds: number[]) {
+export async function getPaymentsByOrderIds(orderIds: number[], dbInstance?: typeof db) {
+  const d = dbInstance || db;
   if (orderIds.length === 0) return [];
-  return db.select().from(payments).where(inArray(payments.orderId, orderIds));
+  return d.select().from(payments).where(inArray(payments.orderId, orderIds));
 }
 
-export async function createPortionReservation(data: InsertPortionReservation) {
-  const [row] = await db.insert(portionReservations).values(data).returning();
+export async function createPortionReservation(data: InsertPortionReservation, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [row] = await d.insert(portionReservations).values(data).returning();
   return row;
 }
 
-export async function expirePortionReservations() {
+export async function expirePortionReservations(dbInstance?: typeof db) {
+  const d = dbInstance || db;
   const now = new Date();
-  const expired = await db.select().from(portionReservations)
+  const expired = await d.select().from(portionReservations)
     .where(and(eq(portionReservations.status, "RESERVED"), lte(portionReservations.expiresAt, now)));
   for (const res of expired) {
-    await db.update(portionReservations)
+    await d.update(portionReservations)
       .set({ status: "EXPIRED" })
       .where(eq(portionReservations.id, res.id));
-    await incrementPortions(res.productId, res.qty);
+    await incrementPortions(res.productId, res.qty, undefined, undefined, dbInstance);
   }
   return expired.length;
 }
 
-export async function consumePortionReservation(orderItemId: number) {
-  await db.update(portionReservations)
+export async function consumePortionReservation(orderItemId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.update(portionReservations)
     .set({ status: "CONSUMED" })
     .where(and(eq(portionReservations.orderItemId, orderItemId), eq(portionReservations.status, "RESERVED")));
 }
 
-export async function cancelPortionReservation(orderItemId: number) {
-  const reservations = await db.select().from(portionReservations)
+export async function cancelPortionReservation(orderItemId: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const reservations = await d.select().from(portionReservations)
     .where(and(eq(portionReservations.orderItemId, orderItemId), eq(portionReservations.status, "RESERVED")));
   for (const res of reservations) {
-    await db.update(portionReservations)
+    await d.update(portionReservations)
       .set({ status: "CANCELLED" })
       .where(eq(portionReservations.id, res.id));
-    await incrementPortions(res.productId, res.qty);
+    await incrementPortions(res.productId, res.qty, undefined, undefined, dbInstance);
   }
 }
 
-export async function getQrRateLimit(tableCode: string) {
-  const [row] = await db.select().from(qrRateLimits).where(eq(qrRateLimits.tableCode, tableCode));
+export async function getQrRateLimit(tableCode: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [row] = await d.select().from(qrRateLimits).where(eq(qrRateLimits.tableCode, tableCode));
   return row;
 }
 
-export async function upsertQrRateLimit(tableCode: string) {
-  const existing = await getQrRateLimit(tableCode);
+export async function upsertQrRateLimit(tableCode: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const existing = await getQrRateLimit(tableCode, dbInstance);
   if (existing) {
-    await db.update(qrRateLimits)
+    await d.update(qrRateLimits)
       .set({ lastSubmissionAt: new Date() })
       .where(eq(qrRateLimits.id, existing.id));
   } else {
-    await db.insert(qrRateLimits).values({ tableCode, lastSubmissionAt: new Date() });
+    await d.insert(qrRateLimits).values({ tableCode, lastSubmissionAt: new Date() });
   }
 }
 
-export async function truncateTransactionalData() {
-  await db.delete(splitItems);
-  await db.delete(splitAccounts);
-  await db.delete(salesLedgerItems);
-  await db.delete(voidedItems);
-  await db.delete(orderItemModifiers);
-  await db.delete(orderItemTaxes);
-  await db.delete(orderItemDiscounts);
-  await db.delete(orderDiscounts);
-  await db.delete(kitchenTicketItems);
-  await db.delete(kitchenTickets);
-  await db.delete(payments);
-  await db.delete(qrSubmissions);
-  await db.delete(portionReservations);
-  await db.delete(orderItems);
-  await db.delete(orders);
-  await db.delete(cashSessions);
-  await db.delete(auditEvents);
-  await db.delete(qboExportJobs);
-  await db.execute(sql`ALTER SEQUENCE IF EXISTS orders_id_seq RESTART WITH 1`);
-  await db.execute(sql`ALTER SEQUENCE IF EXISTS order_items_id_seq RESTART WITH 1`);
-  await db.execute(sql`ALTER SEQUENCE IF EXISTS payments_id_seq RESTART WITH 1`);
-  await db.execute(sql`ALTER SEQUENCE IF EXISTS kitchen_tickets_id_seq RESTART WITH 1`);
-  await db.execute(sql`ALTER SEQUENCE IF EXISTS kitchen_ticket_items_id_seq RESTART WITH 1`);
+export async function truncateTransactionalData(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  await d.delete(splitItems);
+  await d.delete(splitAccounts);
+  await d.delete(salesLedgerItems);
+  await d.delete(voidedItems);
+  await d.delete(orderItemModifiers);
+  await d.delete(orderItemTaxes);
+  await d.delete(orderItemDiscounts);
+  await d.delete(orderDiscounts);
+  await d.delete(kitchenTicketItems);
+  await d.delete(kitchenTickets);
+  await d.delete(payments);
+  await d.delete(qrSubmissions);
+  await d.delete(portionReservations);
+  await d.delete(orderItems);
+  await d.delete(orders);
+  await d.delete(cashSessions);
+  await d.delete(auditEvents);
+  await d.delete(qboExportJobs);
+  await d.execute(sql`ALTER SEQUENCE IF EXISTS orders_id_seq RESTART WITH 1`);
+  await d.execute(sql`ALTER SEQUENCE IF EXISTS order_items_id_seq RESTART WITH 1`);
+  await d.execute(sql`ALTER SEQUENCE IF EXISTS payments_id_seq RESTART WITH 1`);
+  await d.execute(sql`ALTER SEQUENCE IF EXISTS kitchen_tickets_id_seq RESTART WITH 1`);
+  await d.execute(sql`ALTER SEQUENCE IF EXISTS kitchen_ticket_items_id_seq RESTART WITH 1`);
 }
 
 // ==================== HR MODULE ====================
 
 // -- HR Settings (singleton like businessConfig) --
-export async function getHrSettings(): Promise<HrSettings | undefined> {
-  const [s] = await db.select().from(hrSettings).limit(1);
+export async function getHrSettings(dbInstance?: typeof db): Promise<HrSettings | undefined> {
+  const d = dbInstance || db;
+  const [s] = await d.select().from(hrSettings).limit(1);
   return s;
 }
 
-export async function upsertHrSettings(data: Partial<InsertHrSettings>): Promise<HrSettings> {
-  const existing = await getHrSettings();
+export async function upsertHrSettings(data: Partial<InsertHrSettings>, dbInstance?: typeof db): Promise<HrSettings> {
+  const d = dbInstance || db;
+  const existing = await getHrSettings(dbInstance);
   if (existing) {
-    const [updated] = await db.update(hrSettings)
+    const [updated] = await d.update(hrSettings)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(hrSettings.id, existing.id))
       .returning();
     return updated;
   }
-  const [created] = await db.insert(hrSettings).values(data as InsertHrSettings).returning();
+  const [created] = await d.insert(hrSettings).values(data as InsertHrSettings).returning();
   return created;
 }
 
 // -- Weekly Schedules --
-export async function getWeeklySchedule(employeeId: number, weekStartDate: string): Promise<HrWeeklySchedule | undefined> {
-  const [s] = await db.select().from(hrWeeklySchedules)
+export async function getWeeklySchedule(employeeId: number, weekStartDate: string, dbInstance?: typeof db): Promise<HrWeeklySchedule | undefined> {
+  const d = dbInstance || db;
+  const [s] = await d.select().from(hrWeeklySchedules)
     .where(and(eq(hrWeeklySchedules.employeeId, employeeId), eq(hrWeeklySchedules.weekStartDate, weekStartDate)));
   return s;
 }
 
-export async function getWeeklySchedulesByWeek(weekStartDate: string): Promise<HrWeeklySchedule[]> {
-  return db.select().from(hrWeeklySchedules)
+export async function getWeeklySchedulesByWeek(weekStartDate: string, dbInstance?: typeof db): Promise<HrWeeklySchedule[]> {
+  const d = dbInstance || db;
+  return d.select().from(hrWeeklySchedules)
     .where(eq(hrWeeklySchedules.weekStartDate, weekStartDate));
 }
 
-export async function createWeeklySchedule(data: InsertHrWeeklySchedule): Promise<HrWeeklySchedule> {
-  const [s] = await db.insert(hrWeeklySchedules).values(data).returning();
+export async function createWeeklySchedule(data: InsertHrWeeklySchedule, dbInstance?: typeof db): Promise<HrWeeklySchedule> {
+  const d = dbInstance || db;
+  const [s] = await d.insert(hrWeeklySchedules).values(data).returning();
   return s;
 }
 
-export async function updateWeeklySchedule(id: number, data: Partial<InsertHrWeeklySchedule>): Promise<HrWeeklySchedule> {
-  const [s] = await db.update(hrWeeklySchedules)
+export async function updateWeeklySchedule(id: number, data: Partial<InsertHrWeeklySchedule>, dbInstance?: typeof db): Promise<HrWeeklySchedule> {
+  const d = dbInstance || db;
+  const [s] = await d.update(hrWeeklySchedules)
     .set({ ...data, updatedAt: new Date() })
     .where(eq(hrWeeklySchedules.id, id))
     .returning();
   return s;
 }
 
-export async function deleteWeeklySchedule(id: number): Promise<void> {
-  await db.delete(hrScheduleDays).where(eq(hrScheduleDays.scheduleId, id));
-  await db.delete(hrWeeklySchedules).where(eq(hrWeeklySchedules.id, id));
+export async function deleteWeeklySchedule(id: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  await d.delete(hrScheduleDays).where(eq(hrScheduleDays.scheduleId, id));
+  await d.delete(hrWeeklySchedules).where(eq(hrWeeklySchedules.id, id));
 }
 
 // -- Schedule Days --
-export async function getScheduleDays(scheduleId: number): Promise<HrScheduleDay[]> {
-  return db.select().from(hrScheduleDays)
+export async function getScheduleDays(scheduleId: number, dbInstance?: typeof db): Promise<HrScheduleDay[]> {
+  const d = dbInstance || db;
+  return d.select().from(hrScheduleDays)
     .where(eq(hrScheduleDays.scheduleId, scheduleId))
     .orderBy(asc(hrScheduleDays.dayOfWeek));
 }
 
-export async function upsertScheduleDays(scheduleId: number, days: InsertHrScheduleDay[]): Promise<HrScheduleDay[]> {
-  await db.delete(hrScheduleDays).where(eq(hrScheduleDays.scheduleId, scheduleId));
+export async function upsertScheduleDays(scheduleId: number, days: InsertHrScheduleDay[], dbInstance?: typeof db): Promise<HrScheduleDay[]> {
+  const dbi = dbInstance || db;
+  await dbi.delete(hrScheduleDays).where(eq(hrScheduleDays.scheduleId, scheduleId));
   if (days.length === 0) return [];
   const toInsert = days.map(d => ({ ...d, scheduleId }));
-  return db.insert(hrScheduleDays).values(toInsert).returning();
+  return dbi.insert(hrScheduleDays).values(toInsert).returning();
 }
 
 // -- Time Punches --
-export async function getTimePunch(id: number): Promise<HrTimePunch | undefined> {
-  const [p] = await db.select().from(hrTimePunches).where(eq(hrTimePunches.id, id));
+export async function getTimePunch(id: number, dbInstance?: typeof db): Promise<HrTimePunch | undefined> {
+  const d = dbInstance || db;
+  const [p] = await d.select().from(hrTimePunches).where(eq(hrTimePunches.id, id));
   return p;
 }
 
-export async function getOpenPunchForEmployee(employeeId: number): Promise<HrTimePunch | undefined> {
-  const [p] = await db.select().from(hrTimePunches)
+export async function getOpenPunchForEmployee(employeeId: number, dbInstance?: typeof db): Promise<HrTimePunch | undefined> {
+  const d = dbInstance || db;
+  const [p] = await d.select().from(hrTimePunches)
     .where(and(eq(hrTimePunches.employeeId, employeeId), isNull(hrTimePunches.clockOutAt)))
     .orderBy(desc(hrTimePunches.clockInAt))
     .limit(1);
   return p;
 }
 
-export async function deleteTimePunch(id: number): Promise<void> {
-  await db.delete(hrTimePunches).where(eq(hrTimePunches.id, id));
+export async function deleteTimePunch(id: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  await d.delete(hrTimePunches).where(eq(hrTimePunches.id, id));
 }
 
-export async function getTimePunchesByDate(businessDate: string): Promise<HrTimePunch[]> {
-  return db.select().from(hrTimePunches)
+export async function getTimePunchesByDate(businessDate: string, dbInstance?: typeof db): Promise<HrTimePunch[]> {
+  const d = dbInstance || db;
+  return d.select().from(hrTimePunches)
     .where(eq(hrTimePunches.businessDate, businessDate))
     .orderBy(asc(hrTimePunches.clockInAt));
 }
 
-export async function getTimePunchesByEmployee(employeeId: number, dateFrom?: string, dateTo?: string): Promise<HrTimePunch[]> {
+export async function getTimePunchesByEmployee(employeeId: number, dateFrom?: string, dateTo?: string, dbInstance?: typeof db): Promise<HrTimePunch[]> {
+  const d = dbInstance || db;
   const conditions = [eq(hrTimePunches.employeeId, employeeId)];
   if (dateFrom) conditions.push(gte(hrTimePunches.businessDate, dateFrom));
   if (dateTo) conditions.push(lte(hrTimePunches.businessDate, dateTo));
-  return db.select().from(hrTimePunches)
+  return d.select().from(hrTimePunches)
     .where(and(...conditions))
     .orderBy(asc(hrTimePunches.clockInAt));
 }
 
-export async function getTimePunchesByDateRange(dateFrom: string, dateTo: string): Promise<HrTimePunch[]> {
-  return db.select().from(hrTimePunches)
+export async function getTimePunchesByDateRange(dateFrom: string, dateTo: string, dbInstance?: typeof db): Promise<HrTimePunch[]> {
+  const d = dbInstance || db;
+  return d.select().from(hrTimePunches)
     .where(and(gte(hrTimePunches.businessDate, dateFrom), lte(hrTimePunches.businessDate, dateTo)))
     .orderBy(asc(hrTimePunches.employeeId), asc(hrTimePunches.clockInAt));
 }
 
-export async function getAllOpenPunches(): Promise<HrTimePunch[]> {
-  return db.select().from(hrTimePunches)
+export async function getAllOpenPunches(dbInstance?: typeof db): Promise<HrTimePunch[]> {
+  const d = dbInstance || db;
+  return d.select().from(hrTimePunches)
     .where(isNull(hrTimePunches.clockOutAt));
 }
 
-export async function createTimePunch(data: InsertHrTimePunch): Promise<HrTimePunch> {
-  const [p] = await db.insert(hrTimePunches).values(data).returning();
+export async function createTimePunch(data: InsertHrTimePunch, dbInstance?: typeof db): Promise<HrTimePunch> {
+  const d = dbInstance || db;
+  const [p] = await d.insert(hrTimePunches).values(data).returning();
   return p;
 }
 
-export async function updateTimePunch(id: number, data: Partial<HrTimePunch>): Promise<HrTimePunch> {
+export async function updateTimePunch(id: number, data: Partial<HrTimePunch>, dbInstance?: typeof db): Promise<HrTimePunch> {
+  const d = dbInstance || db;
   const { id: _id, ...rest } = data as any;
-  const [p] = await db.update(hrTimePunches)
+  const [p] = await d.update(hrTimePunches)
     .set({ ...rest, updatedAt: new Date() })
     .where(eq(hrTimePunches.id, id))
     .returning();
@@ -2188,13 +2276,15 @@ export async function updateTimePunch(id: number, data: Partial<HrTimePunch>): P
 }
 
 // -- Service Charge Ledger --
-export async function getServiceChargeByOrder(orderId: number): Promise<ServiceChargeLedgerEntry[]> {
-  return db.select().from(serviceChargeLedger)
+export async function getServiceChargeByOrder(orderId: number, dbInstance?: typeof db): Promise<ServiceChargeLedgerEntry[]> {
+  const d = dbInstance || db;
+  return d.select().from(serviceChargeLedger)
     .where(eq(serviceChargeLedger.orderId, orderId));
 }
 
-export async function getServiceChargeLedgerByDateRange(dateFrom: string, dateTo: string): Promise<ServiceChargeLedgerEntry[]> {
-  return db.select().from(serviceChargeLedger)
+export async function getServiceChargeLedgerByDateRange(dateFrom: string, dateTo: string, dbInstance?: typeof db): Promise<ServiceChargeLedgerEntry[]> {
+  const d = dbInstance || db;
+  return d.select().from(serviceChargeLedger)
     .where(and(
       gte(serviceChargeLedger.businessDate, dateFrom),
       lte(serviceChargeLedger.businessDate, dateTo),
@@ -2203,26 +2293,30 @@ export async function getServiceChargeLedgerByDateRange(dateFrom: string, dateTo
     .orderBy(asc(serviceChargeLedger.businessDate));
 }
 
-export async function createServiceChargeLedgerEntry(data: InsertServiceChargeLedgerEntry): Promise<ServiceChargeLedgerEntry> {
-  const [e] = await db.insert(serviceChargeLedger).values(data).returning();
+export async function createServiceChargeLedgerEntry(data: InsertServiceChargeLedgerEntry, dbInstance?: typeof db): Promise<ServiceChargeLedgerEntry> {
+  const d = dbInstance || db;
+  const [e] = await d.insert(serviceChargeLedger).values(data).returning();
   return e;
 }
 
-export async function voidServiceChargeByOrderItem(orderItemId: number): Promise<void> {
-  await db.update(serviceChargeLedger)
+export async function voidServiceChargeByOrderItem(orderItemId: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  await d.update(serviceChargeLedger)
     .set({ status: "VOIDED" })
     .where(eq(serviceChargeLedger.orderItemId, orderItemId));
 }
 
-export async function voidServiceChargeByOrder(orderId: number): Promise<void> {
-  await db.update(serviceChargeLedger)
+export async function voidServiceChargeByOrder(orderId: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  await d.update(serviceChargeLedger)
     .set({ status: "VOIDED" })
     .where(eq(serviceChargeLedger.orderId, orderId));
 }
 
 // -- Service Charge Payouts --
-export async function getServiceChargePayouts(periodStart: string, periodEnd: string): Promise<ServiceChargePayout[]> {
-  return db.select().from(serviceChargePayouts)
+export async function getServiceChargePayouts(periodStart: string, periodEnd: string, dbInstance?: typeof db): Promise<ServiceChargePayout[]> {
+  const d = dbInstance || db;
+  return d.select().from(serviceChargePayouts)
     .where(and(
       eq(serviceChargePayouts.periodStart, periodStart),
       eq(serviceChargePayouts.periodEnd, periodEnd)
@@ -2230,21 +2324,24 @@ export async function getServiceChargePayouts(periodStart: string, periodEnd: st
     .orderBy(asc(serviceChargePayouts.employeeId));
 }
 
-export async function createServiceChargePayout(data: InsertServiceChargePayout): Promise<ServiceChargePayout> {
-  const [p] = await db.insert(serviceChargePayouts).values(data).returning();
+export async function createServiceChargePayout(data: InsertServiceChargePayout, dbInstance?: typeof db): Promise<ServiceChargePayout> {
+  const d = dbInstance || db;
+  const [p] = await d.insert(serviceChargePayouts).values(data).returning();
   return p;
 }
 
-export async function updateServiceChargePayoutStatus(id: number, status: string): Promise<ServiceChargePayout> {
-  const [p] = await db.update(serviceChargePayouts)
+export async function updateServiceChargePayoutStatus(id: number, status: string, dbInstance?: typeof db): Promise<ServiceChargePayout> {
+  const d = dbInstance || db;
+  const [p] = await d.update(serviceChargePayouts)
     .set({ status })
     .where(eq(serviceChargePayouts.id, id))
     .returning();
   return p;
 }
 
-export async function deleteServiceChargePayoutsByPeriod(periodStart: string, periodEnd: string, status: string): Promise<void> {
-  await db.delete(serviceChargePayouts)
+export async function deleteServiceChargePayoutsByPeriod(periodStart: string, periodEnd: string, status: string, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  await d.delete(serviceChargePayouts)
     .where(and(
       eq(serviceChargePayouts.periodStart, periodStart),
       eq(serviceChargePayouts.periodEnd, periodEnd),
@@ -2284,25 +2381,28 @@ export async function smartDeleteProduct(id: number, dbInstance?: typeof db): Pr
   return { product, hardDeleted: true };
 }
 
-export async function getExtraTypes() {
-  return db.select().from(hrExtraTypes).where(eq(hrExtraTypes.isActive, true));
+export async function getExtraTypes(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(hrExtraTypes).where(eq(hrExtraTypes.isActive, true));
 }
 
-export async function getPayrollExtrasByRange(dateFrom: string, dateTo: string, employeeId?: number) {
+export async function getPayrollExtrasByRange(dateFrom: string, dateTo: string, employeeId?: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
   const conditions = [
     eq(hrPayrollExtras.isDeleted, false),
     gte(hrPayrollExtras.appliesToDate, dateFrom),
     lte(hrPayrollExtras.appliesToDate, dateTo),
   ];
   if (employeeId) conditions.push(eq(hrPayrollExtras.employeeId, employeeId));
-  return db.select().from(hrPayrollExtras).where(and(...conditions));
+  return d.select().from(hrPayrollExtras).where(and(...conditions));
 }
 
 export async function createPayrollExtra(data: {
   employeeId: number; appliesToDate: string; typeCode: string;
   amount: string; note?: string; createdBy?: number;
-}) {
-  const [extra] = await db.insert(hrPayrollExtras).values({
+}, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [extra] = await d.insert(hrPayrollExtras).values({
     ...data,
     createdAt: new Date(),
   }).returning();
@@ -2311,46 +2411,51 @@ export async function createPayrollExtra(data: {
 
 export async function updatePayrollExtra(id: number, data: {
   typeCode?: string; amount?: string; note?: string; updatedBy?: number;
-}) {
-  const [extra] = await db.update(hrPayrollExtras).set({
+}, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [extra] = await d.update(hrPayrollExtras).set({
     ...data,
     updatedAt: new Date(),
   }).where(eq(hrPayrollExtras.id, id)).returning();
   return extra;
 }
 
-export async function softDeletePayrollExtra(id: number) {
-  const [extra] = await db.update(hrPayrollExtras).set({
+export async function softDeletePayrollExtra(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [extra] = await d.update(hrPayrollExtras).set({
     isDeleted: true,
     updatedAt: new Date(),
   }).where(eq(hrPayrollExtras.id, id)).returning();
   return extra;
 }
 
-export async function getPayrollExtraById(id: number) {
-  const [extra] = await db.select().from(hrPayrollExtras).where(eq(hrPayrollExtras.id, id));
+export async function getPayrollExtraById(id: number, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const [extra] = await d.select().from(hrPayrollExtras).where(eq(hrPayrollExtras.id, id));
   return extra;
 }
 
-export async function getServiceChargeLedgerByDates(dateFrom: string, dateTo: string) {
-  return db.select().from(serviceChargeLedger)
+export async function getServiceChargeLedgerByDates(dateFrom: string, dateTo: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(serviceChargeLedger)
     .where(and(
       gte(serviceChargeLedger.businessDate, dateFrom),
       lte(serviceChargeLedger.businessDate, dateTo),
     ));
 }
 
-export async function getAllSchedulesForDateRange(dateFrom: string, dateTo: string) {
+export async function getAllSchedulesForDateRange(dateFrom: string, dateTo: string, dbInstance?: typeof db) {
+  const dbi = dbInstance || db;
   const mondayFrom = getWeekMondayForDate(dateFrom);
   const mondayTo = getWeekMondayForDate(dateTo);
-  const schedules = await db.select().from(hrWeeklySchedules)
+  const schedules = await dbi.select().from(hrWeeklySchedules)
     .where(and(
       gte(hrWeeklySchedules.weekStartDate, mondayFrom),
       lte(hrWeeklySchedules.weekStartDate, mondayTo),
     ));
   const allDays = [];
   for (const s of schedules) {
-    const days = await db.select().from(hrScheduleDays)
+    const days = await dbi.select().from(hrScheduleDays)
       .where(eq(hrScheduleDays.scheduleId, s.id));
     for (const d of days) {
       allDays.push({ ...d, employeeId: s.employeeId, weekStartDate: s.weekStartDate });
@@ -2367,8 +2472,9 @@ function getWeekMondayForDate(dateStr: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-export async function getPunchesForDateRange(dateFrom: string, dateTo: string) {
-  return db.select().from(hrTimePunches)
+export async function getPunchesForDateRange(dateFrom: string, dateTo: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(hrTimePunches)
     .where(and(
       gte(hrTimePunches.businessDate, dateFrom),
       lte(hrTimePunches.businessDate, dateTo),

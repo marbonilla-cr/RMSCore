@@ -50,8 +50,8 @@ function extractTableNumber(tableName: string): string {
   return match ? match[1] : "0";
 }
 
-async function getOrCreateOrderForTable(tableId: number) {
-  let order = await storage.getOpenOrderForTable(tableId, req.db);
+async function getOrCreateOrderForTable(tableId: number, dbInstance?: typeof db) {
+  let order = await storage.getOpenOrderForTable(tableId, dbInstance);
   if (order) return order;
   try {
     order = await storage.createOrder({
@@ -59,9 +59,9 @@ async function getOrCreateOrderForTable(tableId: number) {
       status: "OPEN",
       responsibleWaiterId: null,
       businessDate: await getBusinessDate(),
-    }, req.db);
+    }, dbInstance);
   } catch (e: any) {
-    order = await storage.getOpenOrderForTable(tableId, req.db);
+    order = await storage.getOpenOrderForTable(tableId, dbInstance);
     if (order) return order;
     throw e;
   }
@@ -125,7 +125,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
-      const order = await getOrCreateOrderForTable(table.id);
+      const order = await getOrCreateOrderForTable(table.id, req.db);
 
       const existing = await db.select().from(orderSubaccounts)
         .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)));
@@ -183,7 +183,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
-      const order = await getOrCreateOrderForTable(table.id);
+      const order = await getOrCreateOrderForTable(table.id, req.db);
       const wanted = Math.max(Number(count) || 2, 1);
 
       const existing = await db.select().from(orderSubaccounts)
@@ -245,7 +245,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         return res.status(429).json({ message: "Demasiados pedidos pendientes. Espere a que sean procesados." });
       }
 
-      const order = await getOrCreateOrderForTable(table.id);
+      const order = await getOrCreateOrderForTable(table.id, req.db);
 
       const [sub] = await db.insert(qrSubmissions).values({
         orderId: order.id,
@@ -407,7 +407,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
                 nameSnapshot: option.name,
                 priceDeltaSnapshot: option.priceDelta || "0",
                 qty: 1,
-              });
+              }, req.db);
             }
           }
         }

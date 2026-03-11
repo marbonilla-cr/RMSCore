@@ -722,14 +722,14 @@ export async function registerRoutes(
         return res.status(403).json({ message: "No tiene permiso para marcar entrada/salida" });
       }
 
-      const settings = await storage.getHrSettings();
+      const settings = await storage.getHrSettings(req.db);
       const tz = await getTenantTimezone(req.tenantSchema);
       const now = new Date();
       const localNow = getNowInTZ(tz);
       const businessDate = await getBusinessDate(req.tenantSchema);
 
       if (action === "clock_in") {
-        const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+        const openPunch = await storage.getOpenPunchForEmployee(employeeId, req.db);
         if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta. Marque salida primero." });
 
         let geoVerified = false;
@@ -753,10 +753,10 @@ export async function registerRoutes(
         const mondayDate = new Date(localNow);
         mondayDate.setDate(mondayDate.getDate() - dayOffset);
         const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: tz });
-        const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
+        const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate, req.db);
         let hasScheduleToday = false;
         if (schedule) {
-          const days = await storage.getScheduleDays(schedule.id);
+          const days = await storage.getScheduleDays(schedule.id, req.db);
           const todaySchedule = days.find(d => d.dayOfWeek === weekDay);
           if (todaySchedule && !todaySchedule.isDayOff && todaySchedule.startTime) {
             hasScheduleToday = true;
@@ -790,7 +790,7 @@ export async function registerRoutes(
           clockinGeoLng: lng ? String(lng) : null,
           clockinGeoAccuracyM: accuracy ? String(accuracy) : null,
           clockinGeoVerified: geoVerified,
-        });
+        }, req.db);
 
         const auditAction = hasScheduleToday ? "CLOCK_IN" : "CLOCK_IN_NO_SCHEDULE_CONFIRMED";
         await storage.createAuditEvent({
@@ -805,7 +805,7 @@ export async function registerRoutes(
       }
 
       if (action === "clock_out") {
-        const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+        const openPunch = await storage.getOpenPunchForEmployee(employeeId, req.db);
 
         let geoVerified = false;
         if (settings && settings.geoEnforcementEnabled && settings.geoRequiredForClockout && settings.businessLat && settings.businessLng) {
@@ -845,7 +845,7 @@ export async function registerRoutes(
           clockoutGeoLng: lng ? String(lng) : null,
           clockoutGeoAccuracyM: accuracy ? String(accuracy) : null,
           clockoutGeoVerified: geoVerified,
-        });
+        }, req.db);
 
         await storage.createAuditEvent({
           actorType: "USER", actorUserId: employeeId,
@@ -1296,11 +1296,11 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: MODIFIERS ====================
-  app.get("/api/admin/modifier-groups", requireRole("MANAGER"), async (_req, res) => {
-    const groups = await storage.getAllModifierGroups();
+  app.get("/api/admin/modifier-groups", requireRole("MANAGER"), async (req, res) => {
+    const groups = await storage.getAllModifierGroups(req.db);
     const result = [];
     for (const g of groups) {
-      const options = await storage.getModifierOptionsByGroup(g.id);
+      const options = await storage.getModifierOptionsByGroup(g.id, req.db);
       result.push({ ...g, options });
     }
     res.json(result);
@@ -1309,7 +1309,7 @@ export async function registerRoutes(
   app.post("/api/admin/modifier-groups", requireRole("MANAGER"), async (req, res) => {
     try {
       const parsed = insertModifierGroupSchema.parse(req.body);
-      const group = await storage.createModifierGroup(parsed);
+      const group = await storage.createModifierGroup(parsed, req.db);
       res.json(group);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1318,7 +1318,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/modifier-groups/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const group = await storage.updateModifierGroup(parseInt(req.params.id as string), req.body);
+      const group = await storage.updateModifierGroup(parseInt(req.params.id as string), req.body, req.db);
       res.json(group);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1331,7 +1331,7 @@ export async function registerRoutes(
         ...req.body,
         groupId: parseInt(req.params.id as string),
       });
-      const option = await storage.createModifierOption(parsed);
+      const option = await storage.createModifierOption(parsed, req.db);
       res.json(option);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1340,7 +1340,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/modifier-options/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const option = await storage.updateModifierOption(parseInt(req.params.id as string), req.body);
+      const option = await storage.updateModifierOption(parseInt(req.params.id as string), req.body, req.db);
       res.json(option);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1349,7 +1349,7 @@ export async function registerRoutes(
 
   app.delete("/api/admin/modifier-options/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      await storage.deleteModifierOption(parseInt(req.params.id as string));
+      await storage.deleteModifierOption(parseInt(req.params.id as string), req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1357,14 +1357,14 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: DISCOUNTS ====================
-  app.get("/api/admin/discounts", requireRole("MANAGER"), async (_req, res) => {
-    res.json(await storage.getAllDiscounts());
+  app.get("/api/admin/discounts", requireRole("MANAGER"), async (req, res) => {
+    res.json(await storage.getAllDiscounts(req.db));
   });
 
   app.post("/api/admin/discounts", requireRole("MANAGER"), async (req, res) => {
     try {
       const parsed = insertDiscountSchema.parse(req.body);
-      const discount = await storage.createDiscount(parsed);
+      const discount = await storage.createDiscount(parsed, req.db);
       res.json(discount);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1373,7 +1373,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/discounts/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const discount = await storage.updateDiscount(parseInt(req.params.id as string), req.body);
+      const discount = await storage.updateDiscount(parseInt(req.params.id as string), req.body, req.db);
       res.json(discount);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1381,14 +1381,14 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: TAX CATEGORIES ====================
-  app.get("/api/admin/tax-categories", requireRole("MANAGER"), async (_req, res) => {
+  app.get("/api/admin/tax-categories", requireRole("MANAGER"), async (req, res) => {
     res.json(await storage.getAllTaxCategories(req.db));
   });
 
   app.post("/api/admin/tax-categories", requireRole("MANAGER"), async (req, res) => {
     try {
       const parsed = insertTaxCategorySchema.parse(req.body);
-      const tc = await storage.createTaxCategory(parsed);
+      const tc = await storage.createTaxCategory(parsed, req.db);
       res.json(tc);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1397,7 +1397,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/tax-categories/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const tc = await storage.updateTaxCategory(parseInt(req.params.id as string), req.body);
+      const tc = await storage.updateTaxCategory(parseInt(req.params.id as string), req.body, req.db);
       res.json(tc);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1421,9 +1421,9 @@ export async function registerRoutes(
   app.post("/api/admin/tax-categories/:id/apply-all", requireRole("MANAGER"), async (req, res) => {
     try {
       const taxCategoryId = parseInt(req.params.id as string);
-      const tc = await storage.getTaxCategory(taxCategoryId);
+      const tc = await storage.getTaxCategory(taxCategoryId, req.db);
       if (!tc) return res.status(404).json({ message: "Impuesto no encontrado" });
-      const result = await storage.applyTaxToAllProducts(taxCategoryId);
+      const result = await storage.applyTaxToAllProducts(taxCategoryId, req.db);
       const openOrders = await storage.getOpenOrders(req.db);
       let recalced = 0;
       for (const order of openOrders) {
@@ -1438,7 +1438,7 @@ export async function registerRoutes(
 
   // Product tax assignment
   app.get("/api/admin/products/:id/taxes", requirePermission("MODULE_PRODUCTS_VIEW"), async (req, res) => {
-    const ptcs = await storage.getProductTaxCategories(parseInt(req.params.id as string));
+    const ptcs = await storage.getProductTaxCategories(parseInt(req.params.id as string), req.db);
     res.json(ptcs.map(p => p.taxCategoryId));
   });
 
@@ -1446,7 +1446,7 @@ export async function registerRoutes(
     try {
       const { taxCategoryIds } = req.body;
       if (!Array.isArray(taxCategoryIds)) return res.status(400).json({ message: "taxCategoryIds debe ser un array" });
-      await storage.setProductTaxCategories(parseInt(req.params.id as string), taxCategoryIds);
+      await storage.setProductTaxCategories(parseInt(req.params.id as string), taxCategoryIds, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1455,7 +1455,7 @@ export async function registerRoutes(
 
   // ==================== POS: DISCOUNTS LIST ====================
   app.get("/api/pos/discounts", requirePermission("POS_PAY"), async (req, res) => {
-    const all = await storage.getAllDiscounts();
+    const all = await storage.getAllDiscounts(req.db);
     res.json(all.filter(d => d.active));
   });
 
@@ -1479,7 +1479,7 @@ export async function registerRoutes(
       const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
 
       for (const orderItem of activeItems) {
-        const mods = await storage.getOrderItemModifiers(orderItem.id);
+        const mods = await storage.getOrderItemModifiers(orderItem.id, req.db);
         const unitPrice = Number(orderItem.productPriceSnapshot) + mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
         const lineSubtotal = unitPrice * orderItem.qty;
 
@@ -1490,7 +1490,7 @@ export async function registerRoutes(
           amountApplied = Math.min(Number(discountValue), lineSubtotal);
         }
 
-        await storage.deleteOrderItemDiscountsByItem(orderItem.id);
+        await storage.deleteOrderItemDiscountsByItem(orderItem.id, req.db);
         await storage.createOrderItemDiscount({
           orderItemId: orderItem.id,
           orderId,
@@ -1499,7 +1499,7 @@ export async function registerRoutes(
           discountValue: discountValue.toString(),
           amountApplied: amountApplied.toFixed(2),
           appliedByUserId: userId,
-        });
+        }, req.db);
       }
 
       await storage.recalcOrderTotal(orderId, req.db);
@@ -1521,7 +1521,7 @@ export async function registerRoutes(
       const orderItem = await storage.getOrderItem(orderItemId, req.db);
       if (!orderItem) return res.status(404).json({ message: "Item no encontrado" });
 
-      const mods = await storage.getOrderItemModifiers(orderItemId);
+      const mods = await storage.getOrderItemModifiers(orderItemId, req.db);
       const unitPrice = Number(orderItem.productPriceSnapshot) + mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
       const lineSubtotal = unitPrice * orderItem.qty;
 
@@ -1532,7 +1532,7 @@ export async function registerRoutes(
         amountApplied = Math.min(Number(discountValue), lineSubtotal);
       }
 
-      await storage.deleteOrderItemDiscountsByItem(orderItemId);
+      await storage.deleteOrderItemDiscountsByItem(orderItemId, req.db);
 
       const discount = await storage.createOrderItemDiscount({
         orderItemId,
@@ -1542,7 +1542,7 @@ export async function registerRoutes(
         discountValue: discountValue.toString(),
         amountApplied: amountApplied.toFixed(2),
         appliedByUserId: userId,
-      });
+      }, req.db);
 
       await storage.recalcOrderTotal(orderItem.orderId, req.db);
       broadcast("order_updated", { orderId: orderItem.orderId });
@@ -1559,7 +1559,7 @@ export async function registerRoutes(
       const orderItem = await storage.getOrderItem(orderItemId, req.db);
       if (!orderItem) return res.status(404).json({ message: "Item no encontrado" });
 
-      await storage.deleteOrderItemDiscountsByItem(orderItemId);
+      await storage.deleteOrderItemDiscountsByItem(orderItemId, req.db);
       await storage.recalcOrderTotal(orderItem.orderId, req.db);
       broadcast("order_updated", { orderId: orderItem.orderId });
 
@@ -1709,7 +1709,7 @@ export async function registerRoutes(
               nameSnapshot: mod.name,
               priceDeltaSnapshot: mod.priceDelta || "0",
               qty: mod.qty || 1,
-            });
+            }, req.db);
           }
         }
 
@@ -1796,8 +1796,8 @@ export async function registerRoutes(
 
     const [allItems, allSubs, waiters, upcomingReservations, allSubaccounts] = await Promise.all([
       storage.getOrderItemsByOrderIds(orderIds, req.db),
-      storage.getPendingSubmissionsByOrderIds(orderIds),
-      storage.getUsersByIds(waiterIds),
+      storage.getPendingSubmissionsByOrderIds(orderIds, req.db),
+      storage.getUsersByIds(waiterIds, req.db),
       db.select().from(reservations).where(and(
         inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
         or(eq(reservations.reservedDate, yesterdayStr), eq(reservations.reservedDate, todayStr), eq(reservations.reservedDate, tomorrowStr)),
@@ -1949,11 +1949,11 @@ export async function registerRoutes(
         storage.getOrderItems(order.id, req.db),
         storage.getPendingSubmissions(order.id, req.db),
         storage.getVoidedItemsForOrder(order.id, req.db),
-        storage.getOrderItemModifiersByOrderIds([order.id]),
+        storage.getOrderItemModifiersByOrderIds([order.id], req.db),
       ]);
 
       const voidedUserIds = Array.from(new Set(voidedItemsList.map(i => i.voidedByUserId)));
-      const voidedUsers = await storage.getUsersByIds(voidedUserIds);
+      const voidedUsers = await storage.getUsersByIds(voidedUserIds, req.db);
 
       const modsByItem = new Map<number, typeof allMods>();
       for (const m of allMods) {
@@ -2177,11 +2177,11 @@ export async function registerRoutes(
   app.get("/api/products/:id/modifiers", async (req, res) => {
     try {
       const productId = parseInt(req.params.id as string);
-      const links = await storage.getItemModifierGroups(productId);
+      const links = await storage.getItemModifierGroups(productId, req.db);
       const groupIds = links.map(l => l.modifierGroupId);
       const [groups, allOptions] = await Promise.all([
-        Promise.all(groupIds.map(id => storage.getModifierGroup(id))),
-        Promise.all(groupIds.map(id => storage.getModifierOptionsByGroup(id))),
+        Promise.all(groupIds.map(id => storage.getModifierGroup(id, req.db))),
+        Promise.all(groupIds.map(id => storage.getModifierOptionsByGroup(id, req.db))),
       ]);
       const result = [];
       for (let i = 0; i < links.length; i++) {
@@ -2213,7 +2213,7 @@ export async function registerRoutes(
         storage.getProductsByIds(productIds, req.db),
         storage.getAllCategories(req.db),
         storage.getAllTaxCategories(req.db),
-        Promise.all(productIds.map(pid => storage.getProductTaxCategories(pid).then(links => ({ pid, links })))),
+        Promise.all(productIds.map(pid => storage.getProductTaxCategories(pid, req.db).then(links => ({ pid, links })))),
       ]);
 
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
@@ -2372,7 +2372,7 @@ export async function registerRoutes(
               nameSnapshot: mod.name,
               priceDeltaSnapshot: mod.priceDelta || "0",
               qty: mod.qty || 1,
-            }));
+            }, req.db));
           }
         }
 
@@ -2709,7 +2709,7 @@ export async function registerRoutes(
         await storage.voidKitchenTicketItemsByOrderItem(itemId, effectiveQty, isFullVoid, req.db);
       }
       if (isFullVoid) {
-        await storage.cancelPortionReservation(itemId);
+        await storage.cancelPortionReservation(itemId, req.db);
         try { await onOrderItemsVoided([itemId], userId); } catch (e) { console.error("[inv] reversal error:", e); }
       }
 
@@ -2834,7 +2834,7 @@ export async function registerRoutes(
       const items = await storage.getVoidedItemsForOrder(orderId, req.db);
       const userIds = Array.from(new Set(items.map(i => i.voidedByUserId)));
       const usersMap = new Map<number, string>();
-      const bulkUsers = await storage.getUsersByIds(userIds);
+      const bulkUsers = await storage.getUsersByIds(userIds, req.db);
       for (const u of bulkUsers) usersMap.set(u.id, u.displayName);
       const result = items.map(i => ({
         ...i,
@@ -2954,7 +2954,7 @@ export async function registerRoutes(
   app.post("/api/qr/:tableCode/submit", async (req, res) => {
     try {
       const tableCode = req.params.tableCode as string;
-      const rateLimitRecord = await storage.getQrRateLimit(tableCode);
+      const rateLimitRecord = await storage.getQrRateLimit(tableCode, req.db);
       if (rateLimitRecord && (Date.now() - rateLimitRecord.lastSubmissionAt.getTime()) < 30000) {
         return res.status(429).json({ message: "Espere un momento antes de enviar otro pedido" });
       }
@@ -3007,7 +3007,7 @@ export async function registerRoutes(
           qrSubmissionId: sub.id,
         }, req.db);
 
-        const qrTaxLinks = await storage.getProductTaxCategories(product.id);
+        const qrTaxLinks = await storage.getProductTaxCategories(product.id, req.db);
         if (qrTaxLinks.length > 0) {
           const allTaxCats = await storage.getAllTaxCategories(req.db);
           const taxSnapshot = qrTaxLinks.map(ptc => {
@@ -3027,7 +3027,7 @@ export async function registerRoutes(
               nameSnapshot: mod.name,
               priceDeltaSnapshot: mod.priceDelta || "0",
               qty: mod.qty || 1,
-            });
+            }, req.db);
           }
         }
 
@@ -3073,7 +3073,7 @@ export async function registerRoutes(
       broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id, itemsCount: items.length });
       broadcast("order_updated", { tableId: table.id, orderId: order.id });
 
-      await storage.upsertQrRateLimit(tableCode);
+      await storage.upsertQrRateLimit(tableCode, req.db);
 
       res.json({ ok: true, submissionId: sub.id });
     } catch (err: any) {
@@ -3144,15 +3144,15 @@ export async function registerRoutes(
     "SPLIT": 7,
   };
 
-  async function recalcOrderStatusFromItems(orderId: number) {
-    const items = await storage.getOrderItems(orderId, req.db);
+  async function recalcOrderStatusFromItems(orderId: number, dbInstance?: typeof db) {
+    const items = await storage.getOrderItems(orderId, dbInstance);
     const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
     if (activeItems.length === 0) return;
 
     const allReady = activeItems.every(i => i.status === "READY");
     const allPreparingOrReady = activeItems.every(i => i.status === "PREPARING" || i.status === "READY");
 
-    const order = await storage.getOrder(orderId, req.db);
+    const order = await storage.getOrder(orderId, dbInstance);
     if (!order || order.status === "PAID" || order.status === "VOIDED" || order.status === "SPLIT") return;
 
     let newStatus: string;
@@ -3168,7 +3168,7 @@ export async function registerRoutes(
     const newRank = ORDER_STATUS_RANK[newStatus] ?? 0;
     if (newRank <= currentRank && order.status !== "OPEN") return;
 
-    await storage.updateOrder(orderId, { status: newStatus }, req.db);
+    await storage.updateOrder(orderId, { status: newStatus }, dbInstance);
     broadcast("order_updated", { orderId });
     broadcast("table_status_changed", {});
   }
@@ -3204,7 +3204,7 @@ export async function registerRoutes(
 
         const ticket = await storage.getKitchenTicketByItemId(item.id, req.db);
         if (ticket) {
-          await recalcOrderStatusFromItems(ticket.orderId);
+          await recalcOrderStatusFromItems(ticket.orderId, req.db);
         }
       }
 
@@ -3231,7 +3231,7 @@ export async function registerRoutes(
       }
 
       if (ticket) {
-        await recalcOrderStatusFromItems(ticket.orderId);
+        await recalcOrderStatusFromItems(ticket.orderId, req.db);
 
         try {
           const [ord] = await db.select().from(orders).where(eq(orders.id, ticket.orderId));
@@ -3294,32 +3294,32 @@ export async function registerRoutes(
     await tx.delete(orderSubaccounts).where(eq(orderSubaccounts.orderId, orderId));
   }
 
-  async function maybeAutoCloseParentOrder(orderId: number) {
-    const paidOrder = await storage.getOrder(orderId, req.db);
+  async function maybeAutoCloseParentOrder(orderId: number, dbInstance?: typeof db) {
+    const paidOrder = await storage.getOrder(orderId, dbInstance);
     if (!paidOrder?.parentOrderId) return;
-    const siblings = await storage.getChildOrders(paidOrder.parentOrderId, req.db);
+    const siblings = await storage.getChildOrders(paidOrder.parentOrderId, dbInstance);
     const allSiblingsPaid = siblings.every(s => s.status === "PAID" || s.status === "VOIDED");
     if (!allSiblingsPaid) return;
-    const parentOrder = await storage.getOrder(paidOrder.parentOrderId, req.db);
+    const parentOrder = await storage.getOrder(paidOrder.parentOrderId, dbInstance);
     if (!parentOrder || (parentOrder.status !== "SPLIT" && parentOrder.status !== "OPEN")) return;
-    const parentItems = await storage.getOrderItems(paidOrder.parentOrderId, req.db);
+    const parentItems = await storage.getOrderItems(paidOrder.parentOrderId, dbInstance);
     const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
     if (parentActive.length === 0) {
-      await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() }, req.db);
+      await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() }, dbInstance);
       await cleanupSubaccountsForOrder(paidOrder.parentOrderId);
     }
   }
 
-  async function buildServiceChargeOps(orderId: number, order: any, activeItems: any[], schema?: string) {
+  async function buildServiceChargeOps(orderId: number, order: any, activeItems: any[], schema?: string, dbInstance?: typeof db) {
     try {
       const [bizConfig, allProducts, existing] = await Promise.all([
         storage.getBusinessConfig(schema),
-        storage.getAllProducts(req.db),
-        storage.getServiceChargeByOrder(orderId),
+        storage.getAllProducts(dbInstance),
+        storage.getServiceChargeByOrder(orderId, dbInstance),
       ]);
       let scRate = 0.10;
       if (bizConfig?.serviceTaxCategoryId) {
-        const taxCat = await storage.getTaxCategory(bizConfig.serviceTaxCategoryId);
+        const taxCat = await storage.getTaxCategory(bizConfig.serviceTaxCategoryId, dbInstance);
         if (taxCat && taxCat.active) {
           scRate = Number(taxCat.rate) / 100;
         }
@@ -3329,7 +3329,7 @@ export async function registerRoutes(
         existing.filter(x => x.status === "PAID").map(x => x.orderItemId)
       );
       const productMap = new Map(allProducts.map(p => [p.id, p]));
-      const tableName = order.tableId ? (await storage.getTable(order.tableId, req.db))?.tableName : null;
+      const tableName = order.tableId ? (await storage.getTable(order.tableId, dbInstance))?.tableName : null;
       const bd = await getBusinessDate(schema);
       const entries: any[] = [];
       for (const item of activeItems) {
@@ -3366,7 +3366,7 @@ export async function registerRoutes(
         }
       }
       if (entries.length > 0) {
-        await Promise.all(entries.map(e => storage.createServiceChargeLedgerEntry(e)));
+        await Promise.all(entries.map(e => storage.createServiceChargeLedgerEntry(e, dbInstance)));
       }
     } catch (scErr) {
       console.error("[ServiceCharge] Error creating ledger entries:", scErr);
@@ -3389,7 +3389,7 @@ export async function registerRoutes(
     const allSubaccountQueryIds = Array.from(new Set([...orderIds, ...parentOrderIds]));
 
     const [itemCounts, allSubaccounts] = await Promise.all([
-      storage.getActiveItemCountsByOrderIds(orderIds),
+      storage.getActiveItemCountsByOrderIds(orderIds, req.db),
       allSubaccountQueryIds.length > 0
         ? db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, allSubaccountQueryIds))
         : Promise.resolve([]),
@@ -3458,9 +3458,9 @@ export async function registerRoutes(
 
     const [allItems, allMods, allItemDiscounts, allItemTaxes, allSubaccounts] = await Promise.all([
       storage.getOrderItems(orderId, req.db),
-      storage.getOrderItemModifiersByOrderIds([orderId]),
-      storage.getOrderItemDiscountsByOrderIds([orderId]),
-      storage.getOrderItemTaxesByOrderIds([orderId]),
+      storage.getOrderItemModifiersByOrderIds([orderId], req.db),
+      storage.getOrderItemDiscountsByOrderIds([orderId], req.db),
+      storage.getOrderItemTaxesByOrderIds([orderId], req.db),
       db.select().from(orderSubaccounts).where(
         inArray(orderSubaccounts.orderId, order.parentOrderId ? [orderId, order.parentOrderId] : [orderId])
       ),
@@ -3567,7 +3567,7 @@ export async function registerRoutes(
         await db.transaction(async (tx) => {
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
         });
-        await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema);
+        await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema, req.db);
       }
 
       if (pm?.paymentCode === "CASH" && cashSession) {
@@ -3586,7 +3586,7 @@ export async function registerRoutes(
       });
 
       if (balanceDue <= 0) {
-        await maybeAutoCloseParentOrder(orderId);
+        await maybeAutoCloseParentOrder(orderId, req.db);
       }
 
       broadcast("payment_completed", { orderId });
@@ -3673,8 +3673,8 @@ export async function registerRoutes(
         await db.transaction(async (tx) => {
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
         });
-        await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema);
-        await maybeAutoCloseParentOrder(orderId);
+        await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema, req.db);
+        await maybeAutoCloseParentOrder(orderId, req.db);
       }
 
       if (hasCashLeg && cashSession) {
@@ -3802,7 +3802,7 @@ export async function registerRoutes(
   app.post("/api/pos/orders/:orderId/normalize-split", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId as string);
-      const result = await storage.normalizeOrderItemsForSplit(orderId);
+      const result = await storage.normalizeOrderItemsForSplit(orderId, req.db);
       if (result.normalized) {
         await storage.recalcOrderTotal(orderId, req.db);
         broadcast("order_updated", { orderId });
@@ -3824,7 +3824,7 @@ export async function registerRoutes(
         return res.json([]);
       }
       const splitIds = splits.map(s => s.id);
-      const allSplitItems = await storage.getSplitItemsByAccountIds(splitIds);
+      const allSplitItems = await storage.getSplitItemsByAccountIds(splitIds, req.db);
       const itemsBySplit = new Map<number, typeof allSplitItems>();
       for (const si of allSplitItems) {
         if (!itemsBySplit.has(si.splitId)) itemsBySplit.set(si.splitId, []);
@@ -4070,7 +4070,7 @@ export async function registerRoutes(
       });
 
       const splitActiveOIs = splitOIs.filter(oi => oi.status !== "VOIDED");
-      await buildServiceChargeOps(orderId, order!, splitActiveOIs, req.tenantSchema);
+      await buildServiceChargeOps(orderId, order!, splitActiveOIs, req.tenantSchema, req.db);
 
       if (pm?.paymentCode === "CASH" && cashSession) {
         const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + splitTotal;
@@ -4147,7 +4147,7 @@ export async function registerRoutes(
 
       const receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
       for (const i of targetItems) {
-        const mods = await storage.getOrderItemModifiers(i.id);
+        const mods = await storage.getOrderItemModifiers(i.id, req.db);
         const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
         receiptItems.push({
           name: i.productNameSnapshot + (mods.length > 0 ? ` (${mods.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : ""),
@@ -4188,8 +4188,8 @@ export async function registerRoutes(
         : Number(order.totalAmount);
 
       const itemIds = new Set(targetItems.map(i => i.id));
-      const orderDiscountsList = (await storage.getOrderItemDiscountsByOrder(orderId)).filter(d => itemIds.has(d.orderItemId));
-      const orderTaxesList = (await storage.getOrderItemTaxesByOrder(orderId)).filter(t => itemIds.has(t.orderItemId));
+      const orderDiscountsList = (await storage.getOrderItemDiscountsByOrder(orderId, req.db)).filter(d => itemIds.has(d.orderItemId));
+      const orderTaxesList = (await storage.getOrderItemTaxesByOrder(orderId, req.db)).filter(t => itemIds.has(t.orderItemId));
       const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
       const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
 
@@ -4265,7 +4265,7 @@ export async function registerRoutes(
 
       const receiptItems: { name: string; qty: number; price: number; total: number }[] = [];
       for (const i of activeItems) {
-        const mods = await storage.getOrderItemModifiers(i.id);
+        const mods = await storage.getOrderItemModifiers(i.id, req.db);
         const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
         receiptItems.push({
           name: i.productNameSnapshot + (mods.length > 0 ? ` (${mods.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +${Number(m.priceDeltaSnapshot)}` : "")).join(", ")})` : ""),
@@ -4277,8 +4277,8 @@ export async function registerRoutes(
 
       const oNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `#${order.id}`);
 
-      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
-      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
+      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId, req.db);
+      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId, req.db);
       const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
       const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
 
@@ -4380,15 +4380,15 @@ export async function registerRoutes(
       let subtotal = 0;
       const emailItemsData: { name: string; qty: number; lineTotal: number }[] = [];
       for (const i of activeItems) {
-        const mods = await storage.getOrderItemModifiers(i.id);
+        const mods = await storage.getOrderItemModifiers(i.id, req.db);
         const modDelta = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
         const lineTotal = (Number(i.productPriceSnapshot) + modDelta) * i.qty;
         subtotal += lineTotal;
         const modLabel = mods.length > 0 ? ` (${mods.map(m => m.nameSnapshot + (Number(m.priceDeltaSnapshot) > 0 ? ` +₡${Number(m.priceDeltaSnapshot).toLocaleString()}` : "")).join(", ")})` : "";
         emailItemsData.push({ name: i.productNameSnapshot + modLabel, qty: i.qty, lineTotal });
       }
-      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId);
-      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId);
+      const orderDiscountsList = await storage.getOrderItemDiscountsByOrder(orderId, req.db);
+      const orderTaxesList = await storage.getOrderItemTaxesByOrder(orderId, req.db);
       const totalDiscounts = orderDiscountsList.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
       const totalTaxes = orderTaxesList.reduce((s: number, t: any) => s + Number(t.taxAmount), 0);
       const taxBk = orderTaxesList.length > 0 ? aggregateTaxBreakdown(orderTaxesList) : [];
@@ -4630,7 +4630,7 @@ export async function registerRoutes(
       const paymentId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
 
-      const payment = await storage.getPayment(paymentId);
+      const payment = await storage.getPayment(paymentId, req.db);
       if (!payment) return res.status(404).json({ message: "Pago no encontrado" });
       if (payment.status !== "PAID") return res.status(400).json({ message: "Este pago ya fue anulado" });
 
@@ -4650,7 +4650,7 @@ export async function registerRoutes(
       const order = await storage.getOrder(payment.orderId, req.db);
       if (order && order.status === "PAID" && balanceDue > 0) {
         await storage.updateOrder(payment.orderId, { status: "OPEN", closedAt: null }, req.db);
-        await storage.voidServiceChargeByOrder(payment.orderId);
+        await storage.voidServiceChargeByOrder(payment.orderId, req.db);
       }
 
       await storage.createAuditEvent({
@@ -4703,8 +4703,8 @@ export async function registerRoutes(
       const activeItemIds = activeItems.map(i => i.id);
       const [allMods, orderDiscountsList, orderTaxesList] = await Promise.all([
         storage.getOrderItemModifiersByItemIds(activeItemIds, req.db),
-        storage.getOrderItemDiscountsByOrder(orderId),
-        storage.getOrderItemTaxesByOrder(orderId),
+        storage.getOrderItemDiscountsByOrder(orderId, req.db),
+        storage.getOrderItemTaxesByOrder(orderId, req.db),
       ]);
 
       const modsMap = new Map<number, typeof allMods>();
@@ -4754,7 +4754,7 @@ export async function registerRoutes(
     try {
       const date = (req.query.date as string) || undefined;
       const [paidOrders, allTables] = await Promise.all([
-        storage.getPaidOrdersForDate(date),
+        storage.getPaidOrdersForDate(date, req.db),
         storage.getAllTables(false, req.db),
       ]);
       const tableMap = new Map(allTables.map(t => [t.id, t]));
@@ -4764,7 +4764,7 @@ export async function registerRoutes(
       const orderIds = paidOrders.map(o => o.id);
       const [allItems, allPaymentsList, allPaymentMethods] = await Promise.all([
         storage.getOrderItemsByOrderIds(orderIds, req.db),
-        storage.getPaymentsByOrderIds(orderIds),
+        storage.getPaymentsByOrderIds(orderIds, req.db),
         storage.getAllPaymentMethods(req.db),
       ]);
       const pmNameMap = new Map(allPaymentMethods.map(m => [m.id, m.paymentName]));
@@ -4889,9 +4889,9 @@ export async function registerRoutes(
         status: "PENDING",
         startedAt: new Date(),
         retryCount: 0,
-      });
+      }, req.db);
 
-      const ledgerItems = await storage.getLedgerItemsForDate(date, "PAID");
+      const ledgerItems = await storage.getLedgerItemsForDate(date, "PAID", req.db);
       const paidPayments = await storage.getPaymentsForDate(date, req.db);
       const activePaidPayments = paidPayments.filter(p => p.status === "PAID");
 
@@ -4903,16 +4903,16 @@ export async function registerRoutes(
           status: "SUCCESS",
           finishedAt: new Date(),
           qboRefs: { ledgerTotal: ledgerSum, paymentTotal: paymentSum, itemCount: ledgerItems.length },
-        });
+        }, req.db);
       } else {
         await storage.updateQboExportJob(job.id, {
           status: "FAILED",
           finishedAt: new Date(),
           errorMessage: `Mismatch: ledger=${ledgerSum.toFixed(2)}, payments=${paymentSum.toFixed(2)}`,
-        });
+        }, req.db);
       }
 
-      const updatedJob = await storage.getQboExportJobs(date);
+      const updatedJob = await storage.getQboExportJobs(date, req.db);
 
       await storage.createAuditEvent({
         actorType: "USER",
@@ -4931,9 +4931,9 @@ export async function registerRoutes(
   });
 
   // ==================== QBO: GET EXPORT JOBS ====================
-  app.get("/api/qbo/export", requireRole("MANAGER"), async (_req, res) => {
+  app.get("/api/qbo/export", requireRole("MANAGER"), async (req, res) => {
     const today = await getBusinessDate(req.tenantSchema);
-    const jobs = await storage.getQboExportJobs(today);
+    const jobs = await storage.getQboExportJobs(today, req.db);
     res.json(jobs);
   });
 
@@ -4947,13 +4947,13 @@ export async function registerRoutes(
     const resolvedFrom = dateFrom || await getBusinessDate(req.tenantSchema);
     const resolvedTo = dateTo || resolvedFrom;
     const [data, ledgerDetails, paymentMethodTotals] = await Promise.all([
-      storage.getDashboardData(dateFrom, dateTo, hourFrom, hourTo, req.tenantSchema, await getTenantTimezone(req.tenantSchema)),
+      storage.getDashboardData(dateFrom, dateTo, hourFrom, hourTo, req.tenantSchema, await getTenantTimezone(req.tenantSchema), req.db),
       resolvedFrom === resolvedTo
-        ? storage.getLedgerItemsForDate(resolvedFrom)
-        : storage.getLedgerItemsForDateRange(resolvedFrom, resolvedTo),
+        ? storage.getLedgerItemsForDate(resolvedFrom, req.db)
+        : storage.getLedgerItemsForDateRange(resolvedFrom, resolvedTo, req.db),
       resolvedFrom === resolvedTo
         ? storage.getPaymentsByDateGrouped(resolvedFrom, req.db)
-        : storage.getPaymentsByDateRangeGrouped(resolvedFrom, resolvedTo),
+        : storage.getPaymentsByDateRangeGrouped(resolvedFrom, resolvedTo, req.db),
     ]);
     if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/dashboard ${Date.now() - t0}ms`);
     res.json({ ...data, ledgerDetails, paymentMethodTotals });
@@ -4962,7 +4962,7 @@ export async function registerRoutes(
   app.get("/api/dashboard/orders/:id", requireRole("MANAGER"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.id as string);
-      const detail = await storage.getOrderDetail(orderId);
+      const detail = await storage.getOrderDetail(orderId, req.db);
       if (!detail) return res.status(404).json({ message: "Orden no encontrada" });
       res.json(detail);
     } catch (err: any) {
@@ -4973,14 +4973,14 @@ export async function registerRoutes(
   // ==================== HR MODULE ====================
 
   // -- HR Settings --
-  app.get("/api/hr/settings", requirePermission("HR_MANAGE_SETTINGS"), async (_req, res) => {
-    const settings = await storage.getHrSettings();
+  app.get("/api/hr/settings", requirePermission("HR_MANAGE_SETTINGS"), async (req, res) => {
+    const settings = await storage.getHrSettings(req.db);
     res.json(settings || {});
   });
 
   app.put("/api/hr/settings", requirePermission("HR_MANAGE_SETTINGS"), async (req, res) => {
     try {
-      const settings = await storage.upsertHrSettings(req.body);
+      const settings = await storage.upsertHrSettings(req.body, req.db);
       await storage.createAuditEvent({
         actorType: "USER",
         actorUserId: req.session.userId!,
@@ -4999,10 +4999,10 @@ export async function registerRoutes(
   app.get("/api/hr/schedules", requirePermission("HR_MANAGE_SCHEDULES", "HR_VIEW_TEAM"), async (req, res) => {
     const weekStartDate = req.query.weekStartDate as string;
     if (!weekStartDate) return res.status(400).json({ message: "weekStartDate required" });
-    const schedules = await storage.getWeeklySchedulesByWeek(weekStartDate);
+    const schedules = await storage.getWeeklySchedulesByWeek(weekStartDate, req.db);
     const result = [];
     for (const s of schedules) {
-      const days = await storage.getScheduleDays(s.id);
+      const days = await storage.getScheduleDays(s.id, req.db);
       result.push({ ...s, days });
     }
     res.json(result);
@@ -5011,9 +5011,9 @@ export async function registerRoutes(
   app.get("/api/hr/schedules/my", requirePermission("HR_VIEW_SELF"), async (req, res) => {
     const weekStartDate = req.query.weekStartDate as string;
     if (!weekStartDate) return res.status(400).json({ message: "weekStartDate required" });
-    const schedule = await storage.getWeeklySchedule(req.session.userId!, weekStartDate);
+    const schedule = await storage.getWeeklySchedule(req.session.userId!, weekStartDate, req.db);
     if (!schedule) return res.json(null);
-    const days = await storage.getScheduleDays(schedule.id);
+    const days = await storage.getScheduleDays(schedule.id, req.db);
     res.json({ ...schedule, days });
   });
 
@@ -5022,13 +5022,13 @@ export async function registerRoutes(
       const { employeeId, weekStartDate, days } = req.body;
       if (!employeeId || !weekStartDate) return res.status(400).json({ message: "employeeId and weekStartDate required" });
       
-      const existing = await storage.getWeeklySchedule(employeeId, weekStartDate);
+      const existing = await storage.getWeeklySchedule(employeeId, weekStartDate, req.db);
       if (existing) return res.status(409).json({ message: "Schedule already exists for this employee/week" });
       
-      const schedule = await storage.createWeeklySchedule({ employeeId, weekStartDate });
+      const schedule = await storage.createWeeklySchedule({ employeeId, weekStartDate }, req.db);
       let savedDays: any[] = [];
       if (days && Array.isArray(days) && days.length > 0) {
-        savedDays = await storage.upsertScheduleDays(schedule.id, days);
+        savedDays = await storage.upsertScheduleDays(schedule.id, days, req.db);
       }
       await storage.createAuditEvent({
         actorType: "USER",
@@ -5049,10 +5049,10 @@ export async function registerRoutes(
     try {
       const id = Number(req.params.id);
       const { days } = req.body;
-      const schedule = await storage.updateWeeklySchedule(id, {});
+      const schedule = await storage.updateWeeklySchedule(id, {}, req.db);
       let savedDays: any[] = [];
       if (days && Array.isArray(days)) {
-        savedDays = await storage.upsertScheduleDays(id, days);
+        savedDays = await storage.upsertScheduleDays(id, days, req.db);
       }
       await storage.createAuditEvent({
         actorType: "USER",
@@ -5072,7 +5072,7 @@ export async function registerRoutes(
   app.delete("/api/hr/schedules/:id", requirePermission("HR_MANAGE_SCHEDULES"), async (req, res) => {
     try {
       const id = Number(req.params.id);
-      await storage.deleteWeeklySchedule(id);
+      await storage.deleteWeeklySchedule(id, req.db);
       await storage.createAuditEvent({
         actorType: "USER",
         actorUserId: req.session.userId!,
@@ -5092,10 +5092,10 @@ export async function registerRoutes(
       const employeeId = req.session.userId!;
       const { confirmNoSchedule } = req.body;
       
-      const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+      const openPunch = await storage.getOpenPunchForEmployee(employeeId, req.db);
       if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta. Marque salida primero." });
       
-      const settings = await storage.getHrSettings();
+      const settings = await storage.getHrSettings(req.db);
       const tzSelf = await getTenantTimezone(req.tenantSchema);
       const now = new Date();
       const localNow = getNowInTZ(tzSelf);
@@ -5112,9 +5112,9 @@ export async function registerRoutes(
       const weekStartDate = mondayDate.toLocaleDateString("en-CA", { timeZone: tzSelf });
       
       let hasScheduleToday = false;
-      const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate);
+      const schedule = await storage.getWeeklySchedule(employeeId, weekStartDate, req.db);
       if (schedule) {
-        const days = await storage.getScheduleDays(schedule.id);
+        const days = await storage.getScheduleDays(schedule.id, req.db);
         const todaySchedule = days.find(d => d.dayOfWeek === weekDay);
         if (todaySchedule && !todaySchedule.isDayOff && todaySchedule.startTime) {
           hasScheduleToday = true;
@@ -5152,7 +5152,7 @@ export async function registerRoutes(
         clockinGeoLng: null,
         clockinGeoAccuracyM: null,
         clockinGeoVerified: false,
-      });
+      }, req.db);
       
       const auditAction = hasScheduleToday ? "CLOCK_IN" : "CLOCK_IN_NO_SCHEDULE_CONFIRMED";
       await storage.createAuditEvent({
@@ -5184,9 +5184,9 @@ export async function registerRoutes(
     try {
       const employeeId = req.session.userId!;
       
-      const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+      const openPunch = await storage.getOpenPunchForEmployee(employeeId, req.db);
       
-      const settings = await storage.getHrSettings();
+      const settings = await storage.getHrSettings(req.db);
       const now = new Date();
 
       if (!openPunch) {
@@ -5219,7 +5219,7 @@ export async function registerRoutes(
         clockoutGeoLng: null,
         clockoutGeoAccuracyM: null,
         clockoutGeoVerified: false,
-      });
+      }, req.db);
       
       await storage.createAuditEvent({
         actorType: "USER",
@@ -5245,10 +5245,10 @@ export async function registerRoutes(
       
       const now = new Date();
       const businessDate = await getBusinessDate(req.tenantSchema);
-      const settings = await storage.getHrSettings();
+      const settings = await storage.getHrSettings(req.db);
       
       if (action === "clock_in") {
-        const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+        const openPunch = await storage.getOpenPunchForEmployee(employeeId, req.db);
         if (openPunch) return res.status(409).json({ message: "Ya tiene una entrada abierta" });
         
         const punch = await storage.createTimePunch({
@@ -5257,7 +5257,7 @@ export async function registerRoutes(
           clockInAt: now,
           clockinGeoVerified: false,
           notes: `Override por gerente: ${reason || "Sin razón"}`,
-        });
+        }, req.db);
         
         await storage.createAuditEvent({
           actorType: "USER",
@@ -5273,7 +5273,7 @@ export async function registerRoutes(
       }
       
       if (action === "clock_out") {
-        const openPunch = await storage.getOpenPunchForEmployee(employeeId);
+        const openPunch = await storage.getOpenPunchForEmployee(employeeId, req.db);
         
         if (!openPunch) {
           await storage.createAuditEvent({
@@ -5293,7 +5293,7 @@ export async function registerRoutes(
           workedMinutes,
           notes: `Override por gerente: ${reason || "Sin razón"}`,
           clockoutGeoVerified: false,
-        });
+        }, req.db);
         
         await storage.createAuditEvent({
           actorType: "USER",
@@ -5353,7 +5353,7 @@ export async function registerRoutes(
         clockinGeoVerified: false,
         clockoutGeoVerified: clockOutAt ? false : undefined,
         notes: `Marca manual: ${reason}${notes ? ` - ${notes}` : ""}`,
-      });
+      }, req.db);
 
       await storage.createAuditEvent({
         actorType: "USER",
@@ -5373,7 +5373,7 @@ export async function registerRoutes(
 
   // -- My current punch status --
   app.get("/api/hr/my-punch", requireAuth, async (req, res) => {
-    const punch = await storage.getOpenPunchForEmployee(req.session.userId!);
+    const punch = await storage.getOpenPunchForEmployee(req.session.userId!, req.db);
     if (punch) {
       res.json({ clockedIn: true, clockInTime: punch.clockInAt, punchId: punch.id });
     } else {
@@ -5388,17 +5388,18 @@ export async function registerRoutes(
       const punches = await storage.getTimePunchesByEmployee(
         Number(employeeId),
         (dateFrom as string) || undefined,
-        (dateTo as string) || undefined
+        (dateTo as string) || undefined,
+        req.db
       );
       return res.json(punches);
     }
     if (dateFrom && dateTo) {
-      return res.json(await storage.getTimePunchesByDateRange(dateFrom as string, dateTo as string));
+      return res.json(await storage.getTimePunchesByDateRange(dateFrom as string, dateTo as string, req.db));
     }
     if (date) {
-      return res.json(await storage.getTimePunchesByDate(date as string));
+      return res.json(await storage.getTimePunchesByDate(date as string, req.db));
     }
-    return res.json(await storage.getTimePunchesByDate(await getBusinessDate(req.tenantSchema)));
+    return res.json(await storage.getTimePunchesByDate(await getBusinessDate(req.tenantSchema), req.db));
   });
 
   app.get("/api/hr/punches/my", requirePermission("HR_VIEW_SELF"), async (req, res) => {
@@ -5406,7 +5407,8 @@ export async function registerRoutes(
     const punches = await storage.getTimePunchesByEmployee(
       req.session.userId!,
       (dateFrom as string) || undefined,
-      (dateTo as string) || undefined
+      (dateTo as string) || undefined,
+      req.db
     );
     res.json(punches);
   });
@@ -5419,7 +5421,7 @@ export async function registerRoutes(
       
       if (!reason) return res.status(400).json({ message: "Razón de edición obligatoria" });
       
-      const existing = await storage.getTimePunch(id);
+      const existing = await storage.getTimePunch(id, req.db);
       if (!existing) return res.status(404).json({ message: "Marca no encontrada" });
       
       const updates: any = {
@@ -5437,7 +5439,7 @@ export async function registerRoutes(
         updates.workedMinutes = Math.floor((outTime.getTime() - inTime.getTime()) / 60000);
       }
       
-      const updated = await storage.updateTimePunch(id, updates);
+      const updated = await storage.updateTimePunch(id, updates, req.db);
       
       await storage.createAuditEvent({
         actorType: "USER",
@@ -5462,10 +5464,10 @@ export async function registerRoutes(
   app.delete("/api/hr/punches/:id", requirePermission("HR_EDIT_PUNCHES"), async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const existing = await storage.getTimePunch(id);
+      const existing = await storage.getTimePunch(id, req.db);
       if (!existing) return res.status(404).json({ message: "Marca no encontrada" });
 
-      await storage.deleteTimePunch(id);
+      await storage.deleteTimePunch(id, req.db);
 
       await storage.createAuditEvent({
         actorType: "USER",
@@ -5493,8 +5495,8 @@ export async function registerRoutes(
   });
 
   // -- Extra Types + Payroll Extras CRUD --
-  app.get("/api/hr/extra-types", requirePermission("HR_VIEW_TEAM"), async (_req, res) => {
-    const types = await storage.getExtraTypes();
+  app.get("/api/hr/extra-types", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    const types = await storage.getExtraTypes(req.db);
     res.json(types);
   });
 
@@ -5503,7 +5505,8 @@ export async function registerRoutes(
     if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom and dateTo required" });
     const extras = await storage.getPayrollExtrasByRange(
       dateFrom as string, dateTo as string,
-      employeeId ? Number(employeeId) : undefined
+      employeeId ? Number(employeeId) : undefined,
+      req.db
     );
     res.json(extras);
   });
@@ -5514,7 +5517,7 @@ export async function registerRoutes(
       if (!employeeId || !appliesToDate || !typeCode || amount == null) {
         return res.status(400).json({ message: "employeeId, appliesToDate, typeCode, and amount are required" });
       }
-      const types = await storage.getExtraTypes();
+      const types = await storage.getExtraTypes(req.db);
       const t = types.find(tt => tt.typeCode === typeCode);
       if (!t) return res.status(400).json({ message: "typeCode inválido o inactivo" });
       const needsNote = ["AJUSTE_POSITIVO", "AJUSTE_NEGATIVO", "PRESTAMO_DEDUCCION"].includes(typeCode);
@@ -5528,7 +5531,7 @@ export async function registerRoutes(
         amount: String(amount),
         note: note || null,
         createdBy: req.session.userId!,
-      });
+      }, req.db);
       await storage.createAuditEvent({
         actorType: "USER", actorUserId: req.session.userId!,
         action: "PAYROLL_EXTRA_CREATE", entityType: "HR_PAYROLL_EXTRA", entityId: extra.id,
@@ -5543,11 +5546,11 @@ export async function registerRoutes(
   app.patch("/api/hr/payroll-extras/:id", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const existing = await storage.getPayrollExtraById(id);
+      const existing = await storage.getPayrollExtraById(id, req.db);
       if (!existing || existing.isDeleted) return res.status(404).json({ message: "Extra no encontrado" });
       const { typeCode, amount, note } = req.body;
       if (typeCode) {
-        const types = await storage.getExtraTypes();
+        const types = await storage.getExtraTypes(req.db);
         if (!types.find(t => t.typeCode === typeCode)) {
           return res.status(400).json({ message: "typeCode inválido" });
         }
@@ -5560,7 +5563,7 @@ export async function registerRoutes(
       const updated = await storage.updatePayrollExtra(id, {
         typeCode, amount: amount != null ? String(amount) : undefined,
         note, updatedBy: req.session.userId!,
-      });
+      }, req.db);
       await storage.createAuditEvent({
         actorType: "USER", actorUserId: req.session.userId!,
         action: "PAYROLL_EXTRA_UPDATE", entityType: "HR_PAYROLL_EXTRA", entityId: id,
@@ -5575,9 +5578,9 @@ export async function registerRoutes(
   app.delete("/api/hr/payroll-extras/:id", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const existing = await storage.getPayrollExtraById(id);
+      const existing = await storage.getPayrollExtraById(id, req.db);
       if (!existing || existing.isDeleted) return res.status(404).json({ message: "Extra no encontrado" });
-      const deleted = await storage.softDeletePayrollExtra(id);
+      const deleted = await storage.softDeletePayrollExtra(id, req.db);
       await storage.createAuditEvent({
         actorType: "USER", actorUserId: req.session.userId!,
         action: "PAYROLL_EXTRA_DELETE", entityType: "HR_PAYROLL_EXTRA", entityId: id,
@@ -5772,7 +5775,7 @@ export async function registerRoutes(
         if (diffDays > 31) return res.status(400).json({ message: "Service range cannot exceed 31 days" });
       }
 
-      const settings = await storage.getHrSettings();
+      const settings = await storage.getHrSettings(req.db);
       const hrConfig: HrConfig = {
         overtimeDailyThresholdHours: settings?.overtimeDailyThresholdHours || "8",
         overtimeMultiplier: settings?.overtimeMultiplier || "1.5",
@@ -5801,13 +5804,13 @@ export async function registerRoutes(
       }));
 
       const [punches, scheduleDays, extras, serviceLedger, extraTypes, waiterIdsFromSalesRows, waiterIdsFromServiceRows] = await Promise.all([
-        storage.getPunchesForDateRange(dateFrom, dateTo),
-        storage.getAllSchedulesForDateRange(dateFrom, dateTo),
-        storage.getPayrollExtrasByRange(dateFrom, dateTo),
-        storage.getServiceChargeLedgerByDates(serviceFrom, serviceTo),
-        storage.getExtraTypes(),
-        db.execute(sql`SELECT DISTINCT responsible_waiter_id AS id FROM sales_ledger_items WHERE business_date >= ${dateFrom} AND business_date <= ${dateTo} AND responsible_waiter_id IS NOT NULL`),
-        db.execute(sql`SELECT DISTINCT responsible_waiter_employee_id AS id FROM service_charge_ledger WHERE business_date >= ${serviceFrom} AND business_date <= ${serviceTo} AND responsible_waiter_employee_id IS NOT NULL`),
+        storage.getPunchesForDateRange(dateFrom, dateTo, req.db),
+        storage.getAllSchedulesForDateRange(dateFrom, dateTo, req.db),
+        storage.getPayrollExtrasByRange(dateFrom, dateTo, undefined, req.db),
+        storage.getServiceChargeLedgerByDates(serviceFrom, serviceTo, req.db),
+        storage.getExtraTypes(req.db),
+        req.db.execute(sql`SELECT DISTINCT responsible_waiter_id AS id FROM sales_ledger_items WHERE business_date >= ${dateFrom} AND business_date <= ${dateTo} AND responsible_waiter_id IS NOT NULL`),
+        req.db.execute(sql`SELECT DISTINCT responsible_waiter_employee_id AS id FROM service_charge_ledger WHERE business_date >= ${serviceFrom} AND business_date <= ${serviceTo} AND responsible_waiter_employee_id IS NOT NULL`),
       ]);
 
       const operationalWaiterIds = new Set<number>();
@@ -5969,7 +5972,7 @@ export async function registerRoutes(
     const { dateFrom, dateTo } = req.query;
     if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom and dateTo required" });
     
-    const punches = await storage.getTimePunchesByDateRange(dateFrom as string, dateTo as string);
+    const punches = await storage.getTimePunchesByDateRange(dateFrom as string, dateTo as string, req.db);
     const employees = await storage.getAllUsers(req.db);
     
     const report: Record<number, {
@@ -6004,7 +6007,7 @@ export async function registerRoutes(
       report[p.employeeId].punchCount++;
     }
     
-    const settings = await storage.getHrSettings();
+    const settings = await storage.getHrSettings(req.db);
     const weeklyThreshold = settings ? Number(settings.overtimeWeeklyThresholdHours) * 60 : 2880;
     
     res.json({
@@ -6018,7 +6021,7 @@ export async function registerRoutes(
   app.get("/api/hr/service-charges", requirePermission("SERVICE_VIEW_REPORTS"), async (req, res) => {
     const { dateFrom, dateTo } = req.query;
     if (!dateFrom || !dateTo) return res.status(400).json({ message: "dateFrom and dateTo required" });
-    const entries = await storage.getServiceChargeLedgerByDateRange(dateFrom as string, dateTo as string);
+    const entries = await storage.getServiceChargeLedgerByDateRange(dateFrom as string, dateTo as string, req.db);
     res.json(entries);
   });
 
@@ -6026,7 +6029,7 @@ export async function registerRoutes(
   app.get("/api/hr/service-payouts", requirePermission("SERVICE_VIEW_REPORTS"), async (req, res) => {
     const { periodStart, periodEnd } = req.query;
     if (!periodStart || !periodEnd) return res.status(400).json({ message: "periodStart and periodEnd required" });
-    const payouts = await storage.getServiceChargePayouts(periodStart as string, periodEnd as string);
+    const payouts = await storage.getServiceChargePayouts(periodStart as string, periodEnd as string, req.db);
     res.json(payouts);
   });
 
@@ -6035,9 +6038,9 @@ export async function registerRoutes(
       const { periodStart, periodEnd } = req.body;
       if (!periodStart || !periodEnd) return res.status(400).json({ message: "periodStart and periodEnd required" });
       
-      await storage.deleteServiceChargePayoutsByPeriod(periodStart, periodEnd, "PREVIEW");
+      await storage.deleteServiceChargePayoutsByPeriod(periodStart, periodEnd, "PREVIEW", req.db);
       
-      const entries = await storage.getServiceChargeLedgerByDateRange(periodStart, periodEnd);
+      const entries = await storage.getServiceChargeLedgerByDateRange(periodStart, periodEnd, req.db);
       
       const byEmployee: Record<number, number> = {};
       for (const e of entries) {
@@ -6056,7 +6059,7 @@ export async function registerRoutes(
           amount: amount.toFixed(2),
           generatedByEmployeeId: req.session.userId!,
           status: "PREVIEW",
-        });
+        }, req.db);
         payouts.push(payout);
       }
       
@@ -6079,14 +6082,14 @@ export async function registerRoutes(
       const { periodStart, periodEnd } = req.body;
       if (!periodStart || !periodEnd) return res.status(400).json({ message: "periodStart and periodEnd required" });
       
-      const payouts = await storage.getServiceChargePayouts(periodStart, periodEnd);
+      const payouts = await storage.getServiceChargePayouts(periodStart, periodEnd, req.db);
       const previews = payouts.filter(p => p.status === "PREVIEW");
       
       if (previews.length === 0) return res.status(400).json({ message: "No hay liquidaciones en PREVIEW para finalizar" });
       
       const finalized = [];
       for (const p of previews) {
-        const updated = await storage.updateServiceChargePayoutStatus(p.id, "FINALIZED");
+        const updated = await storage.updateServiceChargePayoutStatus(p.id, "FINALIZED", req.db);
         finalized.push(updated);
       }
       
@@ -6112,7 +6115,7 @@ export async function registerRoutes(
 
   // -- Open punches (for auto-process monitoring) --
   app.get("/api/hr/open-punches", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
-    const openPunches = await storage.getAllOpenPunches();
+    const openPunches = await storage.getAllOpenPunches(req.db);
     res.json(openPunches);
   });
 
@@ -6592,7 +6595,7 @@ export async function registerRoutes(
     return remaining <= 0 ? block : [];
   }
 
-  async function sendReservationEmail(email: string, reservation: { reservationCode: string; guestName: string; reservedDate: string; reservedTime: string; partySize: number; notes: string | null }) {
+  async function sendReservationEmail(email: string, reservation: { reservationCode: string; guestName: string; reservedDate: string; reservedTime: string; partySize: number; notes: string | null }, tenantSchema?: string, dbInstance?: typeof db) {
     try {
       const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
       const smtpUser = process.env.SMTP_USER;
@@ -6605,7 +6608,7 @@ export async function registerRoutes(
         secure: process.env.SMTP_SECURE === "true",
         auth: { user: smtpUser, pass: smtpPass },
       });
-      const config = await storage.getBusinessConfig(req.tenantSchema);
+      const config = await storage.getBusinessConfig(tenantSchema);
       const businessName = config?.businessName || "Restaurante";
       await transporter.sendMail({
         from: process.env.SMTP_FROM || smtpUser,
@@ -6613,7 +6616,8 @@ export async function registerRoutes(
         subject: `Reserva recibida - ${reservation.reservationCode} | ${businessName}`,
         text: `Hola ${reservation.guestName},\n\nTu reserva ha sido recibida.\n\nCodigo: ${reservation.reservationCode}\nFecha: ${reservation.reservedDate}\nHora: ${reservation.reservedTime}\nPersonas: ${reservation.partySize}\n${reservation.notes ? `Notas: ${reservation.notes}\n` : ''}\nEl restaurante confirmara tu reserva pronto.\n\nGracias,\n${businessName}`,
       });
-      await db.update(reservations).set({ confirmationSentAt: new Date() }).where(eq(reservations.reservationCode, reservation.reservationCode));
+      const d = dbInstance || db;
+      await d.update(reservations).set({ confirmationSentAt: new Date() }).where(eq(reservations.reservationCode, reservation.reservationCode));
     } catch (err) {
       console.error("[Reservations] Failed to send confirmation email:", err);
     }
@@ -7148,7 +7152,7 @@ export async function registerRoutes(
           reservedTime,
           partySize,
           notes: notes || null,
-        });
+        }, req.tenantSchema, req.db);
       }
 
       res.status(201).json({ reservationCode: code, message: "Reserva recibida exitosamente" });
