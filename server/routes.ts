@@ -1255,15 +1255,21 @@ export async function registerRoutes(
 
   app.post("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
     try {
+      console.log("[printer-debug] POST body:", JSON.stringify(req.body), "tenantSchema:", req.tenantSchema);
+      const body = { ...req.body };
+      if (!body.bridgeId || body.bridgeId === "none") body.bridgeId = null;
       const parsed = insertPrinterSchema.parse({
-        ...req.body,
-        port: Number(req.body.port) || 9100,
-        paperWidth: Number(req.body.paperWidth) || 80,
+        ...body,
+        port: Number(body.port) || 9100,
+        paperWidth: Number(body.paperWidth) || 80,
       });
+      console.log("[printer-debug] parsed:", JSON.stringify(parsed));
       const tdb = getTenantDb(req.tenantSchema);
       const [printer] = await tdb.insert(printersTable).values(parsed).returning();
+      console.log("[printer-debug] created:", JSON.stringify(printer));
       res.status(201).json(printer);
     } catch (err: any) {
+      console.error("[printer-debug] ERROR:", err.message);
       res.status(400).json({ message: err.message });
     }
   });
