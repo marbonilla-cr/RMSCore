@@ -1772,7 +1772,7 @@ export async function registerRoutes(
     const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
       storage.getAllTables(false, req.db),
-      storage.getAllOpenOrders(),
+      storage.getAllOpenOrders(req.db),
     ]);
 
     const parentOrders = allOpenOrders.filter(o => !o.parentOrderId);
@@ -3378,7 +3378,7 @@ export async function registerRoutes(
     const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
       storage.getAllTables(false, req.db),
-      storage.getAllOpenOrders(),
+      storage.getAllOpenOrders(req.db),
     ]);
     const tableMap = new Map(allTables.map(t => [t.id, t]));
     const relevantOrders = allOpenOrders.filter(o => tableMap.has(o.tableId));

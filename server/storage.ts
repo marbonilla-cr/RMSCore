@@ -1895,8 +1895,9 @@ export async function deleteOrderItemDiscountsByItem(orderItemId: number) {
   await db.delete(orderItemDiscounts).where(eq(orderItemDiscounts.orderItemId, orderItemId));
 }
 
-export async function getAllOpenOrders() {
-  return db.select().from(orders)
+export async function getAllOpenOrders(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(orders)
     .where(inArray(orders.status, ["OPEN", "IN_KITCHEN", "PREPARING", "READY"]));
 }
 
