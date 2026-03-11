@@ -51,7 +51,10 @@ export async function tenantMiddleware(req: Request, res: Response, next: NextFu
       [slug]
     );
 
-    if (!result.rows.length) return res.status(404).json({ message: "Restaurante no encontrado." });
+    if (!result.rows.length) {
+      console.error("[tenant-middleware] Slug no encontrado:", slug, "host:", req.hostname);
+      return res.status(404).json({ message: "Restaurante no encontrado.", slug });
+    }
 
     const tenant = result.rows[0];
     if (!tenant.is_active) {
@@ -68,7 +71,7 @@ export async function tenantMiddleware(req: Request, res: Response, next: NextFu
     req.db = getTenantDb(tenant.schema_name);
     next();
   } catch (err: any) {
-    console.error("[tenant-middleware] Error:", err.message);
+    console.error("[tenant-middleware] Error:", err.message, "host:", req.hostname);
     req.tenantSchema = process.env.TENANT_SCHEMA || "public";
     req.tenantId = null;
     req.db = getTenantDb(req.tenantSchema);
