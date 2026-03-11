@@ -6370,6 +6370,7 @@ export async function registerRoutes(
 
   app.get("/api/admin/print-bridges", requireRole("MANAGER"), async (req, res) => {
     try {
+      console.log("[bridge-debug] tenantSchema:", req.tenantSchema, "host:", req.headers.host);
       const tdb = getTenantDb(req.tenantSchema);
       const rows = await tdb.select({
         id: printBridgesTable.id,
