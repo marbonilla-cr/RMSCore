@@ -181,6 +181,41 @@ export function registerProvisionRoutes(app: Express) {
     res.json({ plans: PLAN_PRICES, addons: ADDON_PRICES, planModules: PLAN_MODULES });
   });
 
+  app.delete("/api/superadmin/tenants/:id/hard-delete", requireSuperadmin, async (req, res) => {
+    const client = await publicPool.connect();
+    try {
+      const id = parseInt(req.params.id);
+      const { rows } = await client.query("SELECT * FROM public.tenants WHERE id=$1", [id]);
+      if (!rows.length) return res.status(404).json({ message: "Tenant no encontrado" });
+      const tenant = rows[0];
+      if (tenant.is_active) return res.status(400).json({ message: "El tenant debe estar suspendido antes de eliminarlo permanentemente" });
+      if (tenant.schema_name === "public") return res.status(400).json({ message: "No se puede eliminar el tenant principal" });
+
+      const schemaName = tenant.schema_name;
+      const businessName = tenant.business_name;
+
+      await client.query("BEGIN");
+      await client.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+      await client.query("DELETE FROM public.tenant_modules WHERE tenant_id=$1", [id]);
+      await client.query("DELETE FROM public.schema_migrations WHERE schema_name=$1", [schemaName]);
+      await client.query("DELETE FROM public.tenants WHERE id=$1", [id]);
+      try {
+        await client.query(
+          `INSERT INTO public.provision_log (tenant_id, action, actor_id, status, metadata) VALUES ($1, 'HARD_DELETE', 0, 'COMPLETED', $2)`,
+          [id, JSON.stringify({ schemaName, businessName })]
+        );
+      } catch (_) {}
+      await client.query("COMMIT");
+
+      res.json({ success: true, message: "Tenant eliminado permanentemente" });
+    } catch (err: any) {
+      await client.query("ROLLBACK").catch(() => {});
+      res.status(500).json({ message: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
   app.get("/api/superadmin/metrics", requireSuperadmin, async (_req, res) => {
     try {
       const r = await publicPool.query(`SELECT COUNT(*) FILTER (WHERE is_active) AS active_tenants, COUNT(*) FILTER (WHERE plan='TRIAL') AS trial_tenants, COUNT(*) FILTER (WHERE plan='BASIC' AND is_active) AS basic_tenants, COUNT(*) FILTER (WHERE plan='PRO' AND is_active) AS pro_tenants, COUNT(*) FILTER (WHERE plan='ENTERPRISE' AND is_active) AS enterprise_tenants, COUNT(*) FILTER (WHERE status='SUSPENDED') AS suspended_tenants FROM public.tenants`);

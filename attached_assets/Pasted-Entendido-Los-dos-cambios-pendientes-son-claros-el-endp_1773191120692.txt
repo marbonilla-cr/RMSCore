@@ -1,0 +1,85 @@
+Entendido. Los dos cambios pendientes son claros: el endpoint de hard-delete en el backend y el botón correspondiente en el frontend del superadmin.
+
+Déjame revisar los archivos actuales antes de escribir el prompt.Aquí el prompt completo para Replit Agent:
+
+---
+
+## Prompt para Replit Agent
+
+**Contexto:** RMSCore — plataforma SaaS multi-tenant de gestión de restaurantes. El panel superadmin (`/superadmin`) permite gestionar tenants. Necesitamos completar la funcionalidad de **eliminación permanente (hard-delete) de tenants**, que quedó pendiente en la iteración anterior del Migration Governor.
+
+---
+
+### Tarea: Implementar hard-delete de tenants en superadmin
+
+Son exactamente **dos cambios**: uno en el backend y uno en el frontend.
+
+---
+
+### CAMBIO 1 — Backend: `server/provision/provision-routes.ts`
+
+Agregar el endpoint `DELETE /api/superadmin/tenants/:id/hard-delete`.
+
+**Lógica del endpoint:**
+
+1. Verificar autenticación via `SUPERADMIN_TOKEN` (igual que el resto de endpoints del archivo).
+2. Buscar el tenant por `id` en `public.tenants`. Si no existe → 404.
+3. **Bloqueo de seguridad:** Si el tenant tiene `isActive = true` → rechazar con 400 y mensaje `"El tenant debe estar suspendido antes de eliminarlo permanentemente"`. Solo se puede hard-delete un tenant suspendido.
+4. Obtener el `schema_name` del tenant.
+5. Si `schema_name` es `'public'` → rechazar con 400 y mensaje `"No se puede eliminar el tenant principal"`. Nunca tocar el schema `public`.
+6. En una transacción:
+   a. Ejecutar `DROP SCHEMA "${schemaName}" CASCADE` para eliminar todos los datos del tenant.
+   b. Eliminar el registro de `public.tenants` donde `id = :id`.
+   c. Eliminar registros relacionados en `public.tenant_modules` donde `tenant_id = :id` (si la tabla existe).
+   d. Insertar en `public.provision_log`: `{ tenant_id: id, action: 'HARD_DELETE', actor_id: 'superadmin', status: 'COMPLETED', metadata: { schemaName, businessName } }` (si la tabla existe — usar try/catch para el log, no debe bloquear la operación principal).
+7. Responder `200` con `{ success: true, message: "Tenant eliminado permanentemente" }`.
+
+**Manejo de errores:** Cualquier fallo en el DROP SCHEMA o DELETE debe hacer rollback de la transacción completa y responder 500 con el mensaje del error.
+
+```typescript
+// Ruta a agregar en provision-routes.ts
+router.delete('/tenants/:id/hard-delete', async (req, res) => {
+  // ... implementación según lógica descrita
+});
+```
+
+---
+
+### CAMBIO 2 — Frontend: `client/src/pages/superadmin.tsx`
+
+Agregar un botón "Eliminar permanentemente" en la UI del superadmin.
+
+**Reglas de visibilidad:**
+- El botón **solo aparece** cuando el tenant tiene `isActive = false` (está suspendido).
+- **Nunca aparece** para el tenant con `schema_name = 'public'` (Tenant 1 / La Antigua).
+
+**Flujo de interacción:**
+1. El botón tiene estilo destructivo (rojo), ícono de trash, texto `"Eliminar permanentemente"`.
+2. Al hacer click, abrir un **dialog de confirmación** que muestre:
+   - Título: `"¿Eliminar tenant permanentemente?"`
+   - Cuerpo: `"Esta acción es irreversible. Se eliminará el schema completo de la base de datos con todos sus datos. Escribe el nombre del restaurante para confirmar:"` seguido de un input de texto.
+   - El botón de confirmar solo se habilita cuando el texto ingresado coincide exactamente con el `businessName` del tenant.
+   - Botón confirmar: rojo, texto `"Sí, eliminar permanentemente"`.
+   - Botón cancelar: secundario.
+3. Al confirmar:
+   - Llamar `DELETE /api/superadmin/tenants/:id/hard-delete` con el header de autenticación correspondiente (mismo patrón que las otras llamadas del archivo).
+   - En caso de éxito: cerrar dialog, mostrar toast de confirmación, refrescar la lista de tenants.
+   - En caso de error: mostrar el mensaje de error del servidor en el dialog (no cerrarlo).
+
+**Posición del botón:** Dentro de la card o fila del tenant, junto a los botones de "Suspender"/"Reactivar" existentes, pero visualmente separado (puede ir al final con un separador o margen adicional para enfatizar que es una acción destructiva irreversible).
+
+---
+
+### Criterios de aceptación
+
+- [ ] `DELETE /api/superadmin/tenants/:id/hard-delete` responde 400 si el tenant está activo.
+- [ ] `DELETE /api/superadmin/tenants/:id/hard-delete` responde 400 si `schema_name = 'public'`.
+- [ ] `DELETE /api/superadmin/tenants/:id/hard-delete` ejecuta `DROP SCHEMA ... CASCADE` y elimina el registro de `public.tenants` en una transacción.
+- [ ] El botón "Eliminar permanentemente" **no aparece** para tenants activos ni para el tenant `public`.
+- [ ] El dialog de confirmación requiere escribir el `businessName` exacto para habilitar el botón de confirmar.
+- [ ] Después del hard-delete exitoso, el tenant desaparece de la lista del superadmin.
+- [ ] No se modifica ninguna otra lógica existente del superadmin.
+
+---
+
+**No tocar:** `server/provision/migrate-tenants.ts`, lógica de `syncAllTenantsAtStartup()`, ni ningún otro archivo fuera de los dos mencionados.

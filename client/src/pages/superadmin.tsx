@@ -95,6 +95,7 @@ const Ico = {
   eyeOff:  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19M1 1l22 22"/></svg>,
   search:  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
   upgrade: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="18"/></svg>,
+  trash:   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>,
 };
 
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
@@ -183,6 +184,12 @@ export default function SuperadminPage() {
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupResult,  setSetupResult]  = useState<""|"ok"|"err">("");
   const [setupErr,     setSetupErr]     = useState("");
+
+  const [hdOpen, setHdOpen] = useState(false);
+  const [hdTenant, setHdTenant] = useState<Tenant|null>(null);
+  const [hdConfirmText, setHdConfirmText] = useState("");
+  const [hdLoading, setHdLoading] = useState(false);
+  const [hdError, setHdError] = useState("");
 
   // ── Toasts ───────────────────────────────────────────────────────────────────
   const [toasts, setToasts] = useState<{id:number;type:string;title:string;msg:string}[]>([]);
@@ -350,6 +357,21 @@ export default function SuperadminPage() {
       message:`Se restaurará el acceso a "${t.business_name}".`,
       onConfirm: async() => { await api("POST",`/api/superadmin/tenants/${t.id}/reactivate`); toast("success","Reactivado",t.business_name); await loadData(); },
     }); setConfirmOpen(true);
+  };
+  const doHardDelete = (t:Tenant) => {
+    setHdTenant(t); setHdConfirmText(""); setHdError(""); setHdLoading(false); setHdOpen(true);
+  };
+  const execHardDelete = async () => {
+    if (!hdTenant) return;
+    setHdLoading(true); setHdError("");
+    try {
+      await api("DELETE",`/api/superadmin/tenants/${hdTenant.id}/hard-delete`);
+      setHdOpen(false);
+      toast("success","Eliminado permanentemente",hdTenant.business_name);
+      if (detailOpen) setDetailOpen(false);
+      await loadData();
+    } catch(e:any) { setHdError(e.message); }
+    finally { setHdLoading(false); }
   };
   const execConfirm = async () => {
     if (!confirmCfg) return;
@@ -655,6 +677,9 @@ export default function SuperadminPage() {
                                 {t.status!=="FAILED" && (t.is_active
                                   ? <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>doSuspend(t)}>Suspender</button>
                                   : <button style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>doReactivate(t)}>Reactivar</button>
+                                )}
+                                {!t.is_active && t.schema_name!=="public" && (
+                                  <button data-testid={`btn-hard-delete-${t.id}`} style={{ padding:"4px 9px", borderRadius:"var(--sa-r-xs)", fontSize:11, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red)", background:"var(--sa-red-d)", color:"var(--sa-red)", marginLeft:4, display:"flex", alignItems:"center", gap:3 }} onClick={()=>doHardDelete(t)}>{Ico.trash} Eliminar</button>
                                 )}
                               </div>
                             </td>
@@ -1079,6 +1104,9 @@ export default function SuperadminPage() {
                     ? <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red-m)", background:"var(--sa-s0)", color:"var(--sa-red)" }} onClick={()=>{setDetailOpen(false);doSuspend(detailData.tenant);}}>Suspender</button>
                     : <button style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-sage-m)", background:"var(--sa-s0)", color:"var(--sa-sage)" }} onClick={()=>{setDetailOpen(false);doReactivate(detailData.tenant);}}>Reactivar</button>
                   )}
+                  {!detailData.tenant.is_active && detailData.tenant.schema_name!=="public" && (
+                    <button data-testid="btn-hard-delete-detail" style={{ padding:"7px 13px", borderRadius:"var(--sa-r-sm)", fontSize:12, fontWeight:600, cursor:"pointer", border:"1px solid var(--sa-red)", background:"var(--sa-red)", color:"#fff", marginLeft:"auto", display:"flex", alignItems:"center", gap:4 }} onClick={()=>doHardDelete(detailData.tenant)}>{Ico.trash} Eliminar permanentemente</button>
+                  )}
                 </div>
               </div>
             )}
@@ -1147,6 +1175,32 @@ export default function SuperadminPage() {
                   style={{ padding:"9px 18px", border:"none", borderRadius:"var(--sa-r-sm)", fontFamily:"var(--sa-f-disp)", fontWeight:600, fontSize:14, cursor:"pointer", color:"white", opacity:confirmLoading?0.7:1,
                     background:confirmCfg.variant==="danger"?"var(--sa-red)":confirmCfg.variant==="success"?"var(--sa-sage)":"var(--sa-acc)" }}>
                   {confirmLoading?"Procesando...":confirmCfg.label}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════ MODAL: HARD DELETE ════════════════ */}
+      {hdOpen && hdTenant && (
+        <div className="sa-overlay" style={{ ...S.overlay, zIndex:310 }} onClick={e=>{if(e.target===e.currentTarget&&!hdLoading){setHdOpen(false);}}}>
+          <div className="sa-modal" style={{ ...S.modal, maxWidth:440 }}>
+            <div style={{ padding:"28px 26px 24px" }}>
+              <div style={{ fontFamily:"var(--sa-f-disp)", fontWeight:700, fontSize:18, color:"var(--sa-red)", marginBottom:10 }}>¿Eliminar tenant permanentemente?</div>
+              <div style={{ fontSize:14, color:"var(--sa-text2)", lineHeight:1.6, marginBottom:16 }}>
+                Esta acción es <strong>irreversible</strong>. Se eliminará el schema completo de la base de datos con todos sus datos.
+              </div>
+              <div style={{ marginBottom:16 }}>
+                <label style={S.lbl}>Escribe "<strong>{hdTenant.business_name}</strong>" para confirmar</label>
+                <input data-testid="input-hard-delete-confirm" value={hdConfirmText} onChange={e=>setHdConfirmText(e.target.value)} placeholder={hdTenant.business_name} style={S.input} autoFocus />
+              </div>
+              {hdError && <div style={{ fontSize:12, color:"var(--sa-red)", background:"var(--sa-red-d)", padding:"8px 12px", borderRadius:"var(--sa-r-xs)", marginBottom:14 }}>{hdError}</div>}
+              <div style={{ display:"flex", justifyContent:"flex-end", gap:10 }}>
+                <button style={S.btnSec} onClick={()=>setHdOpen(false)} disabled={hdLoading}>Cancelar</button>
+                <button data-testid="btn-confirm-hard-delete" onClick={execHardDelete} disabled={hdLoading || hdConfirmText !== hdTenant.business_name}
+                  style={{ padding:"9px 18px", border:"none", borderRadius:"var(--sa-r-sm)", fontFamily:"var(--sa-f-disp)", fontWeight:600, fontSize:14, cursor: hdConfirmText===hdTenant.business_name?"pointer":"not-allowed", color:"white", background:"var(--sa-red)", opacity: (hdLoading || hdConfirmText!==hdTenant.business_name)?0.5:1, display:"flex", alignItems:"center", gap:5 }}>
+                  {Ico.trash} {hdLoading?"Eliminando...":"Sí, eliminar permanentemente"}
                 </button>
               </div>
             </div>
