@@ -51,7 +51,7 @@ function extractTableNumber(tableName: string): string {
 }
 
 async function getOrCreateOrderForTable(tableId: number) {
-  let order = await storage.getOpenOrderForTable(tableId);
+  let order = await storage.getOpenOrderForTable(tableId, req.db);
   if (order) return order;
   try {
     order = await storage.createOrder({
@@ -59,9 +59,9 @@ async function getOrCreateOrderForTable(tableId: number) {
       status: "OPEN",
       responsibleWaiterId: null,
       businessDate: await getBusinessDate(),
-    });
+    }, req.db);
   } catch (e: any) {
-    order = await storage.getOpenOrderForTable(tableId);
+    order = await storage.getOpenOrderForTable(tableId, req.db);
     if (order) return order;
     throw e;
   }
@@ -103,7 +103,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
-      const order = await storage.getOpenOrderForTable(table.id);
+      const order = await storage.getOpenOrderForTable(table.id, req.db);
       if (!order) return res.json([]);
 
       const subs = await db.select().from(orderSubaccounts)
@@ -277,19 +277,19 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const subId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
 
-      const sub = await storage.getSubmission(subId);
+      const sub = await storage.getSubmission(subId, req.db);
       if (!sub || sub.status !== "SUBMITTED") {
         return res.status(400).json({ message: "Submission no válida o ya procesada" });
       }
 
-      const order = await storage.getOrder(sub.orderId);
+      const order = await storage.getOrder(sub.orderId, req.db);
       if (!order) return res.status(400).json({ message: "Orden no encontrada" });
 
       const table = await storage.getTable(sub.tableId, req.db);
       if (!table) return res.status(400).json({ message: "Mesa no encontrada" });
 
       if (!order.responsibleWaiterId) {
-        await storage.updateOrder(order.id, { responsibleWaiterId: userId });
+        await storage.updateOrder(order.id, { responsibleWaiterId: userId }, req.db);
       }
 
       const payload = sub.payloadSnapshot as any;
@@ -322,9 +322,9 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const t0 = Date.now();
 
       const [existingItems, allCategories, allTaxCats] = await Promise.all([
-        storage.getOrderItems(order.id),
+        storage.getOrderItems(order.id, req.db),
         storage.getAllCategories(req.db),
-        storage.getAllTaxCategories(),
+        storage.getAllTaxCategories(req.db),
       ]);
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
       const roundNumber = maxRound + 1;
@@ -342,7 +342,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           ? db.select().from(modifierOptions).where(inArray(modifierOptions.id, allModOptionIds))
           : Promise.resolve([]),
         uniqueProductIds.length > 0
-          ? storage.getProductTaxCategoriesByProductIds(uniqueProductIds)
+          ? storage.getProductTaxCategoriesByProductIds(uniqueProductIds, req.db)
           : Promise.resolve([]),
       ]);
 
@@ -378,7 +378,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           status: "PENDING",
           roundNumber,
           qrSubmissionId: subId,
-        });
+        }, req.db);
 
         await db.update(orderItems).set({
           subaccountId: subaccount?.id || null,
@@ -393,7 +393,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
             return tc ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
           }).filter(Boolean);
           if (taxSnapshot.length > 0) {
-            await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot });
+            await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot }, req.db);
           }
         }
 
@@ -438,7 +438,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           createdByUserId: null,
           responsibleWaiterId: userId,
           status: "OPEN",
-        });
+        }, req.db);
 
         createdItems.push({ ...orderItem, productName: product.name, categoryId: product.categoryId });
       }
@@ -449,7 +449,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         status: "ACCEPTED",
         acceptedByUserId: userId,
         acceptedAt: new Date(),
-      });
+      }, req.db);
 
       const createdTicketIds: number[] = [];
       if (createdItems.length > 0) {
@@ -466,7 +466,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
               tableNameSnapshot: table.tableName,
               status: "NEW",
               kdsDestination,
-            });
+            }, req.db);
             kdsTickets.set(kdsDestination, ticket.id);
             createdTicketIds.push(ticket.id);
           }
@@ -476,7 +476,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           await storage.updateOrderItem(createdItem.id, {
             status: "SENT",
             sentToKitchenAt: new Date(),
-          });
+          }, req.db);
 
           if (createdItem.qty > 1) {
             const groupId = crypto.randomUUID();
@@ -490,7 +490,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
                 status: "NEW",
                 kitchenItemGroupId: groupId,
                 seqInGroup: seq,
-              });
+              }, req.db);
             }
           } else {
             await storage.createKitchenTicketItem({
@@ -500,13 +500,13 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
               qty: 1,
               notes: createdItem.notes,
               status: "NEW",
-            });
+            }, req.db);
           }
 
           await storage.updateSalesLedgerItems(createdItem.id, {
             sentToKitchenAt: new Date(),
             responsibleWaiterId: userId,
-          });
+          }, req.db);
         }
 
         console.log(`[perf] accept-v2 tickets created in ${Date.now() - t0}ms`);
@@ -520,10 +520,10 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
         console.log(`[perf] accept-v2 inventory done in ${Date.now() - t0}ms`);
 
-        await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
+        await storage.updateOrder(order.id, { status: "IN_KITCHEN" }, req.db);
       }
 
-      await storage.recalcOrderTotal(order.id);
+      await storage.recalcOrderTotal(order.id, req.db);
 
       storage.createAuditEvent({
         actorType: "USER",
@@ -541,8 +541,8 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       broadcast("order_updated", { tableId: sub.tableId, orderId: order.id });
       broadcast("table_status_changed", { tableId: sub.tableId });
 
-      const updatedOrder = await storage.getOpenOrderForTable(sub.tableId);
-      const updatedItems = updatedOrder ? await storage.getOrderItems(updatedOrder.id) : [];
+      const updatedOrder = await storage.getOpenOrderForTable(sub.tableId, req.db);
+      const updatedItems = updatedOrder ? await storage.getOrderItems(updatedOrder.id, req.db) : [];
 
       console.log(`[perf] accept-v2 total ${Date.now() - t0}ms (${createdItems.length} items)`);
 
@@ -563,7 +563,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const subId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
 
-      const sub = await storage.getSubmission(subId);
+      const sub = await storage.getSubmission(subId, req.db);
       if (!sub || sub.status !== "SUBMITTED") {
         return res.status(400).json({ message: "Submission no válida o ya procesada" });
       }
@@ -572,7 +572,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         status: "REJECTED",
         acceptedByUserId: userId,
         acceptedAt: new Date(),
-      });
+      }, req.db);
 
       await storage.createAuditEvent({
         actorType: "USER",
@@ -597,7 +597,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const subId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
 
-      const sub = await storage.getSubmission(subId);
+      const sub = await storage.getSubmission(subId, req.db);
       if (!sub || sub.status !== "SUBMITTED") {
         return res.status(400).json({ message: "Submission no válida o ya procesada" });
       }
@@ -606,7 +606,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         status: "REJECTED",
         acceptedByUserId: userId,
         acceptedAt: new Date(),
-      });
+      }, req.db);
 
       await storage.createAuditEvent({
         actorType: "USER",
@@ -652,7 +652,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     try {
       const orderId = parseInt(req.params.orderId as string);
 
-      const items = await storage.getOrderItems(orderId);
+      const items = await storage.getOrderItems(orderId, req.db);
 
       const subaccountIds = Array.from(new Set(items.map(i => (i as any).subaccountId).filter(Boolean)));
       let subaccountsMap: Map<number, OrderSubaccount> = new Map();
@@ -701,7 +701,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     try {
       const orderId = parseInt(req.params.orderId as string);
 
-      const allItems = await storage.getOrderItems(orderId);
+      const allItems = await storage.getOrderItems(orderId, req.db);
       const activeItems = allItems.filter((i: any) => i.status !== "VOIDED" && i.status !== "PAID");
 
       if (activeItems.length === 0) {
@@ -713,13 +713,13 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         return res.status(400).json({ message: "Los items no tienen nombres de subcuenta asignados" });
       }
 
-      const existingSplits = await storage.getSplitAccountsForOrder(orderId);
+      const existingSplits = await storage.getSplitAccountsForOrder(orderId, req.db);
 
       if (existingSplits.length > 0) {
         const existingWithItems: any[] = [];
         let existingValid = true;
         for (const s of existingSplits) {
-          const sItems = await storage.getSplitItemsForSplit(s.id);
+          const sItems = await storage.getSplitItemsForSplit(s.id, req.db);
           const validItems = sItems.filter(si => activeItems.some(ai => ai.id === si.orderItemId));
           if (validItems.length === 0 && sItems.length > 0) {
             existingValid = false;
@@ -735,7 +735,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           return res.json(existingWithItems);
         }
         for (const s of existingSplits) {
-          await storage.deleteSplitAccount(s.id);
+          await storage.deleteSplitAccount(s.id, req.db);
         }
       }
 
@@ -750,11 +750,11 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const result: any[] = [];
       for (const name of Object.keys(nameGroups)) {
         const groupItems = nameGroups[name];
-        const split = await storage.createSplitAccount({ orderId, label: name });
+        const split = await storage.createSplitAccount({ orderId, label: name }, req.db);
         for (const item of groupItems) {
-          await storage.createSplitItem({ splitId: split.id, orderItemId: item.id });
+          await storage.createSplitItem({ splitId: split.id, orderItemId: item.id }, req.db);
         }
-        const items = await storage.getSplitItemsForSplit(split.id);
+        const items = await storage.getSplitItemsForSplit(split.id, req.db);
         result.push({ ...split, items });
       }
 

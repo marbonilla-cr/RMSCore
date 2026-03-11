@@ -41,8 +41,8 @@ declare module "express-session" {
   }
 }
 
-async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: number | null, schema?: string) {
-  let order = await storage.getOpenOrderForTable(tableId);
+async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: number | null, schema?: string, dbInstance?: typeof db) {
+  let order = await storage.getOpenOrderForTable(tableId, dbInstance);
   if (order) return order;
   try {
     order = await storage.createOrder({
@@ -50,9 +50,9 @@ async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: nu
       status: "OPEN",
       responsibleWaiterId,
       businessDate: await getBusinessDate(schema),
-    });
+    }, dbInstance);
   } catch (e: any) {
-    order = await storage.getOpenOrderForTable(tableId);
+    order = await storage.getOpenOrderForTable(tableId, dbInstance);
     if (order) return order;
     throw e;
   }
@@ -300,29 +300,29 @@ function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcast): Promise<{ closed: boolean; newStatus?: string } | null> {
+async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcast, dbInstance?: typeof db): Promise<{ closed: boolean; newStatus?: string } | null> {
   try {
-    const order = await storage.getOrder(orderId);
+    const order = await storage.getOrder(orderId, dbInstance);
     if (!order) return null;
     if (order.status === "PAID" || order.status === "VOIDED") return null;
 
-    const allItems = await storage.getOrderItems(orderId);
+    const allItems = await storage.getOrderItems(orderId, dbInstance);
     const activeItems = allItems.filter(i => i.status !== "VOIDED");
 
     if (activeItems.length === 0) {
-      const childOrders = await storage.getChildOrders(orderId);
+      const childOrders = await storage.getChildOrders(orderId, dbInstance);
 
       if (childOrders.length > 0) {
         const allChildrenDone = childOrders.every(c => c.status === "PAID" || c.status === "VOIDED");
         if (allChildrenDone) {
-          await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() });
+          await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() }, dbInstance);
           broadcastFn("order_updated", { tableId: order.tableId, orderId });
           broadcastFn("table_status_changed", { tableId: order.tableId });
           broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "all_children_done" });
           return { closed: true, newStatus: "PAID" };
         }
       } else {
-        await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date() });
+        await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date() }, dbInstance);
         broadcastFn("order_updated", { tableId: order.tableId, orderId });
         broadcastFn("table_status_changed", { tableId: order.tableId });
         broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "no_active_items" });
@@ -340,8 +340,8 @@ async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcas
       if (allPaidOrZero) {
         for (const ai of activeItems) {
           if (ai.status !== "PAID") {
-            await storage.updateOrderItem(ai.id, { status: "PAID" });
-            await storage.updateSalesLedgerItems(ai.id, { status: "PAID", paidAt: new Date() });
+            await storage.updateOrderItem(ai.id, { status: "PAID" }, dbInstance);
+            await storage.updateSalesLedgerItems(ai.id, { status: "PAID", paidAt: new Date() }, dbInstance);
           }
         }
         await storage.updateOrder(orderId, {
@@ -349,7 +349,7 @@ async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcas
           closedAt: new Date(),
           balanceDue: "0.00",
           totalAmount: Math.max(0, totalAmount).toFixed(2),
-        });
+        }, dbInstance);
         broadcastFn("order_updated", { tableId: order.tableId, orderId });
         broadcastFn("table_status_changed", { tableId: order.tableId });
         broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "zero_balance" });
@@ -358,21 +358,21 @@ async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcas
     }
 
     if (balance <= 0 && activeItems.length > 0) {
-      const childOrders = await storage.getChildOrders(orderId);
+      const childOrders = await storage.getChildOrders(orderId, dbInstance);
       if (childOrders.length > 0) {
         const allChildrenDone = childOrders.every(c => c.status === "PAID" || c.status === "VOIDED");
         if (allChildrenDone) {
           for (const ai of activeItems) {
             if (ai.status !== "PAID") {
-              await storage.updateOrderItem(ai.id, { status: "PAID" });
-              await storage.updateSalesLedgerItems(ai.id, { status: "PAID", paidAt: new Date() });
+              await storage.updateOrderItem(ai.id, { status: "PAID" }, dbInstance);
+              await storage.updateSalesLedgerItems(ai.id, { status: "PAID", paidAt: new Date() }, dbInstance);
             }
           }
           await storage.updateOrder(orderId, {
             status: "PAID",
             closedAt: new Date(),
             balanceDue: "0.00",
-          });
+          }, dbInstance);
           broadcastFn("order_updated", { tableId: order.tableId, orderId });
           broadcastFn("table_status_changed", { tableId: order.tableId });
           broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "children_paid_balance_zero" });
@@ -1382,7 +1382,7 @@ export async function registerRoutes(
 
   // ==================== ADMIN: TAX CATEGORIES ====================
   app.get("/api/admin/tax-categories", requireRole("MANAGER"), async (_req, res) => {
-    res.json(await storage.getAllTaxCategories());
+    res.json(await storage.getAllTaxCategories(req.db));
   });
 
   app.post("/api/admin/tax-categories", requireRole("MANAGER"), async (req, res) => {
@@ -1406,10 +1406,10 @@ export async function registerRoutes(
 
   app.post("/api/admin/recalc-open-orders", requireRole("MANAGER"), async (req, res) => {
     try {
-      const openOrders = await storage.getOpenOrders();
+      const openOrders = await storage.getOpenOrders(req.db);
       let recalced = 0;
       for (const order of openOrders) {
-        await storage.recalcOrderTotal(order.id);
+        await storage.recalcOrderTotal(order.id, req.db);
         recalced++;
       }
       res.json({ message: `${recalced} órdenes recalculadas`, recalced });
@@ -1424,10 +1424,10 @@ export async function registerRoutes(
       const tc = await storage.getTaxCategory(taxCategoryId);
       if (!tc) return res.status(404).json({ message: "Impuesto no encontrado" });
       const result = await storage.applyTaxToAllProducts(taxCategoryId);
-      const openOrders = await storage.getOpenOrders();
+      const openOrders = await storage.getOpenOrders(req.db);
       let recalced = 0;
       for (const order of openOrders) {
-        await storage.recalcOrderTotal(order.id);
+        await storage.recalcOrderTotal(order.id, req.db);
         recalced++;
       }
       res.json({ ...result, ordersRecalculated: recalced });
@@ -1472,10 +1472,10 @@ export async function registerRoutes(
       if (isNaN(numValue) || numValue <= 0) return res.status(400).json({ message: "Valor de descuento inválido" });
       if (discountType === "percentage" && numValue > 100) return res.status(400).json({ message: "Porcentaje no puede ser mayor a 100" });
 
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const items = await storage.getOrderItems(orderId);
+      const items = await storage.getOrderItems(orderId, req.db);
       const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
 
       for (const orderItem of activeItems) {
@@ -1502,7 +1502,7 @@ export async function registerRoutes(
         });
       }
 
-      await storage.recalcOrderTotal(orderId);
+      await storage.recalcOrderTotal(orderId, req.db);
       broadcast("order_updated", { orderId });
 
       res.json({ ok: true, itemsAffected: activeItems.length });
@@ -1518,7 +1518,7 @@ export async function registerRoutes(
       const { discountName, discountType, discountValue } = req.body;
       const userId = req.session.userId!;
 
-      const orderItem = await storage.getOrderItem(orderItemId);
+      const orderItem = await storage.getOrderItem(orderItemId, req.db);
       if (!orderItem) return res.status(404).json({ message: "Item no encontrado" });
 
       const mods = await storage.getOrderItemModifiers(orderItemId);
@@ -1544,7 +1544,7 @@ export async function registerRoutes(
         appliedByUserId: userId,
       });
 
-      await storage.recalcOrderTotal(orderItem.orderId);
+      await storage.recalcOrderTotal(orderItem.orderId, req.db);
       broadcast("order_updated", { orderId: orderItem.orderId });
 
       res.json(discount);
@@ -1556,11 +1556,11 @@ export async function registerRoutes(
   app.delete("/api/pos/order-items/:id/discount", requirePermission("POS_PAY"), async (req, res) => {
     try {
       const orderItemId = parseInt(req.params.id as string);
-      const orderItem = await storage.getOrderItem(orderItemId);
+      const orderItem = await storage.getOrderItem(orderItemId, req.db);
       if (!orderItem) return res.status(404).json({ message: "Item no encontrado" });
 
       await storage.deleteOrderItemDiscountsByItem(orderItemId);
-      await storage.recalcOrderTotal(orderItem.orderId);
+      await storage.recalcOrderTotal(orderItem.orderId, req.db);
       broadcast("order_updated", { orderId: orderItem.orderId });
 
       res.json({ ok: true });
@@ -1578,7 +1578,7 @@ export async function registerRoutes(
       const { items, sendToKds } = req.body;
       if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
 
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
       const table = order.tableId ? await storage.getTable(order.tableId, req.db) : null;
@@ -1588,11 +1588,11 @@ export async function registerRoutes(
       const productIds = Array.from(new Set(items.map((i: any) => i.productId as number)));
 
       const [existingItems, allCategories, allProductsList, allPtcs, allTaxCats] = await Promise.all([
-        storage.getOrderItems(order.id),
+        storage.getOrderItems(order.id, req.db),
         storage.getAllCategories(req.db),
         storage.getProductsByIds(productIds, req.db),
-        storage.getProductTaxCategoriesByProductIds(productIds),
-        storage.getAllTaxCategories(),
+        storage.getProductTaxCategoriesByProductIds(productIds, req.db),
+        storage.getAllTaxCategories(req.db),
       ]);
 
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
@@ -1628,7 +1628,7 @@ export async function registerRoutes(
             tableNameSnapshot: tableName,
             status: "NEW",
             kdsDestination,
-          });
+          }, req.db);
           kdsTickets.set(kdsDestination, ticket.id);
           createdTicketIds.push(ticket.id);
         }
@@ -1646,7 +1646,7 @@ export async function registerRoutes(
           status: sendToKds ? "SENT" : "OPEN",
           roundNumber,
           qrSubmissionId: null,
-        });
+        }, req.db);
 
         const posTaxLinks = ptcsByProductId.get(product.id) || [];
         if (posTaxLinks.length > 0) {
@@ -1655,7 +1655,7 @@ export async function registerRoutes(
             return tc && tc.active ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
           }).filter(Boolean);
           if (taxSnapshot.length > 0) {
-            await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot });
+            await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot }, req.db);
           }
         }
 
@@ -1663,11 +1663,11 @@ export async function registerRoutes(
           try {
             await onOrderItemsConfirmedSent(order.id, [orderItem.id], userId);
           } catch (deductionErr: any) {
-            await storage.updateOrderItem(orderItem.id, { status: "OPEN" });
+            await storage.updateOrderItem(orderItem.id, { status: "OPEN" }, req.db);
             return res.status(400).json({ message: deductionErr.message || "Error de inventario al enviar" });
           }
 
-          await storage.updateOrderItem(orderItem.id, { sentToKitchenAt: new Date() });
+          await storage.updateOrderItem(orderItem.id, { sentToKitchenAt: new Date() }, req.db);
 
           const ticketId = kdsTickets.get(kdsDestination)!;
           const modNotes = item.modifiers && item.modifiers.length > 0
@@ -1687,7 +1687,7 @@ export async function registerRoutes(
                 status: "NEW",
                 kitchenItemGroupId: groupId,
                 seqInGroup: seq,
-              });
+              }, req.db);
             }
           } else {
             await storage.createKitchenTicketItem({
@@ -1697,7 +1697,7 @@ export async function registerRoutes(
               qty: 1,
               notes: fullNotes || null,
               status: "NEW",
-            });
+            }, req.db);
           }
         }
 
@@ -1750,9 +1750,9 @@ export async function registerRoutes(
       }
 
       if (sendToKds) {
-        await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
+        await storage.updateOrder(order.id, { status: "IN_KITCHEN" }, req.db);
       }
-      await storage.recalcOrderTotal(order.id);
+      await storage.recalcOrderTotal(order.id, req.db);
 
       if (createdTicketIds.length > 0) {
         broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId, tableName });
@@ -1795,7 +1795,7 @@ export async function registerRoutes(
     const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
 
     const [allItems, allSubs, waiters, upcomingReservations, allSubaccounts] = await Promise.all([
-      storage.getOrderItemsByOrderIds(orderIds),
+      storage.getOrderItemsByOrderIds(orderIds, req.db),
       storage.getPendingSubmissionsByOrderIds(orderIds),
       storage.getUsersByIds(waiterIds),
       db.select().from(reservations).where(and(
@@ -1940,15 +1940,15 @@ export async function registerRoutes(
       const table = await storage.getTable(tableId, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
-      const order = await storage.getOpenOrderForTable(tableId);
+      const order = await storage.getOpenOrderForTable(tableId, req.db);
       if (!order) {
         return res.json({ table, activeOrder: null, orderItems: [], pendingQrSubmissions: [] });
       }
 
       const [items, pendingSubs, voidedItemsList, allMods] = await Promise.all([
-        storage.getOrderItems(order.id),
-        storage.getPendingSubmissions(order.id),
-        storage.getVoidedItemsForOrder(order.id),
+        storage.getOrderItems(order.id, req.db),
+        storage.getPendingSubmissions(order.id, req.db),
+        storage.getVoidedItemsForOrder(order.id, req.db),
         storage.getOrderItemModifiersByOrderIds([order.id]),
       ]);
 
@@ -1993,9 +1993,9 @@ export async function registerRoutes(
       if (isNaN(orderId) || isNaN(guestCount) || guestCount < 1) {
         return res.status(400).json({ message: "Datos inválidos" });
       }
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
-      await storage.updateOrder(orderId, { guestCount });
+      await storage.updateOrder(orderId, { guestCount }, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2014,10 +2014,10 @@ export async function registerRoutes(
       if (!sourceTable || !sourceTable.active) return res.status(404).json({ message: "Mesa origen no encontrada o inactiva" });
       if (!destTable || !destTable.active) return res.status(404).json({ message: "Mesa destino no encontrada o inactiva" });
 
-      const sourceOrder = await storage.getOpenOrderForTable(srcId);
+      const sourceOrder = await storage.getOpenOrderForTable(srcId, req.db);
       if (!sourceOrder) return res.status(400).json({ message: "La mesa origen no tiene una orden abierta" });
 
-      const destOrder = await storage.getOpenOrderForTable(dstId);
+      const destOrder = await storage.getOpenOrderForTable(dstId, req.db);
       if (destOrder) return res.status(400).json({ message: "La mesa destino ya tiene una orden abierta" });
 
       await db.transaction(async (tx) => {
@@ -2046,7 +2046,7 @@ export async function registerRoutes(
       const [subaccount] = await db.select().from(orderSubaccounts).where(eq(orderSubaccounts.id, subaccountId));
       if (!subaccount) return res.status(404).json({ message: "Subcuenta no encontrada" });
 
-      const sourceOrder = await storage.getOrder(subaccount.orderId);
+      const sourceOrder = await storage.getOrder(subaccount.orderId, req.db);
       if (!sourceOrder || sourceOrder.status === "CLOSED") return res.status(400).json({ message: "Orden origen no válida" });
 
       const sourceTable = await storage.getTable(sourceOrder.tableId, req.db);
@@ -2054,7 +2054,7 @@ export async function registerRoutes(
       if (!destTable || !destTable.active) return res.status(404).json({ message: "Mesa destino no encontrada o inactiva" });
       if (sourceOrder.tableId === destTableId) return res.status(400).json({ message: "La subcuenta ya está en esa mesa" });
 
-      let destOrder = await storage.getOpenOrderForTable(destTableId);
+      let destOrder = await storage.getOpenOrderForTable(destTableId, req.db);
       if (destOrder && !["OPEN", "IN_KITCHEN", "PREPARING", "READY"].includes(destOrder.status)) {
         return res.status(400).json({ message: "La orden destino no está activa" });
       }
@@ -2133,8 +2133,8 @@ export async function registerRoutes(
         }).where(eq(orderSubaccounts.id, subaccountId));
       });
 
-      await storage.recalcOrderTotal(sourceOrder.id);
-      await storage.recalcOrderTotal(destOrder!.id);
+      await storage.recalcOrderTotal(sourceOrder.id, req.db);
+      await storage.recalcOrderTotal(destOrder!.id, req.db);
 
       broadcast("table_status_changed", { tableId: sourceOrder.tableId });
       broadcast("table_status_changed", { tableId: destTableId });
@@ -2150,11 +2150,11 @@ export async function registerRoutes(
 
   app.get("/api/waiter/tables/:id/order", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const tableId = parseInt(req.params.id as string);
-    const order = await storage.getOpenOrderForTable(tableId);
+    const order = await storage.getOpenOrderForTable(tableId, req.db);
     if (!order) return res.json({ order: null, items: [], pendingSubmissions: [] });
 
-    const items = await storage.getOrderItems(order.id);
-    const pendingSubs = await storage.getPendingSubmissions(order.id);
+    const items = await storage.getOrderItems(order.id, req.db);
+    const pendingSubs = await storage.getPendingSubmissions(order.id, req.db);
 
     const subsWithItems = [];
     for (const sub of pendingSubs) {
@@ -2212,7 +2212,7 @@ export async function registerRoutes(
         storage.getTable(tableId, req.db),
         storage.getProductsByIds(productIds, req.db),
         storage.getAllCategories(req.db),
-        storage.getAllTaxCategories(),
+        storage.getAllTaxCategories(req.db),
         Promise.all(productIds.map(pid => storage.getProductTaxCategories(pid).then(links => ({ pid, links })))),
       ]);
 
@@ -2221,11 +2221,11 @@ export async function registerRoutes(
       const productMap = new Map(allProducts.map(p => [p.id, p]));
       const taxLinksMap = new Map(allProdTaxLinks.map(r => [r.pid, r.links]));
 
-      let order = await getOrCreateOrderForTable(tableId, userId, req.tenantSchema);
+      let order = await getOrCreateOrderForTable(tableId, userId, req.tenantSchema, req.db);
 
       const [existingItems] = await Promise.all([
-        storage.getOrderItems(order.id),
-        !order.responsibleWaiterId ? storage.updateOrder(order.id, { responsibleWaiterId: userId }).then(o => { order = o; }) : Promise.resolve(),
+        storage.getOrderItems(order.id, req.db),
+        !order.responsibleWaiterId ? storage.updateOrder(order.id, { responsibleWaiterId: userId }, req.db).then(o => { order = o; }) : Promise.resolve(),
       ]);
 
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
@@ -2264,7 +2264,7 @@ export async function registerRoutes(
             tableNameSnapshot: table.tableName,
             status: "NEW",
             kdsDestination,
-          });
+          }, req.db);
           kdsTickets.set(kdsDestination, ticket.id);
           createdTicketIds.push(ticket.id);
         }
@@ -2294,7 +2294,7 @@ export async function registerRoutes(
           status: "SENT",
           roundNumber,
           qrSubmissionId: null,
-        });
+        }, req.db);
 
         const modNotes = item.modifiers && item.modifiers.length > 0
           ? item.modifiers.map((m: any) => m.name).join(", ")
@@ -2316,7 +2316,7 @@ export async function registerRoutes(
               status: "NEW",
               kitchenItemGroupId: groupId,
               seqInGroup: seq,
-            }));
+            }, req.db));
           }
         } else {
           kdsItemOps.push(storage.createKitchenTicketItem({
@@ -2326,11 +2326,11 @@ export async function registerRoutes(
             qty: 1,
             notes: fullNotes || null,
             status: "NEW",
-          }));
+          }, req.db));
         }
 
         const parallelOps: Promise<any>[] = [
-          storage.updateOrderItem(orderItem.id, { sentToKitchenAt: now, ...(taxSnapshot ? { taxSnapshotJson: taxSnapshot } : {}) }),
+          storage.updateOrderItem(orderItem.id, { sentToKitchenAt: now, ...(taxSnapshot ? { taxSnapshotJson: taxSnapshot } : {}) }, req.db),
           ...kdsItemOps,
           storage.createSalesLedgerItem({
             businessDate,
@@ -2385,8 +2385,8 @@ export async function registerRoutes(
         }
       }
 
-      await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
-      await storage.recalcOrderTotal(order.id);
+      await storage.updateOrder(order.id, { status: "IN_KITCHEN" }, req.db);
+      await storage.recalcOrderTotal(order.id, req.db);
 
       if (createdTicketIds.length > 0) {
         broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId, tableName: table.tableName });
@@ -2405,10 +2405,10 @@ export async function registerRoutes(
     try {
       const subId = parseInt(req.params.id as string);
       const userId = req.session.userId!;
-      const sub = await storage.getSubmission(subId);
+      const sub = await storage.getSubmission(subId, req.db);
       if (!sub || sub.status !== "PENDING") return res.status(400).json({ message: "Submission no válida" });
 
-      const order = await storage.getOpenOrderForTable(sub.tableId);
+      const order = await storage.getOpenOrderForTable(sub.tableId, req.db);
       if (!order) return res.status(400).json({ message: "Orden no encontrada" });
 
       const table = await storage.getTable(sub.tableId, req.db);
@@ -2416,7 +2416,7 @@ export async function registerRoutes(
 
       // Update waiter on order if not set
       if (!order.responsibleWaiterId) {
-        await storage.updateOrder(order.id, { responsibleWaiterId: userId });
+        await storage.updateOrder(order.id, { responsibleWaiterId: userId }, req.db);
       }
 
       // Accept submission
@@ -2424,10 +2424,10 @@ export async function registerRoutes(
         status: "ACCEPTED",
         acceptedByUserId: userId,
         acceptedAt: new Date(),
-      });
+      }, req.db);
 
       // Get pending items for this submission
-      const orderItemsList = await storage.getOrderItems(order.id);
+      const orderItemsList = await storage.getOrderItems(order.id, req.db);
       const subItems = orderItemsList.filter(i => i.qrSubmissionId === subId);
 
       const createdTicketIds: number[] = [];
@@ -2450,7 +2450,7 @@ export async function registerRoutes(
               tableNameSnapshot: table.tableName,
               status: "NEW",
               kdsDestination,
-            });
+            }, req.db);
             kdsTickets.set(kdsDestination, ticket.id);
             createdTicketIds.push(ticket.id);
           }
@@ -2461,7 +2461,7 @@ export async function registerRoutes(
             status: "SENT",
             sentToKitchenAt: new Date(),
             responsibleWaiterId: userId,
-          });
+          }, req.db);
 
           if (item.qty > 1) {
             const groupId = crypto.randomUUID();
@@ -2475,7 +2475,7 @@ export async function registerRoutes(
                 status: "NEW",
                 kitchenItemGroupId: groupId,
                 seqInGroup: seq,
-              });
+              }, req.db);
             }
           } else {
             await storage.createKitchenTicketItem({
@@ -2485,7 +2485,7 @@ export async function registerRoutes(
               qty: 1,
               notes: item.notes,
               status: "NEW",
-            });
+            }, req.db);
           }
 
           try {
@@ -2497,11 +2497,11 @@ export async function registerRoutes(
           await storage.updateSalesLedgerItems(item.id, {
             sentToKitchenAt: new Date(),
             responsibleWaiterId: userId,
-          });
+          }, req.db);
         }
 
-        await storage.updateOrder(order.id, { status: "IN_KITCHEN" });
-        await storage.recalcOrderTotal(order.id);
+        await storage.updateOrder(order.id, { status: "IN_KITCHEN" }, req.db);
+        await storage.recalcOrderTotal(order.id, req.db);
       }
 
       await storage.createAuditEvent({
@@ -2521,9 +2521,9 @@ export async function registerRoutes(
       broadcast("table_status_changed", { tableId: sub.tableId });
 
       // Return full current view payload for immediate UI refresh
-      const updatedOrder = await storage.getOpenOrderForTable(sub.tableId);
-      const updatedItems = updatedOrder ? await storage.getOrderItems(updatedOrder.id) : [];
-      const updatedPendingSubs = updatedOrder ? await storage.getPendingSubmissions(updatedOrder.id) : [];
+      const updatedOrder = await storage.getOpenOrderForTable(sub.tableId, req.db);
+      const updatedItems = updatedOrder ? await storage.getOrderItems(updatedOrder.id, req.db) : [];
+      const updatedPendingSubs = updatedOrder ? await storage.getPendingSubmissions(updatedOrder.id, req.db) : [];
       const updatedSubsWithItems = [];
       for (const s of updatedPendingSubs) {
         const sItems = updatedItems.filter(i => i.qrSubmissionId === s.id);
@@ -2552,14 +2552,14 @@ export async function registerRoutes(
       const user = (req as any).user;
       const { reason, reasonCode, reasonText, qtyToVoid, managerPin } = req.body;
 
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
       if (order.status === "PAID") {
         return res.status(403).json({ message: "No se puede anular ítems de una orden ya pagada" });
       }
 
-      const item = await storage.getOrderItem(itemId);
+      const item = await storage.getOrderItem(itemId, req.db);
       if (!item || item.orderId !== orderId) {
         return res.status(404).json({ message: "Ítem no encontrado en esta orden" });
       }
@@ -2678,13 +2678,13 @@ export async function registerRoutes(
           status: "VOIDED",
           voidedAt: new Date(),
           voidedByUserId: userId,
-        });
-        await storage.updateSalesLedgerItems(itemId, { status: "VOIDED" });
+        }, req.db);
+        await storage.updateSalesLedgerItems(itemId, { status: "VOIDED" }, req.db);
       } else {
         const newQty = item.qty - effectiveQty;
-        await storage.updateOrderItem(itemId, { qty: newQty });
+        await storage.updateOrderItem(itemId, { qty: newQty }, req.db);
         const newSubtotal = (Number(item.productPriceSnapshot) * newQty).toFixed(2);
-        await storage.updateSalesLedgerItems(itemId, { qty: newQty, lineSubtotal: newSubtotal });
+        await storage.updateSalesLedgerItems(itemId, { qty: newQty, lineSubtotal: newSubtotal }, req.db);
       }
 
       await storage.createVoidedItem({
@@ -2703,17 +2703,17 @@ export async function registerRoutes(
         voidedByRole: user.role,
         status: "VOIDED",
         notes: isFullVoid ? null : `Parcial: ${effectiveQty} de ${item.qty}`,
-      });
+      }, req.db);
 
       if (item.sentToKitchenAt) {
-        await storage.voidKitchenTicketItemsByOrderItem(itemId, effectiveQty, isFullVoid);
+        await storage.voidKitchenTicketItemsByOrderItem(itemId, effectiveQty, isFullVoid, req.db);
       }
       if (isFullVoid) {
         await storage.cancelPortionReservation(itemId);
         try { await onOrderItemsVoided([itemId], userId); } catch (e) { console.error("[inv] reversal error:", e); }
       }
 
-      await storage.recalcOrderTotal(orderId);
+      await storage.recalcOrderTotal(orderId, req.db);
 
       await storage.createAuditEvent({
         actorType: "USER",
@@ -2766,7 +2766,7 @@ export async function registerRoutes(
         broadcast("kitchen_item_status_changed", { orderItemId: itemId, status: "VOIDED" });
       }
 
-      const autoCloseResult = await maybeAutoCloseOrder(orderId, broadcast);
+      const autoCloseResult = await maybeAutoCloseOrder(orderId, broadcast, req.db);
 
       res.json({ ok: true, autoClosed: autoCloseResult?.closed || false });
     } catch (err: any) {
@@ -2781,10 +2781,10 @@ export async function registerRoutes(
       const itemId = parseInt(req.params.itemId as string);
       const userId = req.session.userId!;
 
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const item = await storage.getOrderItem(itemId);
+      const item = await storage.getOrderItem(itemId, req.db);
       if (!item || item.orderId !== orderId) {
         return res.status(404).json({ message: "Ítem no encontrado en esta orden" });
       }
@@ -2797,9 +2797,9 @@ export async function registerRoutes(
         try { await onOrderItemsVoided([itemId], userId); } catch (e) { console.error("[inv] reversal error:", e); }
       }
 
-      await storage.deleteOrderItem(itemId);
+      await storage.deleteOrderItem(itemId, req.db);
 
-      await storage.recalcOrderTotal(orderId);
+      await storage.recalcOrderTotal(orderId, req.db);
 
       await storage.createAuditEvent({
         actorType: "USER",
@@ -2819,7 +2819,7 @@ export async function registerRoutes(
       broadcast("order_updated", { tableId: order.tableId, orderId });
       broadcast("table_status_changed", { tableId: order.tableId });
 
-      const autoCloseResult = await maybeAutoCloseOrder(orderId, broadcast);
+      const autoCloseResult = await maybeAutoCloseOrder(orderId, broadcast, req.db);
 
       res.json({ ok: true, autoClosed: autoCloseResult?.closed || false });
     } catch (err: any) {
@@ -2831,7 +2831,7 @@ export async function registerRoutes(
   app.get("/api/waiter/orders/:orderId/voided-items", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId as string);
-      const items = await storage.getVoidedItemsForOrder(orderId);
+      const items = await storage.getVoidedItemsForOrder(orderId, req.db);
       const userIds = Array.from(new Set(items.map(i => i.voidedByUserId)));
       const usersMap = new Map<number, string>();
       const bulkUsers = await storage.getUsersByIds(userIds);
@@ -2853,7 +2853,7 @@ export async function registerRoutes(
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
     const config = await storage.getBusinessConfig(req.tenantSchema);
     const maxSubaccounts = (config as any)?.maxSubaccounts ?? 15;
-    const openOrder = await storage.getOpenOrderForTable(table.id);
+    const openOrder = await storage.getOpenOrderForTable(table.id, req.db);
     const hasGuestCount = !!(openOrder && openOrder.guestCount && openOrder.guestCount > 0);
     res.json({ tableName: table.tableName, tableCode: table.tableCode, maxSubaccounts, hasGuestCount, orderId: openOrder?.id || null });
   });
@@ -2864,16 +2864,16 @@ export async function registerRoutes(
       if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
       const guestCount = parseInt(req.body.guestCount);
       if (isNaN(guestCount) || guestCount < 1) return res.status(400).json({ message: "Cantidad inválida" });
-      let order = await storage.getOpenOrderForTable(table.id);
+      let order = await storage.getOpenOrderForTable(table.id, req.db);
       if (!order) {
         order = await storage.createOrder({
           tableId: table.id,
           status: "OPEN",
           responsibleWaiterId: null,
           businessDate: await getBusinessDate(req.tenantSchema),
-        });
+        }, req.db);
       }
-      await storage.updateOrder(order.id, { guestCount });
+      await storage.updateOrder(order.id, { guestCount }, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2935,10 +2935,10 @@ export async function registerRoutes(
     const table = await storage.getTableByCode(req.params.tableCode, req.db);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
 
-    const order = await storage.getOpenOrderForTable(table.id);
+    const order = await storage.getOpenOrderForTable(table.id, req.db);
     if (!order) return res.json([]);
 
-    const items = await storage.getOrderItems(order.id);
+    const items = await storage.getOrderItems(order.id, req.db);
     const qrItems = items
       .filter(i => i.origin === "QR" && i.status !== "VOIDED")
       .map(i => ({
@@ -2966,10 +2966,10 @@ export async function registerRoutes(
       if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
 
       // Get or create order (defensive: prevents duplicates via race condition)
-      let order = await getOrCreateOrderForTable(table.id, null, req.tenantSchema);
+      let order = await getOrCreateOrderForTable(table.id, null, req.tenantSchema, req.db);
 
       // Get max round number
-      const existingItems = await storage.getOrderItems(order.id);
+      const existingItems = await storage.getOrderItems(order.id, req.db);
       const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
       const roundNumber = maxRound + 1;
 
@@ -2978,7 +2978,7 @@ export async function registerRoutes(
         orderId: order.id,
         tableId: table.id,
         status: "PENDING",
-      });
+      }, req.db);
 
       const allCategories = await storage.getAllCategories(req.db);
 
@@ -3005,17 +3005,17 @@ export async function registerRoutes(
           status: "PENDING",
           roundNumber,
           qrSubmissionId: sub.id,
-        });
+        }, req.db);
 
         const qrTaxLinks = await storage.getProductTaxCategories(product.id);
         if (qrTaxLinks.length > 0) {
-          const allTaxCats = await storage.getAllTaxCategories();
+          const allTaxCats = await storage.getAllTaxCategories(req.db);
           const taxSnapshot = qrTaxLinks.map(ptc => {
             const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
             return tc ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
           }).filter(Boolean);
           if (taxSnapshot.length > 0) {
-            await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot });
+            await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot }, req.db);
           }
         }
 
@@ -3054,10 +3054,10 @@ export async function registerRoutes(
           createdByUserId: null,
           responsibleWaiterId: order.responsibleWaiterId,
           status: "OPEN",
-        });
+        }, req.db);
       }
 
-      await storage.recalcOrderTotal(order.id);
+      await storage.recalcOrderTotal(order.id, req.db);
 
       // Audit
       await storage.createAuditEvent({
@@ -3088,16 +3088,16 @@ export async function registerRoutes(
     const destination = (req.query.destination as string) || undefined;
     let tickets;
     if (type === "active") {
-      tickets = await storage.getActiveKitchenTickets(destination);
+      tickets = await storage.getActiveKitchenTickets(destination, req.db);
     } else {
-      tickets = await storage.getHistoryKitchenTickets(destination);
+      tickets = await storage.getHistoryKitchenTickets(destination, req.db);
     }
 
     const ticketIds = tickets.map(t => t.id);
-    const allTicketItems = ticketIds.length > 0 ? await storage.getKitchenTicketItemsByTicketIds(ticketIds) : [];
+    const allTicketItems = ticketIds.length > 0 ? await storage.getKitchenTicketItemsByTicketIds(ticketIds, req.db) : [];
 
     const allOrderItemIds = allTicketItems.map(i => i.orderItemId);
-    const allMods = allOrderItemIds.length > 0 ? await storage.getOrderItemModifiersByItemIds(allOrderItemIds) : [];
+    const allMods = allOrderItemIds.length > 0 ? await storage.getOrderItemModifiersByItemIds(allOrderItemIds, req.db) : [];
     const modsByItem = new Map<number, typeof allMods>();
     for (const m of allMods) {
       if (!modsByItem.has(m.orderItemId)) modsByItem.set(m.orderItemId, []);
@@ -3145,14 +3145,14 @@ export async function registerRoutes(
   };
 
   async function recalcOrderStatusFromItems(orderId: number) {
-    const items = await storage.getOrderItems(orderId);
+    const items = await storage.getOrderItems(orderId, req.db);
     const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
     if (activeItems.length === 0) return;
 
     const allReady = activeItems.every(i => i.status === "READY");
     const allPreparingOrReady = activeItems.every(i => i.status === "PREPARING" || i.status === "READY");
 
-    const order = await storage.getOrder(orderId);
+    const order = await storage.getOrder(orderId, req.db);
     if (!order || order.status === "PAID" || order.status === "VOIDED" || order.status === "SPLIT") return;
 
     let newStatus: string;
@@ -3168,7 +3168,7 @@ export async function registerRoutes(
     const newRank = ORDER_STATUS_RANK[newStatus] ?? 0;
     if (newRank <= currentRank && order.status !== "OPEN") return;
 
-    await storage.updateOrder(orderId, { status: newStatus });
+    await storage.updateOrder(orderId, { status: newStatus }, req.db);
     broadcast("order_updated", { orderId });
     broadcast("table_status_changed", {});
   }
@@ -3181,28 +3181,28 @@ export async function registerRoutes(
       if (status === "PREPARING") data.prepStartedAt = new Date();
       if (status === "READY") data.readyAt = new Date();
 
-      const item = await storage.updateKitchenTicketItem(itemId, data);
+      const item = await storage.updateKitchenTicketItem(itemId, data, req.db);
 
       if (item) {
         if (item.kitchenItemGroupId) {
-          const groupItems = await storage.getKitchenTicketItemsByGroupId(item.kitchenItemGroupId);
+          const groupItems = await storage.getKitchenTicketItemsByGroupId(item.kitchenItemGroupId, req.db);
           const allGroupReady = groupItems.every(gi => gi.status === "READY");
           const anyPreparing = groupItems.some(gi => gi.status === "PREPARING");
           if (allGroupReady) {
-            await storage.updateOrderItem(item.orderItemId, { status: "READY" });
-            await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+            await storage.updateOrderItem(item.orderItemId, { status: "READY" }, req.db);
+            await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() }, req.db);
           } else if (anyPreparing || status === "PREPARING") {
-            await storage.updateOrderItem(item.orderItemId, { status: "PREPARING" });
+            await storage.updateOrderItem(item.orderItemId, { status: "PREPARING" }, req.db);
           }
         } else {
           const orderItemStatus = status === "PREPARING" ? "PREPARING" : status === "READY" ? "READY" : item.status;
-          await storage.updateOrderItem(item.orderItemId, { status: orderItemStatus });
+          await storage.updateOrderItem(item.orderItemId, { status: orderItemStatus }, req.db);
           if (status === "READY") {
-            await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+            await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() }, req.db);
           }
         }
 
-        const ticket = await storage.getKitchenTicketByItemId(item.id);
+        const ticket = await storage.getKitchenTicketByItemId(item.id, req.db);
         if (ticket) {
           await recalcOrderStatusFromItems(ticket.orderId);
         }
@@ -3219,14 +3219,14 @@ export async function registerRoutes(
     try {
       const ticketId = parseInt(req.params.id as string);
       const { status } = req.body;
-      const ticket = await storage.updateKitchenTicket(ticketId, { status });
+      const ticket = await storage.updateKitchenTicket(ticketId, { status }, req.db);
 
-      const items = await storage.getKitchenTicketItems(ticketId);
+      const items = await storage.getKitchenTicketItems(ticketId, req.db);
       for (const item of items) {
         if (item.status !== "READY") {
-          await storage.updateKitchenTicketItem(item.id, { status: "READY", readyAt: new Date() });
-          await storage.updateOrderItem(item.orderItemId, { status: "READY" });
-          await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() });
+          await storage.updateKitchenTicketItem(item.id, { status: "READY", readyAt: new Date() }, req.db);
+          await storage.updateOrderItem(item.orderItemId, { status: "READY" }, req.db);
+          await storage.updateSalesLedgerItems(item.orderItemId, { kdsReadyAt: new Date() }, req.db);
         }
       }
 
@@ -3259,7 +3259,7 @@ export async function registerRoutes(
 
   app.post("/api/kds/clear-history", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     const destination = (req.query.destination as string) || undefined;
-    await storage.clearKitchenHistory(destination);
+    await storage.clearKitchenHistory(destination, req.db);
     res.json({ ok: true });
   });
 
@@ -3295,17 +3295,17 @@ export async function registerRoutes(
   }
 
   async function maybeAutoCloseParentOrder(orderId: number) {
-    const paidOrder = await storage.getOrder(orderId);
+    const paidOrder = await storage.getOrder(orderId, req.db);
     if (!paidOrder?.parentOrderId) return;
-    const siblings = await storage.getChildOrders(paidOrder.parentOrderId);
+    const siblings = await storage.getChildOrders(paidOrder.parentOrderId, req.db);
     const allSiblingsPaid = siblings.every(s => s.status === "PAID" || s.status === "VOIDED");
     if (!allSiblingsPaid) return;
-    const parentOrder = await storage.getOrder(paidOrder.parentOrderId);
+    const parentOrder = await storage.getOrder(paidOrder.parentOrderId, req.db);
     if (!parentOrder || (parentOrder.status !== "SPLIT" && parentOrder.status !== "OPEN")) return;
-    const parentItems = await storage.getOrderItems(paidOrder.parentOrderId);
+    const parentItems = await storage.getOrderItems(paidOrder.parentOrderId, req.db);
     const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
     if (parentActive.length === 0) {
-      await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() });
+      await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() }, req.db);
       await cleanupSubaccountsForOrder(paidOrder.parentOrderId);
     }
   }
@@ -3450,14 +3450,14 @@ export async function registerRoutes(
   app.get("/api/pos/table-detail/:orderId", requirePermission("POS_VIEW"), async (req, res) => {
     const t0 = Date.now();
     const orderId = parseInt(req.params.orderId);
-    const order = await storage.getOrder(orderId);
+    const order = await storage.getOrder(orderId, req.db);
     if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
     const table = await storage.getTable(order.tableId, req.db);
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
     const [allItems, allMods, allItemDiscounts, allItemTaxes, allSubaccounts] = await Promise.all([
-      storage.getOrderItems(orderId),
+      storage.getOrderItems(orderId, req.db),
       storage.getOrderItemModifiersByOrderIds([orderId]),
       storage.getOrderItemDiscountsByOrderIds([orderId]),
       storage.getOrderItemTaxesByOrderIds([orderId]),
@@ -3526,9 +3526,9 @@ export async function registerRoutes(
       const userId = req.session.userId!;
 
       const [order, allPMs, cashSession] = await Promise.all([
-        storage.getOrder(orderId),
+        storage.getOrder(orderId, req.db),
         storage.getAllPaymentMethods(req.db),
-        storage.getActiveCashSession(),
+        storage.getActiveCashSession(req.db),
       ]);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
       if (order.status === "PAID") return res.json({ ok: true, alreadyPaid: true });
@@ -3557,12 +3557,12 @@ export async function registerRoutes(
         clientNameSnapshot: clientName || null,
         clientEmailSnapshot: clientEmail || null,
         businessDate: bd,
-      });
+      }, req.db);
 
-      const { balanceDue } = await storage.updateOrderPaymentTotals(orderId);
+      const { balanceDue } = await storage.updateOrderPaymentTotals(orderId, req.db);
 
       if (balanceDue <= 0) {
-        const items = await storage.getOrderItems(orderId);
+        const items = await storage.getOrderItems(orderId, req.db);
         const activeItems = items.filter(i => i.status !== "VOIDED");
         await db.transaction(async (tx) => {
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
@@ -3572,7 +3572,7 @@ export async function registerRoutes(
 
       if (pm?.paymentCode === "CASH" && cashSession) {
         const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + payAmount;
-        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
+        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) }, req.db);
       }
 
       await storage.createAuditEvent({
@@ -3612,9 +3612,9 @@ export async function registerRoutes(
       const userId = req.session.userId!;
 
       const [order, allPMs, cashSession] = await Promise.all([
-        storage.getOrder(orderId),
+        storage.getOrder(orderId, req.db),
         storage.getAllPaymentMethods(req.db),
-        storage.getActiveCashSession(),
+        storage.getActiveCashSession(req.db),
       ]);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
       if (order.status === "PAID") return res.json({ ok: true, alreadyPaid: true, paymentIds: [], hasCash: false });
@@ -3665,10 +3665,10 @@ export async function registerRoutes(
       }));
       await db.insert(auditEvents).values(auditValues);
 
-      const { balanceDue } = await storage.updateOrderPaymentTotals(orderId);
+      const { balanceDue } = await storage.updateOrderPaymentTotals(orderId, req.db);
 
       if (balanceDue <= 0) {
-        const items = await storage.getOrderItems(orderId);
+        const items = await storage.getOrderItems(orderId, req.db);
         const activeItems = items.filter(i => i.status !== "VOIDED");
         await db.transaction(async (tx) => {
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
@@ -3683,7 +3683,7 @@ export async function registerRoutes(
           return pm?.paymentCode === "CASH" ? s + Number(l.amount) : s;
         }, 0);
         const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + cashTotal;
-        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
+        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) }, req.db);
       }
 
       broadcast("payment_completed", { orderId });
@@ -3707,7 +3707,7 @@ export async function registerRoutes(
 
   // ==================== CASH SESSION ====================
   app.get("/api/pos/cash-session", requirePermission("POS_VIEW"), async (req, res) => {
-    const session = await storage.getLatestCashSession();
+    const session = await storage.getLatestCashSession(req.db);
     if (!session) return res.json({});
 
     const user = (req as any).user;
@@ -3715,7 +3715,7 @@ export async function registerRoutes(
     const canViewReport = userPerms.includes("POS_VIEW_CASH_REPORT");
 
     if (!session.closedAt) {
-      const totalsByMethod = canViewReport ? await storage.getPaymentsByDateGrouped(await getBusinessDate(req.tenantSchema)) : undefined;
+      const totalsByMethod = canViewReport ? await storage.getPaymentsByDateGrouped(await getBusinessDate(req.tenantSchema), req.db) : undefined;
       const result: any = { id: session.id, openingCash: session.openingCash, closedAt: session.closedAt, openedByUserId: session.openedByUserId };
       if (canViewReport) {
         result.expectedCash = session.expectedCash;
@@ -3739,15 +3739,15 @@ export async function registerRoutes(
 
   app.post("/api/pos/cash-session/open", requirePermission("POS_VIEW"), async (req, res) => {
     try {
-      const existing = await storage.getActiveCashSession();
+      const existing = await storage.getActiveCashSession(req.db);
       if (existing) return res.status(400).json({ message: "Ya hay una caja abierta" });
 
       const session = await storage.createCashSession({
         openedByUserId: req.session.userId!,
         openingCash: req.body.openingCash || "0",
-      });
+      }, req.db);
 
-      await storage.updateCashSession(session.id, { expectedCash: req.body.openingCash || "0" });
+      await storage.updateCashSession(session.id, { expectedCash: req.body.openingCash || "0" }, req.db);
 
       res.json(session);
     } catch (err: any) {
@@ -3757,14 +3757,14 @@ export async function registerRoutes(
 
   app.post("/api/pos/cash-session/close", requirePermission("CASH_CLOSE"), async (req, res) => {
     try {
-      const session = await storage.getActiveCashSession();
+      const session = await storage.getActiveCashSession(req.db);
       if (!session) return res.status(400).json({ message: "No hay caja abierta" });
 
       const countedCash = parseFloat(req.body.countedCash || "0");
       const expected = parseFloat(session.expectedCash?.toString() || session.openingCash);
       const difference = countedCash - expected;
 
-      const totalsByMethod = await storage.getPaymentsByDateGrouped(await getBusinessDate(req.tenantSchema));
+      const totalsByMethod = await storage.getPaymentsByDateGrouped(await getBusinessDate(req.tenantSchema), req.db);
 
       const updated = await storage.updateCashSession(session.id, {
         closedAt: new Date(),
@@ -3773,7 +3773,7 @@ export async function registerRoutes(
         difference: difference.toFixed(2),
         totalsByMethod,
         notes: req.body.notes || null,
-      });
+      }, req.db);
 
       res.json({ ...updated, totalsByMethod });
     } catch (err: any) {
@@ -3785,7 +3785,7 @@ export async function registerRoutes(
   app.get("/api/pos/orders/:orderId/payments", requirePermission("POS_VIEW"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId as string);
-      const orderPayments = await storage.getPaymentsForOrder(orderId);
+      const orderPayments = await storage.getPaymentsForOrder(orderId, req.db);
       const allMethods = await storage.getAllPaymentMethods(req.db);
       const methodMap = new Map(allMethods.map(m => [m.id, m.paymentName]));
       const result = orderPayments.map(p => ({
@@ -3804,7 +3804,7 @@ export async function registerRoutes(
       const orderId = parseInt(req.params.orderId as string);
       const result = await storage.normalizeOrderItemsForSplit(orderId);
       if (result.normalized) {
-        await storage.recalcOrderTotal(orderId);
+        await storage.recalcOrderTotal(orderId, req.db);
         broadcast("order_updated", { orderId });
       }
       res.json(result);
@@ -3818,7 +3818,7 @@ export async function registerRoutes(
     try {
       const t0 = Date.now();
       const orderId = parseInt(req.params.orderId as string);
-      const splits = await storage.getSplitAccountsForOrder(orderId);
+      const splits = await storage.getSplitAccountsForOrder(orderId, req.db);
       if (splits.length === 0) {
         if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/orders/${orderId}/splits ${Date.now() - t0}ms (empty)`);
         return res.json([]);
@@ -3846,15 +3846,15 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Label es requerido" });
       }
 
-      const split = await storage.createSplitAccount({ orderId, label });
+      const split = await storage.createSplitAccount({ orderId, label }, req.db);
 
       if (orderItemIds && Array.isArray(orderItemIds)) {
         for (const orderItemId of orderItemIds) {
-          await storage.createSplitItem({ splitId: split.id, orderItemId });
+          await storage.createSplitItem({ splitId: split.id, orderItemId }, req.db);
         }
       }
 
-      const items = await storage.getSplitItemsForSplit(split.id);
+      const items = await storage.getSplitItemsForSplit(split.id, req.db);
       broadcast("order_updated", { orderId });
       res.json({ ...split, items });
     } catch (err: any) {
@@ -3865,7 +3865,7 @@ export async function registerRoutes(
   app.delete("/api/pos/splits/:id", requirePermission("POS_SPLIT"), async (req, res) => {
     try {
       const id = parseInt(req.params.id as string);
-      await storage.deleteSplitAccount(id);
+      await storage.deleteSplitAccount(id, req.db);
       broadcast("order_updated", {});
       res.json({ ok: true });
     } catch (err: any) {
@@ -3879,11 +3879,11 @@ export async function registerRoutes(
       if (!orderItemId) return res.status(400).json({ message: "orderItemId requerido" });
 
       if (fromSplitId) {
-        await storage.removeSplitItemByOrderItemId(fromSplitId, orderItemId);
+        await storage.removeSplitItemByOrderItemId(fromSplitId, orderItemId, req.db);
       }
 
       if (toSplitId) {
-        await storage.createSplitItem({ splitId: toSplitId, orderItemId });
+        await storage.createSplitItem({ splitId: toSplitId, orderItemId }, req.db);
       }
 
       broadcast("order_updated", {});
@@ -3900,7 +3900,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "orderItemIds requerido (array)" });
       }
 
-      await storage.bulkMoveSplitItems(orderItemIds, fromSplitId || null, toSplitId || null);
+      await storage.bulkMoveSplitItems(orderItemIds, fromSplitId || null, toSplitId || null, req.db);
 
       broadcast("order_updated", {});
       res.json({ ok: true });
@@ -3913,16 +3913,16 @@ export async function registerRoutes(
     const t0 = Date.now();
     try {
       const { orderId } = req.body;
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
       if (order.status !== "OPEN" && order.status !== "IN_KITCHEN" && order.status !== "PREPARING" && order.status !== "READY") {
         return res.status(400).json({ message: "Orden no está abierta" });
       }
 
-      const splits = await storage.getSplitAccountsForOrder(orderId);
+      const splits = await storage.getSplitAccountsForOrder(orderId, req.db);
       const splitsWithItems = [];
       for (const sp of splits) {
-        const items = await storage.getSplitItemsForSplit(sp.id);
+        const items = await storage.getSplitItemsForSplit(sp.id, req.db);
         if (items.length > 0) splitsWithItems.push({ ...sp, items });
       }
 
@@ -3930,16 +3930,16 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No hay subcuentas con items para separar" });
       }
 
-      const allOrderItems = await storage.getOrderItems(orderId);
+      const allOrderItems = await storage.getOrderItems(orderId, req.db);
       const assignedItemIds = splitsWithItems.flatMap(s => s.items.map(si => si.orderItemId));
       const unassignedActive = allOrderItems.filter(i => !assignedItemIds.includes(i.id) && i.status !== "VOIDED" && i.status !== "PAID");
 
       const rootParentId = order.parentOrderId || orderId;
-      const rootParent = order.parentOrderId ? await storage.getOrder(order.parentOrderId) : order;
+      const rootParent = order.parentOrderId ? await storage.getOrder(order.parentOrderId, req.db) : order;
       const parentDailyNumber = rootParent?.dailyNumber || order.dailyNumber || 0;
       const parentGlobalNumber = rootParent?.globalNumber || order.globalNumber;
 
-      const existingSiblings = await storage.getChildOrders(rootParentId);
+      const existingSiblings = await storage.getChildOrders(rootParentId, req.db);
       const maxExistingSplitIdx = existingSiblings.reduce((max, s) => Math.max(max, s.splitIndex || 0), 0);
 
       const createdOrderIds: number[] = [];
@@ -3956,25 +3956,25 @@ export async function registerRoutes(
           splitIndex: splitIdx,
           dailyNumber: parentDailyNumber,
           globalNumber: parentGlobalNumber,
-        });
+        }, req.db);
 
         for (const si of sp.items) {
-          await storage.moveOrderItem(si.orderItemId, childOrder.id);
+          await storage.moveOrderItem(si.orderItemId, childOrder.id, req.db);
         }
 
-        await storage.recalcOrderTotal(childOrder.id);
+        await storage.recalcOrderTotal(childOrder.id, req.db);
         createdOrderIds.push(childOrder.id);
         splitIdx++;
       }
 
-      await storage.recalcOrderTotal(orderId);
+      await storage.recalcOrderTotal(orderId, req.db);
 
       for (const sp of splits) {
-        await storage.deleteSplitAccount(sp.id);
+        await storage.deleteSplitAccount(sp.id, req.db);
       }
 
       if (unassignedActive.length === 0) {
-        await storage.updateOrder(orderId, { status: "SPLIT", closedAt: new Date() });
+        await storage.updateOrder(orderId, { status: "SPLIT", closedAt: new Date() }, req.db);
       }
 
       broadcast("order_updated", { orderId });
@@ -3994,10 +3994,10 @@ export async function registerRoutes(
       const userId = req.session.userId!;
 
       const [splitAccount, splitItemsList, allPMs, cashSession] = await Promise.all([
-        storage.getSplitAccount(splitId),
-        storage.getSplitItemsForSplit(splitId),
+        storage.getSplitAccount(splitId, req.db),
+        storage.getSplitItemsForSplit(splitId, req.db),
         storage.getAllPaymentMethods(req.db),
-        storage.getActiveCashSession(),
+        storage.getActiveCashSession(req.db),
       ]);
 
       if (!splitAccount) return res.status(404).json({ message: "Split no encontrado" });
@@ -4007,8 +4007,8 @@ export async function registerRoutes(
       const splitOrderItemIds = splitItemsList.map(si => si.orderItemId);
 
       const [orderItemsList, order] = await Promise.all([
-        storage.getOrderItems(orderId),
-        storage.getOrder(orderId),
+        storage.getOrderItems(orderId, req.db),
+        storage.getOrder(orderId, req.db),
       ]);
 
       const splitOIs = orderItemsList.filter(oi => splitOrderItemIds.includes(oi.id));
@@ -4016,9 +4016,9 @@ export async function registerRoutes(
       if (alreadyPaid) return res.json({ ok: true, alreadyPaid: true });
 
       const [allMods, allDiscounts, allTaxes] = await Promise.all([
-        storage.getOrderItemModifiersByItemIds(splitOrderItemIds),
-        storage.getOrderItemDiscountsByItemIds(splitOrderItemIds),
-        storage.getOrderItemTaxesByItemIds(splitOrderItemIds),
+        storage.getOrderItemModifiersByItemIds(splitOrderItemIds, req.db),
+        storage.getOrderItemDiscountsByItemIds(splitOrderItemIds, req.db),
+        storage.getOrderItemTaxesByItemIds(splitOrderItemIds, req.db),
       ]);
 
       const modsMap = new Map<number, number>();
@@ -4063,7 +4063,7 @@ export async function registerRoutes(
         clientNameSnapshot: clientName || null,
         clientEmailSnapshot: clientEmail || null,
         businessDate: bd,
-      });
+      }, req.db);
 
       await db.transaction(async (tx) => {
         await finalizePaymentTx(tx, { orderId, itemIds: splitOrderItemIds, now });
@@ -4074,16 +4074,16 @@ export async function registerRoutes(
 
       if (pm?.paymentCode === "CASH" && cashSession) {
         const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) + splitTotal;
-        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
+        await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) }, req.db);
       }
 
-      await storage.recalcOrderTotal(orderId);
-      await storage.updateOrderPaymentTotals(orderId);
+      await storage.recalcOrderTotal(orderId, req.db);
+      await storage.updateOrderPaymentTotals(orderId, req.db);
 
-      const allItems = await storage.getOrderItems(orderId);
+      const allItems = await storage.getOrderItems(orderId, req.db);
       const allPaidNow = allItems.filter(i => i.status !== "VOIDED").every(i => i.status === "PAID");
       if (allPaidNow) {
-        await storage.updateOrder(orderId, { status: "PAID", closedAt: now });
+        await storage.updateOrder(orderId, { status: "PAID", closedAt: now }, req.db);
         await cleanupSubaccountsForOrder(orderId);
       }
 
@@ -4115,11 +4115,11 @@ export async function registerRoutes(
       }
 
       const config = await storage.getBusinessConfig(req.tenantSchema);
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
       const table = await storage.getTable(order.tableId, req.db);
-      const items = await storage.getOrderItems(orderId);
+      const items = await storage.getOrderItems(orderId, req.db);
 
       let targetItems: typeof items;
 
@@ -4127,9 +4127,9 @@ export async function registerRoutes(
         const paidSet = new Set(bodyPaidItemIds as number[]);
         targetItems = items.filter(i => paidSet.has(i.id));
       } else if (splitPaymentId) {
-        const splitPay = (await storage.getPaymentsForOrder(orderId)).find(p => p.id === splitPaymentId);
+        const splitPay = (await storage.getPaymentsForOrder(orderId, req.db)).find(p => p.id === splitPaymentId);
         if (splitPay && splitPay.splitId) {
-          const splitItemsList = await storage.getSplitItemsForSplit(splitPay.splitId).catch(() => []);
+          const splitItemsList = await storage.getSplitItemsForSplit(splitPay.splitId, req.db).catch(() => []);
           const splitItemOrderIds = new Set(splitItemsList.map(si => si.orderItemId));
           if (splitItemOrderIds.size > 0) {
             targetItems = items.filter(i => splitItemOrderIds.has(i.id));
@@ -4160,7 +4160,7 @@ export async function registerRoutes(
       const oNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `#${order.id}`);
       const receiptOrderNum = splitLabel ? `${oNum} — ${splitLabel}` : oNum;
 
-      const allPayments = (await storage.getPaymentsForOrder(orderId)).filter(p => p.status === "PAID");
+      const allPayments = (await storage.getPaymentsForOrder(orderId, req.db)).filter(p => p.status === "PAID");
       const relevantPayments = splitPaymentId
         ? allPayments.filter(p => p.id === splitPaymentId)
         : allPayments;
@@ -4254,11 +4254,11 @@ export async function registerRoutes(
       }
 
       const config = await storage.getBusinessConfig(req.tenantSchema);
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
       const table = await storage.getTable(order.tableId, req.db);
-      const items = await storage.getOrderItems(orderId);
+      const items = await storage.getOrderItems(orderId, req.db);
       const activeItems = items.filter(i => i.status !== "VOIDED");
 
       const cashier = req.session.userId ? await storage.getUser(req.session.userId) : null;
@@ -4367,14 +4367,14 @@ export async function registerRoutes(
         return res.status(400).json({ message: "orderId y clientEmail son requeridos" });
       }
 
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
       if (order.status !== "PAID" && order.status !== "OPEN" && order.status !== "IN_KITCHEN" && order.status !== "PREPARING" && order.status !== "READY") {
         return res.status(400).json({ message: "No se puede enviar tiquete para esta orden" });
       }
 
-      const items = await storage.getOrderItems(orderId);
+      const items = await storage.getOrderItems(orderId, req.db);
       const activeItems = items.filter(i => i.status !== "VOIDED");
       const table = await storage.getTable(order.tableId, req.db);
       let subtotal = 0;
@@ -4505,13 +4505,13 @@ export async function registerRoutes(
       const user = await storage.getUser(userId);
       if (!user) return res.status(401).json({ message: "Usuario no encontrado" });
 
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
       if (order.status === "PAID") return res.status(400).json({ message: "No se puede anular una orden ya pagada" });
       if (order.status === "VOIDED") return res.status(400).json({ message: "La orden ya está anulada" });
 
       const [items, table, allCategories] = await Promise.all([
-        storage.getOrderItems(orderId),
+        storage.getOrderItems(orderId, req.db),
         storage.getTable(order.tableId, req.db),
         storage.getAllCategories(req.db),
       ]);
@@ -4572,21 +4572,21 @@ export async function registerRoutes(
         try { await onOrderItemsVoided(sentItemIds, userId); } catch (e) { console.error("[inv] order void reversal error:", e); }
       }
 
-      await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date(), totalAmount: "0" });
+      await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date(), totalAmount: "0" }, req.db);
       await cleanupSubaccountsForOrder(orderId);
 
       if (order.parentOrderId) {
-        const siblings = await storage.getChildOrders(order.parentOrderId);
+        const siblings = await storage.getChildOrders(order.parentOrderId, req.db);
         const allDone = siblings.every(s => s.status === "PAID" || s.status === "VOIDED");
         if (allDone) {
           const anyPaid = siblings.some(s => s.status === "PAID");
-          const parentOrder = await storage.getOrder(order.parentOrderId);
+          const parentOrder = await storage.getOrder(order.parentOrderId, req.db);
           if (parentOrder) {
-            const parentItems = await storage.getOrderItems(order.parentOrderId);
+            const parentItems = await storage.getOrderItems(order.parentOrderId, req.db);
             const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
             if (parentActive.length === 0) {
               const finalStatus = anyPaid ? "PAID" : "VOIDED";
-              await storage.updateOrder(order.parentOrderId, { status: finalStatus, closedAt: new Date() });
+              await storage.updateOrder(order.parentOrderId, { status: finalStatus, closedAt: new Date() }, req.db);
               await cleanupSubaccountsForOrder(order.parentOrderId);
             }
           }
@@ -4594,9 +4594,9 @@ export async function registerRoutes(
       }
 
       // Delete any split accounts
-      const splits = await storage.getSplitAccountsForOrder(orderId);
+      const splits = await storage.getSplitAccountsForOrder(orderId, req.db);
       for (const split of splits) {
-        await storage.deleteSplitAccount(split.id);
+        await storage.deleteSplitAccount(split.id, req.db);
       }
 
       await storage.createAuditEvent({
@@ -4634,22 +4634,22 @@ export async function registerRoutes(
       if (!payment) return res.status(404).json({ message: "Pago no encontrado" });
       if (payment.status !== "PAID") return res.status(400).json({ message: "Este pago ya fue anulado" });
 
-      await storage.voidPayment(paymentId, userId, req.body.voidReason || "Anulación de pago");
+      await storage.voidPayment(paymentId, userId, req.body.voidReason || "Anulación de pago", req.db);
 
       const pm = (await storage.getAllPaymentMethods(req.db)).find(m => m.id === payment.paymentMethodId);
       if (pm?.paymentCode === "CASH") {
-        const cashSession = await storage.getActiveCashSession();
+        const cashSession = await storage.getActiveCashSession(req.db);
         if (cashSession) {
           const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) - Number(payment.amount);
-          await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
+          await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) }, req.db);
         }
       }
 
-      const { balanceDue } = await storage.updateOrderPaymentTotals(payment.orderId);
+      const { balanceDue } = await storage.updateOrderPaymentTotals(payment.orderId, req.db);
 
-      const order = await storage.getOrder(payment.orderId);
+      const order = await storage.getOrder(payment.orderId, req.db);
       if (order && order.status === "PAID" && balanceDue > 0) {
-        await storage.updateOrder(payment.orderId, { status: "OPEN", closedAt: null });
+        await storage.updateOrder(payment.orderId, { status: "OPEN", closedAt: null }, req.db);
         await storage.voidServiceChargeByOrder(payment.orderId);
       }
 
@@ -4680,13 +4680,13 @@ export async function registerRoutes(
     const t0 = Date.now();
     try {
       const orderId = parseInt(req.params.orderId as string);
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
       const [table, items, orderPayments, allPaymentMethods] = await Promise.all([
         storage.getTable(order.tableId, req.db),
-        storage.getOrderItems(orderId),
-        storage.getPaymentsForOrder(orderId),
+        storage.getOrderItems(orderId, req.db),
+        storage.getPaymentsForOrder(orderId, req.db),
         storage.getAllPaymentMethods(req.db),
       ]);
       const pmMap = new Map(allPaymentMethods.map(m => [m.id, m.paymentName]));
@@ -4702,7 +4702,7 @@ export async function registerRoutes(
 
       const activeItemIds = activeItems.map(i => i.id);
       const [allMods, orderDiscountsList, orderTaxesList] = await Promise.all([
-        storage.getOrderItemModifiersByItemIds(activeItemIds),
+        storage.getOrderItemModifiersByItemIds(activeItemIds, req.db),
         storage.getOrderItemDiscountsByOrder(orderId),
         storage.getOrderItemTaxesByOrder(orderId),
       ]);
@@ -4763,7 +4763,7 @@ export async function registerRoutes(
 
       const orderIds = paidOrders.map(o => o.id);
       const [allItems, allPaymentsList, allPaymentMethods] = await Promise.all([
-        storage.getOrderItemsByOrderIds(orderIds),
+        storage.getOrderItemsByOrderIds(orderIds, req.db),
         storage.getPaymentsByOrderIds(orderIds),
         storage.getAllPaymentMethods(req.db),
       ]);
@@ -4827,35 +4827,35 @@ export async function registerRoutes(
       const orderId = parseInt(req.params.orderId as string);
       const userId = req.session.userId!;
 
-      const order = await storage.getOrder(orderId);
+      const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
       if (order.status !== "PAID") return res.status(400).json({ message: "Solo se pueden reabrir ordenes pagadas" });
 
-      const orderPayments = await storage.getPaymentsForOrder(orderId);
+      const orderPayments = await storage.getPaymentsForOrder(orderId, req.db);
       const paidPayments = orderPayments.filter(p => p.status === "PAID");
       const allPMs = await storage.getAllPaymentMethods(req.db);
       const pmMap = new Map(allPMs.map(m => [m.id, m]));
 
       for (const p of paidPayments) {
-        await storage.voidPayment(p.id, userId, "Reapertura de orden");
+        await storage.voidPayment(p.id, userId, "Reapertura de orden", req.db);
         const pm = pmMap.get(p.paymentMethodId);
         if (pm?.paymentCode === "CASH") {
-          const cashSession = await storage.getActiveCashSession();
+          const cashSession = await storage.getActiveCashSession(req.db);
           if (cashSession) {
             const newExpected = Number(cashSession.expectedCash || cashSession.openingCash) - Number(p.amount);
-            await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) });
+            await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) }, req.db);
           }
         }
       }
 
-      await storage.updateOrderPaymentTotals(orderId);
-      await storage.updateOrder(orderId, { status: "OPEN", closedAt: null });
+      await storage.updateOrderPaymentTotals(orderId, req.db);
+      await storage.updateOrder(orderId, { status: "OPEN", closedAt: null }, req.db);
 
-      const orderItemsList = await storage.getOrderItems(orderId);
+      const orderItemsList = await storage.getOrderItems(orderId, req.db);
       for (const item of orderItemsList) {
         if (item.status === "PAID") {
-          await storage.updateOrderItem(item.id, { status: "OPEN" });
-          await storage.updateSalesLedgerItems(item.id, { status: "OPEN", paidAt: null });
+          await storage.updateOrderItem(item.id, { status: "OPEN" }, req.db);
+          await storage.updateSalesLedgerItems(item.id, { status: "OPEN", paidAt: null }, req.db);
         }
       }
 
@@ -4892,7 +4892,7 @@ export async function registerRoutes(
       });
 
       const ledgerItems = await storage.getLedgerItemsForDate(date, "PAID");
-      const paidPayments = await storage.getPaymentsForDate(date);
+      const paidPayments = await storage.getPaymentsForDate(date, req.db);
       const activePaidPayments = paidPayments.filter(p => p.status === "PAID");
 
       const ledgerSum = ledgerItems.reduce((s, i) => s + Number(i.lineSubtotal), 0);
@@ -4952,7 +4952,7 @@ export async function registerRoutes(
         ? storage.getLedgerItemsForDate(resolvedFrom)
         : storage.getLedgerItemsForDateRange(resolvedFrom, resolvedTo),
       resolvedFrom === resolvedTo
-        ? storage.getPaymentsByDateGrouped(resolvedFrom)
+        ? storage.getPaymentsByDateGrouped(resolvedFrom, req.db)
         : storage.getPaymentsByDateRangeGrouped(resolvedFrom, resolvedTo),
     ]);
     if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/dashboard ${Date.now() - t0}ms`);
