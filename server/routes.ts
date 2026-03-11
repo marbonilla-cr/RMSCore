@@ -1242,15 +1242,6 @@ export async function registerRoutes(
     res.json(config || { businessName: "", legalName: "", taxId: "", address: "", phone: "", email: "", legalNote: "" });
   });
 
-  app.get("/api/debug/printer-check", async (req, res) => {
-    try {
-      const list = await req.db.select().from(printersTable).orderBy(asc(printersTable.name));
-      res.json({ ok: true, count: list.length, tenantSchema: req.tenantSchema, printers: list });
-    } catch (err: any) {
-      res.json({ ok: false, error: err.message, stack: err.stack?.split('\n').slice(0,5), tenantSchema: req.tenantSchema });
-    }
-  });
-
   // ==================== ADMIN: PRINTERS ====================
   app.get("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
     try {
@@ -1258,7 +1249,7 @@ export async function registerRoutes(
       res.json(list);
     } catch (err: any) {
       console.error("[printers] GET error:", err.message);
-      res.status(500).json({ message: err.message });
+      res.status(500).json({ message: err.message, debug: { tenantSchema: req.tenantSchema, stack: err.stack?.split('\n').slice(0,3) } });
     }
   });
 
@@ -6393,7 +6384,7 @@ export async function registerRoutes(
       res.json(rows.map(b => ({ ...b, isConnected: live.has(b.bridgeId) })));
     } catch (err: any) {
       console.error("[bridges] GET error:", err.message);
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err.message, debug: { tenantSchema: req.tenantSchema, stack: err.stack?.split('\n').slice(0,3) } });
     }
   });
 
