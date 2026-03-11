@@ -1,0 +1,73 @@
+Necesito ver las líneas truncadas del archivo antes de escribir el prompt. Dame un momento.Tengo suficiente contexto. El patrón es consistente en todo el archivo — funciones que usan `db` directamente. Algunas ya tienen `dbInstance?: typeof db` como patrón opcional.
+
+---
+
+## Prompt para Replit Agent
+
+Refactorizar `server/storage.ts` completo para soporte multi-tenant. Este es el cambio más importante del sistema — hacerlo sistemáticamente y sin errores.
+
+**REGLA PRINCIPAL:** Cada función exportada que usa `db` directamente debe aceptar un parámetro opcional `dbInstance?: typeof db` y usarlo en lugar del `db` global. Las funciones que ya tienen este patrón no se tocan.
+
+**PATRÓN A APLICAR:**
+
+```typescript
+// ANTES:
+export async function getAllTables() {
+  return db.select().from(tables).orderBy(asc(tables.sortOrder));
+}
+
+// DESPUÉS:
+export async function getAllTables(dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  return d.select().from(tables).orderBy(asc(tables.sortOrder));
+}
+```
+
+**INSTRUCCIONES PRECISAS:**
+
+1. Abrir `server/storage.ts`
+
+2. Para cada función exportada que use `db` directamente:
+   - Si ya tiene `dbInstance?: typeof db` como parámetro → no tocar
+   - Si no tiene el parámetro → agregar `dbInstance?: typeof db` como último parámetro
+   - Cambiar `db.select/insert/update/delete` → `const d = dbInstance || db; d.select/insert/update/delete`
+   - Si la función llama a otras funciones de storage internamente, pasar `dbInstance` a esas llamadas también
+
+3. Funciones que NO deben cambiar:
+   - `generateRandomPin()` — no usa DB
+   - `verifyPassword()` — no usa DB
+   - `verifyPin()` — no usa DB
+   - `getWeekMondayForDate()` — no usa DB
+   - `seedTenantSchema()` — ya usa pool directo
+   - `SYSTEM_PERMISSIONS` y `DEFAULT_ROLE_PERMISSIONS` — constantes
+
+4. Funciones especiales a manejar con cuidado:
+   - `getBusinessDate(schema?)` — ya tiene schema param, no cambiar
+   - `ensureSystemPermissions()` — agregar `dbInstance`
+   - `seedDefaultRolePermissions()` — agregar `dbInstance`
+   - `userHasPermission()` — debe pasar `dbInstance` a sus llamadas internas (`getUser`, `getPermissionKeysForRole`)
+   - `getEffectivePermissions()` — debe pasar `dbInstance` a sus llamadas internas
+   - `recalculateOrderTotal()` — función larga, asegurarse de pasar `dbInstance` a todas las llamadas internas
+
+5. Después de modificar `storage.ts`, actualizar `server/routes.ts`:
+   - Buscar cada llamada a funciones de storage: `storage.funcionX(params)` o `funcionX(params)` (si se importan directamente)
+   - Agregar `req.db` como último argumento: `funcionX(params, req.db)`
+   - **EXCEPCIÓN:** No agregar `req.db` en llamadas dentro de jobs background (`setInterval`) ni en funciones de seed — esas se manejan después
+
+**VERIFICACIÓN FINAL:**
+```bash
+# Verificar que no quedan llamadas a db global en funciones exportadas
+grep -n "^\s*return db\.\|^\s*await db\.\|^\s*const.*= db\." server/storage.ts | head -20
+```
+
+Si el grep devuelve líneas, revisar cada una y aplicar el patrón.
+
+**Criterios de aceptación:**
+- [ ] Todas las funciones exportadas aceptan `dbInstance?: typeof db`
+- [ ] El servidor compila sin errores TypeScript
+- [ ] `grep -c "dbInstance || db" server/storage.ts` devuelve un número mayor a 100
+- [ ] Las rutas en `routes.ts` pasan `req.db` a todas las llamadas de storage
+- [ ] El servidor arranca sin errores después del cambio
+- [ ] Hacer deploy a Railway
+
+**IMPORTANTE:** Este es un cambio grande. Hacerlo en una sola pasada sistemática. No hacer deploy hasta que el servidor compile sin errores TypeScript localmente.
