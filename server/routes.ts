@@ -1242,6 +1242,15 @@ export async function registerRoutes(
     res.json(config || { businessName: "", legalName: "", taxId: "", address: "", phone: "", email: "", legalNote: "" });
   });
 
+  app.get("/api/debug/printer-check", async (req, res) => {
+    try {
+      const list = await req.db.select().from(printersTable).orderBy(asc(printersTable.name));
+      res.json({ ok: true, count: list.length, tenantSchema: req.tenantSchema, printers: list });
+    } catch (err: any) {
+      res.json({ ok: false, error: err.message, stack: err.stack?.split('\n').slice(0,5), tenantSchema: req.tenantSchema });
+    }
+  });
+
   // ==================== ADMIN: PRINTERS ====================
   app.get("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
     try {
