@@ -141,12 +141,10 @@ export default function AdminPrintersPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("[printer-form] handleSubmit called, form:", JSON.stringify(form));
     if (!form.name.trim()) {
       toast({ title: "El nombre es requerido", variant: "destructive" });
       return;
     }
-    console.log("[printer-form] calling saveMutation.mutate");
     saveMutation.mutate(form);
   };
 

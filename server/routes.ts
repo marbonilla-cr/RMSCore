@@ -1245,17 +1245,16 @@ export async function registerRoutes(
   // ==================== ADMIN: PRINTERS ====================
   app.get("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
     try {
-      const tdb = getTenantDb(req.tenantSchema);
-      const list = await tdb.select().from(printersTable).orderBy(asc(printersTable.name));
+      const list = await req.db.select().from(printersTable).orderBy(asc(printersTable.name));
       res.json(list);
     } catch (err: any) {
+      console.error("[printers] GET error:", err.message);
       res.status(500).json({ message: err.message });
     }
   });
 
   app.post("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
     try {
-      console.log("[printer-debug] POST body:", JSON.stringify(req.body), "tenantSchema:", req.tenantSchema);
       const body = { ...req.body };
       if (!body.bridgeId || body.bridgeId === "none") body.bridgeId = null;
       const parsed = insertPrinterSchema.parse({
@@ -1263,13 +1262,10 @@ export async function registerRoutes(
         port: Number(body.port) || 9100,
         paperWidth: Number(body.paperWidth) || 80,
       });
-      console.log("[printer-debug] parsed:", JSON.stringify(parsed));
-      const tdb = getTenantDb(req.tenantSchema);
-      const [printer] = await tdb.insert(printersTable).values(parsed).returning();
-      console.log("[printer-debug] created:", JSON.stringify(printer));
+      const [printer] = await req.db.insert(printersTable).values(parsed).returning();
       res.status(201).json(printer);
     } catch (err: any) {
-      console.error("[printer-debug] ERROR:", err.message);
+      console.error("[printers] POST error:", err.message);
       res.status(400).json({ message: err.message });
     }
   });
@@ -1280,21 +1276,21 @@ export async function registerRoutes(
       if (data.port !== undefined) data.port = Number(data.port) || 9100;
       if (data.paperWidth !== undefined) data.paperWidth = Number(data.paperWidth) || 80;
       if (data.bridgeId !== undefined) data.bridgeId = data.bridgeId || null;
-      const tdb = getTenantDb(req.tenantSchema);
-      const [printer] = await tdb.update(printersTable).set(data).where(eq(printersTable.id, parseInt(req.params.id as string))).returning();
+      const [printer] = await req.db.update(printersTable).set(data).where(eq(printersTable.id, parseInt(req.params.id as string))).returning();
       if (!printer) return res.status(404).json({ message: "Impresora no encontrada" });
       res.json(printer);
     } catch (err: any) {
+      console.error("[printers] PATCH error:", err.message);
       res.status(400).json({ message: err.message });
     }
   });
 
   app.delete("/api/admin/printers/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const tdb = getTenantDb(req.tenantSchema);
-      await tdb.delete(printersTable).where(eq(printersTable.id, parseInt(req.params.id as string)));
+      await req.db.delete(printersTable).where(eq(printersTable.id, parseInt(req.params.id as string)));
       res.json({ ok: true });
     } catch (err: any) {
+      console.error("[printers] DELETE error:", err.message);
       res.status(400).json({ message: err.message });
     }
   });
@@ -4112,8 +4108,7 @@ export async function registerRoutes(
 
       const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
 
-      const tdb = getTenantDb(req.tenantSchema);
-      const printersList = await tdb.select().from(printersTable).orderBy(asc(printersTable.name));
+      const printersList = await req.db.select().from(printersTable).orderBy(asc(printersTable.name));
       const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
       if (!cajaPrinter) {
         return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });
@@ -4252,8 +4247,7 @@ export async function registerRoutes(
 
       const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
 
-      const tdb = getTenantDb(req.tenantSchema);
-      const printersList = await tdb.select().from(printersTable).orderBy(asc(printersTable.name));
+      const printersList = await req.db.select().from(printersTable).orderBy(asc(printersTable.name));
       const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
       if (!cajaPrinter) {
         return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });
@@ -4334,8 +4328,7 @@ export async function registerRoutes(
   app.post("/api/pos/open-drawer", requirePermission("POS_PAY"), async (req, res) => {
     try {
       const { buildDrawerKickData, sendToPrinter } = await import("./escpos");
-      const tdb = getTenantDb(req.tenantSchema);
-      const printersList = await tdb.select().from(printersTable).orderBy(asc(printersTable.name));
+      const printersList = await req.db.select().from(printersTable).orderBy(asc(printersTable.name));
       const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
       if (!cajaPrinter) {
         return res.json({ ok: false, message: "No hay impresora de caja configurada" });
@@ -6376,9 +6369,7 @@ export async function registerRoutes(
 
   app.get("/api/admin/print-bridges", requireRole("MANAGER"), async (req, res) => {
     try {
-      console.log("[bridge-debug] tenantSchema:", req.tenantSchema, "host:", req.headers.host);
-      const tdb = getTenantDb(req.tenantSchema);
-      const rows = await tdb.select({
+      const rows = await req.db.select({
         id: printBridgesTable.id,
         bridgeId: printBridgesTable.bridgeId,
         displayName: printBridgesTable.displayName,
@@ -6392,6 +6383,7 @@ export async function registerRoutes(
       );
       res.json(rows.map(b => ({ ...b, isConnected: live.has(b.bridgeId) })));
     } catch (err: any) {
+      console.error("[bridges] GET error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
@@ -6401,44 +6393,44 @@ export async function registerRoutes(
       const { displayName } = req.body;
       if (!displayName?.trim())
         return res.status(400).json({ error: 'displayName requerido' });
-      const tdb = getTenantDb(req.tenantSchema);
       const token = `rms-${crypto.randomBytes(20).toString('hex')}`;
       const bridgeId = `bridge-${crypto.randomBytes(4).toString('hex')}`;
-      const [created] = await tdb
+      const [created] = await req.db
         .insert(printBridgesTable)
         .values({ bridgeId, displayName: displayName.trim(), token, isActive: true })
         .returning();
       res.status(201).json(created);
     } catch (err: any) {
+      console.error("[bridges] POST error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
 
   app.patch("/api/admin/print-bridges/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const tdb = getTenantDb(req.tenantSchema);
       const updates: any = {};
       if (req.body.displayName !== undefined) updates.displayName = req.body.displayName;
       if (req.body.isActive !== undefined) updates.isActive = req.body.isActive;
-      const [updated] = await tdb
+      const [updated] = await req.db
         .update(printBridgesTable).set(updates)
         .where(eq(printBridgesTable.id, parseInt(req.params.id)))
         .returning();
       const { token: _t, ...safe } = updated;
       res.json(safe);
     } catch (err: any) {
+      console.error("[bridges] PATCH error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/admin/print-bridges/:id/regenerate-token", requireRole("MANAGER"), async (req, res) => {
     try {
-      const tdb = getTenantDb(req.tenantSchema);
       const token = `rms-${crypto.randomBytes(20).toString('hex')}`;
-      await tdb.update(printBridgesTable).set({ token })
+      await req.db.update(printBridgesTable).set({ token })
         .where(eq(printBridgesTable.id, parseInt(req.params.id)));
       res.json({ token });
     } catch (err: any) {
+      console.error("[bridges] REGEN error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
