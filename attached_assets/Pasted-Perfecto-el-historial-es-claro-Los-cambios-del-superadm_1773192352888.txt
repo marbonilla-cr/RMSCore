@@ -1,0 +1,44 @@
+Perfecto, el historial es claro. Los cambios del superadmin (hard-delete) **sí se implementaron** en Replit. El problema de impresoras también se resolvió en desarrollo con el cambio 3 (borrar el registro de `schema_migrations` para forzar re-aplicar `0010_print_bridges.sql`).
+
+El problema es que **el deploy a Railway no propagó las migraciones correctamente** — específicamente `0010_print_bridges.sql` nunca se aplicó en la DB de producción.
+
+Aquí el prompt para cerrar esto:
+
+---
+
+## Prompt para Replit Agent
+
+Verificar el estado actual y hacer deploy limpio a producción. No modificar lógica de negocio.
+
+**PASO 1 — Verificar que los cambios de la sesión anterior están en el código:**
+
+Confirmar que existen sin modificar nada:
+1. En `server/provision/provision-routes.ts`: ¿existe `router.delete('/tenants/:id/hard-delete', ...)`?
+2. En `client/src/pages/superadmin.tsx`: ¿existe el dialog de confirmación con input de `business_name`?
+3. En `server/provision/migrate-tenants.ts`: ¿`syncAllTenantsAtStartup()` llama `propagateMigrations('public')` (no `backfillMigrationLog`)?
+4. En `public.schema_migrations` de la DB de **desarrollo**: ¿el archivo `0010_print_bridges.sql` aparece como aplicado?
+
+Mostrar el resultado de cada verificación antes de continuar.
+
+**PASO 2 — Si todo está correcto, hacer Deploy en Replit** para que Railway reciba los cambios. Al arrancar en Railway, `syncAllTenantsAtStartup()` debe ejecutar `propagateMigrations('public')` que aplicará `0010_print_bridges.sql` en la DB de producción creando la tabla `print_bridges` y la columna `printers.bridge_id`.
+
+**PASO 3 — Verificar en los logs de Railway** que aparezca algo similar a:
+```
+[migrate] public: 1 pendiente(s)
+[migrate] ✓ public ← 0010_print_bridges.sql
+[migrate] Startup sync complete ✓
+```
+
+Si en cambio los logs muestran que `0010_print_bridges.sql` ya está marcado como aplicado en Railway pero la columna no existe, reportar eso — significaría que hay un registro fantasma en `public.schema_migrations` en Railway que hay que limpiar con:
+```sql
+DELETE FROM public.schema_migrations 
+WHERE schema_name = 'public' 
+AND filename = '0010_print_bridges.sql';
+```
+Este DELETE debe correrse en la DB de Railway (usar `process.env.DATABASE_URL` que apunta a Railway), no en la de desarrollo.
+
+**Criterios de aceptación:**
+- [ ] `POST /api/admin/print-bridges` responde 201 en producción
+- [ ] `POST /api/admin/printers` responde 201 en producción  
+- [ ] Los logs de Railway confirman que `0010_print_bridges.sql` se aplicó
+- [ ] El superadmin muestra el botón de eliminar permanentemente en tenants suspendidos
