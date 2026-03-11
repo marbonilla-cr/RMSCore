@@ -1,0 +1,56 @@
+El problema está en `POST /api/admin/printers` — ese handler usa `storage.createPrinter(parsed)` en lugar de `getTenantDb(req.tenantSchema)`. El `storage` global probablemente apunta al schema incorrecto.
+
+---
+
+## Prompt para Replit Agent
+
+Encontré el problema. `POST /api/admin/printers` usa `storage.createPrinter()` en lugar de `getTenantDb(req.tenantSchema)` como hace el handler de print-bridges. Necesito verificar y corregir.
+
+**PASO 1 — Mostrar sin modificar:**
+
+1. La función `createPrinter` en `server/storage.ts` — completa
+2. Cómo se instancia `storage` en `server/routes.ts` — buscar `const storage` o `new Storage` o similar
+3. Los últimos 10 errores en los logs de Railway relacionados con printers o bridges
+
+**PASO 2 — Si `storage.createPrinter` usa `db` global en lugar de tenant db, corregir el handler en `server/routes.ts`:**
+
+Buscar:
+```typescript
+app.post("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
+  const parsed = insertPrinterSchema.parse({ ...req.body, port: Number(req.body.port)||9100, paperWidth: Number(req.body.paperWidth)||80 });
+  const printer = await storage.createPrinter(parsed);
+  res.json(printer);
+});
+```
+
+Reemplazar por:
+```typescript
+app.post("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
+  try {
+    const parsed = insertPrinterSchema.parse({ 
+      ...req.body, 
+      port: Number(req.body.port) || 9100, 
+      paperWidth: Number(req.body.paperWidth) || 80 
+    });
+    const tdb = getTenantDb(req.tenantSchema);
+    const [printer] = await tdb
+      .insert(printersTable)
+      .values(parsed)
+      .returning();
+    res.json(printer);
+  } catch (err: any) {
+    res.status(400).json({ message: err.message });
+  }
+});
+```
+
+**PASO 3 — Verificar también `GET /api/admin/printers` y `PATCH /api/admin/printers/:id`** — si también usan `storage.*` en lugar de `getTenantDb`, corregirlos con el mismo patrón.
+
+**PASO 4 — Verificar que `printersTable` está importado** en `server/routes.ts`. Si no está, agregarlo al import de `shared/schema`.
+
+**Criterios de aceptación:**
+- [ ] `POST /api/admin/printers` usa `getTenantDb(req.tenantSchema)` 
+- [ ] `GET /api/admin/printers` usa `getTenantDb(req.tenantSchema)`
+- [ ] No hay referencias a `storage.createPrinter`, `storage.getPrinters`, `storage.updatePrinter` en routes.ts
+- [ ] El servidor compila sin errores
+- [ ] Hacer deploy y confirmar que crear una impresora en producción responde 201

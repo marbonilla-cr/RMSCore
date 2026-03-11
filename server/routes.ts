@@ -29,7 +29,7 @@ import {
   getConnectedBridgesForTenant,
   dispatchPrintJobViaBridge,
 } from "./services/print-service";
-import { printBridges as printBridgesTable } from "../shared/schema";
+import { printBridges as printBridgesTable, printers as printersTable } from "../shared/schema";
 import { pool } from "./db";
 import { getTenantDb } from "./db-tenant";
 import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog } from "@shared/schema";
@@ -1243,8 +1243,14 @@ export async function registerRoutes(
   });
 
   // ==================== ADMIN: PRINTERS ====================
-  app.get("/api/admin/printers", requireRole("MANAGER"), async (_req, res) => {
-    res.json(await storage.getAllPrinters());
+  app.get("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const tdb = getTenantDb(req.tenantSchema);
+      const list = await tdb.select().from(printersTable).orderBy(asc(printersTable.name));
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.post("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
@@ -1254,8 +1260,9 @@ export async function registerRoutes(
         port: Number(req.body.port) || 9100,
         paperWidth: Number(req.body.paperWidth) || 80,
       });
-      const printer = await storage.createPrinter(parsed);
-      res.json(printer);
+      const tdb = getTenantDb(req.tenantSchema);
+      const [printer] = await tdb.insert(printersTable).values(parsed).returning();
+      res.status(201).json(printer);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
@@ -1267,7 +1274,8 @@ export async function registerRoutes(
       if (data.port !== undefined) data.port = Number(data.port) || 9100;
       if (data.paperWidth !== undefined) data.paperWidth = Number(data.paperWidth) || 80;
       if (data.bridgeId !== undefined) data.bridgeId = data.bridgeId || null;
-      const printer = await storage.updatePrinter(parseInt(req.params.id as string), data);
+      const tdb = getTenantDb(req.tenantSchema);
+      const [printer] = await tdb.update(printersTable).set(data).where(eq(printersTable.id, parseInt(req.params.id as string))).returning();
       if (!printer) return res.status(404).json({ message: "Impresora no encontrada" });
       res.json(printer);
     } catch (err: any) {
@@ -1277,7 +1285,8 @@ export async function registerRoutes(
 
   app.delete("/api/admin/printers/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      await storage.deletePrinter(parseInt(req.params.id as string));
+      const tdb = getTenantDb(req.tenantSchema);
+      await tdb.delete(printersTable).where(eq(printersTable.id, parseInt(req.params.id as string)));
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -4097,7 +4106,8 @@ export async function registerRoutes(
 
       const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
 
-      const printersList = await storage.getAllPrinters();
+      const tdb = getTenantDb(req.tenantSchema);
+      const printersList = await tdb.select().from(printersTable).orderBy(asc(printersTable.name));
       const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
       if (!cajaPrinter) {
         return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });
@@ -4236,7 +4246,8 @@ export async function registerRoutes(
 
       const { buildReceiptBuffer, sendToPrinter } = await import("./escpos");
 
-      const printersList = await storage.getAllPrinters();
+      const tdb = getTenantDb(req.tenantSchema);
+      const printersList = await tdb.select().from(printersTable).orderBy(asc(printersTable.name));
       const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
       if (!cajaPrinter) {
         return res.status(400).json({ message: "No hay impresora de caja configurada y habilitada" });
@@ -4314,10 +4325,11 @@ export async function registerRoutes(
   });
 
   // ==================== POS: OPEN CASH DRAWER ====================
-  app.post("/api/pos/open-drawer", requirePermission("POS_PAY"), async (_req, res) => {
+  app.post("/api/pos/open-drawer", requirePermission("POS_PAY"), async (req, res) => {
     try {
       const { buildDrawerKickData, sendToPrinter } = await import("./escpos");
-      const printersList = await storage.getAllPrinters();
+      const tdb = getTenantDb(req.tenantSchema);
+      const printersList = await tdb.select().from(printersTable).orderBy(asc(printersTable.name));
       const cajaPrinter = printersList.find(p => p.type === "caja" && p.enabled && p.ipAddress);
       if (!cajaPrinter) {
         return res.json({ ok: false, message: "No hay impresora de caja configurada" });
