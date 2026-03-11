@@ -1003,7 +1003,7 @@ export async function registerRoutes(
 
   // ==================== ADMIN: TABLES ====================
   app.get("/api/admin/tables", requireRole("MANAGER"), async (req, res) => {
-    res.json(await storage.getAllTables(req.db));
+    res.json(await storage.getAllTables(false, req.db));
   });
 
   app.post("/api/admin/tables", requireRole("MANAGER"), async (req, res) => {
@@ -1771,7 +1771,7 @@ export async function registerRoutes(
   app.get("/api/waiter/tables", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
-      storage.getAllTables(req.db),
+      storage.getAllTables(false, req.db),
       storage.getAllOpenOrders(),
     ]);
 
@@ -3377,7 +3377,7 @@ export async function registerRoutes(
   app.get("/api/pos/tables", requirePermission("POS_VIEW"), async (req, res) => {
     const t0 = Date.now();
     const [allTables, allOpenOrders] = await Promise.all([
-      storage.getAllTables(req.db),
+      storage.getAllTables(false, req.db),
       storage.getAllOpenOrders(),
     ]);
     const tableMap = new Map(allTables.map(t => [t.id, t]));
@@ -4755,7 +4755,7 @@ export async function registerRoutes(
       const date = (req.query.date as string) || undefined;
       const [paidOrders, allTables] = await Promise.all([
         storage.getPaidOrdersForDate(date),
-        storage.getAllTables(req.db),
+        storage.getAllTables(false, req.db),
       ]);
       const tableMap = new Map(allTables.map(t => [t.id, t]));
 
@@ -6636,7 +6636,7 @@ export async function registerRoutes(
         rows = rows.filter(r => reservationCoversTable(r, tid));
       }
 
-      const allTables = await storage.getAllTables(req.db);
+      const allTables = await storage.getAllTables(false, req.db);
       const tableMap = new Map(allTables.map(t => [t.id, { id: t.id, tableName: t.tableName, tableCode: t.tableCode, capacity: t.capacity }]));
 
       const result = rows.map(r => {
@@ -6660,7 +6660,7 @@ export async function registerRoutes(
       const { date, partySize } = req.query;
       if (!date || !partySize) return res.status(400).json({ message: "date y partySize son requeridos" });
       const ps = parseInt(partySize as string);
-      const allTables = await storage.getAllTables(req.db);
+      const allTables = await storage.getAllTables(false, req.db);
       const activeTables = allTables.filter(t => t.active);
 
       const dayReservations = await db.select().from(reservations)
@@ -7076,7 +7076,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "El sistema de reservaciones no está disponible." });
       }
 
-      const allTables = await storage.getAllTables(req.db);
+      const allTables = await storage.getAllTables(false, req.db);
       const activeTables = allTables.filter(t => t.active).sort((a, b) => a.capacity - b.capacity);
       const totalSeats = activeTables.reduce((sum, t) => sum + t.capacity, 0);
       const maxReservableSeats = Math.max(1, Math.floor(totalSeats * settings.maxOccupancyPercent / 100));
@@ -7174,7 +7174,7 @@ export async function registerRoutes(
         return res.json([]);
       }
 
-      const allTables = await storage.getAllTables(req.db);
+      const allTables = await storage.getAllTables(false, req.db);
       const activeTables = allTables.filter(t => t.active).sort((a, b) => a.capacity - b.capacity);
       const totalSeats = activeTables.reduce((sum, t) => sum + t.capacity, 0);
 
@@ -7259,7 +7259,7 @@ export async function registerRoutes(
       const settings = settingsRows.length > 0 ? settingsRows[0] : { turnoverBufferMinutes: 15 };
       const buffer = settings.turnoverBufferMinutes;
 
-      const allTables = await storage.getAllTables(req.db);
+      const allTables = await storage.getAllTables(false, req.db);
       const activeTables = allTables.filter(t => t.active);
 
       const dayReservations = await db.select().from(reservations)
@@ -7660,7 +7660,7 @@ export async function registerRoutes(
         }).from(salesLedgerItems).where(inArray(salesLedgerItems.orderId, orderIds)),
       ]);
 
-      const allTables = await storage.getAllTables(req.db);
+      const allTables = await storage.getAllTables(false, req.db);
       const tableMap = new Map(allTables.map(t => [t.id, t.tableName]));
       const orderMap = new Map(orderRows.map(o => [o.id, o]));
       const syncMap = new Map(syncRows.map(s => [s.paymentId, s]));
