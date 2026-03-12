@@ -134,7 +134,7 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
       const res = await apiRequest("GET", `/api/kds/tickets/active?destination=${destination}`);
       return res.json();
     },
-    refetchInterval: wsUp ? 60000 : 5000,
+    refetchInterval: wsUp ? 10000 : 3000,
   });
 
   const groupedTickets = useMemo(() => groupTicketsByOrder(activeTickets), [activeTickets]);

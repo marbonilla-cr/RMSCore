@@ -13,7 +13,7 @@ class WSManager {
   private _state: WSState = "DISCONNECTED";
   private backoffStep = 0;
 
-  private static readonly BACKOFF_DELAYS = [500, 1000, 2000, 4000, 8000, 16000, 30000];
+  private static readonly BACKOFF_DELAYS = [500, 1000, 2000, 4000, 8000, 10000];
   private static readonly JITTER_MAX = 500;
 
   get connected() {

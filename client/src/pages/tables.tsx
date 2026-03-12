@@ -131,7 +131,7 @@ export default function TablesPage() {
   const wsUp = useWsConnected();
   const { data: tables = [], isLoading } = useQuery<TableView[]>({
     queryKey: ["/api/waiter/tables"],
-    refetchInterval: wsUp ? 60000 : 10000,
+    refetchInterval: wsUp ? 10000 : 5000,
   });
 
   useEffect(() => {
