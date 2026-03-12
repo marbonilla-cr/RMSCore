@@ -27,7 +27,7 @@ export function getTenantDb(schemaName: string): typeof globalDb {
     client.query(`SET search_path TO "${schemaName}"`);
   });
 
-  const tenantDb = drizzle(tenantPool, { schema }) as unknown as typeof globalDb;
+  const tenantDb = drizzle(tenantPool, { schema }) as typeof globalDb;
   dbCache.set(schemaName, tenantDb);
   console.log(`[db-tenant] Schema "${schemaName}" conectado`);
   return tenantDb;
