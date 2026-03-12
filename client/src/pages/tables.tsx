@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell, ArrowRightLeft, AlertTriangle } from "lucide-react";
+import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell, ArrowRightLeft, AlertTriangle, X } from "lucide-react";
 import { wsManager } from "@/lib/ws";
 import { useWsConnected } from "@/hooks/use-ws-connected";
 import { formatCurrency, timeAgo } from "@/lib/utils";
@@ -723,139 +723,92 @@ export default function TablesPage() {
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        .qr-popup-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.6);
-          z-index: 300;
+        @keyframes qr-bar-enter {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .qr-bar-wrapper {
+          position: relative;
+          z-index: 50;
+          height: 0;
+          overflow: visible;
+        }
+        .qr-notify-bar {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin: 0 14px;
+          padding: 7px 12px;
+          background: var(--red-d);
+          border: 1px solid var(--red-m);
+          border-radius: var(--r-sm);
+          animation: qr-bar-enter 0.25s ease-out;
+          flex-wrap: wrap;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }
+        .qr-notify-bar .qr-bar-icon {
+          color: var(--red);
+          flex-shrink: 0;
+          animation: pulse-badge 1.5s ease-in-out infinite;
+        }
+        .qr-notify-bar .qr-bar-label {
+          font-family: var(--f-disp);
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--red);
+          white-space: nowrap;
+        }
+        .qr-notify-bar .qr-bar-badge {
+          background: var(--red);
+          color: #fff;
+          font-family: var(--f-mono);
+          font-size: 11px;
+          font-weight: 700;
+          min-width: 20px;
+          height: 20px;
+          border-radius: 10px;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 20px;
+          padding: 0 6px;
+          flex-shrink: 0;
         }
-        .qr-popup {
-          background: var(--s1);
-          border: 1.5px solid var(--red-m);
-          border-radius: var(--r-lg);
-          width: min(92vw, 380px);
-          overflow: hidden;
-          animation: qr-popup-enter 0.3s ease-out;
-        }
-        @keyframes qr-popup-enter {
-          from { transform: scale(0.9); opacity: 0; }
-          to { transform: scale(1); opacity: 1; }
-        }
-        .qr-popup-header {
-          background: var(--red-d);
-          color: var(--red);
-          padding: 14px 18px;
+        .qr-notify-bar .qr-bar-chips {
           display: flex;
-          align-items: center;
-          gap: 10px;
-          font-family: var(--f-disp);
-          font-size: 16px;
-          font-weight: 700;
-          border-bottom: 1px solid var(--red-m);
+          gap: 6px;
+          flex-wrap: wrap;
+          flex: 1;
+          min-width: 0;
         }
-        .qr-popup-header svg {
-          animation: pulse-badge 1.5s ease-in-out infinite;
-        }
-        .qr-popup-body {
-          padding: 14px 18px;
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-        .qr-popup-table-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 10px 14px;
-          background: var(--s2);
-          border-radius: var(--r-sm);
-          border: 1px solid var(--border-ds);
-        }
-        .qr-popup-table-info {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-        }
-        .qr-popup-table-name {
-          font-family: var(--f-disp);
-          font-size: 15px;
-          font-weight: 700;
-          color: var(--text);
-        }
-        .qr-popup-table-count {
-          font-family: var(--f-mono);
-          font-size: 11px;
-          color: var(--red);
-          font-weight: 600;
-        }
-        .qr-popup-go-btn {
-          background: var(--green);
-          color: #050f08;
+        .qr-notify-bar .qr-bar-chip {
+          background: var(--red);
+          color: #fff;
           border: none;
           border-radius: var(--r-sm);
-          padding: 8px 16px;
+          padding: 4px 10px;
           font-family: var(--f-mono);
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 700;
           cursor: pointer;
+          white-space: nowrap;
           transition: opacity var(--t-fast);
         }
-        .qr-popup-go-btn:active { opacity: 0.7; }
-        .qr-popup-dismiss {
+        .qr-notify-bar .qr-bar-chip:active { opacity: 0.7; }
+        .qr-notify-bar .qr-bar-close {
           background: none;
-          border: 1px solid var(--border2);
-          border-radius: var(--r-sm);
-          padding: 10px;
-          font-family: var(--f-mono);
-          font-size: 12px;
-          color: var(--text3);
+          border: none;
+          color: var(--red);
           cursor: pointer;
-          width: 100%;
-          text-align: center;
-          margin-top: 4px;
-          transition: background var(--t-fast);
+          padding: 2px;
+          margin-left: auto;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          opacity: 0.7;
+          transition: opacity var(--t-fast);
         }
-        .qr-popup-dismiss:active { background: var(--s2); }
+        .qr-notify-bar .qr-bar-close:active { opacity: 1; }
       `}</style>
-
-      {qrPopupTables.length > 0 && !qrPopupDismissed && (
-        <div className="qr-popup-overlay" data-testid="qr-popup-overlay">
-          <div className="qr-popup" data-testid="qr-popup">
-            <div className="qr-popup-header">
-              <AlertTriangle size={20} />
-              Nueva orden QR
-            </div>
-            <div className="qr-popup-body">
-              {qrPopupTables.map(t => (
-                <div key={t.id} className="qr-popup-table-row" data-testid={`qr-popup-table-${t.id}`}>
-                  <div className="qr-popup-table-info">
-                    <div className="qr-popup-table-name">{t.name}</div>
-                    <div className="qr-popup-table-count">{t.count} {t.count === 1 ? "orden pendiente" : "ordenes pendientes"}</div>
-                  </div>
-                  <button
-                    className="qr-popup-go-btn"
-                    onClick={() => { setQrPopupDismissed(true); navigate(`/tables/${t.id}`); }}
-                    data-testid={`qr-popup-go-${t.id}`}
-                  >
-                    Ir a mesa
-                  </button>
-                </div>
-              ))}
-              <button
-                className="qr-popup-dismiss"
-                onClick={() => setQrPopupDismissed(true)}
-                data-testid="qr-popup-dismiss"
-              >
-                Cerrar (las ordenes siguen pendientes)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="screen-header">
         <div style={{ flex: 1 }}>
@@ -1031,6 +984,38 @@ export default function TablesPage() {
           />
         </div>
       </div>
+
+      {qrPopupTables.length > 0 && !qrPopupDismissed && (
+        <div className="qr-bar-wrapper">
+          <div className="qr-notify-bar" data-testid="qr-notify-bar">
+            <AlertTriangle size={16} className="qr-bar-icon" />
+            <span className="qr-bar-label">Orden QR</span>
+            <span className="qr-bar-badge" data-testid="qr-bar-badge">
+              {qrPopupTables.reduce((sum, t) => sum + t.count, 0)}
+            </span>
+            <div className="qr-bar-chips">
+              {qrPopupTables.map(t => (
+                <button
+                  key={t.id}
+                  className="qr-bar-chip"
+                  onClick={() => navigate(`/tables/${t.id}`)}
+                  data-testid={`qr-bar-chip-${t.id}`}
+                >
+                  {t.name} · {t.count}
+                </button>
+              ))}
+            </div>
+            <button
+              className="qr-bar-close"
+              onClick={() => setQrPopupDismissed(true)}
+              data-testid="qr-bar-close"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {!isLoading && activeTables.length > 0 && (
         <div className="host-bar" data-testid="host-availability-bar">
           <div className="host-chip occupied" data-testid="chip-occupied">{occupiedCount} ocupadas</div>
