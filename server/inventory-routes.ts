@@ -652,7 +652,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         if (!conv) {
           return res.status(400).json({ message: `No existe conversión de UOM '${uom}' a '${item.baseUom}'. Agregue la conversión primero en el detalle del insumo.` });
         }
-        multiplier = (conv as any).multiplier || conv.toBaseMultiplier;
+        multiplier = conv.toBaseMultiplier;
       }
 
       const qtyBaseExpected = String(qtyNum * parseFloat(multiplier));

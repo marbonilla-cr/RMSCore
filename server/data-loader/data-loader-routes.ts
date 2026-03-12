@@ -315,23 +315,23 @@ export function registerDataLoaderRoutes(app: any) {
       const hrConfig = (grouped.hr_config || []).map(r => ({ rowId: r.rowId, ...r.data }));
 
       const categoryTree: Record<string, string[]> = {};
-      for (const cat of categories as any[]) {
-        const parent = cat.category_name || "Sin padre";
-        const child = cat.parent_category || "";
+      for (const cat of categories as Array<{ rowId: number; [key: string]: unknown }>) {
+        const parent = String(cat.category_name || "Sin padre");
+        const child = String(cat.parent_category || "");
         if (!categoryTree[parent]) categoryTree[parent] = [];
         if (child) categoryTree[parent].push(child);
       }
 
-      const productsByCategory: Record<string, typeof products> = {};
-      for (const prod of products as any[]) {
-        const cat = prod.category || "Sin categoría";
+      const productsByCategory: Record<string, Array<Record<string, unknown>>> = {};
+      for (const prod of products as Array<{ rowId: number; [key: string]: unknown }>) {
+        const cat = String(prod.category || "Sin categoría");
         if (!productsByCategory[cat]) productsByCategory[cat] = [];
         productsByCategory[cat].push(prod);
       }
 
-      const modifiersByGroup: Record<string, typeof modifiers> = {};
-      for (const mod of modifiers as any[]) {
-        const grp = mod.group_name || "Sin grupo";
+      const modifiersByGroup: Record<string, Array<Record<string, unknown>>> = {};
+      for (const mod of modifiers as Array<{ rowId: number; [key: string]: unknown }>) {
+        const grp = String(mod.group_name || "Sin grupo");
         if (!modifiersByGroup[grp]) modifiersByGroup[grp] = [];
         modifiersByGroup[grp].push(mod);
       }

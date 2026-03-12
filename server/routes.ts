@@ -6214,7 +6214,7 @@ export async function registerRoutes(
     }
 
     const res = new ServerResponse(request);
-    res.assignSocket(socket as any);
+    res.assignSocket(socket as unknown as import("net").Socket);
     const sessionMiddleware = app.get("sessionMiddleware");
     if (sessionMiddleware) {
       sessionMiddleware(request as any, res as any, () => {
