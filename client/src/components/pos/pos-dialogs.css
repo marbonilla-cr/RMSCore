@@ -1095,6 +1095,16 @@
   }
   .pos-dialog-split .pos-step-panel:last-child { border-right: none; }
 
+  .pos-dialog-split .pos-sub-drop {
+    overflow-y: auto;
+    max-height: calc(50dvh - 80px);
+  }
+
+  .pos-dialog-split .split-main-items-list {
+    overflow-y: auto;
+    max-height: calc(50dvh - 80px);
+  }
+
   /* Col headers visible */
   .pos-col-header { display: flex; }
 

@@ -244,7 +244,7 @@ export function SplitDialog({ open, onClose, table, onPaySplit, onPayAll, onSepa
 
             <div className="pos-sect-lbl">Toca → para mover a subcuenta activa</div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }} data-testid="split-main-items">
+            <div className="split-main-items-list" style={{ display: "flex", flexDirection: "column", gap: 6 }} data-testid="split-main-items">
               {allItems.map((item) => {
                 const isMoved = assignedItemIds.includes(item.id);
                 return (
