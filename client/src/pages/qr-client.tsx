@@ -433,6 +433,8 @@ export default function QRClientPage() {
       return r.json();
     },
     enabled: !!tableCode && screen === 1 && !!qrToken,
+    staleTime: 0,
+    refetchOnMount: "always" as const,
   });
 
   const existingNames = useMemo(() => {
@@ -1132,8 +1134,6 @@ export default function QRClientPage() {
 
         <button data-testid="button-qr-order-more" onClick={() => {
           setCart([]);
-          setSubaccountId(null);
-          setName("");
           setScreen(1);
         }} style={{
           marginTop: 24, padding: "14px 32px", borderRadius: 30, border: `1.5px solid ${C.acc}`,
