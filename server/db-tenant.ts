@@ -9,9 +9,9 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "@shared/schema";
 import { db as globalDb } from "./db";
 
-const dbCache = new Map<string, ReturnType<typeof drizzle>>();
+const dbCache = new Map<string, typeof globalDb>();
 
-export function getTenantDb(schemaName: string) {
+export function getTenantDb(schemaName: string): typeof globalDb {
   if (schemaName === "public") return globalDb;
 
   if (dbCache.has(schemaName)) return dbCache.get(schemaName)!;
@@ -27,7 +27,7 @@ export function getTenantDb(schemaName: string) {
     client.query(`SET search_path TO "${schemaName}"`);
   });
 
-  const tenantDb = drizzle(tenantPool, { schema });
+  const tenantDb = drizzle(tenantPool, { schema }) as unknown as typeof globalDb;
   dbCache.set(schemaName, tenantDb);
   console.log(`[db-tenant] Schema "${schemaName}" conectado`);
   return tenantDb;

@@ -1674,7 +1674,7 @@ export async function normalizeOrderItemsForSplit(orderId: number, dbInstance?: 
   const modsMap = new Map<number, typeof allMods>();
   for (const m of allMods) { if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []); modsMap.get(m.orderItemId)!.push(m); }
   const ledgerMap = new Map<number, typeof allLedger[0]>();
-  for (const l of allLedger) { if (!ledgerMap.has(l.orderItemId)) ledgerMap.set(l.orderItemId, l); }
+  for (const l of allLedger) { if (l.orderItemId != null && !ledgerMap.has(l.orderItemId)) ledgerMap.set(l.orderItemId, l); }
   const ktiMap = new Map<number, typeof allKti>();
   for (const k of allKti) { if (!ktiMap.has(k.orderItemId)) ktiMap.set(k.orderItemId, []); ktiMap.get(k.orderItemId)!.push(k); }
   const taxesMap = new Map<number, typeof allTaxes>();
