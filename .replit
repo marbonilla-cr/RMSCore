@@ -63,3 +63,7 @@ QBO_ENVIRONMENT = "sandbox"
 EMAIL_FROM = "soporte@rmscore.app"
 
 [userenv.production]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
