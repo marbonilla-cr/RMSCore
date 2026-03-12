@@ -59,9 +59,9 @@ async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: nu
   return order;
 }
 
-async function cleanupSubaccountsForOrder(orderId: number) {
+async function cleanupSubaccountsForOrder(orderId: number, dbInstance: typeof db) {
   try {
-    await db.delete(orderSubaccounts).where(eq(orderSubaccounts.orderId, orderId));
+    await dbInstance.delete(orderSubaccounts).where(eq(orderSubaccounts.orderId, orderId));
   } catch (err) {
     console.error("[Subaccount Cleanup] Error cleaning subaccounts for order", orderId, err);
   }
@@ -1798,12 +1798,12 @@ export async function registerRoutes(
       storage.getOrderItemsByOrderIds(orderIds, req.db),
       storage.getPendingSubmissionsByOrderIds(orderIds, req.db),
       storage.getUsersByIds(waiterIds, req.db),
-      db.select().from(reservations).where(and(
+      req.db.select().from(reservations).where(and(
         inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
         or(eq(reservations.reservedDate, yesterdayStr), eq(reservations.reservedDate, todayStr), eq(reservations.reservedDate, tomorrowStr)),
       )),
       orderIds.length > 0
-        ? db.select().from(orderSubaccounts).where(and(inArray(orderSubaccounts.orderId, orderIds), eq(orderSubaccounts.isActive, true)))
+        ? req.db.select().from(orderSubaccounts).where(and(inArray(orderSubaccounts.orderId, orderIds), eq(orderSubaccounts.isActive, true)))
         : Promise.resolve([]),
     ]);
 
@@ -2020,7 +2020,7 @@ export async function registerRoutes(
       const destOrder = await storage.getOpenOrderForTable(dstId, req.db);
       if (destOrder) return res.status(400).json({ message: "La mesa destino ya tiene una orden abierta" });
 
-      await db.transaction(async (tx) => {
+      await req.db.transaction(async (tx) => {
         await tx.update(orders).set({ tableId: dstId }).where(eq(orders.id, sourceOrder.id));
         await tx.update(qrSubmissions).set({ tableId: dstId }).where(and(eq(qrSubmissions.orderId, sourceOrder.id), eq(qrSubmissions.tableId, srcId)));
         await tx.update(kitchenTickets).set({ tableId: dstId, tableNameSnapshot: destTable.tableName }).where(and(eq(kitchenTickets.orderId, sourceOrder.id), eq(kitchenTickets.tableId, srcId)));
@@ -2043,7 +2043,7 @@ export async function registerRoutes(
       const destTableId = parseInt(req.body.destTableId);
       if (isNaN(subaccountId) || isNaN(destTableId)) return res.status(400).json({ message: "Parámetros inválidos" });
 
-      const [subaccount] = await db.select().from(orderSubaccounts).where(eq(orderSubaccounts.id, subaccountId));
+      const [subaccount] = await req.db.select().from(orderSubaccounts).where(eq(orderSubaccounts.id, subaccountId));
       if (!subaccount) return res.status(404).json({ message: "Subcuenta no encontrada" });
 
       const sourceOrder = await storage.getOrder(subaccount.orderId, req.db);
@@ -2059,7 +2059,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "La orden destino no está activa" });
       }
 
-      await db.transaction(async (tx) => {
+      await req.db.transaction(async (tx) => {
         if (!destOrder) {
           const [newOrder] = await tx.insert(orders).values({
             tableId: destTableId,
@@ -3234,9 +3234,9 @@ export async function registerRoutes(
         await recalcOrderStatusFromItems(ticket.orderId, req.db);
 
         try {
-          const [ord] = await db.select().from(orders).where(eq(orders.id, ticket.orderId));
+          const [ord] = await req.db.select().from(orders).where(eq(orders.id, ticket.orderId));
           if (ord) {
-            const ordItems = await db.select().from(orderItems).where(eq(orderItems.orderId, ord.id));
+            const ordItems = await req.db.select().from(orderItems).where(eq(orderItems.orderId, ord.id));
             notifyDispatchReady(ord.id, {
               orderId: ord.id,
               customerName: ordItems[0]?.customerNameSnapshot || "Cliente",
@@ -3306,7 +3306,7 @@ export async function registerRoutes(
     const parentActive = parentItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
     if (parentActive.length === 0) {
       await storage.updateOrder(paidOrder.parentOrderId, { status: "PAID", closedAt: new Date() }, dbInstance);
-      await cleanupSubaccountsForOrder(paidOrder.parentOrderId);
+      await cleanupSubaccountsForOrder(paidOrder.parentOrderId, dbInstance || db);
     }
   }
 
@@ -3392,7 +3392,7 @@ export async function registerRoutes(
     const [itemCounts, allSubaccounts] = await Promise.all([
       storage.getActiveItemCountsByOrderIds(orderIds, req.db),
       allSubaccountQueryIds.length > 0
-        ? db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, allSubaccountQueryIds))
+        ? req.db.select().from(orderSubaccounts).where(inArray(orderSubaccounts.orderId, allSubaccountQueryIds))
         : Promise.resolve([]),
     ]);
 
@@ -3462,7 +3462,7 @@ export async function registerRoutes(
       storage.getOrderItemModifiersByOrderIds([orderId], req.db),
       storage.getOrderItemDiscountsByOrderIds([orderId], req.db),
       storage.getOrderItemTaxesByOrderIds([orderId], req.db),
-      db.select().from(orderSubaccounts).where(
+      req.db.select().from(orderSubaccounts).where(
         inArray(orderSubaccounts.orderId, order.parentOrderId ? [orderId, order.parentOrderId] : [orderId])
       ),
     ]);
@@ -3565,7 +3565,7 @@ export async function registerRoutes(
       if (balanceDue <= 0) {
         const items = await storage.getOrderItems(orderId, req.db);
         const activeItems = items.filter(i => i.status !== "VOIDED");
-        await db.transaction(async (tx) => {
+        await req.db.transaction(async (tx) => {
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
         });
         await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema, req.db);
@@ -3593,7 +3593,7 @@ export async function registerRoutes(
       broadcast("payment_completed", { orderId });
       broadcast("table_status_changed", {});
 
-      qbo.enqueueSyncForPayment(payment.id, orderId).catch(() => {});
+      qbo.enqueueSyncForPayment(payment.id, orderId, req.db).catch(() => {});
 
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay ${Date.now() - t0}ms`);
       res.json({ ok: true, paymentId: payment.id });
@@ -3652,7 +3652,7 @@ export async function registerRoutes(
         businessDate: bd,
       }));
 
-      const createdPayments = await db.insert(payments).values(paymentValues).returning();
+      const createdPayments = await req.db.insert(payments).values(paymentValues).returning();
       const paymentIds = createdPayments.map(p => p.id);
 
       const auditValues = createdPayments.map(p => ({
@@ -3664,14 +3664,14 @@ export async function registerRoutes(
         tableId: order.tableId,
         metadata: { orderId, amount: Number(p.amount), paymentMethodId: p.paymentMethodId, multiPay: true },
       }));
-      await db.insert(auditEvents).values(auditValues);
+      await req.db.insert(auditEvents).values(auditValues);
 
       const { balanceDue } = await storage.updateOrderPaymentTotals(orderId, req.db);
 
       if (balanceDue <= 0) {
         const items = await storage.getOrderItems(orderId, req.db);
         const activeItems = items.filter(i => i.status !== "VOIDED");
-        await db.transaction(async (tx) => {
+        await req.db.transaction(async (tx) => {
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
         });
         await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema, req.db);
@@ -3696,7 +3696,7 @@ export async function registerRoutes(
       });
 
       for (const pid of paymentIds) {
-        qbo.enqueueSyncForPayment(pid, orderId).catch(() => {});
+        qbo.enqueueSyncForPayment(pid, orderId, req.db).catch(() => {});
       }
 
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay-multi ${Date.now() - t0}ms (${legs.length} legs)`);
@@ -4066,7 +4066,7 @@ export async function registerRoutes(
         businessDate: bd,
       }, req.db);
 
-      await db.transaction(async (tx) => {
+      await req.db.transaction(async (tx) => {
         await finalizePaymentTx(tx, { orderId, itemIds: splitOrderItemIds, now });
       });
 
@@ -4085,13 +4085,13 @@ export async function registerRoutes(
       const allPaidNow = allItems.filter(i => i.status !== "VOIDED").every(i => i.status === "PAID");
       if (allPaidNow) {
         await storage.updateOrder(orderId, { status: "PAID", closedAt: now }, req.db);
-        await cleanupSubaccountsForOrder(orderId);
+        await cleanupSubaccountsForOrder(orderId, req.db);
       }
 
       broadcast("payment_completed", { orderId });
       broadcast("table_status_changed", {});
 
-      qbo.enqueueSyncForPayment(payment.id, orderId).catch(() => {});
+      qbo.enqueueSyncForPayment(payment.id, orderId, req.db).catch(() => {});
 
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay-split ${Date.now() - t0}ms`);
       const paidItemIds = splitItemsList.map(si => si.orderItemId);
@@ -4525,10 +4525,10 @@ export async function registerRoutes(
       const activeItemIds = activeItems.map(i => i.id);
       if (activeItemIds.length > 0) {
         const now = new Date();
-        await db.update(orderItems)
+        await req.db.update(orderItems)
           .set({ status: "VOIDED", voidedAt: now, voidedByUserId: userId })
           .where(inArray(orderItems.id, activeItemIds));
-        await db.update(salesLedgerItems)
+        await req.db.update(salesLedgerItems)
           .set({ status: "VOIDED" })
           .where(inArray(salesLedgerItems.orderItemId, activeItemIds));
       }
@@ -4556,12 +4556,12 @@ export async function registerRoutes(
         };
       });
       if (voidInserts.length > 0) {
-        await db.insert(voidedItems).values(voidInserts);
+        await req.db.insert(voidedItems).values(voidInserts);
       }
 
       const sentItemIds2 = activeItems.filter(i => i.sentToKitchenAt).map(i => i.id);
       if (sentItemIds2.length > 0) {
-        await db.update(kitchenTicketItems)
+        await req.db.update(kitchenTicketItems)
           .set({ status: "VOIDED" })
           .where(inArray(kitchenTicketItems.orderItemId, sentItemIds2));
       }
@@ -4574,7 +4574,7 @@ export async function registerRoutes(
       }
 
       await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date(), totalAmount: "0" }, req.db);
-      await cleanupSubaccountsForOrder(orderId);
+      await cleanupSubaccountsForOrder(orderId, req.db);
 
       if (order.parentOrderId) {
         const siblings = await storage.getChildOrders(order.parentOrderId, req.db);
@@ -4588,7 +4588,7 @@ export async function registerRoutes(
             if (parentActive.length === 0) {
               const finalStatus = anyPaid ? "PAID" : "VOIDED";
               await storage.updateOrder(order.parentOrderId, { status: finalStatus, closedAt: new Date() }, req.db);
-              await cleanupSubaccountsForOrder(order.parentOrderId);
+              await cleanupSubaccountsForOrder(order.parentOrderId, req.db);
             }
           }
         }
@@ -4668,7 +4668,7 @@ export async function registerRoutes(
       broadcast("table_status_changed", {});
       broadcast("order_updated", { orderId: payment.orderId });
 
-      qbo.voidSalesReceipt(paymentId).catch(() => {});
+      qbo.voidSalesReceipt(paymentId, req.db).catch(() => {});
 
       res.json({ ok: true });
     } catch (err: any) {
@@ -5608,7 +5608,7 @@ export async function registerRoutes(
       if (employeeId) {
         conditions.push(eq(hrOvertimeApprovals.employeeId, Number(employeeId)) as any);
       }
-      const rows = await db.select().from(hrOvertimeApprovals).where(and(...conditions));
+      const rows = await req.db.select().from(hrOvertimeApprovals).where(and(...conditions));
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -5630,7 +5630,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "La razón de rechazo es obligatoria" });
       }
 
-      const existing = await db
+      const existing = await req.db
         .select()
         .from(hrOvertimeApprovals)
         .where(
@@ -5643,9 +5643,9 @@ export async function registerRoutes(
 
       if (existing.length > 0) {
         if (status === "PENDING") {
-          await db.delete(hrOvertimeApprovals).where(eq(hrOvertimeApprovals.id, existing[0].id));
+          await req.db.delete(hrOvertimeApprovals).where(eq(hrOvertimeApprovals.id, existing[0].id));
         } else {
-          await db
+          await req.db
             .update(hrOvertimeApprovals)
             .set({
               status,
@@ -5659,7 +5659,7 @@ export async function registerRoutes(
         }
       } else {
         if (status !== "PENDING") {
-          await db.insert(hrOvertimeApprovals).values({
+          await req.db.insert(hrOvertimeApprovals).values({
             employeeId: Number(employeeId),
             businessDate: String(businessDate),
             overtimeMinutes: Number(overtimeMinutes),
@@ -5699,7 +5699,7 @@ export async function registerRoutes(
       }
 
       for (const day of days) {
-        const existing = await db
+        const existing = await req.db
           .select()
           .from(hrOvertimeApprovals)
           .where(
@@ -5720,9 +5720,9 @@ export async function registerRoutes(
         };
 
         if (existing.length > 0) {
-          await db.update(hrOvertimeApprovals).set(values).where(eq(hrOvertimeApprovals.id, existing[0].id));
+          await req.db.update(hrOvertimeApprovals).set(values).where(eq(hrOvertimeApprovals.id, existing[0].id));
         } else {
-          await db.insert(hrOvertimeApprovals).values({
+          await req.db.insert(hrOvertimeApprovals).values({
             employeeId: Number(employeeId),
             businessDate: String(day.businessDate),
             ...values,
@@ -6488,22 +6488,22 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/fix-loyverse-timestamps", requireRole("MANAGER"), async (_req, res) => {
+  app.post("/api/admin/fix-loyverse-timestamps", requireRole("MANAGER"), async (req, res) => {
     try {
-      const result1 = await db.execute(sql`
+      const result1 = await req.db.execute(sql`
         UPDATE sales_ledger_items 
         SET created_at = created_at + INTERVAL '12 hours',
             paid_at = paid_at + INTERVAL '12 hours',
             business_date = (((created_at + INTERVAL '12 hours') AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica')::date::text
         WHERE origin = 'LOYVERSE_POS'
       `);
-      const result2 = await db.execute(sql`
+      const result2 = await req.db.execute(sql`
         UPDATE payments 
         SET paid_at = paid_at + INTERVAL '12 hours'
         WHERE order_id IN (SELECT DISTINCT order_id FROM sales_ledger_items WHERE origin = 'LOYVERSE_POS')
         AND paid_at IS NOT NULL
       `);
-      const result3 = await db.execute(sql`
+      const result3 = await req.db.execute(sql`
         UPDATE sales_ledger_items
         SET category_name_snapshot = regexp_replace(category_name_snapshot, '^\d+-', '')
         WHERE origin = 'LOYVERSE_POS' AND category_name_snapshot ~ '^\d+-'
@@ -6521,10 +6521,10 @@ export async function registerRoutes(
 
   // ==================== RESERVATIONS MODULE ====================
 
-  async function generateReservationCode(): Promise<string> {
+  async function generateReservationCode(dbInstance: typeof db): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `RES-${year}-`;
-    const result = await db.select({ code: reservations.reservationCode })
+    const result = await dbInstance.select({ code: reservations.reservationCode })
       .from(reservations)
       .where(sql`reservation_code LIKE ${prefix + '%'}`)
       .orderBy(desc(reservations.id))
@@ -6533,8 +6533,8 @@ export async function registerRoutes(
     return `${prefix}${String((lastNum || 0) + 1).padStart(4, '0')}`;
   }
 
-  async function getDurationForPartySize(partySize: number): Promise<number> {
-    const configs = await db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
+  async function getDurationForPartySize(partySize: number, dbInstance: typeof db): Promise<number> {
+    const configs = await dbInstance.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
     for (const c of configs) {
       if (partySize >= c.minPartySize && partySize <= c.maxPartySize) return c.durationMinutes;
     }
@@ -6550,14 +6550,14 @@ export async function registerRoutes(
     return timeToMinutes(t) + mins;
   }
 
-  async function checkReservationConflict(tableIdOrIds: number | number[], date: string, time: string, durationMinutes: number, excludeId?: number) {
+  async function checkReservationConflict(tableIdOrIds: number | number[], date: string, time: string, durationMinutes: number, dbInstance: typeof db, excludeId?: number) {
     const tableIdsToCheck = Array.isArray(tableIdOrIds) ? tableIdOrIds : [tableIdOrIds];
     const conditions = [
       eq(reservations.reservedDate, date),
       inArray(reservations.status, ['CONFIRMED', 'SEATED']),
     ];
     if (excludeId) conditions.push(ne(reservations.id, excludeId));
-    const existing = await db.select().from(reservations).where(and(...conditions));
+    const existing = await dbInstance.select().from(reservations).where(and(...conditions));
     const newStart = timeToMinutes(time);
     const newEnd = addMinutesToTime(time, durationMinutes);
     for (const r of existing) {
@@ -6632,7 +6632,7 @@ export async function registerRoutes(
       const conditions: any[] = [eq(reservations.reservedDate, date as string)];
       if (status) conditions.push(eq(reservations.status, status as string));
 
-      let rows = await db.select().from(reservations)
+      let rows = await req.db.select().from(reservations)
         .where(and(...conditions))
         .orderBy(asc(reservations.reservedTime));
 
@@ -6668,7 +6668,7 @@ export async function registerRoutes(
       const allTables = await storage.getAllTables(false, req.db);
       const activeTables = allTables.filter(t => t.active);
 
-      const dayReservations = await db.select().from(reservations)
+      const dayReservations = await req.db.select().from(reservations)
         .where(and(
           eq(reservations.reservedDate, date as string),
           inArray(reservations.status, ['CONFIRMED', 'SEATED']),
@@ -6703,7 +6703,7 @@ export async function registerRoutes(
   app.get("/api/reservations/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const id = parseInt(req.params.id as string);
-      const rows = await db.select().from(reservations).where(eq(reservations.id, id));
+      const rows = await req.db.select().from(reservations).where(eq(reservations.id, id));
       if (rows.length === 0) return res.status(404).json({ message: "Reserva no encontrada" });
       res.json(rows[0]);
     } catch (err: any) {
@@ -6718,11 +6718,11 @@ export async function registerRoutes(
       if (!guestName || !guestPhone || !partySize || !reservedDate || !reservedTime) {
         return res.status(400).json({ message: "Faltan campos requeridos" });
       }
-      const duration = durationMinutes || await getDurationForPartySize(partySize);
+      const duration = durationMinutes || await getDurationForPartySize(partySize, req.db);
       const assignedTableIds: number[] = reqTableIds || (tableId ? [tableId] : []);
 
       if (assignedTableIds.length > 0) {
-        const conflict = await checkReservationConflict(assignedTableIds, reservedDate, reservedTime, duration);
+        const conflict = await checkReservationConflict(assignedTableIds, reservedDate, reservedTime, duration, req.db);
         if (conflict.conflict) {
           return res.status(409).json({
             message: `Conflicto con reserva existente de ${conflict.with!.guestName} (${conflict.with!.reservedTime})`,
@@ -6731,8 +6731,8 @@ export async function registerRoutes(
         }
       }
 
-      const code = await generateReservationCode();
-      const [created] = await db.insert(reservations).values({
+      const code = await generateReservationCode(req.db);
+      const [created] = await req.db.insert(reservations).values({
         reservationCode: code,
         guestName,
         guestPhone,
@@ -6759,7 +6759,7 @@ export async function registerRoutes(
   app.patch("/api/reservations/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const id = parseInt(req.params.id as string);
-      const rows = await db.select().from(reservations).where(eq(reservations.id, id));
+      const rows = await req.db.select().from(reservations).where(eq(reservations.id, id));
       if (rows.length === 0) return res.status(404).json({ message: "Reserva no encontrada" });
       const existing = rows[0];
       if (!['PENDING', 'CONFIRMED'].includes(existing.status)) {
@@ -6775,7 +6775,7 @@ export async function registerRoutes(
       const existingTableIds = getReservationTableIds(existing);
       const tablesChanged = JSON.stringify(newTableIds.sort()) !== JSON.stringify(existingTableIds.sort());
       if (newTableIds.length > 0 && (tablesChanged || newDate !== existing.reservedDate || newTime !== existing.reservedTime)) {
-        const conflict = await checkReservationConflict(newTableIds, newDate, newTime, newDuration, id);
+        const conflict = await checkReservationConflict(newTableIds, newDate, newTime, newDuration, req.db, id);
         if (conflict.conflict) {
           return res.status(409).json({
             message: `Conflicto con reserva existente de ${conflict.with!.guestName} (${conflict.with!.reservedTime})`,
@@ -6798,7 +6798,7 @@ export async function registerRoutes(
       if (notes !== undefined) updates.notes = notes;
       if (durationMinutes !== undefined) updates.durationMinutes = durationMinutes;
 
-      const [updated] = await db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
+      const [updated] = await req.db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
       broadcast("reservation_updated", { reservationId: updated.id, tableIds: getReservationTableIds(updated), status: updated.status });
       res.json(updated);
     } catch (err: any) {
@@ -6811,7 +6811,7 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id as string);
       const { status, reason } = req.body;
-      const rows = await db.select().from(reservations).where(eq(reservations.id, id));
+      const rows = await req.db.select().from(reservations).where(eq(reservations.id, id));
       if (rows.length === 0) return res.status(404).json({ message: "Reserva no encontrada" });
       const existing = rows[0];
 
@@ -6832,7 +6832,7 @@ export async function registerRoutes(
         updates.cancellationReason = reason || null;
       }
 
-      const [updated] = await db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
+      const [updated] = await req.db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
       broadcast("reservation_updated", { reservationId: updated.id, tableIds: getReservationTableIds(updated), status: updated.status });
       res.json(updated);
     } catch (err: any) {
@@ -6842,7 +6842,7 @@ export async function registerRoutes(
 
   // GET /api/reservations/duration-config
   app.get("/api/reservations/duration-config", requireRole("WAITER", "MANAGER"), async (req, res) => {
-    const configs = await db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
+    const configs = await req.db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
     res.json(configs);
   });
 
@@ -6851,15 +6851,15 @@ export async function registerRoutes(
     try {
       const { configs } = req.body;
       if (!Array.isArray(configs)) return res.status(400).json({ message: "configs debe ser un array" });
-      await db.delete(reservationDurationConfig);
+      await req.db.delete(reservationDurationConfig);
       for (const c of configs) {
-        await db.insert(reservationDurationConfig).values({
+        await req.db.insert(reservationDurationConfig).values({
           minPartySize: c.minPartySize,
           maxPartySize: c.maxPartySize,
           durationMinutes: c.durationMinutes,
         });
       }
-      const result = await db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
+      const result = await req.db.select().from(reservationDurationConfig).orderBy(asc(reservationDurationConfig.minPartySize));
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -6868,9 +6868,9 @@ export async function registerRoutes(
 
   // GET /api/reservations/settings
   app.get("/api/reservations/settings", requireRole("WAITER", "MANAGER"), async (req, res) => {
-    const rows = await db.select().from(reservationSettings);
+    const rows = await req.db.select().from(reservationSettings);
     if (rows.length === 0) {
-      const [created] = await db.insert(reservationSettings).values({}).returning();
+      const [created] = await req.db.insert(reservationSettings).values({}).returning();
       return res.json(created);
     }
     res.json(rows[0]);
@@ -6880,9 +6880,9 @@ export async function registerRoutes(
   app.put("/api/reservations/settings", requireRole("MANAGER"), async (req, res) => {
     try {
       const { openTime, closeTime, slotIntervalMinutes, maxOccupancyPercent, turnoverBufferMinutes, maxPartySize, occupancyThresholdPercent, enabled } = req.body;
-      const rows = await db.select().from(reservationSettings);
+      const rows = await req.db.select().from(reservationSettings);
       if (rows.length === 0) {
-        const [created] = await db.insert(reservationSettings).values({
+        const [created] = await req.db.insert(reservationSettings).values({
           openTime: openTime || "11:00",
           closeTime: closeTime || "22:00",
           slotIntervalMinutes: slotIntervalMinutes || 30,
@@ -6894,7 +6894,7 @@ export async function registerRoutes(
         }).returning();
         return res.json(created);
       }
-      const [updated] = await db.update(reservationSettings)
+      const [updated] = await req.db.update(reservationSettings)
         .set({
           openTime: openTime || rows[0].openTime,
           closeTime: closeTime || rows[0].closeTime,
@@ -7055,7 +7055,7 @@ export async function registerRoutes(
 
   // GET /api/public/reservations/settings (public - limited info)
   app.get("/api/public/reservations/settings", async (req, res) => {
-    const rows = await db.select().from(reservationSettings);
+    const rows = await req.db.select().from(reservationSettings);
     const settings = rows.length > 0 ? rows[0] : { openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30, enabled: true, maxPartySize: 20 };
     res.json({ openTime: settings.openTime, closeTime: settings.closeTime, slotIntervalMinutes: settings.slotIntervalMinutes, enabled: settings.enabled, maxPartySize: settings.maxPartySize ?? 20 });
   });
@@ -7071,9 +7071,9 @@ export async function registerRoutes(
       if (!guestName || !guestPhone || !partySize || !reservedDate || !reservedTime) {
         return res.status(400).json({ message: "Faltan campos requeridos" });
       }
-      const duration = await getDurationForPartySize(partySize);
+      const duration = await getDurationForPartySize(partySize, req.db);
 
-      const settingsRows = await db.select().from(reservationSettings);
+      const settingsRows = await req.db.select().from(reservationSettings);
       const settings = settingsRows.length > 0 ? settingsRows[0] : { turnoverBufferMinutes: 15, maxOccupancyPercent: 50, occupancyThresholdPercent: 10, enabled: true };
       const buffer = settings.turnoverBufferMinutes;
 
@@ -7087,7 +7087,7 @@ export async function registerRoutes(
       const maxReservableSeats = Math.max(1, Math.floor(totalSeats * settings.maxOccupancyPercent / 100));
       const thresholdSeats = Math.floor(totalSeats * (settings.occupancyThresholdPercent ?? 10) / 100);
 
-      const dayReservations = await db.select().from(reservations)
+      const dayReservations = await req.db.select().from(reservations)
         .where(and(
           eq(reservations.reservedDate, reservedDate),
           inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
@@ -7126,8 +7126,8 @@ export async function registerRoutes(
         return res.status(409).json({ message: "No hay mesas disponibles para ese horario. Por favor intente otro horario." });
       }
 
-      const code = await generateReservationCode();
-      const [created] = await db.insert(reservations).values({
+      const code = await generateReservationCode(req.db);
+      const [created] = await req.db.insert(reservations).values({
         reservationCode: code,
         guestName,
         guestPhone,
@@ -7169,7 +7169,7 @@ export async function registerRoutes(
       if (!date || !partySize) return res.status(400).json({ message: "date y partySize son requeridos" });
       const ps = parseInt(partySize as string);
 
-      const settingsRows = await db.select().from(reservationSettings);
+      const settingsRows = await req.db.select().from(reservationSettings);
       const settings = settingsRows.length > 0 ? settingsRows[0] : {
         openTime: "11:00", closeTime: "22:00", slotIntervalMinutes: 30,
         maxOccupancyPercent: 50, turnoverBufferMinutes: 15, occupancyThresholdPercent: 10, enabled: true
@@ -7190,7 +7190,7 @@ export async function registerRoutes(
       const maxReservableSeats = Math.max(1, Math.floor(totalSeats * settings.maxOccupancyPercent / 100));
       const thresholdSeats = Math.floor(totalSeats * (settings.occupancyThresholdPercent ?? 10) / 100);
 
-      const dayReservations = await db.select().from(reservations)
+      const dayReservations = await req.db.select().from(reservations)
         .where(and(
           eq(reservations.reservedDate, date as string),
           inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
@@ -7200,7 +7200,7 @@ export async function registerRoutes(
       let closeMinutes = timeToMinutes(settings.closeTime);
       if (closeMinutes <= openMinutes) closeMinutes += 1440;
       const interval = settings.slotIntervalMinutes;
-      const duration = await getDurationForPartySize(ps);
+      const duration = await getDurationForPartySize(ps, req.db);
       const buffer = settings.turnoverBufferMinutes;
 
       const slots: { time: string; available: boolean; seatsAvailable: number }[] = [];
@@ -7258,18 +7258,17 @@ export async function registerRoutes(
       const { date, time, partySize } = req.query;
       if (!date || !time || !partySize) return res.status(400).json({ message: "date, time y partySize son requeridos" });
       const ps = parseInt(partySize as string);
-      const duration = await getDurationForPartySize(ps);
+      const duration = await getDurationForPartySize(ps, req.db);
 
-      const settingsRows = await db.select().from(reservationSettings);
+      const settingsRows = await req.db.select().from(reservationSettings);
       const settings = settingsRows.length > 0 ? settingsRows[0] : { turnoverBufferMinutes: 15 };
       const buffer = settings.turnoverBufferMinutes;
 
       const allTables = await storage.getAllTables(false, req.db);
       const activeTables = allTables.filter(t => t.active);
 
-      const dayReservations = await db.select().from(reservations)
+      const dayReservations = await req.db.select().from(reservations)
         .where(and(
-          
           eq(reservations.reservedDate, date as string),
           inArray(reservations.status, ['PENDING', 'CONFIRMED', 'SEATED']),
         ));
@@ -7299,9 +7298,9 @@ export async function registerRoutes(
   });
 
   // ==================== QUICKBOOKS ONLINE INTEGRATION ====================
-  app.get("/api/qbo/auth-url", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.get("/api/qbo/auth-url", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const url = await qbo.getAuthUrl();
+      const url = await qbo.getAuthUrl(req.db);
       res.json({ url });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7315,7 +7314,7 @@ export async function registerRoutes(
       if (!state || !qbo.validateOAuthState(state as string)) {
         return res.status(403).send("Invalid or expired OAuth state");
       }
-      await qbo.handleOAuthCallback(code as string, realmId as string);
+      await qbo.handleOAuthCallback(code as string, realmId as string, req.db);
       res.redirect("/admin/quickbooks?connected=true");
     } catch (err: any) {
       console.error("[QBO] OAuth callback error:", err.message);
@@ -7323,9 +7322,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/qbo/status", requirePermission("MODULE_ADMIN_VIEW"), async (_req, res) => {
+  app.get("/api/qbo/status", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const config = await qbo.getQboConfig();
+      const config = await qbo.getQboConfig(req.db);
       if (!config) return res.json({ connected: false });
       res.json({
         connected: config.isConnected,
@@ -7345,7 +7344,7 @@ export async function registerRoutes(
 
   app.post("/api/qbo/disconnect", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      await qbo.disconnectQBO();
+      await qbo.disconnectQBO(req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7354,7 +7353,7 @@ export async function registerRoutes(
 
   app.get("/api/qbo/credentials", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const status = await qbo.getCredentialStatus();
+      const status = await qbo.getCredentialStatus(req.db);
       res.json(status);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7364,7 +7363,7 @@ export async function registerRoutes(
   app.put("/api/qbo/credentials", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
       const { clientId, clientSecret, redirectUri, environment } = req.body;
-      await qbo.saveCredentials({ clientId, clientSecret, redirectUri, environment });
+      await qbo.saveCredentials({ clientId, clientSecret, redirectUri, environment }, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7373,7 +7372,7 @@ export async function registerRoutes(
 
   app.put("/api/qbo/settings", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      await qbo.updateQboSettings(req.body);
+      await qbo.updateQboSettings(req.body, req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7382,7 +7381,7 @@ export async function registerRoutes(
 
   app.get("/api/qbo/items", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const items = await qbo.getQBOItems();
+      const items = await qbo.getQBOItems(req.db);
       res.json(items);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7391,7 +7390,7 @@ export async function registerRoutes(
 
   app.get("/api/qbo/accounts", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const accounts = await qbo.getQBOAccounts();
+      const accounts = await qbo.getQBOAccounts(req.db);
       res.json(accounts);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7400,7 +7399,7 @@ export async function registerRoutes(
 
   app.get("/api/qbo/tax-codes", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const codes = await qbo.getQBOTaxCodes();
+      const codes = await qbo.getQBOTaxCodes(req.db);
       res.json(codes);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7409,7 +7408,7 @@ export async function registerRoutes(
 
   app.get("/api/qbo/mappings", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const mappings = await qbo.getMappings();
+      const mappings = await qbo.getMappings(req.db);
       res.json(mappings);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7418,7 +7417,7 @@ export async function registerRoutes(
 
   app.put("/api/qbo/mappings", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      await qbo.saveMappings(req.body.mappings || []);
+      await qbo.saveMappings(req.body.mappings || [], req.db);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7430,7 +7429,7 @@ export async function registerRoutes(
       const status = req.query.status as string | undefined;
       const limit = parseInt(req.query.limit as string) || 50;
       const offset = parseInt(req.query.offset as string) || 0;
-      const logs = await qbo.getSyncLog(status, limit, offset);
+      const logs = await qbo.getSyncLog(status, limit, offset, req.db);
       res.json(logs);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7439,7 +7438,7 @@ export async function registerRoutes(
 
   app.get("/api/qbo/sync-stats", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const stats = await qbo.getSyncStats();
+      const stats = await qbo.getSyncStats(req.db);
       res.json(stats);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7459,7 +7458,7 @@ export async function registerRoutes(
     try {
       const logId = parseInt(req.params.id as string);
       if (isNaN(logId)) return res.status(400).json({ message: "ID inválido" });
-      const ok = await qbo.resetSyncEntry(logId);
+      const ok = await qbo.resetSyncEntry(logId, req.db);
       if (!ok) return res.status(404).json({ message: "Entrada no encontrada o no es reintentable" });
       res.json({ ok: true });
     } catch (err: any) {
@@ -7471,7 +7470,7 @@ export async function registerRoutes(
     try {
       const { fromDate } = req.body;
       if (!fromDate) return res.status(400).json({ message: "fromDate requerido" });
-      const queued = await qbo.initialSync(fromDate);
+      const queued = await qbo.initialSync(fromDate, req.db);
       res.json({ ok: true, queued });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7629,7 +7628,7 @@ export async function registerRoutes(
       const dateFrom = req.query.date_from as string || new Date().toISOString().split("T")[0];
       const dateTo = req.query.date_to as string || dateFrom;
 
-      const paidPaymentRows = await db.select({
+      const paidPaymentRows = await req.db.select({
         paymentId: payments.id,
         orderId: payments.orderId,
         amount: payments.amount,
@@ -7652,14 +7651,14 @@ export async function registerRoutes(
       const paymentIds = paidPaymentRows.map(p => p.paymentId);
 
       const [orderRows, syncRows, pmRows, ledgerRows] = await Promise.all([
-        db.select({
+        req.db.select({
           id: orders.id,
           globalNumber: orders.globalNumber,
           tableId: orders.tableId,
         }).from(orders).where(inArray(orders.id, orderIds)),
-        db.select().from(qboSyncLog).where(inArray(qboSyncLog.paymentId, paymentIds)),
+        req.db.select().from(qboSyncLog).where(inArray(qboSyncLog.paymentId, paymentIds)),
         storage.getAllPaymentMethods(req.db),
-        db.select({
+        req.db.select({
           orderId: salesLedgerItems.orderId,
           categoryName: salesLedgerItems.categoryNameSnapshot,
         }).from(salesLedgerItems).where(inArray(salesLedgerItems.orderId, orderIds)),

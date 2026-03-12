@@ -22,8 +22,8 @@ interface QboCredentials {
   encryptKey: string;
 }
 
-async function getCredentials(): Promise<QboCredentials> {
-  const config = await getQboConfig();
+async function getCredentials(dbInstance?: typeof db): Promise<QboCredentials> {
+  const config = await getQboConfig(dbInstance);
   let clientId = process.env.QBO_CLIENT_ID || "";
   let clientSecret = process.env.QBO_CLIENT_SECRET || "";
 
@@ -79,17 +79,19 @@ export function decrypt(text: string): string {
   return decrypted;
 }
 
-export async function getQboConfig(): Promise<QboConfig | null> {
-  const [row] = await db.select().from(qboConfig).limit(1);
+export async function getQboConfig(dbInstance?: typeof db): Promise<QboConfig | null> {
+  const d = dbInstance || db;
+  const [row] = await d.select().from(qboConfig).limit(1);
   return row || null;
 }
 
-async function upsertQboConfig(data: Partial<QboConfig>) {
-  const existing = await getQboConfig();
+async function upsertQboConfig(data: Partial<QboConfig>, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const existing = await getQboConfig(d);
   if (existing) {
-    await db.update(qboConfig).set(data).where(eq(qboConfig.id, existing.id));
+    await d.update(qboConfig).set(data).where(eq(qboConfig.id, existing.id));
   } else {
-    await db.insert(qboConfig).values(data as any);
+    await d.insert(qboConfig).values(data as any);
   }
 }
 
@@ -98,16 +100,16 @@ export async function saveCredentials(data: {
   clientSecret?: string;
   redirectUri?: string;
   environment?: string;
-}): Promise<void> {
+}, dbInstance?: typeof db): Promise<void> {
   const updateData: Partial<QboConfig> = {};
   if (data.clientId !== undefined) updateData.dbClientId = data.clientId ? encrypt(data.clientId) : null;
   if (data.clientSecret !== undefined) updateData.dbClientSecret = data.clientSecret ? encrypt(data.clientSecret) : null;
   if (data.redirectUri !== undefined) updateData.dbRedirectUri = data.redirectUri || null;
   if (data.environment !== undefined) updateData.dbEnvironment = data.environment || null;
-  await upsertQboConfig(updateData);
+  await upsertQboConfig(updateData, dbInstance);
 }
 
-export async function getCredentialStatus(): Promise<{
+export async function getCredentialStatus(dbInstance?: typeof db): Promise<{
   hasClientId: boolean;
   hasClientSecret: boolean;
   hasEncryptKey: boolean;
@@ -115,7 +117,7 @@ export async function getCredentialStatus(): Promise<{
   environment: string;
   source: string;
 }> {
-  const config = await getQboConfig();
+  const config = await getQboConfig(dbInstance);
   const hasDbClientId = !!(config?.dbClientId);
   const hasEnvClientId = !!process.env.QBO_CLIENT_ID;
 
@@ -129,12 +131,12 @@ export async function getCredentialStatus(): Promise<{
   };
 }
 
-export async function getAuthUrl(): Promise<string> {
+export async function getAuthUrl(dbInstance?: typeof db): Promise<string> {
   oauthStateStore.forEach((ts, key) => {
     if (Date.now() - ts > STATE_TTL_MS) oauthStateStore.delete(key);
   });
 
-  const creds = await getCredentials();
+  const creds = await getCredentials(dbInstance);
   console.log('[QBO AUTH]', { clientId: creds?.clientId, hasSecret: !!creds?.clientSecret });
 
   if (!creds.clientId || !creds.clientSecret) {
@@ -163,8 +165,8 @@ export function validateOAuthState(state: string): boolean {
   return Date.now() - ts < STATE_TTL_MS;
 }
 
-async function exchangeToken(code: string): Promise<{ access_token: string; refresh_token: string; expires_in: number; x_refresh_token_expires_in: number }> {
-  const creds = await getCredentials();
+async function exchangeToken(code: string, dbInstance?: typeof db): Promise<{ access_token: string; refresh_token: string; expires_in: number; x_refresh_token_expires_in: number }> {
+  const creds = await getCredentials(dbInstance);
   const credentials = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString("base64");
   const res = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
     method: "POST",
@@ -186,8 +188,8 @@ async function exchangeToken(code: string): Promise<{ access_token: string; refr
   return res.json();
 }
 
-export async function handleOAuthCallback(code: string, realmId: string): Promise<void> {
-  const tokenData = await exchangeToken(code);
+export async function handleOAuthCallback(code: string, realmId: string, dbInstance?: typeof db): Promise<void> {
+  const tokenData = await exchangeToken(code, dbInstance);
   const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000);
 
   await upsertQboConfig({
@@ -198,11 +200,12 @@ export async function handleOAuthCallback(code: string, realmId: string): Promis
     isConnected: true,
     connectedAt: new Date(),
     lastTokenRefresh: new Date(),
-  });
+  }, dbInstance);
 }
 
-export async function ensureFreshToken(): Promise<string> {
-  const config = await getQboConfig();
+export async function ensureFreshToken(dbInstance?: typeof db): Promise<string> {
+  const d = dbInstance || db;
+  const config = await getQboConfig(d);
   if (!config || !config.isConnected || !config.refreshToken) {
     throw new Error("QBO not connected");
   }
@@ -216,7 +219,7 @@ export async function ensureFreshToken(): Promise<string> {
   }
 
   const refreshToken = decrypt(config.refreshToken);
-  const creds = await getCredentials();
+  const creds = await getCredentials(d);
   const credentials = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString("base64");
 
   const res = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
@@ -235,7 +238,7 @@ export async function ensureFreshToken(): Promise<string> {
   if (!res.ok) {
     const errBody = await res.text();
     console.error("[QBO] Token refresh failed:", errBody);
-    await upsertQboConfig({ isConnected: false });
+    await upsertQboConfig({ isConnected: false }, d);
     throw new Error("QBO token refresh failed — reconnect required");
   }
 
@@ -247,16 +250,16 @@ export async function ensureFreshToken(): Promise<string> {
     refreshToken: encrypt(tokenData.refresh_token),
     tokenExpiresAt: newExpiresAt,
     lastTokenRefresh: new Date(),
-  });
+  }, d);
 
   return tokenData.access_token;
 }
 
-async function qboApiGet(path: string): Promise<any> {
-  const config = await getQboConfig();
+async function qboApiGet(path: string, dbInstance?: typeof db): Promise<any> {
+  const config = await getQboConfig(dbInstance);
   if (!config?.realmId) throw new Error("QBO realmId not configured");
-  const token = await ensureFreshToken();
-  const creds = await getCredentials();
+  const token = await ensureFreshToken(dbInstance);
+  const creds = await getCredentials(dbInstance);
   const url = `${getBaseUrl(creds.environment)}/v3/company/${config.realmId}${path}`;
   const res = await fetch(url, {
     headers: {
@@ -271,11 +274,11 @@ async function qboApiGet(path: string): Promise<any> {
   return res.json();
 }
 
-async function qboApiPost(path: string, body: any): Promise<any> {
-  const config = await getQboConfig();
+async function qboApiPost(path: string, body: any, dbInstance?: typeof db): Promise<any> {
+  const config = await getQboConfig(dbInstance);
   if (!config?.realmId) throw new Error("QBO realmId not configured");
-  const token = await ensureFreshToken();
-  const creds = await getCredentials();
+  const token = await ensureFreshToken(dbInstance);
+  const creds = await getCredentials(dbInstance);
   const url = `${getBaseUrl(creds.environment)}/v3/company/${config.realmId}${path}`;
   const res = await fetch(url, {
     method: "POST",
@@ -293,32 +296,32 @@ async function qboApiPost(path: string, body: any): Promise<any> {
   return res.json();
 }
 
-export async function getQBOItems(): Promise<{ id: string; name: string; type: string }[]> {
-  const data = await qboApiGet("/query?query=" + encodeURIComponent("SELECT * FROM Item WHERE Active = true MAXRESULTS 1000"));
+export async function getQBOItems(dbInstance?: typeof db): Promise<{ id: string; name: string; type: string }[]> {
+  const data = await qboApiGet("/query?query=" + encodeURIComponent("SELECT * FROM Item WHERE Active = true MAXRESULTS 1000"), dbInstance);
   const items = data?.QueryResponse?.Item || [];
   return items
     .filter((i: any) => i.Type !== "Category")
     .map((i: any) => ({ id: String(i.Id), name: i.Name, type: i.Type }));
 }
 
-export async function getQBOAccounts(): Promise<{ id: string; name: string; accountType: string }[]> {
-  const data = await qboApiGet("/query?query=" + encodeURIComponent("SELECT * FROM Account WHERE Active = true AND AccountType IN ('Bank', 'Other Current Asset') MAXRESULTS 500"));
+export async function getQBOAccounts(dbInstance?: typeof db): Promise<{ id: string; name: string; accountType: string }[]> {
+  const data = await qboApiGet("/query?query=" + encodeURIComponent("SELECT * FROM Account WHERE Active = true AND AccountType IN ('Bank', 'Other Current Asset') MAXRESULTS 500"), dbInstance);
   const accts = data?.QueryResponse?.Account || [];
   return accts.map((a: any) => ({ id: String(a.Id), name: a.Name, accountType: a.AccountType }));
 }
 
-export async function getQBOTaxCodes(): Promise<{ id: string; name: string; rate: number }[]> {
-  const data = await qboApiGet("/query?query=" + encodeURIComponent("SELECT * FROM TaxCode WHERE Active = true MAXRESULTS 100"));
+export async function getQBOTaxCodes(dbInstance?: typeof db): Promise<{ id: string; name: string; rate: number }[]> {
+  const data = await qboApiGet("/query?query=" + encodeURIComponent("SELECT * FROM TaxCode WHERE Active = true MAXRESULTS 100"), dbInstance);
   const codes = data?.QueryResponse?.TaxCode || [];
   return codes.map((t: any) => ({ id: String(t.Id), name: t.Name, rate: 0 }));
 }
 
-async function findOrCreateCustomer(name: string): Promise<string> {
-  const data = await qboApiGet("/query?query=" + encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName = '${name}' MAXRESULTS 1`));
+async function findOrCreateCustomer(name: string, dbInstance?: typeof db): Promise<string> {
+  const data = await qboApiGet("/query?query=" + encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName = '${name}' MAXRESULTS 1`), dbInstance);
   const existing = data?.QueryResponse?.Customer;
   if (existing && existing.length > 0) return String(existing[0].Id);
 
-  const created = await qboApiPost("/customer", { DisplayName: name });
+  const created = await qboApiPost("/customer", { DisplayName: name }, dbInstance);
   return String(created.Customer.Id);
 }
 
@@ -330,20 +333,21 @@ function getDepositAccountForMethod(config: QboConfig, paymentCode: string): str
   return config.depositAccountCard || null;
 }
 
-export async function createSalesReceipt(orderId: number, paymentId: number): Promise<string> {
-  const existingLog = await db.select().from(qboSyncLog)
+export async function createSalesReceipt(orderId: number, paymentId: number, dbInstance?: typeof db): Promise<string> {
+  const d = dbInstance || db;
+  const existingLog = await d.select().from(qboSyncLog)
     .where(and(eq(qboSyncLog.paymentId, paymentId), eq(qboSyncLog.status, "SUCCESS")))
     .limit(1);
   if (existingLog.length > 0) return existingLog[0].qboReceiptId || "";
 
-  const config = await getQboConfig();
+  const config = await getQboConfig(d);
   if (!config || !config.isConnected) throw new Error("QBO not connected");
 
-  const payment = await storage.getPayment(paymentId);
+  const payment = await storage.getPayment(paymentId, d);
   if (!payment) {
     const msg = `Pago #${paymentId} no encontrado en la base de datos — requiere revisión manual en QBO`;
     console.error(`[QBO] ${msg}`);
-    await db.update(qboSyncLog).set({
+    await d.update(qboSyncLog).set({
       status: "FAILED",
       attempts: 5,
       errorMessage: msg,
@@ -352,11 +356,11 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
   }
 
   const effectiveOrderId = payment.orderId;
-  const order = await storage.getOrder(effectiveOrderId);
+  const order = await storage.getOrder(effectiveOrderId, d);
   if (!order) {
     const msg = `Orden #${effectiveOrderId} no encontrada en la base de datos (Pago #${paymentId}) — requiere revisión manual en QBO`;
     console.error(`[QBO] ${msg}`);
-    await db.update(qboSyncLog).set({
+    await d.update(qboSyncLog).set({
       status: "FAILED",
       attempts: 5,
       errorMessage: msg,
@@ -364,13 +368,13 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
     throw new Error(msg);
   }
 
-  const items = await storage.getOrderItems(effectiveOrderId);
+  const items = await storage.getOrderItems(effectiveOrderId, d);
   const activeItems = items.filter(i => i.status !== "VOIDED");
 
   if (activeItems.length === 0) {
     const msg = `Todos los ítems anulados en orden #${effectiveOrderId} — nada que sincronizar`;
     console.log(`[QBO] ${msg}`);
-    await db.update(qboSyncLog).set({
+    await d.update(qboSyncLog).set({
       status: "SKIPPED",
       errorMessage: msg,
       syncedAt: new Date(),
@@ -378,12 +382,12 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
     return "";
   }
 
-  const pm = await storage.getPaymentMethod(payment.paymentMethodId);
+  const pm = await storage.getPaymentMethod(payment.paymentMethodId, d);
 
-  const mappings = await db.select().from(qboCategoryMapping);
+  const mappings = await d.select().from(qboCategoryMapping);
   const mappingMap = new Map(mappings.map(m => [m.categoryId, m]));
 
-  const allProducts = await db.select({
+  const allProducts = await d.select({
     id: dsql`"products"."id"`,
     categoryId: dsql`"products"."category_id"`,
   }).from(dsql`products`);
@@ -456,7 +460,7 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
     });
   }
 
-  const customerId = await findOrCreateCustomer("Cliente Mostrador");
+  const customerId = await findOrCreateCustomer("Cliente Mostrador", d);
   const depositAccount = pm ? getDepositAccountForMethod(config, pm.paymentCode) : null;
 
   const baseNum = order.globalNumber ? `G-${order.globalNumber}` : (order.dailyNumber ? `D-${order.dailyNumber}` : `${order.id}`);
@@ -475,12 +479,12 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
   }
 
   try {
-    const result = await qboApiPost("/salesreceipt", receiptBody);
+    const result = await qboApiPost("/salesreceipt", receiptBody, d);
     const receipt = result.SalesReceipt;
     const qboId = String(receipt.Id);
     const qboDocNum = receipt.DocNumber || "";
 
-    await db.update(qboSyncLog).set({
+    await d.update(qboSyncLog).set({
       status: "SUCCESS",
       qboReceiptId: qboId,
       qboReceiptNumber: qboDocNum,
@@ -492,11 +496,11 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
     return qboId;
   } catch (err: any) {
     const backoffMinutes = [5, 15, 60, 240, 1440];
-    const logEntry = await db.select().from(qboSyncLog).where(eq(qboSyncLog.paymentId, paymentId)).limit(1);
+    const logEntry = await d.select().from(qboSyncLog).where(eq(qboSyncLog.paymentId, paymentId)).limit(1);
     const attempts = logEntry[0]?.attempts || 0;
     const nextRetry = new Date(Date.now() + (backoffMinutes[Math.min(attempts, backoffMinutes.length - 1)] * 60 * 1000));
 
-    await db.update(qboSyncLog).set({
+    await d.update(qboSyncLog).set({
       status: "FAILED",
       errorMessage: err.message?.substring(0, 500),
       attempts: dsql`${qboSyncLog.attempts} + 1`,
@@ -507,23 +511,24 @@ export async function createSalesReceipt(orderId: number, paymentId: number): Pr
   }
 }
 
-export async function voidSalesReceipt(paymentId: number): Promise<void> {
-  const [logEntry] = await db.select().from(qboSyncLog)
+export async function voidSalesReceipt(paymentId: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  const [logEntry] = await d.select().from(qboSyncLog)
     .where(and(eq(qboSyncLog.paymentId, paymentId), eq(qboSyncLog.status, "SUCCESS")))
     .limit(1);
 
   if (!logEntry || !logEntry.qboReceiptId) return;
 
   try {
-    const receiptData = await qboApiGet(`/salesreceipt/${logEntry.qboReceiptId}`);
+    const receiptData = await qboApiGet(`/salesreceipt/${logEntry.qboReceiptId}`, d);
     const receipt = receiptData.SalesReceipt;
 
     await qboApiPost("/salesreceipt?operation=void", {
       Id: receipt.Id,
       SyncToken: receipt.SyncToken,
-    });
+    }, d);
 
-    await db.update(qboSyncLog).set({
+    await d.update(qboSyncLog).set({
       status: "VOIDED",
       syncedAt: new Date(),
     }).where(eq(qboSyncLog.id, logEntry.id));
@@ -532,11 +537,11 @@ export async function voidSalesReceipt(paymentId: number): Promise<void> {
   }
 }
 
-export async function retryPendingSync(): Promise<number> {
-  const config = await getQboConfig();
+async function retryPendingSyncForTenant(tdb: typeof db): Promise<number> {
+  const config = await getQboConfig(tdb);
   if (!config || !config.isConnected) return 0;
 
-  await db.update(qboSyncLog).set({
+  await tdb.update(qboSyncLog).set({
     status: "PENDING",
     attempts: 0,
     errorMessage: null,
@@ -546,7 +551,7 @@ export async function retryPendingSync(): Promise<number> {
   );
 
   const now = new Date();
-  const pendingLogs = await db.select().from(qboSyncLog)
+  const pendingLogs = await tdb.select().from(qboSyncLog)
     .where(
       dsql`(${qboSyncLog.status} = 'PENDING') OR (${qboSyncLog.status} = 'FAILED' AND ${qboSyncLog.nextRetryAt} <= ${now} AND ${qboSyncLog.attempts} < 5)`
     )
@@ -556,13 +561,13 @@ export async function retryPendingSync(): Promise<number> {
   let processed = 0;
   for (const log of pendingLogs) {
     try {
-      await createSalesReceipt(log.orderId, log.paymentId);
+      await createSalesReceipt(log.orderId, log.paymentId, tdb);
       processed++;
     } catch (err: any) {
       console.error(`[QBO] Retry failed for payment ${log.paymentId}:`, err.message);
       const newAttempts = (log.attempts || 0) + 1;
       if (newAttempts >= 5) {
-        await db.update(qboSyncLog).set({
+        await tdb.update(qboSyncLog).set({
           status: "ABANDONED",
           errorMessage: err.message?.substring(0, 500),
           attempts: newAttempts,
@@ -571,7 +576,7 @@ export async function retryPendingSync(): Promise<number> {
         console.warn(`[QBO] Payment ${log.paymentId} abandoned after ${newAttempts} attempts`);
       } else {
         const nextRetry = new Date(Date.now() + (backoffMinutes[Math.min(newAttempts - 1, backoffMinutes.length - 1)] * 60 * 1000));
-        await db.update(qboSyncLog).set({
+        await tdb.update(qboSyncLog).set({
           status: "FAILED",
           errorMessage: err.message?.substring(0, 500),
           attempts: newAttempts,
@@ -583,10 +588,36 @@ export async function retryPendingSync(): Promise<number> {
   return processed;
 }
 
-export async function resetSyncEntry(logId: number): Promise<boolean> {
-  const [entry] = await db.select().from(qboSyncLog).where(eq(qboSyncLog.id, logId)).limit(1);
+export async function retryPendingSync(): Promise<number> {
+  const { Pool } = await import("pg");
+  const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  let totalProcessed = 0;
+  try {
+    const { rows: tenants } = await publicPool.query(
+      `SELECT schema_name FROM public.tenants WHERE is_active = true`
+    );
+    const schemas = tenants.map((t: any) => t.schema_name);
+    if (schemas.length === 0) schemas.push(process.env.TENANT_SCHEMA || "public");
+    for (const schema of schemas) {
+      try {
+        const { getTenantDb } = await import("./db-tenant");
+        const tdb = getTenantDb(schema);
+        totalProcessed += await retryPendingSyncForTenant(tdb);
+      } catch (err: any) {
+        console.error(`[QBO] Retry error for schema ${schema}:`, err.message);
+      }
+    }
+  } finally {
+    await publicPool.end();
+  }
+  return totalProcessed;
+}
+
+export async function resetSyncEntry(logId: number, dbInstance?: typeof db): Promise<boolean> {
+  const d = dbInstance || db;
+  const [entry] = await d.select().from(qboSyncLog).where(eq(qboSyncLog.id, logId)).limit(1);
   if (!entry || (entry.status !== "ABANDONED" && entry.status !== "FAILED")) return false;
-  await db.update(qboSyncLog).set({
+  await d.update(qboSyncLog).set({
     status: "PENDING",
     attempts: 0,
     errorMessage: null,
@@ -595,30 +626,32 @@ export async function resetSyncEntry(logId: number): Promise<boolean> {
   return true;
 }
 
-export async function enqueueSyncForPayment(paymentId: number, orderId: number): Promise<void> {
-  const config = await getQboConfig();
+export async function enqueueSyncForPayment(paymentId: number, orderId: number, dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  const config = await getQboConfig(d);
   if (!config || !config.isConnected) return;
 
-  const payment = await storage.getPayment(paymentId);
+  const payment = await storage.getPayment(paymentId, d);
   if (!payment) return;
   if ((payment as any).origin === "LOYVERSE") return;
 
   if (config.syncFromDate && payment.businessDate < config.syncFromDate) return;
 
-  await db.insert(qboSyncLog).values({
+  await d.insert(qboSyncLog).values({
     paymentId,
     orderId,
     status: "PENDING",
   }).onConflictDoNothing();
 
-  createSalesReceipt(orderId, paymentId)
+  createSalesReceipt(orderId, paymentId, d)
     .catch(err => console.error("[QBO] Sync failed, will retry:", err.message));
 }
 
-export async function disconnectQBO(): Promise<void> {
-  const config = await getQboConfig();
+export async function disconnectQBO(dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
+  const config = await getQboConfig(d);
   if (!config) return;
-  await db.update(qboConfig).set({
+  await d.update(qboConfig).set({
     accessToken: null,
     refreshToken: null,
     realmId: null,
@@ -633,14 +666,15 @@ export async function updateQboSettings(data: {
   depositAccountSinpe?: string;
   taxCodeRef?: string;
   syncFromDate?: string;
-}): Promise<void> {
-  await upsertQboConfig(data as any);
+}, dbInstance?: typeof db): Promise<void> {
+  await upsertQboConfig(data as any, dbInstance);
 }
 
-export async function getMappings(): Promise<any[]> {
-  const allCats = await storage.getAllCategories();
+export async function getMappings(dbInstance?: typeof db): Promise<any[]> {
+  const d = dbInstance || db;
+  const allCats = await storage.getAllCategories(d);
   const subCats = allCats.filter(cat => cat.parentCategoryCode !== null && cat.parentCategoryCode !== undefined);
-  const mappings = await db.select().from(qboCategoryMapping);
+  const mappings = await d.select().from(qboCategoryMapping);
   const mappingMap = new Map(mappings.map(m => [m.categoryId, m]));
 
   return subCats.map(cat => ({
@@ -651,18 +685,19 @@ export async function getMappings(): Promise<any[]> {
   }));
 }
 
-export async function saveMappings(mappingsData: { categoryId: number; qboItemId: string; qboItemName: string }[]): Promise<void> {
+export async function saveMappings(mappingsData: { categoryId: number; qboItemId: string; qboItemName: string }[], dbInstance?: typeof db): Promise<void> {
+  const d = dbInstance || db;
   for (const m of mappingsData) {
-    const [existing] = await db.select().from(qboCategoryMapping)
+    const [existing] = await d.select().from(qboCategoryMapping)
       .where(eq(qboCategoryMapping.categoryId, m.categoryId)).limit(1);
     if (existing) {
-      await db.update(qboCategoryMapping).set({
+      await d.update(qboCategoryMapping).set({
         qboItemId: m.qboItemId,
         qboItemName: m.qboItemName,
         updatedAt: new Date(),
       }).where(eq(qboCategoryMapping.id, existing.id));
     } else {
-      await db.insert(qboCategoryMapping).values({
+      await d.insert(qboCategoryMapping).values({
         categoryId: m.categoryId,
         qboItemId: m.qboItemId,
         qboItemName: m.qboItemName,
@@ -671,10 +706,11 @@ export async function saveMappings(mappingsData: { categoryId: number; qboItemId
   }
 }
 
-export async function getSyncLog(status?: string, limit = 50, offset = 0): Promise<any[]> {
-  let query = db.select().from(qboSyncLog).orderBy(dsql`${qboSyncLog.createdAt} DESC`).limit(limit).offset(offset);
+export async function getSyncLog(status?: string, limit = 50, offset = 0, dbInstance?: typeof db): Promise<any[]> {
+  const d = dbInstance || db;
+  let query = d.select().from(qboSyncLog).orderBy(dsql`${qboSyncLog.createdAt} DESC`).limit(limit).offset(offset);
   if (status) {
-    return db.select().from(qboSyncLog)
+    return d.select().from(qboSyncLog)
       .where(eq(qboSyncLog.status, status))
       .orderBy(dsql`${qboSyncLog.createdAt} DESC`)
       .limit(limit).offset(offset);
@@ -682,24 +718,25 @@ export async function getSyncLog(status?: string, limit = 50, offset = 0): Promi
   return query;
 }
 
-export async function getSyncStats(): Promise<{ successToday: number; pending: number; failed: number; lastSuccess: Date | null }> {
+export async function getSyncStats(dbInstance?: typeof db): Promise<{ successToday: number; pending: number; failed: number; lastSuccess: Date | null }> {
+  const d = dbInstance || db;
   const today = new Date();
   const todayStr = today.toISOString().split("T")[0];
 
-  const [successToday] = await db.select({ count: dsql<number>`count(*)::int` })
+  const [successToday] = await d.select({ count: dsql<number>`count(*)::int` })
     .from(qboSyncLog)
     .where(and(
       eq(qboSyncLog.status, "SUCCESS"),
       dsql`${qboSyncLog.syncedAt}::date = ${todayStr}`
     ));
 
-  const [pending] = await db.select({ count: dsql<number>`count(*)::int` })
+  const [pending] = await d.select({ count: dsql<number>`count(*)::int` })
     .from(qboSyncLog).where(eq(qboSyncLog.status, "PENDING"));
 
-  const [failed] = await db.select({ count: dsql<number>`count(*)::int` })
+  const [failed] = await d.select({ count: dsql<number>`count(*)::int` })
     .from(qboSyncLog).where(eq(qboSyncLog.status, "FAILED"));
 
-  const [lastSuccess] = await db.select({ syncedAt: qboSyncLog.syncedAt })
+  const [lastSuccess] = await d.select({ syncedAt: qboSyncLog.syncedAt })
     .from(qboSyncLog).where(eq(qboSyncLog.status, "SUCCESS"))
     .orderBy(dsql`${qboSyncLog.syncedAt} DESC`).limit(1);
 
@@ -711,15 +748,16 @@ export async function getSyncStats(): Promise<{ successToday: number; pending: n
   };
 }
 
-export async function initialSync(fromDate: string): Promise<number> {
-  const config = await getQboConfig();
+export async function initialSync(fromDate: string, dbInstance?: typeof db): Promise<number> {
+  const d = dbInstance || db;
+  const config = await getQboConfig(d);
   if (!config || !config.isConnected) throw new Error("QBO not connected");
 
-  const existingSuccess = await db.select({ paymentId: qboSyncLog.paymentId })
+  const existingSuccess = await d.select({ paymentId: qboSyncLog.paymentId })
     .from(qboSyncLog).where(eq(qboSyncLog.status, "SUCCESS"));
   const successIds = new Set(existingSuccess.map(e => e.paymentId));
 
-  const eligiblePayments = await db.select({
+  const eligiblePayments = await d.select({
     id: payments.id,
     orderId: payments.orderId,
   }).from(payments).where(
@@ -738,7 +776,7 @@ export async function initialSync(fromDate: string): Promise<number> {
   let queued = 0;
   for (const p of systemPayments) {
     try {
-      await db.insert(qboSyncLog).values({
+      await d.insert(qboSyncLog).values({
         paymentId: p.id,
         orderId: p.orderId,
         status: "PENDING",
