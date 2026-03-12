@@ -1,0 +1,34 @@
+Entendido. El problema es que en el paso 6, cuando el cliente vuelve a la pantalla de nombre después de enviar su orden, **no aparecen los nombres de los subaccounts ya creados en esa mesa**.
+
+Antes del refactor sí aparecían. El refactor de storage.ts tocó algo en el backend que hace que la query de subaccounts no retorne los datos correctos.
+
+Necesito revisar qué cambió en el backend antes de escribir el prompt.El problema está identificado. Las rutas QR en `routes.ts` son **públicas** (no pasan por `tenantMiddleware` de la misma forma), por lo que cuando se refactorizaron para pasar `req.db`, en las rutas `/api/qr/:tableCode/*` es posible que `req.db` sea `undefined` y el fallback caiga al `db` global — pero con el `search_path` incorrecto o sin el schema correcto.
+
+---
+
+## Prompt para Replit Agent
+
+**Contexto del bug:** El refactor multi-tenant de `server/routes.ts` pasó `req.db` a todas las funciones de storage. Las rutas `/api/qr/:tableCode/*` son públicas (sin sesión de usuario) y pueden estar recibiendo `req.db` como `undefined` si el tenant middleware no se ejecutó correctamente antes de esas rutas, haciendo que las queries corran contra el schema incorrecto y los subaccounts no aparezcan.
+
+**Diagnóstico requerido — hacer primero:**
+
+En `server/routes.ts`, buscar todas las rutas que empiezan con `/api/qr/` y verificar:
+1. ¿El tenant middleware está siendo aplicado a esas rutas?
+2. ¿Las llamadas a storage en esas rutas pasan `req.db`? Si sí, ¿`req.db` puede ser `undefined` en ese punto?
+3. Específicamente la ruta `GET /api/qr/:tableCode/subaccounts` — ¿qué función de storage llama y con qué parámetros?
+
+**Fix esperado:**
+
+Las rutas `/api/qr/:tableCode/*` deben tener acceso al tenant DB correcto. Dos opciones, elegir la más simple:
+
+- **Opción A (preferida):** Asegurarse de que el tenant middleware corre antes de las rutas QR, de modo que `req.db` esté disponible igual que en las rutas autenticadas.
+- **Opción B (fallback):** En las rutas QR donde `req.db` pueda ser undefined, obtener el tenant schema desde la tabla `public.tenants` usando el subdominio del host, igual que lo hace el tenant middleware, y pasar el db correcto.
+
+**Cambio visual pendiente (aplicar en el mismo commit):**
+
+En `client/src/pages/qr-client.tsx`, en la pantalla de nombre donde aparecen los chips "Ya en la mesa" con los nombres existentes, aumentar el tamaño del texto de esos chips. Buscar donde se renderizan los botones/chips de subaccounts existentes y cambiar a `text-base font-semibold` o `text-lg font-medium` según lo que mejor quede.
+
+**Restricciones:**
+- No cambiar la lógica de cuándo se crea el subaccount. Sigue siendo en `handleSubmit` al enviar la orden.
+- No agregar features adicionales.
+- Solo tocar `server/routes.ts` (rutas QR) y `client/src/pages/qr-client.tsx` (tamaño de chips).
