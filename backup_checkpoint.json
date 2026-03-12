@@ -1,0 +1,11 @@
+{
+  "counts": {
+    "orders": "358",
+    "order_items": "1886",
+    "payments": "11519",
+    "sales_ledger_items": "60231",
+    "hr_time_punches": "101",
+    "users": "14"
+  },
+  "timestamp": "2026-03-12T05:14:57.148Z"
+}
