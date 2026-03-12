@@ -408,7 +408,7 @@ export async function createSalesReceipt(orderId: number, paymentId: number, dbI
       continue;
     }
 
-    const modifiers = await storage.getOrderItemModifiers(item.id);
+    const modifiers = await storage.getOrderItemModifiers(item.id, d);
     const modDelta = modifiers.reduce((s: number, m: any) => s + Number(m.priceDeltaSnapshot || 0) * (m.qty || 1), 0);
     const lineTotal = (Number(item.productPriceSnapshot) + modDelta) * item.qty;
 
@@ -446,7 +446,7 @@ export async function createSalesReceipt(orderId: number, paymentId: number, dbI
     throw new Error(`No items mapped to QBO categories for order ${effectiveOrderId} — check category mappings`);
   }
 
-  const discountRows = await storage.getOrderItemDiscountsByOrder(effectiveOrderId);
+  const discountRows = await storage.getOrderItemDiscountsByOrder(effectiveOrderId, d);
   const totalDiscounts = discountRows.reduce((s: number, d: any) => s + Number(d.amountApplied), 0);
   if (totalDiscounts > 0) {
     lines.push({

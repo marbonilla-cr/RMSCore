@@ -6919,7 +6919,7 @@ export async function registerRoutes(
     if (!checkPublicRateLimit(req, res)) return;
     try {
       res.set("Cache-Control", "public, max-age=60");
-      const allCategories = await db
+      const allCategories = await req.db
         .select()
         .from(categories)
         .where(eq(categories.active, true))
@@ -6928,7 +6928,7 @@ export async function registerRoutes(
       const topCategories = allCategories.filter(c => c.categoryCode.startsWith("TOP-"));
       const subcategories = allCategories.filter(c => c.parentCategoryCode && !c.categoryCode.startsWith("TOP-"));
 
-      const allProducts = await db
+      const allProducts = await req.db
         .select({
           id: products.id,
           name: products.name,
