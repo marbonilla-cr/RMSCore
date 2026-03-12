@@ -767,7 +767,7 @@ export default function QRClientPage() {
 
           {existingNames.length > 0 && (
             <div style={{ marginTop: 20, width: "100%", maxWidth: 320 }}>
-              <div style={{ fontSize: 12, color: C.text3, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <div style={{ fontSize: 16, color: "#e07b00", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>
                 Ya en la mesa
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
@@ -777,9 +777,9 @@ export default function QRClientPage() {
                     const match = subaccounts.find(s => s.label === n);
                     if (match) setSubaccountId(match.id);
                   }} style={{
-                    padding: "8px 18px", borderRadius: 20, border: `1.5px solid ${name === n ? C.acc : C.border}`,
-                    background: name === n ? C.accD : C.card, color: name === n ? C.acc : C.text2,
-                    fontSize: 14, fontWeight: 500, cursor: "pointer", minHeight: 38,
+                    padding: "8px 18px", borderRadius: 20, border: `2.5px solid ${name === n ? "#c8660a" : "#e07b00"}`,
+                    background: name === n ? "#e07b00" : "rgba(224,123,0,0.08)", color: name === n ? "#fff" : "#c8660a",
+                    fontSize: 16, fontWeight: 600, cursor: "pointer", minHeight: 38,
                     transition: "all 0.15s ease",
                   }}>{n}</button>
                 ))}
