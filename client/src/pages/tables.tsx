@@ -727,24 +727,18 @@ export default function TablesPage() {
           from { opacity: 0; transform: translateY(-8px); }
           to { opacity: 1; transform: translateY(0); }
         }
-        .qr-bar-wrapper {
-          position: relative;
-          z-index: 50;
-          height: 0;
-          overflow: visible;
-        }
         .qr-notify-bar {
           display: flex;
           align-items: center;
           gap: 8px;
-          margin: 0 14px;
           padding: 7px 12px;
           background: var(--red-d);
           border: 1px solid var(--red-m);
           border-radius: var(--r-sm);
           animation: qr-bar-enter 0.25s ease-out;
-          flex-wrap: wrap;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+          flex-wrap: nowrap;
+          white-space: nowrap;
+          flex-shrink: 0;
         }
         .qr-notify-bar .qr-bar-icon {
           color: var(--red);
@@ -983,10 +977,7 @@ export default function TablesPage() {
             data-testid="input-search-tables"
           />
         </div>
-      </div>
-
-      {qrPopupTables.length > 0 && !qrPopupDismissed && (
-        <div className="qr-bar-wrapper">
+        {qrPopupTables.length > 0 && !qrPopupDismissed && (
           <div className="qr-notify-bar" data-testid="qr-notify-bar">
             <AlertTriangle size={16} className="qr-bar-icon" />
             <span className="qr-bar-label">Orden QR</span>
@@ -1013,8 +1004,8 @@ export default function TablesPage() {
               <X size={16} />
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {!isLoading && activeTables.length > 0 && (
         <div className="host-bar" data-testid="host-availability-bar">
