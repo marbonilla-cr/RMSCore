@@ -1,0 +1,143 @@
+Prompt para Replit Agent
+Necesito corregir los últimos usos de db global en server/routes.ts y server/quickbooks.ts para completar el soporte multi-tenant. Son cambios mecánicos y precisos. No cambiar lógica de negocio, solo reemplazar el handle de DB.
+
+CAMBIO 1 — cleanupSubaccountsForOrder en server/routes.ts (línea 62)
+Buscar esta función y reemplazarla:
+
+// ANTES:
+async function cleanupSubaccountsForOrder(orderId: number) {
+  try {
+    await db.delete(orderSubaccounts).where(eq(orderSubaccounts.orderId, orderId));
+  } catch (err) {
+    console.error("[Subaccount Cleanup] Error cleaning subaccounts for order", orderId, err);
+  }
+}
+
+// DESPUÉS:
+async function cleanupSubaccountsForOrder(orderId: number, dbInstance: typeof db) {
+  try {
+    await dbInstance.delete(orderSubaccounts).where(eq(orderSubaccounts.orderId, orderId));
+  } catch (err) {
+    console.error("[Subaccount Cleanup] Error cleaning subaccounts for order", orderId, err);
+  }
+}
+
+
+Luego buscar todos los callers con:
+
+grep -n "cleanupSubaccountsForOrder" server/routes.ts
+
+
+En cada caller agregar req.db como segundo argumento:
+
+// ANTES:
+await cleanupSubaccountsForOrder(orderId);
+// DESPUÉS:
+await cleanupSubaccountsForOrder(orderId, req.db);
+
+
+CAMBIO 2 — Queries con db global dentro de handlers de rutas en server/routes.ts
+Dentro de handlers de rutas autenticadas, reemplazar db.transaction, db.select, db.insert, db.update, db.delete por req.db. Específicamente en las líneas: 1801, 1806, 2023, 2046, 2062, 3237, 3239, 3395, 3465, 3568, 3655, 3667, 3674, 4069, 4528, 4531, 4559, 4564, 5611, 5646, 5662, 5723.
+Patrón:
+
+// ANTES:
+await db.transaction(async (tx) => { ... });
+await db.select().from(orders).where(...);
+await db.insert(payments).values(...);
+await db.update(orderItems)...;
+await db.delete(something)...;
+
+// DESPUÉS:
+await req.db.transaction(async (tx) => { ... });
+await req.db.select().from(orders).where(...);
+await req.db.insert(payments).values(...);
+await req.db.update(orderItems)...;
+await req.db.delete(something)...;
+
+
+CAMBIO 3 — Rutas de Reservaciones en server/routes.ts (líneas 6527–6854)
+Todas las queries de reservaciones usan db global. Dentro de cada handler de reservaciones reemplazar db. por req.db.. Las tablas afectadas son reservations y reservationDurationConfig.
+
+CAMBIO 4 — retryPendingSync() en server/quickbooks.ts
+Extraer la lógica actual a una función interna retryPendingSyncForTenant y hacer que retryPendingSync itere los tenants activos:
+
+// Nueva función interna — misma lógica de hoy, recibe dbInstance:
+async function retryPendingSyncForTenant(tdb: typeof db): Promise<number> {
+  const config = await getQboConfig(tdb);
+  if (!config || !config.isConnected) return 0;
+
+  await tdb.update(qboSyncLog).set({
+    status: "PENDING",
+    attempts: 0,
+    errorMessage: null,
+    nextRetryAt: null,
+  }).where(
+    sql`${qboSyncLog.status} = 'FAILED' AND ${qboSyncLog.errorMessage} LIKE '%documento duplicado%'`
+  );
+
+  const now = new Date();
+  const pendingLogs = await tdb.select().from(qboSyncLog)
+    .where(
+      sql`(${qboSyncLog.status} = 'PENDING') OR
+          (${qboSyncLog.status} = 'FAILED' AND ${qboSyncLog.nextRetryAt} <= ${now}
+           AND ${qboSyncLog.attempts} < 5)`
+    )
+    .limit(20);
+
+  const backoffMinutes = [5, 15, 60, 240, 1440];
+  let processed = 0;
+  for (const log of pendingLogs) {
+    try {
+      await createSalesReceipt(log.orderId, log.paymentId, tdb);
+      processed++;
+    } catch (err: any) {
+      const newAttempts = (log.attempts || 0) + 1;
+      if (newAttempts >= 5) {
+        await tdb.update(qboSyncLog).set({ status: "ABANDONED", attempts: newAttempts, errorMessage: err.message }).where(eq(qboSyncLog.id, log.id));
+      } else {
+        const nextRetry = new Date(Date.now() + backoffMinutes[newAttempts - 1] * 60 * 1000);
+        await tdb.update(qboSyncLog).set({ status: "FAILED", attempts: newAttempts, errorMessage: err.message, nextRetryAt: nextRetry }).where(eq(qboSyncLog.id, log.id));
+      }
+    }
+  }
+  return processed;
+}
+
+// Función pública — ahora itera tenants:
+export async function retryPendingSync(): Promise<number> {
+  const { Pool } = await import("pg");
+  const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  let totalProcessed = 0;
+  try {
+    const { rows: tenants } = await publicPool.query(
+      `SELECT schema_name FROM public.tenants WHERE is_active = true`
+    );
+    const schemas = tenants.map((t: any) => t.schema_name);
+    if (schemas.length === 0) schemas.push(process.env.TENANT_SCHEMA || "public");
+    for (const schema of schemas) {
+      try {
+        const { getTenantDb } = await import("./db-tenant");
+        const tdb = getTenantDb(schema);
+        totalProcessed += await retryPendingSyncForTenant(tdb);
+      } catch (err: any) {
+        console.error(`[QBO] Retry error for schema ${schema}:`, err.message);
+      }
+    }
+  } finally {
+    await publicPool.end();
+  }
+  return totalProcessed;
+}
+
+
+Si getQboConfig y createSalesReceipt no aceptan dbInstance todavía, agregar ese parámetro con el patrón dbInstance?: typeof db / const d = dbInstance || db.
+
+VERIFICACIÓN FINAL — ejecutar en terminal:
+
+grep -n "await db\.\| db\." server/routes.ts | grep -v "req\.db\|getTenantDb\|dbInstance\|//" | head -20
+grep -n "await db\.\| db\." server/quickbooks.ts | grep -v "req\.db\|getTenantDb\|dbInstance\|//" | head -20
+npx tsc --noEmit
+
+
+Los dos primeros greps deben retornar 0 líneas. TypeScript sin errores.
+No hacer deploy hasta que ambos greps estén vacíos y npx tsc --noEmit no reporte errores.
