@@ -106,7 +106,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const order = await storage.getOpenOrderForTable(table.id, req.db);
       if (!order) return res.json([]);
 
-      const subs = await db.select().from(orderSubaccounts)
+      const subs = await req.db.select().from(orderSubaccounts)
         .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)))
         .orderBy(asc(orderSubaccounts.slotNumber));
 
@@ -127,7 +127,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       const order = await getOrCreateOrderForTable(table.id, req.db);
 
-      const existing = await db.select().from(orderSubaccounts)
+      const existing = await req.db.select().from(orderSubaccounts)
         .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)));
 
       if (label && typeof label === "string" && label.trim()) {
@@ -159,7 +159,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const tableNumber = extractTableNumber(table.tableName);
       const code = `${tableNumber}-${slotNumber}`;
 
-      const [subaccount] = await db.insert(orderSubaccounts).values({
+      const [subaccount] = await req.db.insert(orderSubaccounts).values({
         orderId: order.id,
         tableId: table.id,
         slotNumber,
@@ -186,7 +186,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const order = await getOrCreateOrderForTable(table.id, req.db);
       const wanted = Math.max(Number(count) || 2, 1);
 
-      const existing = await db.select().from(orderSubaccounts)
+      const existing = await req.db.select().from(orderSubaccounts)
         .where(and(eq(orderSubaccounts.orderId, order.id), eq(orderSubaccounts.isActive, true)));
 
       if (existing.length >= wanted) {
@@ -204,7 +204,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         while (usedSlots.has(slotNumber)) slotNumber++;
         usedSlots.add(slotNumber);
         const code = `${tableNumber}-${slotNumber}`;
-        const [sub] = await db.insert(orderSubaccounts).values({
+        const [sub] = await req.db.insert(orderSubaccounts).values({
           orderId: order.id,
           tableId: table.id,
           slotNumber,
@@ -234,7 +234,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
-      const pendingCount = await db.select({ count: sql<number>`count(*)` })
+      const pendingCount = await req.db.select({ count: sql<number>`count(*)` })
         .from(qrSubmissions)
         .where(and(
           eq(qrSubmissions.tableId, table.id),
@@ -247,18 +247,18 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       const order = await getOrCreateOrderForTable(table.id, req.db);
 
-      const [sub] = await db.insert(qrSubmissions).values({
+      const [sub] = await req.db.insert(qrSubmissions).values({
         orderId: order.id,
         tableId: table.id,
         status: "SUBMITTED",
       }).returning();
 
-      await db.update(qrSubmissions).set({
+      await req.db.update(qrSubmissions).set({
         payloadSnapshot: { subaccountId, items },
       } as any).where(eq(qrSubmissions.id, sub.id));
 
       if (subaccountId && items.length > 0 && items[0].customerName) {
-        await db.update(orderSubaccounts)
+        await req.db.update(orderSubaccounts)
           .set({ label: items[0].customerName })
           .where(eq(orderSubaccounts.id, subaccountId));
       }
@@ -314,7 +314,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       let subaccount: OrderSubaccount | null = null;
       if (payload.subaccountId) {
-        const [sa] = await db.select().from(orderSubaccounts)
+        const [sa] = await req.db.select().from(orderSubaccounts)
           .where(eq(orderSubaccounts.id, payload.subaccountId));
         subaccount = sa || null;
       }
@@ -336,10 +336,10 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       const [productsArr, modOptionsArr, allProductTaxLinks] = await Promise.all([
         uniqueProductIds.length > 0
-          ? db.select().from(products).where(inArray(products.id, uniqueProductIds))
+          ? req.db.select().from(products).where(inArray(products.id, uniqueProductIds))
           : Promise.resolve([]),
         allModOptionIds.length > 0
-          ? db.select().from(modifierOptions).where(inArray(modifierOptions.id, allModOptionIds))
+          ? req.db.select().from(modifierOptions).where(inArray(modifierOptions.id, allModOptionIds))
           : Promise.resolve([]),
         uniqueProductIds.length > 0
           ? storage.getProductTaxCategoriesByProductIds(uniqueProductIds, req.db)
@@ -380,7 +380,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           qrSubmissionId: subId,
         }, req.db);
 
-        await db.update(orderItems).set({
+        await req.db.update(orderItems).set({
           subaccountId: subaccount?.id || null,
           subaccountCodeSnapshot: subaccount?.code || null,
           customerNameSnapshot: item.customerName || null,
@@ -630,7 +630,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     try {
       const tableId = parseInt(req.params.tableId as string);
 
-      const submissions = await db.select().from(qrSubmissions)
+      const submissions = await req.db.select().from(qrSubmissions)
         .where(and(
           eq(qrSubmissions.tableId, tableId),
           eq(qrSubmissions.status, "SUBMITTED")
@@ -658,7 +658,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       let subaccountsMap: Map<number, OrderSubaccount> = new Map();
 
       if (subaccountIds.length > 0) {
-        const subs = await db.select().from(orderSubaccounts)
+        const subs = await req.db.select().from(orderSubaccounts)
           .where(inArray(orderSubaccounts.id, subaccountIds));
         for (const s of subs) subaccountsMap.set(s.id, s);
       }
@@ -666,7 +666,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const itemIds = items.map(i => i.id);
       let modsMap: Map<number, any[]> = new Map();
       if (itemIds.length > 0) {
-        const allMods = await db.select().from(orderItemModifiers)
+        const allMods = await req.db.select().from(orderItemModifiers)
           .where(inArray(orderItemModifiers.orderItemId, itemIds));
         for (const m of allMods) {
           if (!modsMap.has(m.orderItemId)) modsMap.set(m.orderItemId, []);

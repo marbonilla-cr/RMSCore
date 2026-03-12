@@ -779,7 +779,7 @@ export default function QRClientPage() {
                   }} style={{
                     padding: "8px 18px", borderRadius: 20, border: `2.5px solid ${name === n ? "#c8660a" : "#e07b00"}`,
                     background: name === n ? "#e07b00" : "rgba(224,123,0,0.08)", color: name === n ? "#fff" : "#c8660a",
-                    fontSize: 16, fontWeight: 600, cursor: "pointer", minHeight: 38,
+                    fontSize: 18, fontWeight: 700, cursor: "pointer", minHeight: 38,
                     transition: "all 0.15s ease",
                   }}>{n}</button>
                 ))}
