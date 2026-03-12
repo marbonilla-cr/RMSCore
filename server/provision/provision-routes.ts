@@ -32,7 +32,7 @@ export function registerProvisionRoutes(app: Express) {
 
   app.get("/api/superadmin/tenants/:id", requireSuperadmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       const [tenant, modules, logs] = await Promise.all([
         publicPool.query("SELECT * FROM public.tenants WHERE id=$1", [id]),
         publicPool.query("SELECT * FROM public.tenant_modules WHERE tenant_id=$1 ORDER BY module_key", [id]),
@@ -67,21 +67,21 @@ export function registerProvisionRoutes(app: Express) {
     try {
       const { reason } = req.body;
       if (!reason) return res.status(400).json({ message: "Razón requerida" });
-      await suspendTenant(parseInt(req.params.id), reason, (req as any).superadminId);
+      await suspendTenant(parseInt(req.params.id as string), reason, (req as any).superadminId);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
   app.post("/api/superadmin/tenants/:id/reactivate", requireSuperadmin, async (req, res) => {
     try {
-      await reactivateTenant(parseInt(req.params.id), (req as any).superadminId);
+      await reactivateTenant(parseInt(req.params.id as string), (req as any).superadminId);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
   app.post("/api/superadmin/tenants/:id/reprovision", requireSuperadmin, async (req, res) => {
     try {
-      const tenantId = parseInt(req.params.id);
+      const tenantId = parseInt(req.params.id as string);
       const {
         adminEmail, adminPassword, adminDisplayName,
         orderDailyStart, orderGlobalStart, invoiceStart,
@@ -140,7 +140,7 @@ export function registerProvisionRoutes(app: Express) {
 
   app.post("/api/superadmin/tenants/:id/send-password-reset", requireSuperadmin, async (req, res) => {
     try {
-      const tenantId = parseInt(req.params.id);
+      const tenantId = parseInt(req.params.id as string);
       const { email } = req.body;
       if (!email) return res.status(400).json({ message: "Email requerido" });
       const host = req.get("host") || "localhost:5000";
@@ -156,7 +156,7 @@ export function registerProvisionRoutes(app: Express) {
     try {
       const { plan } = req.body;
       if (!["BASIC","PRO","ENTERPRISE"].includes(plan)) return res.status(400).json({ message: "Plan inválido" });
-      await changeTenantPlan(parseInt(req.params.id), plan, (req as any).superadminId);
+      await changeTenantPlan(parseInt(req.params.id as string), plan, (req as any).superadminId);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
@@ -165,14 +165,14 @@ export function registerProvisionRoutes(app: Express) {
     try {
       const { moduleKey, unitCount } = req.body;
       if (!moduleKey) return res.status(400).json({ message: "moduleKey requerido" });
-      await activateAddon(parseInt(req.params.id), moduleKey, unitCount);
+      await activateAddon(parseInt(req.params.id as string), moduleKey, unitCount);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
   app.delete("/api/superadmin/tenants/:id/modules/:moduleKey", requireSuperadmin, async (req, res) => {
     try {
-      await publicPool.query(`UPDATE public.tenant_modules SET is_active=false,deactivated_at=NOW() WHERE tenant_id=$1 AND module_key=$2`, [parseInt(req.params.id), req.params.moduleKey]);
+      await publicPool.query(`UPDATE public.tenant_modules SET is_active=false,deactivated_at=NOW() WHERE tenant_id=$1 AND module_key=$2`, [parseInt(req.params.id as string), req.params.moduleKey as string]);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
@@ -184,7 +184,7 @@ export function registerProvisionRoutes(app: Express) {
   app.delete("/api/superadmin/tenants/:id/hard-delete", requireSuperadmin, async (req, res) => {
     const client = await publicPool.connect();
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       const { rows } = await client.query("SELECT * FROM public.tenants WHERE id=$1", [id]);
       if (!rows.length) return res.status(404).json({ message: "Tenant no encontrado" });
       const tenant = rows[0];

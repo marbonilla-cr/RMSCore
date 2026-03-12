@@ -38,7 +38,7 @@ export function registerDispatchRoutes(app: Express, broadcast: Function) {
 
   app.post("/api/dispatch/:tableCode/submit", async (req: Request, res: Response) => {
     try {
-      const { tableCode } = req.params;
+      const tableCode = req.params.tableCode as string;
       const { items, customerName } = req.body;
       const db = (req as any).db || globalDb;
 
@@ -103,7 +103,7 @@ export function registerDispatchRoutes(app: Express, broadcast: Function) {
 
   app.get("/api/dispatch/order/:orderId/status", async (req: Request, res: Response) => {
     try {
-      const orderId = parseInt(req.params.orderId);
+      const orderId = parseInt(req.params.orderId as string);
       const db = (req as any).db || globalDb;
       const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, orderId));
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });

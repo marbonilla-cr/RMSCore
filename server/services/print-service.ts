@@ -133,7 +133,7 @@ export async function dispatchPrintJobViaBridge(
 }
 
 export function isBridgeConnected(tenantSchema: string): boolean {
-  for (const conn of bridgeConnections.values()) {
+  for (const conn of Array.from(bridgeConnections.values())) {
     if (conn.tenantSchema === tenantSchema && conn.ws.readyState === 1)
       return true;
   }

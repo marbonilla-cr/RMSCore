@@ -94,7 +94,7 @@ export async function createTenant(input: CreateTenantInput) {
     const adminPin = generateRandomPin();
     const adminUsername = await createAdminUser(schemaName, { email: input.adminEmail, password: input.adminPassword, displayName: input.adminDisplayName, pin: adminPin });
     const modulePlan = input.plan === "TRIAL" ? (input.trialBasePlan || "BASIC") : input.plan;
-    await activatePlanModules(tenantId, modulePlan);
+    await activatePlanModules(tenantId!, modulePlan);
 
     await publicPool.query(
       `UPDATE public.tenants SET status='ACTIVE', is_active=true, updated_at=NOW() WHERE id=$1`, [tenantId]

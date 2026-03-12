@@ -1585,7 +1585,7 @@ export async function registerRoutes(
       const tableId = order.tableId || 0;
       const tableName = table?.tableName || "Mostrador";
 
-      const productIds = Array.from(new Set(items.map((i: any) => i.productId as number)));
+      const productIds: number[] = Array.from(new Set(items.map((i: any) => i.productId as number)));
 
       const [existingItems, allCategories, allProductsList, allPtcs, allTaxCats] = await Promise.all([
         storage.getOrderItems(order.id, req.db),
@@ -3339,7 +3339,8 @@ export async function registerRoutes(
         if (!prod) {
           try {
             await storage.createAuditEvent({
-              userId: order.responsibleWaiterId || null,
+              actorType: "SYSTEM",
+              actorUserId: order.responsibleWaiterId || null,
               action: "SERVICE_LEDGER_SKIPPED_PRODUCT_NOT_FOUND",
               metadata: JSON.stringify({ orderId, orderItemId: itemKey, productId: item.productId }),
             });
@@ -3449,7 +3450,7 @@ export async function registerRoutes(
 
   app.get("/api/pos/table-detail/:orderId", requirePermission("POS_VIEW"), async (req, res) => {
     const t0 = Date.now();
-    const orderId = parseInt(req.params.orderId);
+    const orderId = parseInt(req.params.orderId as string);
     const order = await storage.getOrder(orderId, req.db);
     if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
@@ -4754,7 +4755,7 @@ export async function registerRoutes(
     try {
       const date = (req.query.date as string) || undefined;
       const [paidOrders, allTables] = await Promise.all([
-        storage.getPaidOrdersForDate(date, req.db),
+        storage.getPaidOrdersForDate(date, undefined, req.db),
         storage.getAllTables(false, req.db),
       ]);
       const tableMap = new Map(allTables.map(t => [t.id, t]));
@@ -4949,7 +4950,7 @@ export async function registerRoutes(
     const [data, ledgerDetails, paymentMethodTotals] = await Promise.all([
       storage.getDashboardData(dateFrom, dateTo, hourFrom, hourTo, req.tenantSchema, await getTenantTimezone(req.tenantSchema), req.db),
       resolvedFrom === resolvedTo
-        ? storage.getLedgerItemsForDate(resolvedFrom, req.db)
+        ? storage.getLedgerItemsForDate(resolvedFrom, undefined, req.db)
         : storage.getLedgerItemsForDateRange(resolvedFrom, resolvedTo, req.db),
       resolvedFrom === resolvedTo
         ? storage.getPaymentsByDateGrouped(resolvedFrom, req.db)
@@ -5161,7 +5162,7 @@ export async function registerRoutes(
         action: auditAction,
         entityType: "HR_PUNCH",
         entityId: punch.id,
-        metadata: { lateMinutes, geoVerified, hasScheduleToday },
+        metadata: { lateMinutes, geoVerified: false, hasScheduleToday },
       });
       
       if (lateMinutes > 0) {
@@ -5227,7 +5228,7 @@ export async function registerRoutes(
         action: "CLOCK_OUT",
         entityType: "HR_PUNCH",
         entityId: openPunch.id,
-        metadata: { workedMinutes, overtimeMinutesDaily, geoVerified },
+        metadata: { workedMinutes, overtimeMinutesDaily, geoVerified: false },
       });
       
       broadcast("hr_punch_update", { employeeId, type: "clock_out" });
@@ -6213,7 +6214,7 @@ export async function registerRoutes(
     }
 
     const res = new ServerResponse(request);
-    res.assignSocket(socket);
+    res.assignSocket(socket as any);
     const sessionMiddleware = app.get("sessionMiddleware");
     if (sessionMiddleware) {
       sessionMiddleware(request as any, res as any, () => {
@@ -6418,7 +6419,7 @@ export async function registerRoutes(
       if (req.body.isActive !== undefined) updates.isActive = req.body.isActive;
       const [updated] = await req.db
         .update(printBridgesTable).set(updates)
-        .where(eq(printBridgesTable.id, parseInt(req.params.id)))
+        .where(eq(printBridgesTable.id, parseInt(req.params.id as string)))
         .returning();
       const { token: _t, ...safe } = updated;
       res.json(safe);
@@ -6430,7 +6431,7 @@ export async function registerRoutes(
 
   app.delete("/api/admin/print-bridges/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       const [bridge] = await req.db.select().from(printBridgesTable).where(eq(printBridgesTable.id, id));
       if (!bridge) return res.status(404).json({ error: "Bridge no encontrado" });
 
@@ -6454,7 +6455,7 @@ export async function registerRoutes(
     try {
       const token = `rms-${crypto.randomBytes(20).toString('hex')}`;
       await req.db.update(printBridgesTable).set({ token })
-        .where(eq(printBridgesTable.id, parseInt(req.params.id)));
+        .where(eq(printBridgesTable.id, parseInt(req.params.id as string)));
       res.json({ token });
     } catch (err: any) {
       console.error("[bridges] REGEN error:", err.message);
@@ -6477,7 +6478,7 @@ export async function registerRoutes(
 
       const result = await dispatchPrintJobViaBridge(
         req.tenantSchema,
-        parseInt(req.params.id),
+        parseInt(req.params.id as string),
         testPayload,
         'test'
       );
@@ -7456,7 +7457,7 @@ export async function registerRoutes(
 
   app.post("/api/qbo/sync-log/:id/retry", requirePermission("MODULE_ADMIN_VIEW"), async (req, res) => {
     try {
-      const logId = parseInt(req.params.id);
+      const logId = parseInt(req.params.id as string);
       if (isNaN(logId)) return res.status(400).json({ message: "ID inválido" });
       const ok = await qbo.resetSyncEntry(logId);
       if (!ok) return res.status(404).json({ message: "Entrada no encontrada o no es reintentable" });
@@ -7485,7 +7486,7 @@ export async function registerRoutes(
       const categoryMap = new Map(allCategories.map(c => [c.id, c]));
 
       const items = allProducts.map(p => {
-        const cat = categoryMap.get(p.categoryId);
+        const cat = p.categoryId != null ? categoryMap.get(p.categoryId) : undefined;
         let status: string;
         if (p.availablePortions === null) {
           status = "ILIMITADO";

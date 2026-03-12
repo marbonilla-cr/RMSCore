@@ -1003,8 +1003,8 @@ export default function POSPage() {
     setPrintConfirmOrderId(tbl.orderId);
   };
 
-  const openSplitDialog = async (table: POSTable) => {
-    setSelectedTable(table);
+  const openSplitDialog = async (table: POSTable | POSTableSnapshot) => {
+    setSelectedTable(table as POSTable);
     setNormalizing(true);
     try {
       await apiRequest("POST", `/api/pos/orders/${table.orderId}/normalize-split`);

@@ -93,7 +93,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/items/:id", requirePermission("INV_VIEW"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id as string);
       const rows = await db
         .select({
           id: invItems.id, sku: invItems.sku, name: invItems.name,
@@ -155,7 +155,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       if ("defaultSupplierId" in coerced) {
         coerced.defaultSupplierId = coerced.defaultSupplierId || null;
       }
-      const item = await invStorage.updateInvItem(parseInt(req.params.id), coerced);
+      const item = await invStorage.updateInvItem(parseInt(req.params.id as string), coerced);
       if (!item) return res.status(404).json({ message: "Item no encontrado" });
       broadcast(wss, "INV_ITEM_UPDATED", item);
       res.json(item);
@@ -166,7 +166,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/items/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      const result = await invStorage.smartDeleteInvItem(parseInt(req.params.id));
+      const result = await invStorage.smartDeleteInvItem(parseInt(req.params.id as string));
       if (!result.item) return res.status(404).json({ message: "Item no encontrado" });
       broadcast(wss, "INV_ITEM_DELETED", result.item);
       res.json({ item: result.item, hardDeleted: result.hardDeleted });
@@ -318,7 +318,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/items/:id/uom-conversions", requirePermission("INV_VIEW"), async (req, res) => {
     try {
-      res.json(await invStorage.getUomConversions(parseInt(req.params.id)));
+      res.json(await invStorage.getUomConversions(parseInt(req.params.id as string)));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -326,7 +326,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.post("/api/inv/items/:id/uom-conversions", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      const parsed = insertInvUomConversionSchema.parse({ ...req.body, invItemId: parseInt(req.params.id) });
+      const parsed = insertInvUomConversionSchema.parse({ ...req.body, invItemId: parseInt(req.params.id as string) });
       const conv = await invStorage.createUomConversion(parsed);
       broadcast(wss, "INV_UOM_CONVERSION_CREATED", conv);
       res.json(conv);
@@ -337,7 +337,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.patch("/api/inv/uom-conversions/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      const conv = await invStorage.updateUomConversion(parseInt(req.params.id), req.body);
+      const conv = await invStorage.updateUomConversion(parseInt(req.params.id as string), req.body);
       if (!conv) return res.status(404).json({ message: "Conversión no encontrada" });
       broadcast(wss, "INV_UOM_CONVERSION_UPDATED", conv);
       res.json(conv);
@@ -348,7 +348,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/uom-conversions/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      await invStorage.deleteUomConversion(parseInt(req.params.id));
+      await invStorage.deleteUomConversion(parseInt(req.params.id as string));
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -358,7 +358,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
   app.get("/api/inv/items/:id/movements", requirePermission("INV_VIEW"), async (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 100;
-      res.json(await invStorage.getInvMovements(parseInt(req.params.id), limit));
+      res.json(await invStorage.getInvMovements(parseInt(req.params.id as string), limit));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -390,7 +390,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/suppliers/:id", requirePermission("INV_VIEW"), async (req, res) => {
     try {
-      const supplier = await invStorage.getSupplier(parseInt(req.params.id));
+      const supplier = await invStorage.getSupplier(parseInt(req.params.id as string));
       if (!supplier) return res.status(404).json({ message: "Proveedor no encontrado" });
       const items = await invStorage.getSupplierItems(supplier.id);
       res.json({ ...supplier, supplierItems: items });
@@ -412,7 +412,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.patch("/api/inv/suppliers/:id", requirePermission("INV_MANAGE_SUPPLIERS"), async (req, res) => {
     try {
-      const supplier = await invStorage.updateSupplier(parseInt(req.params.id), req.body);
+      const supplier = await invStorage.updateSupplier(parseInt(req.params.id as string), req.body);
       if (!supplier) return res.status(404).json({ message: "Proveedor no encontrado" });
       broadcast(wss, "INV_SUPPLIER_UPDATED", supplier);
       res.json(supplier);
@@ -423,7 +423,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/suppliers/:id", requirePermission("INV_MANAGE_SUPPLIERS"), async (req, res) => {
     try {
-      const supplier = await invStorage.deleteSupplier(parseInt(req.params.id));
+      const supplier = await invStorage.deleteSupplier(parseInt(req.params.id as string));
       if (!supplier) return res.status(404).json({ message: "Proveedor no encontrado" });
       broadcast(wss, "INV_SUPPLIER_DELETED", supplier);
       res.json(supplier);
@@ -434,7 +434,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/suppliers/:id/items", requirePermission("INV_VIEW"), async (req, res) => {
     try {
-      const supplierId = parseInt(req.params.id);
+      const supplierId = parseInt(req.params.id as string);
       if (isNaN(supplierId)) return res.status(400).json({ message: "ID inválido" });
 
       const mode = (req.query.mode as string) || "all";
@@ -511,7 +511,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.patch("/api/inv/supplier-items/:id", requirePermission("INV_MANAGE_SUPPLIERS"), async (req, res) => {
     try {
-      const item = await invStorage.updateSupplierItem(parseInt(req.params.id), req.body);
+      const item = await invStorage.updateSupplierItem(parseInt(req.params.id as string), req.body);
       if (!item) return res.status(404).json({ message: "Ítem de proveedor no encontrado" });
       broadcast(wss, "INV_SUPPLIER_ITEM_UPDATED", item);
       res.json(item);
@@ -522,7 +522,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/supplier-items/:id", requirePermission("INV_MANAGE_SUPPLIERS"), async (req, res) => {
     try {
-      await invStorage.deleteSupplierItem(parseInt(req.params.id));
+      await invStorage.deleteSupplierItem(parseInt(req.params.id as string));
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -547,7 +547,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/purchase-orders/:id", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
-      const po = await invStorage.getPurchaseOrder(parseInt(req.params.id));
+      const po = await invStorage.getPurchaseOrder(parseInt(req.params.id as string));
       if (!po) return res.status(404).json({ message: "Orden de compra no encontrada" });
       const lines = await invStorage.getPurchaseOrderLines(po.id);
       res.json({ ...po, lines });
@@ -573,7 +573,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.patch("/api/inv/purchase-orders/:id", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
-      const po = await invStorage.updatePurchaseOrder(parseInt(req.params.id), req.body);
+      const po = await invStorage.updatePurchaseOrder(parseInt(req.params.id as string), req.body);
       if (!po) return res.status(404).json({ message: "Orden de compra no encontrada" });
       broadcast(wss, "INV_PO_UPDATED", po);
       res.json(po);
@@ -584,7 +584,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.post("/api/inv/purchase-orders/:id/send", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
-      const po = await invStorage.sendPurchaseOrder(parseInt(req.params.id));
+      const po = await invStorage.sendPurchaseOrder(parseInt(req.params.id as string));
       if (!po) return res.status(404).json({ message: "Orden de compra no encontrada" });
       broadcast(wss, "INV_PO_SENT", po);
       res.json(po);
@@ -601,12 +601,12 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         return res.status(400).json({ message: "Debe incluir líneas de recepción" });
       }
       const receipt = await invStorage.receivePurchaseOrder(
-        parseInt(req.params.id),
+        parseInt(req.params.id as string),
         user.id,
         lines,
         note
       );
-      broadcast(wss, "INV_PO_RECEIVED", { purchaseOrderId: parseInt(req.params.id), receipt });
+      broadcast(wss, "INV_PO_RECEIVED", { purchaseOrderId: parseInt(req.params.id as string), receipt });
       res.json(receipt);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -615,7 +615,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/purchase-orders/:id/lines", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
-      res.json(await invStorage.getPurchaseOrderLines(parseInt(req.params.id)));
+      res.json(await invStorage.getPurchaseOrderLines(parseInt(req.params.id as string)));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -652,13 +652,13 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         if (!conv) {
           return res.status(400).json({ message: `No existe conversión de UOM '${uom}' a '${item.baseUom}'. Agregue la conversión primero en el detalle del insumo.` });
         }
-        multiplier = conv.multiplier;
+        multiplier = (conv as any).multiplier || conv.toBaseMultiplier;
       }
 
       const qtyBaseExpected = String(qtyNum * parseFloat(multiplier));
 
       const parsed = insertInvPurchaseOrderLineSchema.parse({
-        purchaseOrderId: parseInt(req.params.id),
+        purchaseOrderId: parseInt(req.params.id as string),
         invItemId: itemId,
         qtyPurchaseUom: String(qtyNum),
         purchaseUom: uom,
@@ -676,7 +676,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.patch("/api/inv/po-lines/:id", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
-      const line = await invStorage.updatePurchaseOrderLine(parseInt(req.params.id), req.body);
+      const line = await invStorage.updatePurchaseOrderLine(parseInt(req.params.id as string), req.body);
       if (!line) return res.status(404).json({ message: "Línea no encontrada" });
       broadcast(wss, "INV_PO_LINE_UPDATED", line);
       res.json(line);
@@ -687,7 +687,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/po-lines/:id", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
-      await invStorage.deletePurchaseOrderLine(parseInt(req.params.id));
+      await invStorage.deletePurchaseOrderLine(parseInt(req.params.id as string));
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -696,7 +696,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/purchase-orders/:id/receipts", requirePermission("INV_MANAGE_PO"), async (req, res) => {
     try {
-      const poId = parseInt(req.params.id);
+      const poId = parseInt(req.params.id as string);
       const receipts = await invStorage.getPoReceipts(poId);
 
       const result = await Promise.all(receipts.map(async (receipt: any) => {
@@ -737,7 +737,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/physical-counts/:id", requirePermission("INV_PHYSICAL_COUNT"), async (req, res) => {
     try {
-      const count = await invStorage.getPhysicalCount(parseInt(req.params.id));
+      const count = await invStorage.getPhysicalCount(parseInt(req.params.id as string));
       if (!count) return res.status(404).json({ message: "Conteo no encontrado" });
       const lines = await invStorage.getPhysicalCountLines(count.id);
       res.json({ ...count, lines });
@@ -764,7 +764,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
   app.patch("/api/inv/physical-count-lines/:id", requirePermission("INV_PHYSICAL_COUNT"), async (req, res) => {
     try {
       const { countedQtyBase, adjustmentReason } = req.body;
-      const line = await invStorage.updatePhysicalCountLine(parseInt(req.params.id), {
+      const line = await invStorage.updatePhysicalCountLine(parseInt(req.params.id as string), {
         countedQtyBase,
         adjustmentReason,
       });
@@ -778,7 +778,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
   app.post("/api/inv/physical-counts/:id/finalize", requirePermission("INV_PHYSICAL_COUNT"), async (req, res) => {
     try {
       const user = (req as any).user;
-      const count = await invStorage.finalizePhysicalCount(parseInt(req.params.id), user.id);
+      const count = await invStorage.finalizePhysicalCount(parseInt(req.params.id as string), user.id);
       broadcast(wss, "INV_PHYSICAL_COUNT_FINALIZED", count);
       res.json(count);
     } catch (err: any) {
@@ -796,7 +796,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/recipes/product/:productId", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      const recipe = await invStorage.getActiveRecipeWithLines(parseInt(req.params.productId));
+      const recipe = await invStorage.getActiveRecipeWithLines(parseInt(req.params.productId as string));
       res.json(recipe);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -805,7 +805,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/recipes/:id", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      const recipe = await invStorage.getRecipe(parseInt(req.params.id));
+      const recipe = await invStorage.getRecipe(parseInt(req.params.id as string));
       if (!recipe) return res.status(404).json({ message: "Receta no encontrada" });
       const lines = await invStorage.getRecipeLines(recipe.id);
       res.json({ ...recipe, lines });
@@ -835,7 +835,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.patch("/api/inv/recipes/:id", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      const recipe = await invStorage.updateRecipe(parseInt(req.params.id), req.body);
+      const recipe = await invStorage.updateRecipe(parseInt(req.params.id as string), req.body);
       if (!recipe) return res.status(404).json({ message: "Receta no encontrada" });
       broadcast(wss, "INV_RECIPE_UPDATED", recipe);
       res.json(recipe);
@@ -846,7 +846,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/recipes/:id", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      const recipe = await invStorage.deactivateRecipe(parseInt(req.params.id));
+      const recipe = await invStorage.deactivateRecipe(parseInt(req.params.id as string));
       if (!recipe) return res.status(404).json({ message: "Receta no encontrada" });
       broadcast(wss, "INV_RECIPE_DEACTIVATED", recipe);
       res.json(recipe);
@@ -857,7 +857,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.get("/api/inv/recipes/:id/lines", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      res.json(await invStorage.getRecipeLines(parseInt(req.params.id)));
+      res.json(await invStorage.getRecipeLines(parseInt(req.params.id as string)));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -876,7 +876,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.patch("/api/inv/recipe-lines/:id", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      const line = await invStorage.updateRecipeLine(parseInt(req.params.id), req.body);
+      const line = await invStorage.updateRecipeLine(parseInt(req.params.id as string), req.body);
       if (!line) return res.status(404).json({ message: "Línea de receta no encontrada" });
       broadcast(wss, "INV_RECIPE_LINE_UPDATED", line);
       res.json(line);
@@ -887,7 +887,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/recipe-lines/:id", requirePermission("INV_MANAGE_RECIPES"), async (req, res) => {
     try {
-      await invStorage.deleteRecipeLine(parseInt(req.params.id));
+      await invStorage.deleteRecipeLine(parseInt(req.params.id as string));
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -900,7 +900,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       if (typeof enabled !== "boolean") {
         return res.status(400).json({ message: "El campo 'enabled' es requerido y debe ser boolean" });
       }
-      const product = await invStorage.toggleProductInventoryControl(parseInt(req.params.id), enabled);
+      const product = await invStorage.toggleProductInventoryControl(parseInt(req.params.id as string), enabled);
       if (!product) return res.status(404).json({ message: "Producto no encontrado" });
       broadcast(wss, "INV_PRODUCT_INVENTORY_TOGGLED", product);
       res.json(product);
@@ -1233,7 +1233,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
           return res.status(400).json({ message: `La suma de outputPct (${totalPct}%) excede 100%` });
         }
       }
-      const conv = await invStorage.updateConversion(parseInt(req.params.id), { ...header, outputs });
+      const conv = await invStorage.updateConversion(parseInt(req.params.id as string), { ...header, outputs });
       if (!conv) return res.status(404).json({ message: "Conversión no encontrada" });
       broadcast(wss, "INV_CONVERSION_UPDATED", conv);
       res.json(conv);
@@ -1244,7 +1244,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
 
   app.delete("/api/inv/conversions/:id", requirePermission("INV_MANAGE_ITEMS"), async (req, res) => {
     try {
-      const result = await invStorage.smartDeleteConversion(parseInt(req.params.id));
+      const result = await invStorage.smartDeleteConversion(parseInt(req.params.id as string));
       if (!result) return res.status(404).json({ message: "Conversión no encontrada" });
       broadcast(wss, result.hardDeleted ? "INV_CONVERSION_DELETED" : "INV_CONVERSION_DEACTIVATED", result.conversion);
       res.json(result);
