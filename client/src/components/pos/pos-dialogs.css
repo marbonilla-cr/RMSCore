@@ -495,6 +495,11 @@
   background: var(--c-amber-d);
   color: var(--c-amber);
 }
+.pos-method-btn.sel-employee_charge {
+  border-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.12);
+  color: #7c3aed;
+}
 
 /* Instant pay summary */
 .pos-pay-summary {

@@ -1251,3 +1251,23 @@ export type QboCategoryMapping = typeof qboCategoryMapping.$inferSelect;
 export type InsertQboCategoryMapping = z.infer<typeof insertQboCategoryMappingSchema>;
 export type QboSyncLog = typeof qboSyncLog.$inferSelect;
 export type InsertQboSyncLog = z.infer<typeof insertQboSyncLogSchema>;
+
+// ── Employee Charges ─────────────────────────────────────────────────────────
+export const employeeCharges = pgTable("employee_charges", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => users.id),
+  orderId: integer("order_id").notNull().references(() => orders.id),
+  paymentId: integer("payment_id").references(() => payments.id),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  description: text("description"),
+  businessDate: date("business_date").notNull(),
+  isSettled: boolean("is_settled").notNull().default(false),
+  settledAt: timestamp("settled_at"),
+  settledBy: integer("settled_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdBy: integer("created_by").references(() => users.id),
+});
+
+export const insertEmployeeChargeSchema = createInsertSchema(employeeCharges).omit({ id: true, createdAt: true });
+export type EmployeeCharge = typeof employeeCharges.$inferSelect;
+export type InsertEmployeeCharge = z.infer<typeof insertEmployeeChargeSchema>;

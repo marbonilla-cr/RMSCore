@@ -248,6 +248,7 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "AUDIT_MANAGE", description: "Gestionar alertas de auditoría" },
   { key: "MENU_TOGGLE_AVAILABILITY", description: "Cambiar disponibilidad de productos" },
   { key: "VOID_AUTHORIZE", description: "Autorizar anulaciones de items enviados a cocina" },
+  { key: "EMPLOYEE_CHARGE", description: "Cobrar cargo a empleado desde POS" },
 ];
 
 export async function ensureSystemPermissions(dbInstance?: typeof db) {

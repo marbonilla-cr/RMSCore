@@ -329,6 +329,26 @@ function PayrollTab() {
   const [newExtraAmount, setNewExtraAmount] = useState("");
   const [newExtraNote, setNewExtraNote] = useState("");
 
+  const [chargesFilter, setChargesFilter] = useState<"pending" | "settled">("pending");
+  const { data: employeeCharges = [], refetch: refetchCharges, isFetching: chargesLoading } = useQuery<any[]>({
+    queryKey: ["/api/hr/employee-charges", chargesFilter],
+    queryFn: () =>
+      fetch(`/api/hr/employee-charges?settled=${chargesFilter === "settled"}`, { credentials: "include" })
+        .then(r => r.json()),
+    staleTime: 30_000,
+  });
+
+  const settleChargeMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("PATCH", `/api/hr/employee-charges/${id}/settle`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/employee-charges"] });
+      toast({ title: "Cargo liquidado" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const createExtraMutation = useMutation({
     mutationFn: async (body: { employeeId: number; appliesToDate: string; typeCode: string; amount: number; note: string }) => {
       await apiRequest("POST", "/api/hr/payroll-extras", body);
@@ -1137,6 +1157,94 @@ function ServiceChargeTab() {
             <p className="text-sm text-muted-foreground" data-testid="text-no-payouts">
               No hay liquidaciones para este período.
             </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle>Cargos a Empleados</CardTitle>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={chargesFilter === "pending" ? "default" : "outline"}
+                onClick={() => setChargesFilter("pending")}
+                data-testid="charges-filter-pending"
+              >
+                Pendientes
+              </Button>
+              <Button
+                size="sm"
+                variant={chargesFilter === "settled" ? "default" : "outline"}
+                onClick={() => setChargesFilter("settled")}
+                data-testid="charges-filter-settled"
+              >
+                Liquidados
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => refetchCharges()} data-testid="charges-refresh">
+                ↺ Actualizar
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {chargesLoading ? (
+            <div className="flex justify-center p-4" data-testid="loading-charges">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
+          ) : employeeCharges.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="text-no-charges">
+              {chargesFilter === "pending" ? "No hay cargos pendientes." : "No hay cargos liquidados."}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Empleado</TableHead>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead>Descripción</TableHead>
+                    <TableHead className="text-right">Monto</TableHead>
+                    {chargesFilter === "pending" && <TableHead className="text-center">Acción</TableHead>}
+                    {chargesFilter === "settled" && <TableHead>Liquidado</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {employeeCharges.map((c: any) => (
+                    <TableRow key={c.id} data-testid={`row-charge-${c.id}`}>
+                      <TableCell data-testid={`text-charge-employee-${c.id}`}>{c.employeeName ?? `#${c.employeeId}`}</TableCell>
+                      <TableCell data-testid={`text-charge-date-${c.id}`}>{c.businessDate}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-xs truncate" data-testid={`text-charge-desc-${c.id}`}>
+                        {c.description ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono" data-testid={`text-charge-amount-${c.id}`}>
+                        ₡{Number(c.amount).toLocaleString("es-CR", { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      {chargesFilter === "pending" && (
+                        <TableCell className="text-center">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => settleChargeMutation.mutate(c.id)}
+                            disabled={settleChargeMutation.isPending}
+                            data-testid={`button-settle-charge-${c.id}`}
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            Liquidar
+                          </Button>
+                        </TableCell>
+                      )}
+                      {chargesFilter === "settled" && (
+                        <TableCell data-testid={`text-charge-settled-at-${c.id}`} className="text-sm text-muted-foreground">
+                          {c.settledAt ? new Date(c.settledAt).toLocaleDateString("es-CR") : "—"}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -32,7 +32,7 @@ import {
 import { printBridges as printBridgesTable, printers as printersTable } from "../shared/schema";
 import { pool } from "./db";
 import { getTenantDb } from "./db-tenant";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog, employeeCharges, users } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
 declare module "express-session" {
@@ -3268,6 +3268,19 @@ export async function registerRoutes(
     res.json(await storage.getAllPaymentMethods(req.db));
   });
 
+  app.get("/api/pos/employees-for-charge", requirePermission("EMPLOYEE_CHARGE"), async (req, res) => {
+    try {
+      const employees = await req.db
+        .select({ id: users.id, displayName: users.displayName })
+        .from(users)
+        .where(eq(users.active, true))
+        .orderBy(asc(users.displayName));
+      res.json(employees);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   async function finalizePaymentTx(tx: any, opts: { orderId: number; itemIds?: number[]; now: Date; closeOrder?: boolean }) {
     const { orderId, itemIds, now, closeOrder } = opts;
     const itemCondition = itemIds
@@ -3523,7 +3536,7 @@ export async function registerRoutes(
   app.post("/api/pos/pay", requirePermission("POS_PAY"), async (req, res) => {
     const t0 = Date.now();
     try {
-      const { orderId, paymentMethodId, amount, clientName, clientEmail } = req.body;
+      const { orderId, paymentMethodId, amount, clientName, clientEmail, employeeId } = req.body;
       const userId = req.session.userId!;
 
       const [order, allPMs, cashSession] = await Promise.all([
@@ -3594,6 +3607,24 @@ export async function registerRoutes(
       broadcast("table_status_changed", {});
 
       qbo.enqueueSyncForPayment(payment.id, orderId, req.db).catch(() => {});
+
+      if (pm?.paymentCode === "EMPLOYEE_CHARGE" && employeeId) {
+        const orderItemRows = await storage.getOrderItems(orderId, req.db);
+        const description = orderItemRows
+          .filter(i => i.status !== "VOIDED")
+          .map(i => `${i.qty}x ${i.productNameSnapshot}`)
+          .join(", ");
+        await req.db.insert(employeeCharges).values({
+          employeeId: Number(employeeId),
+          orderId,
+          paymentId: payment.id,
+          amount: String(payAmount.toFixed(2)),
+          description: `Orden #${order.dailyNumber ?? orderId} — ${description}`,
+          businessDate: bd,
+          isSettled: false,
+          createdBy: userId,
+        });
+      }
 
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay ${Date.now() - t0}ms`);
       res.json({ ok: true, paymentId: payment.id });
@@ -6118,6 +6149,59 @@ export async function registerRoutes(
   app.get("/api/hr/open-punches", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
     const openPunches = await storage.getAllOpenPunches(req.db);
     res.json(openPunches);
+  });
+
+  // ==================== HR: EMPLOYEE CHARGES ====================
+  app.get("/api/hr/employee-charges", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      const settled = req.query.settled === "true";
+      const emp = req.query.employeeId ? Number(req.query.employeeId) : null;
+
+      const rows = await req.db
+        .select({
+          id: employeeCharges.id,
+          employeeId: employeeCharges.employeeId,
+          employeeName: users.displayName,
+          orderId: employeeCharges.orderId,
+          paymentId: employeeCharges.paymentId,
+          amount: employeeCharges.amount,
+          description: employeeCharges.description,
+          businessDate: employeeCharges.businessDate,
+          isSettled: employeeCharges.isSettled,
+          settledAt: employeeCharges.settledAt,
+          createdAt: employeeCharges.createdAt,
+        })
+        .from(employeeCharges)
+        .leftJoin(users, eq(users.id, employeeCharges.employeeId))
+        .where(
+          and(
+            eq(employeeCharges.isSettled, settled),
+            emp ? eq(employeeCharges.employeeId, emp) : undefined
+          )
+        )
+        .orderBy(desc(employeeCharges.businessDate), desc(employeeCharges.id));
+
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/hr/employee-charges/:id/settle", requirePermission("HR_VIEW_TEAM"), async (req, res) => {
+    try {
+      const chargeId = Number(req.params.id);
+      const userId = req.session.userId!;
+      const now = new Date();
+
+      await req.db
+        .update(employeeCharges)
+        .set({ isSettled: true, settledAt: now, settledBy: userId })
+        .where(eq(employeeCharges.id, chargeId));
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // ==================== INVENTORY MODULE ====================

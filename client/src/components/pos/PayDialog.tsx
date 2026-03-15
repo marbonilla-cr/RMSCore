@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { PaymentMethod } from "@shared/schema";
@@ -98,6 +98,8 @@ export function PayDialog({
   const [processing, setProcessing] = useState(false);
   const [activeDenom, setActiveDenom] = useState<number | null>(null);
 
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("");
+
   const [multiMode, setMultiMode] = useState(false);
   const [legs, setLegs] = useState<PayLeg[]>([]);
   const [legNextId, setLegNextId] = useState(1);
@@ -109,13 +111,24 @@ export function PayDialog({
 
   const total = splitId ? (splitTotal || 0) : Number(table?.totalAmount || 0);
   const change = received - total;
-  const canPay = method === "CASH" ? change >= 0 && received > 0 : !!method;
+  const canPay = method === "CASH"
+    ? change >= 0 && received > 0
+    : method === "EMPLOYEE_CHARGE"
+      ? !!selectedEmployeeId
+      : !!method;
 
   const activePaymentMethods = paymentMethods.filter((m) => m.active);
 
   const legsTotal = legs.reduce((s, l) => s + l.amount, 0);
   const legsRemaining = total - legsTotal;
   const multiCanPay = legs.length >= 2 && Math.abs(legsRemaining) < 1;
+
+  const isEmployeeChargeSelected = method === "EMPLOYEE_CHARGE";
+
+  const { data: employeeList = [] } = useQuery<{ id: number; displayName: string }[]>({
+    queryKey: ["/api/pos/employees-for-charge"],
+    enabled: isEmployeeChargeSelected,
+  });
 
   useEffect(() => {
     if (open) {
@@ -128,6 +141,7 @@ export function PayDialog({
       setClientEmail("");
       setProcessing(false);
       setActiveDenom(null);
+      setSelectedEmployeeId("");
       setMultiMode(false);
       setLegs([]);
       setLegNextId(1);
@@ -141,6 +155,7 @@ export function PayDialog({
 
   const getMethodType = (pm: PaymentMethod): string => {
     const code = pm.paymentCode.toUpperCase();
+    if (code === "EMPLOYEE_CHARGE") return "EMPLOYEE_CHARGE";
     if (code.includes("CASH") || code.includes("EFECT")) return "CASH";
     if (code.includes("CARD") || code.includes("TARJ")) return "CARD";
     return "SINPE";
@@ -149,12 +164,14 @@ export function PayDialog({
   const getMethodIcon = (type: string) => {
     if (type === "CASH") return "$";
     if (type === "CARD") return "C";
+    if (type === "EMPLOYEE_CHARGE") return "👤";
     return "S";
   };
 
   const getMethodColor = (type: string) => {
     if (type === "CASH") return "var(--c-green)";
     if (type === "CARD") return "var(--c-blue)";
+    if (type === "EMPLOYEE_CHARGE") return "var(--c-purple, #7c3aed)";
     return "var(--c-amber)";
   };
 
@@ -203,6 +220,7 @@ export function PayDialog({
           amount: table.totalAmount,
           clientName: clientName || null,
           clientEmail: clientEmail || null,
+          ...(method === "EMPLOYEE_CHARGE" && selectedEmployeeId ? { employeeId: parseInt(selectedEmployeeId) } : {}),
         });
         const data = await resp.json();
         responsePaymentId = data?.paymentId;
@@ -223,7 +241,7 @@ export function PayDialog({
       toast({ title: "Error", description: err.message, variant: "destructive" });
       setProcessing(false);
     }
-  }, [table, methodId, splitId, clientName, clientEmail, processing, paymentMethods, onSuccess, onClose, toast]);
+  }, [table, methodId, method, selectedEmployeeId, splitId, clientName, clientEmail, processing, paymentMethods, onSuccess, onClose, toast]);
 
   const handleMultiProcess = useCallback(async () => {
     if (!table || processing || !multiCanPay) return;
@@ -751,11 +769,30 @@ export function PayDialog({
                     <div className="pos-pay-summary-label">Total a cobrar</div>
                     <div className="pos-pay-summary-amount" data-testid="pay-instant-amount">₡{total.toLocaleString()}</div>
                   </div>
+
+                  {method === "EMPLOYEE_CHARGE" && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div className="pos-sect-lbl">Seleccionar empleado</div>
+                      <select
+                        className="pos-input"
+                        value={selectedEmployeeId}
+                        onChange={e => setSelectedEmployeeId(e.target.value)}
+                        data-testid="pay-employee-select"
+                        style={{ padding: "8px 10px", borderRadius: 8, fontSize: 15, border: "1px solid var(--b-default)", background: "var(--bg-card)", color: "inherit" }}
+                      >
+                        <option value="">— Elige un empleado —</option>
+                        {employeeList.map(emp => (
+                          <option key={emp.id} value={String(emp.id)}>{emp.displayName}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   <div className="pos-desktop-only">
                     <button
                       className="pos-primary-btn"
                       onClick={handleProcess}
-                      disabled={processing}
+                      disabled={processing || !canPay}
                       data-testid="pay-process-card-desktop"
                     >
                       {processing ? "Procesando..." : `PROCESAR PAGO — ₡${total.toLocaleString()}`}
@@ -765,7 +802,7 @@ export function PayDialog({
                     <button
                       className="pos-primary-btn"
                       onClick={handleProcess}
-                      disabled={processing}
+                      disabled={processing || !canPay}
                       data-testid="pay-process-card-mobile"
                     >
                       {processing ? "Procesando..." : `PROCESAR PAGO — ₡${total.toLocaleString()}`}

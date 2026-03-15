@@ -1,0 +1,180 @@
+## Prompt 1 de 2 — Cargo a Empleado
+
+**Contexto:** Agregar "Cargo a Empleado" como método de pago especial en el PayDialog. Solo visible para MANAGER. Genera una cuenta por cobrar que aparece en HR → Reportes hasta ser marcada como rebajada. El empleado no ve nada en ninguna pantalla.
+
+---
+
+### PARTE A — Migración de base de datos
+
+Crear `migrations/0020_employee_charges.sql`:
+
+```sql
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "employee_charges" (
+  "id" serial PRIMARY KEY,
+  "employee_id" integer NOT NULL REFERENCES "users"("id"),
+  "order_id" integer NOT NULL REFERENCES "orders"("id"),
+  "payment_id" integer REFERENCES "payments"("id"),
+  "amount" numeric(12,2) NOT NULL,
+  "description" text,
+  "business_date" date NOT NULL,
+  "is_settled" boolean NOT NULL DEFAULT false,
+  "settled_at" timestamp,
+  "settled_by" integer REFERENCES "users"("id"),
+  "created_at" timestamp NOT NULL DEFAULT now(),
+  "created_by" integer REFERENCES "users"("id")
+);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "employee_charges_employee_id_idx" ON "employee_charges"("employee_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "employee_charges_is_settled_idx" ON "employee_charges"("is_settled");
+```
+
+Agregar en `shared/schema.ts`:
+
+```typescript
+export const employeeCharges = pgTable("employee_charges", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => users.id),
+  orderId: integer("order_id").notNull().references(() => orders.id),
+  paymentId: integer("payment_id").references(() => payments.id),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  description: text("description"),
+  businessDate: date("business_date").notNull(),
+  isSettled: boolean("is_settled").notNull().default(false),
+  settledAt: timestamp("settled_at"),
+  settledBy: integer("settled_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdBy: integer("created_by").references(() => users.id),
+});
+```
+
+---
+
+### PARTE B — Backend en `server/routes.ts`
+
+**1. Permiso nuevo** — agregar `EMPLOYEE_CHARGE` a `SYSTEM_PERMISSIONS` y asignarlo al rol MANAGER en `DEFAULT_ROLE_PERMISSIONS`.
+
+**2. Endpoint empleados para selector:**
+```typescript
+app.get("/api/pos/employees-for-charge", requireRole("MANAGER"), async (req, res) => {
+  try {
+    const employees = await req.db.select({
+      id: users.id,
+      displayName: users.displayName,
+    }).from(users)
+      .where(eq(users.active, true))
+      .orderBy(asc(users.displayName));
+    res.json(employees);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+**3. En `POST /api/pos/pay`** — después de crear el payment exitosamente, agregar:
+```typescript
+if (paymentMethodCode === "EMPLOYEE_CHARGE" && body.employeeId) {
+  const itemNames = orderItems.map((i: any) => `${i.qty}x ${i.productNameSnapshot}`).join(", ");
+  await req.db.insert(employeeCharges).values({
+    employeeId: body.employeeId,
+    orderId: order.id,
+    paymentId: payment.id,
+    amount: String(totalAmount),
+    description: `Orden #${order.dailyNumber} — ${itemNames}`,
+    businessDate: await getBusinessDate(req.tenantSchema),
+    isSettled: false,
+    createdBy: req.session?.userId ?? null,
+  });
+}
+```
+
+**4. Endpoints de gestión de cargos:**
+```typescript
+// Todos los cargos con info del empleado y orden
+app.get("/api/hr/employee-charges", requireRole("MANAGER"), async (req, res) => {
+  try {
+    const charges = await req.db
+      .select({
+        id: employeeCharges.id,
+        employeeId: employeeCharges.employeeId,
+        employeeName: users.displayName,
+        orderId: employeeCharges.orderId,
+        amount: employeeCharges.amount,
+        description: employeeCharges.description,
+        businessDate: employeeCharges.businessDate,
+        isSettled: employeeCharges.isSettled,
+        settledAt: employeeCharges.settledAt,
+        createdAt: employeeCharges.createdAt,
+      })
+      .from(employeeCharges)
+      .leftJoin(users, eq(employeeCharges.employeeId, users.id))
+      .orderBy(desc(employeeCharges.createdAt));
+    res.json(charges);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Marcar como rebajado
+app.patch("/api/hr/employee-charges/:id/settle", requireRole("MANAGER"), async (req, res) => {
+  try {
+    const [updated] = await req.db
+      .update(employeeCharges)
+      .set({
+        isSettled: true,
+        settledAt: new Date(),
+        settledBy: req.session?.userId ?? null,
+      })
+      .where(eq(employeeCharges.id, parseInt(req.params.id)))
+      .returning();
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+---
+
+### PARTE C — Frontend PayDialog
+
+En `client/src/components/pos/PayDialog.tsx`:
+
+**1.** Al inicio del componente, si el usuario tiene rol MANAGER, hacer fetch a `/api/pos/employees-for-charge` para obtener la lista de empleados.
+
+**2.** Agregar botón "Cargo a Empleado" en la grilla de métodos de pago — en el espacio vacío abajo a la izquierda. Mismo estilo que los otros botones del PayDialog. Color naranja `#e67e22`. Solo renderizar si el usuario es MANAGER.
+
+**3.** Cuando se selecciona "Cargo a Empleado", mostrar debajo de los botones un `<select>` estilizado con los tokens del PayDialog para elegir el empleado. Placeholder: "Seleccionar empleado...".
+
+**4.** El botón COBRAR se habilita solo cuando hay empleado seleccionado. Incluir `employeeId` en el body del POST a `/api/pos/pay`.
+
+---
+
+### PARTE D — Sección en HR Reportes
+
+En `client/src/pages/hr/reports.tsx` agregar una nueva sección "Cargos a Empleados":
+
+- Fetch a `GET /api/hr/employee-charges`
+- Filtros: por empleado (dropdown) y por estado (Todos / Pendientes / Rebajados)
+- Tabla con columnas:
+  - **Empleado**
+  - **Fecha**
+  - **Descripción** — texto truncado con tooltip al hover que muestra el desglose completo (items, fecha, monto)
+  - **Monto** — formato `₡X,XXX`
+  - **Estado** — badge verde "Rebajado" o badge naranja "Pendiente"
+  - **Acción** — botón "Marcar rebajado" solo si `isSettled = false`
+- Total pendiente por empleado visible al pie de la tabla
+- Al marcar rebajado: llamar `PATCH /api/hr/employee-charges/:id/settle` + invalidar query
+
+---
+
+### Criterios de aceptación:
+- [ ] Botón "Cargo a Empleado" aparece en PayDialog solo para MANAGER
+- [ ] Selector de empleado aparece al seleccionar ese método
+- [ ] Al cobrar se crea registro en `employee_charges`
+- [ ] El cargo aparece en HR → Reportes con tooltip de desglose
+- [ ] Botón "Marcar rebajado" funciona y cambia el estado
+- [ ] Empleado no ve nada en Mi Turno ni en ninguna otra pantalla
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] No hacer deploy hasta que todo compile y funcione en Replit
