@@ -22,6 +22,13 @@ async function getAppliedMigrations(schemaName: string): Promise<Set<string>> {
   }
 }
 
+const ALREADY_EXISTS_CODES = new Set([
+  '42P07', // duplicate_table
+  '42710', // duplicate_object (index, constraint, etc.)
+  '42701', // duplicate_column
+  '42P16', // invalid_table_definition (sometimes from dup constraints)
+]);
+
 async function applyMigration(
   schemaName: string,
   filename: string,
@@ -40,14 +47,25 @@ async function applyMigration(
       .map(s => s.trim())
       .filter(s => s.length > 0);
 
+    let skipped = 0;
     for (let i = 0; i < statements.length; i++) {
+      const sp = `sp_${i}`;
+      await client.query(`SAVEPOINT ${sp}`);
       try {
         await client.query(statements[i]);
+        await client.query(`RELEASE SAVEPOINT ${sp}`);
       } catch (err: any) {
-        throw new Error(
-          `Statement ${i + 1}/${statements.length} failed: ` +
-          `${statements[i].substring(0, 200)} — ${err.message}`
-        );
+        if (ALREADY_EXISTS_CODES.has(err.code)) {
+          await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+          await client.query(`RELEASE SAVEPOINT ${sp}`);
+          skipped++;
+        } else {
+          await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+          throw new Error(
+            `Statement ${i + 1}/${statements.length} failed: ` +
+            `${statements[i].substring(0, 200)} — ${err.message}`
+          );
+        }
       }
     }
     await client.query(
@@ -56,7 +74,11 @@ async function applyMigration(
       [schemaName, filename]
     );
     await client.query("COMMIT");
-    console.log(`[migrate] ✓ ${schemaName} ← ${filename}`);
+    if (skipped > 0) {
+      console.log(`[migrate] ✓ ${schemaName} ← ${filename} (${skipped} statements ya existían, skipped)`);
+    } else {
+      console.log(`[migrate] ✓ ${schemaName} ← ${filename}`);
+    }
   } catch (err: any) {
     await client.query("ROLLBACK");
     throw new Error(`[migrate] Error en ${schemaName}/${filename}: ${err.message}`);
