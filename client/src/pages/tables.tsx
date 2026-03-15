@@ -835,7 +835,7 @@ export default function TablesPage() {
         </div>
         <button
           className="header-action"
-          onClick={() => { setQuickSaleDialogOpen(true); setQuickSaleName(""); }}
+          onClick={() => { setQuickSaleDialogOpen(true); setQuickSaleName("Cliente Mostrador"); }}
           data-testid="button-quick-sale"
           style={{ marginRight: 6 }}
           title="Venta Rápida"

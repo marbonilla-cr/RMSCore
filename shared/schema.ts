@@ -140,7 +140,7 @@ export const qrSubmissions = pgTable("qr_submissions", {
 export const kitchenTickets = pgTable("kitchen_tickets", {
   id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull(),
-  tableId: integer("table_id").notNull(),
+  tableId: integer("table_id"),
   tableNameSnapshot: text("table_name_snapshot").notNull(),
   status: text("status").notNull().default("NEW"),
   kdsDestination: text("kds_destination").notNull().default("cocina"),
