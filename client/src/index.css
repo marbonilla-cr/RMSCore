@@ -392,3 +392,5 @@
   flex-direction: column;
   overflow-x: hidden;
 }
+
+@keyframes spin { to { transform: rotate(360deg); } }

@@ -1,0 +1,126 @@
+## OBJETIVO
+Eliminar la lentitud al cargar la pantalla de PIN login. El problema tiene
+dos causas confirmadas: (1) Railway cold start bloquea el GET /api/auth/me
+inicial, y (2) el bundle de React carga todas las páginas antes de mostrar
+el keypad.
+
+NO modificar lógica de negocio, rutas de API, autenticación, ni base de datos.
+Solo cambios de rendimiento en el frontend y un endpoint de health check.
+
+---
+
+## CAMBIO 1 — Health check endpoint para evitar Railway cold start
+
+En server/routes.ts (o server/index.ts donde se registran las rutas),
+agregar ANTES de cualquier middleware de autenticación:
+
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({ status: 'ok', ts: Date.now() });
+  });
+
+---
+
+## CAMBIO 2 — Keep-alive desde el cliente
+
+En client/src/lib/keepalive.ts (crear archivo nuevo):
+
+  // Hace ping al servidor cada 4 minutos para evitar cold start de Railway
+  export function startKeepAlive() {
+    const ping = () =>
+      fetch('/api/health').catch(() => {}); // silencioso, nunca lanza error
+
+    ping(); // ping inmediato al cargar
+    setInterval(ping, 4 * 60 * 1000); // cada 4 minutos
+  }
+
+En client/src/App.tsx, importar y llamar startKeepAlive() una sola vez
+dentro de un useEffect en el componente raíz (fuera de AuthProvider,
+antes del routing). El efecto debe tener array de dependencias vacío [].
+
+---
+
+## CAMBIO 3 — Mostrar keypad inmediatamente sin esperar auth/me
+
+En client/src/lib/auth.tsx, en el AuthProvider:
+
+SITUACIÓN ACTUAL: loading comienza en true, se hace GET /api/auth/me,
+y hasta que resuelve se pone loading=false. Todo el árbol espera.
+
+CAMBIO: Mostrar la UI de inmediato con loading=false desde el inicio.
+Hacer GET /api/auth/me en background. Si devuelve un usuario, setUser()
+y redirigir. Si devuelve 401, no hacer nada (el usuario ya ve el keypad).
+
+Implementación sugerida:
+  - Inicializar: const [user, setUser] = useState<AuthUser | null>(null)
+  - Inicializar: const [loading, setLoading] = useState(false) // <- cambio clave
+  - En el useEffect de session check: hacer el fetch, si resuelve con
+    usuario llamar setUser(user), si falla (401/error) no cambiar nada.
+  - El timeout de 5 segundos se puede eliminar o reducir a 2 segundos.
+
+IMPORTANTE: Verificar que el routing en App.tsx maneje correctamente el
+caso donde loading=false y user=null (debe mostrar PinLoginPage, no
+redirigir ni mostrar spinner).
+
+---
+
+## CAMBIO 4 — Code splitting con React.lazy para todas las páginas
+
+En client/src/App.tsx, convertir los imports estáticos de páginas a
+imports dinámicos con React.lazy, EXCEPTO estas dos que deben quedar
+estáticas (son las primeras en renderizar):
+  - PinLoginPage
+  - LoginPage
+
+Para todas las demás páginas (TablesPage, TableDetailPage, KDSPage,
+POSPage, DashboardPage, SalesCubePage, QRClientPage, todas las de
+/admin/*, /hr/*, /inventory/*, /shortages/*):
+
+  // ANTES:
+  import TablesPage from './pages/tables';
+
+  // DESPUÉS:
+  const TablesPage = React.lazy(() => import('./pages/tables'));
+
+Envolver el componente de routing (el Switch/Route tree) con un
+Suspense que tenga un fallback mínimo:
+
+  import { Suspense } from 'react';
+
+  // Fallback: spinner pequeño centrado, no pantalla blanca
+  const PageLoader = () => (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: '100vh',
+      background: 'var(--background)'
+    }}>
+      <div style={{
+        width: 32, height: 32,
+        border: '3px solid var(--border)',
+        borderTopColor: 'var(--primary)',
+        borderRadius: '50%',
+        animation: 'spin 0.7s linear infinite'
+      }} />
+    </div>
+  );
+
+  // En el render, envolver las rutas:
+  <Suspense fallback={<PageLoader />}>
+    {/* todas las rutas aquí */}
+  </Suspense>
+
+Agregar el keyframe de spin en el CSS global si no existe:
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+---
+
+## VERIFICACIÓN ESPERADA
+Después de estos cambios:
+1. El servidor no se duerme → Railway responde inmediatamente
+2. El bundle inicial es ~80% más pequeño → keypad visible en < 1 segundo
+3. El keypad no espera auth/me → interactivo de inmediato
+4. Las demás páginas cargan bajo demanda → no afectan el login
+
+NO hacer Deploy todavía. Mostrar un resumen de los archivos modificados
+y las líneas cambiadas para revisión antes de deployar.

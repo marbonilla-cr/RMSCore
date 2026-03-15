@@ -401,6 +401,11 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Health check — before any auth middleware
+  app.get("/api/health", (_req, res) => {
+    res.status(200).json({ status: "ok", ts: Date.now() });
+  });
+
   // Session setup
   const sessionSecret = process.env.SESSION_SECRET;
   if (!sessionSecret) {

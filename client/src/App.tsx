@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import { Switch, Route, Link, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -11,56 +11,77 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { usePreventPullRefresh } from "@/hooks/use-prevent-pull-refresh";
 import { Loader2, LogOut, RefreshCw, Grid3x3, CreditCard, ChefHat, Wine } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { startKeepAlive } from "@/lib/keepalive";
 import PinLoginPage from "@/pages/pin-login";
 import LoginPage from "@/pages/login";
 import AuthPage from "@/pages/auth-page";
-import ResetPasswordPage from "@/pages/reset-password";
-import TablesPage from "@/pages/tables";
-import TableDetailPage from "@/pages/table-detail";
-import KDSPage from "@/pages/kds";
-import KDSBarPage from "@/pages/kds-bar";
-import POSPage from "@/pages/pos";
-import DashboardPage from "@/pages/dashboard";
-import QRClientPage from "@/pages/qr-client";
-import PublicReservePage from "@/pages/reserve";
-import PublicMenuPage from "@/pages/public-menu";
-import SuperadminPage from "@/pages/superadmin";
-import AdminTablesPage from "@/pages/admin/tables";
-import AdminCategoriesPage from "@/pages/admin/categories";
-import AdminProductsPage from "@/pages/admin/products";
-import AdminPaymentMethodsPage from "@/pages/admin/payment-methods";
-import AdminEmployeesPage from "@/pages/admin/employees";
-import AdminRolesPage from "@/pages/admin/roles";
-import AdminBusinessConfigPage from "@/pages/admin/business-config";
-import AdminPrintersPage from "@/pages/admin/printers";
-import AdminModifiersPage from "@/pages/admin/modifiers";
-import AdminDiscountsPage from "@/pages/admin/discounts";
-import AdminTaxCategoriesPage from "@/pages/admin/tax-categories";
-import HrMiTurnoPage from "@/pages/hr/mi-turno";
-import HrSchedulesPage from "@/pages/hr/schedules";
-import HrPunchesPage from "@/pages/hr/punches";
-import HrReportsPage from "@/pages/hr/reports";
-import HrSettingsPage from "@/pages/hr/settings";
-import InvItemsPage from "@/pages/inventory/items";
-import InvItemDetailPage from "@/pages/inventory/item-detail";
-import InvSuppliersPage from "@/pages/inventory/suppliers";
-import InvPurchaseOrdersPage from "@/pages/inventory/purchase-orders";
-import InvPhysicalCountsPage from "@/pages/inventory/physical-counts";
-import InvRecipesPage from "@/pages/inventory/recipes";
-import InvReportsPage from "@/pages/inventory/reports";
-import QboLedgerPage from "@/pages/dashboard/qbo-ledger";
-import InvConversionsPage from "@/pages/inventory/conversions";
-import InvProductionPage from "@/pages/inventory/production";
-import InvStockPage from "@/pages/inventory/stock";
-import InventoryBasicPage from "@/pages/inventory-basic";
-import ShortagesReportPage from "@/pages/shortages/report";
-import ShortagesActivePage from "@/pages/shortages/active";
-import ShortagesAuditPage from "@/pages/shortages/audit";
-import SalesCubePage from "@/pages/sales-cube";
-import AdminQuickBooksPage from "@/pages/admin/quickbooks";
-import DataLoaderPage from "@/pages/admin/data-loader";
-import AdminLoyaltyPage from "@/pages/admin/loyalty";
 import NotFound from "@/pages/not-found";
+
+const ResetPasswordPage    = React.lazy(() => import("@/pages/reset-password"));
+const TablesPage           = React.lazy(() => import("@/pages/tables"));
+const TableDetailPage      = React.lazy(() => import("@/pages/table-detail"));
+const KDSPage              = React.lazy(() => import("@/pages/kds"));
+const KDSBarPage           = React.lazy(() => import("@/pages/kds-bar"));
+const POSPage              = React.lazy(() => import("@/pages/pos"));
+const DashboardPage        = React.lazy(() => import("@/pages/dashboard"));
+const QRClientPage         = React.lazy(() => import("@/pages/qr-client"));
+const PublicReservePage    = React.lazy(() => import("@/pages/reserve"));
+const PublicMenuPage       = React.lazy(() => import("@/pages/public-menu"));
+const SuperadminPage       = React.lazy(() => import("@/pages/superadmin"));
+const AdminTablesPage      = React.lazy(() => import("@/pages/admin/tables"));
+const AdminCategoriesPage  = React.lazy(() => import("@/pages/admin/categories"));
+const AdminProductsPage    = React.lazy(() => import("@/pages/admin/products"));
+const AdminPaymentMethodsPage = React.lazy(() => import("@/pages/admin/payment-methods"));
+const AdminEmployeesPage   = React.lazy(() => import("@/pages/admin/employees"));
+const AdminRolesPage       = React.lazy(() => import("@/pages/admin/roles"));
+const AdminBusinessConfigPage = React.lazy(() => import("@/pages/admin/business-config"));
+const AdminPrintersPage    = React.lazy(() => import("@/pages/admin/printers"));
+const AdminModifiersPage   = React.lazy(() => import("@/pages/admin/modifiers"));
+const AdminDiscountsPage   = React.lazy(() => import("@/pages/admin/discounts"));
+const AdminTaxCategoriesPage = React.lazy(() => import("@/pages/admin/tax-categories"));
+const AdminQuickBooksPage  = React.lazy(() => import("@/pages/admin/quickbooks"));
+const DataLoaderPage       = React.lazy(() => import("@/pages/admin/data-loader"));
+const AdminLoyaltyPage     = React.lazy(() => import("@/pages/admin/loyalty"));
+const HrMiTurnoPage        = React.lazy(() => import("@/pages/hr/mi-turno"));
+const HrSchedulesPage      = React.lazy(() => import("@/pages/hr/schedules"));
+const HrPunchesPage        = React.lazy(() => import("@/pages/hr/punches"));
+const HrReportsPage        = React.lazy(() => import("@/pages/hr/reports"));
+const HrSettingsPage       = React.lazy(() => import("@/pages/hr/settings"));
+const InvItemsPage         = React.lazy(() => import("@/pages/inventory/items"));
+const InvItemDetailPage    = React.lazy(() => import("@/pages/inventory/item-detail"));
+const InvSuppliersPage     = React.lazy(() => import("@/pages/inventory/suppliers"));
+const InvPurchaseOrdersPage = React.lazy(() => import("@/pages/inventory/purchase-orders"));
+const InvPhysicalCountsPage = React.lazy(() => import("@/pages/inventory/physical-counts"));
+const InvRecipesPage       = React.lazy(() => import("@/pages/inventory/recipes"));
+const InvReportsPage       = React.lazy(() => import("@/pages/inventory/reports"));
+const QboLedgerPage        = React.lazy(() => import("@/pages/dashboard/qbo-ledger"));
+const InvConversionsPage   = React.lazy(() => import("@/pages/inventory/conversions"));
+const InvProductionPage    = React.lazy(() => import("@/pages/inventory/production"));
+const InvStockPage         = React.lazy(() => import("@/pages/inventory/stock"));
+const InventoryBasicPage   = React.lazy(() => import("@/pages/inventory-basic"));
+const ShortagesReportPage  = React.lazy(() => import("@/pages/shortages/report"));
+const ShortagesActivePage  = React.lazy(() => import("@/pages/shortages/active"));
+const ShortagesAuditPage   = React.lazy(() => import("@/pages/shortages/audit"));
+const SalesCubePage        = React.lazy(() => import("@/pages/sales-cube"));
+
+const PageLoader = () => (
+  <div style={{
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100vh",
+    background: "var(--background)"
+  }}>
+    <div style={{
+      width: 32,
+      height: 32,
+      border: "3px solid var(--border)",
+      borderTopColor: "var(--primary)",
+      borderRadius: "50%",
+      animation: "spin 0.7s linear infinite"
+    }} />
+  </div>
+);
 
 function getDefaultRouteByPermissions(perms: string[]): string {
   if (perms.includes("MODULE_TABLES_VIEW")) return "/tables";
@@ -129,52 +150,54 @@ function AuthenticatedRouter() {
   }
 
   return (
-    <Switch>
-      <Route path="/" component={TablesPage} />
-      <Route path="/tables" component={TablesPage} />
-      <Route path="/tables/quick/:orderId" component={TableDetailPage} />
-      <Route path="/tables/:id" component={TableDetailPage} />
-      <Route path="/kds" component={KDSPage} />
-      <Route path="/kds-bar" component={KDSBarPage} />
-      <Route path="/pos" component={POSPage} />
-      <Route path="/dashboard" component={DashboardPage} />
-      <Route path="/admin/tables" component={AdminTablesPage} />
-      <Route path="/admin/categories" component={AdminCategoriesPage} />
-      <Route path="/admin/products" component={AdminProductsPage} />
-      <Route path="/admin/payment-methods" component={AdminPaymentMethodsPage} />
-      <Route path="/admin/employees" component={AdminEmployeesPage} />
-      <Route path="/admin/roles" component={AdminRolesPage} />
-      <Route path="/admin/business-config" component={AdminBusinessConfigPage} />
-      <Route path="/admin/printers" component={AdminPrintersPage} />
-      <Route path="/admin/modifiers" component={AdminModifiersPage} />
-      <Route path="/admin/discounts" component={AdminDiscountsPage} />
-      <Route path="/admin/tax-categories" component={AdminTaxCategoriesPage} />
-      <Route path="/admin/quickbooks" component={AdminQuickBooksPage} />
-      <Route path="/admin/data-loader" component={DataLoaderPage} />
-      <Route path="/admin/loyalty" component={AdminLoyaltyPage} />
-      <Route path="/hr/mi-turno" component={HrMiTurnoPage} />
-      <Route path="/hr/horarios" component={HrSchedulesPage} />
-      <Route path="/hr/marcas" component={HrPunchesPage} />
-      <Route path="/hr/reportes" component={HrReportsPage} />
-      <Route path="/hr/config" component={HrSettingsPage} />
-      <Route path="/inventory/basic" component={InventoryBasicPage} />
-      <Route path="/inventory/items" component={InvItemsPage} />
-      <Route path="/inventory/items/:id" component={InvItemDetailPage} />
-      <Route path="/inventory/suppliers" component={InvSuppliersPage} />
-      <Route path="/inventory/purchase-orders" component={InvPurchaseOrdersPage} />
-      <Route path="/inventory/physical-counts" component={InvPhysicalCountsPage} />
-      <Route path="/inventory/recipes" component={InvRecipesPage} />
-      <Route path="/inventory/conversions" component={InvConversionsPage} />
-      <Route path="/inventory/production" component={InvProductionPage} />
-      <Route path="/inventory/stock" component={InvStockPage} />
-      <Route path="/inventory/reports" component={InvReportsPage} />
-      <Route path="/shortages/report" component={ShortagesReportPage} />
-      <Route path="/shortages/active" component={ShortagesActivePage} />
-      <Route path="/shortages/audit" component={ShortagesAuditPage} />
-      <Route path="/reports/sales-cube" component={SalesCubePage} />
-      <Route path="/reports/qbo-ledger" component={QboLedgerPage} />
-      <Route component={NotFound} />
-    </Switch>
+    <Suspense fallback={<PageLoader />}>
+      <Switch>
+        <Route path="/" component={TablesPage} />
+        <Route path="/tables" component={TablesPage} />
+        <Route path="/tables/quick/:orderId" component={TableDetailPage} />
+        <Route path="/tables/:id" component={TableDetailPage} />
+        <Route path="/kds" component={KDSPage} />
+        <Route path="/kds-bar" component={KDSBarPage} />
+        <Route path="/pos" component={POSPage} />
+        <Route path="/dashboard" component={DashboardPage} />
+        <Route path="/admin/tables" component={AdminTablesPage} />
+        <Route path="/admin/categories" component={AdminCategoriesPage} />
+        <Route path="/admin/products" component={AdminProductsPage} />
+        <Route path="/admin/payment-methods" component={AdminPaymentMethodsPage} />
+        <Route path="/admin/employees" component={AdminEmployeesPage} />
+        <Route path="/admin/roles" component={AdminRolesPage} />
+        <Route path="/admin/business-config" component={AdminBusinessConfigPage} />
+        <Route path="/admin/printers" component={AdminPrintersPage} />
+        <Route path="/admin/modifiers" component={AdminModifiersPage} />
+        <Route path="/admin/discounts" component={AdminDiscountsPage} />
+        <Route path="/admin/tax-categories" component={AdminTaxCategoriesPage} />
+        <Route path="/admin/quickbooks" component={AdminQuickBooksPage} />
+        <Route path="/admin/data-loader" component={DataLoaderPage} />
+        <Route path="/admin/loyalty" component={AdminLoyaltyPage} />
+        <Route path="/hr/mi-turno" component={HrMiTurnoPage} />
+        <Route path="/hr/horarios" component={HrSchedulesPage} />
+        <Route path="/hr/marcas" component={HrPunchesPage} />
+        <Route path="/hr/reportes" component={HrReportsPage} />
+        <Route path="/hr/config" component={HrSettingsPage} />
+        <Route path="/inventory/basic" component={InventoryBasicPage} />
+        <Route path="/inventory/items" component={InvItemsPage} />
+        <Route path="/inventory/items/:id" component={InvItemDetailPage} />
+        <Route path="/inventory/suppliers" component={InvSuppliersPage} />
+        <Route path="/inventory/purchase-orders" component={InvPurchaseOrdersPage} />
+        <Route path="/inventory/physical-counts" component={InvPhysicalCountsPage} />
+        <Route path="/inventory/recipes" component={InvRecipesPage} />
+        <Route path="/inventory/conversions" component={InvConversionsPage} />
+        <Route path="/inventory/production" component={InvProductionPage} />
+        <Route path="/inventory/stock" component={InvStockPage} />
+        <Route path="/inventory/reports" component={InvReportsPage} />
+        <Route path="/shortages/report" component={ShortagesReportPage} />
+        <Route path="/shortages/active" component={ShortagesActivePage} />
+        <Route path="/shortages/audit" component={ShortagesAuditPage} />
+        <Route path="/reports/sales-cube" component={SalesCubePage} />
+        <Route path="/reports/qbo-ledger" component={QboLedgerPage} />
+        <Route component={NotFound} />
+      </Switch>
+    </Suspense>
   );
 }
 
@@ -300,14 +323,16 @@ function AppContent() {
 
 function AppRouter() {
   return (
-    <Switch>
-      <Route path="/qr/:tableCode" component={QRClientPage} />
-      <Route path="/reserve" component={PublicReservePage} />
-      <Route path="/menu" component={PublicMenuPage} />
-      <Route path="/superadmin" component={SuperadminPage} />
-      <Route path="/reset-password" component={ResetPasswordPage} />
-      <Route component={AppContent} />
-    </Switch>
+    <Suspense fallback={<PageLoader />}>
+      <Switch>
+        <Route path="/qr/:tableCode" component={QRClientPage} />
+        <Route path="/reserve" component={PublicReservePage} />
+        <Route path="/menu" component={PublicMenuPage} />
+        <Route path="/superadmin" component={SuperadminPage} />
+        <Route path="/reset-password" component={ResetPasswordPage} />
+        <Route component={AppContent} />
+      </Switch>
+    </Suspense>
   );
 }
 
@@ -342,6 +367,10 @@ function useWakeLock() {
 function App() {
   useWakeLock();
   usePreventPullRefresh();
+
+  useEffect(() => {
+    startKeepAlive();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
