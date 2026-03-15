@@ -1,141 +1,295 @@
-import { Pool } from "pg";
+import { Pool, PoolClient } from "pg";
 
 const DB_URL = process.env.DATABASE_URL!;
+const TENANT_SLUG = "rms";
 const NEW_SCHEMA = "tenant_la_antigua";
 const SOURCE_SCHEMA = "public";
 
+const GLOBAL_TABLES = new Set([
+  "tenants",
+  "tenant_modules",
+  "superadmin_users",
+  "provision_log",
+  "billing_events",
+  "schema_migrations",
+]);
+
+const GLOBAL_SEQUENCE_PREFIXES = [
+  "tenants_",
+  "tenant_modules_",
+  "superadmin_",
+  "provision_",
+  "billing_",
+  "schema_migrations_",
+];
+
 const pool = new Pool({ connectionString: DB_URL, max: 1 });
+
+interface TenantRow {
+  id: number;
+  slug: string;
+  schema_name: string;
+  plan: string;
+  is_active: boolean;
+}
+
+interface TableRow {
+  tablename: string;
+}
+
+interface SequenceRow {
+  sequence_name: string;
+}
+
+interface CountRow {
+  count: string;
+}
+
+interface SeqValRow {
+  last_value: string;
+}
+
+interface ColumnDefaultRow {
+  table_name: string;
+  column_name: string;
+  column_default: string;
+}
+
+async function getTenantTables(client: PoolClient): Promise<string[]> {
+  const { rows } = await client.query<TableRow>(`
+    SELECT tablename FROM pg_tables
+    WHERE schemaname = $1
+    AND tablename NOT IN (${[...GLOBAL_TABLES].map((_, i) => `$${i + 2}`).join(", ")})
+    ORDER BY tablename
+  `, [SOURCE_SCHEMA, ...GLOBAL_TABLES]);
+  return rows.map(r => r.tablename);
+}
+
+async function getTenantSequences(client: PoolClient): Promise<string[]> {
+  const { rows } = await client.query<SequenceRow>(`
+    SELECT sequence_name FROM information_schema.sequences
+    WHERE sequence_schema = $1
+  `, [SOURCE_SCHEMA]);
+
+  return rows
+    .map(r => r.sequence_name)
+    .filter(name => !GLOBAL_SEQUENCE_PREFIXES.some(prefix => name.startsWith(prefix)));
+}
+
+async function getRowCount(client: PoolClient, schema: string, table: string): Promise<number> {
+  const { rows } = await client.query<CountRow>(
+    `SELECT COUNT(*) as count FROM "${schema}"."${table}"`
+  );
+  return Number(rows[0].count);
+}
+
+async function createTenantSequence(
+  client: PoolClient,
+  seqName: string,
+  sourceValue: number
+): Promise<void> {
+  await client.query(`CREATE SEQUENCE IF NOT EXISTS "${NEW_SCHEMA}"."${seqName}"`);
+  await client.query(
+    `SELECT setval('"${NEW_SCHEMA}"."${seqName}"', $1, true)`,
+    [sourceValue]
+  );
+}
+
+async function rewriteColumnDefaults(client: PoolClient, tables: string[]): Promise<number> {
+  const { rows: cols } = await client.query<ColumnDefaultRow>(`
+    SELECT table_name, column_name, column_default
+    FROM information_schema.columns
+    WHERE table_schema = $1
+    AND column_default LIKE 'nextval(%'
+  `, [NEW_SCHEMA]);
+
+  let rewritten = 0;
+  for (const col of cols) {
+    const match = col.column_default.match(/nextval\('([^']+)'::regclass\)/);
+    if (!match) continue;
+
+    const rawSeqRef = match[1];
+    const seqName = rawSeqRef.includes(".") ? rawSeqRef.split(".").pop()! : rawSeqRef;
+    const qualifiedSeq = `${NEW_SCHEMA}.${seqName}`;
+    const newDefault = `nextval('${qualifiedSeq}'::regclass)`;
+
+    if (col.column_default !== newDefault) {
+      await client.query(
+        `ALTER TABLE "${NEW_SCHEMA}"."${col.table_name}"
+         ALTER COLUMN "${col.column_name}"
+         SET DEFAULT nextval('"${NEW_SCHEMA}"."${seqName}"'::regclass)`
+      );
+      rewritten++;
+    }
+  }
+  return rewritten;
+}
 
 async function run() {
   const client = await pool.connect();
   try {
     console.log("=== MIGRACIÓN LA ANTIGUA ===");
+    console.log("Tenant slug:", TENANT_SLUG);
     console.log("Source schema:", SOURCE_SCHEMA);
     console.log("Target schema:", NEW_SCHEMA);
 
-    // PASO 1 — Verificar estado actual
-    console.log("\n[PASO 1] Verificando estado actual...");
-    const { rows: tenants } = await client.query(
-      `SELECT id, slug, schema_name, plan, is_active FROM public.tenants`
+    console.log("\n[PASO 1] Verificando tenant...");
+    const { rows: tenants } = await client.query<TenantRow>(
+      `SELECT id, slug, schema_name, plan, is_active FROM public.tenants WHERE slug = $1`,
+      [TENANT_SLUG]
     );
-    console.log("Tenants actuales:", JSON.stringify(tenants, null, 2));
 
-    const laAntigua = tenants.find((t: any) => t.schema_name === "public");
-    if (!laAntigua) {
-      throw new Error("No se encontró tenant con schema_name='public'. Abortando.");
+    if (tenants.length === 0) {
+      throw new Error(`Tenant con slug '${TENANT_SLUG}' no encontrado. Abortando.`);
     }
-    console.log("✓ Tenant La Antigua encontrado:", laAntigua);
+    const tenant = tenants[0];
 
-    // PASO 2 — Crear nuevo schema
+    if (tenant.schema_name === NEW_SCHEMA) {
+      console.log("Tenant ya apunta a", NEW_SCHEMA, "— migración ya completada.");
+      return;
+    }
+    if (tenant.schema_name !== SOURCE_SCHEMA) {
+      throw new Error(
+        `Tenant '${TENANT_SLUG}' tiene schema_name='${tenant.schema_name}', esperado '${SOURCE_SCHEMA}'. Abortando.`
+      );
+    }
+    console.log(`✓ Tenant encontrado: id=${tenant.id}, slug=${tenant.slug}, schema=${tenant.schema_name}`);
+
     console.log("\n[PASO 2] Creando schema", NEW_SCHEMA, "...");
     await client.query(`CREATE SCHEMA IF NOT EXISTS "${NEW_SCHEMA}"`);
     console.log("✓ Schema creado");
 
-    // PASO 3 — Obtener todas las tablas del schema public que son de tenant
-    console.log("\n[PASO 3] Obteniendo tablas de tenant en schema public...");
-    const { rows: tables } = await client.query(`
-      SELECT tablename FROM pg_tables 
-      WHERE schemaname = 'public' 
-      AND tablename NOT IN ('tenants', 'tenant_modules', 'superadmin_users', 'provision_log', 'billing_events', 'schema_migrations')
-      ORDER BY tablename
-    `);
-    console.log(`✓ ${tables.length} tablas encontradas:`, tables.map((t: any) => t.tablename).join(", "));
+    console.log("\n[PASO 3] Obteniendo tablas tenant...");
+    const tables = await getTenantTables(client);
+    console.log(`✓ ${tables.length} tablas: ${tables.join(", ")}`);
 
-    // PASO 4 — Copiar estructura y datos tabla por tabla
     console.log("\n[PASO 4] Copiando tablas...");
-    for (const { tablename } of tables) {
+    const failedTables: string[] = [];
+    for (const tablename of tables) {
       try {
         await client.query(
-          `CREATE TABLE IF NOT EXISTS "${NEW_SCHEMA}"."${tablename}" 
-           (LIKE public."${tablename}" INCLUDING ALL)`
+          `CREATE TABLE IF NOT EXISTS "${NEW_SCHEMA}"."${tablename}"
+           (LIKE "${SOURCE_SCHEMA}"."${tablename}" INCLUDING ALL)`
         );
-        const { rowCount } = await client.query(
-          `INSERT INTO "${NEW_SCHEMA}"."${tablename}" 
-           SELECT * FROM public."${tablename}"
+        const result = await client.query(
+          `INSERT INTO "${NEW_SCHEMA}"."${tablename}"
+           SELECT * FROM "${SOURCE_SCHEMA}"."${tablename}"
            ON CONFLICT DO NOTHING`
         );
-        console.log(`  ✓ ${tablename}: ${rowCount} filas copiadas`);
-      } catch (err: any) {
-        console.error(`  ✗ ${tablename}: ${err.message}`);
+        console.log(`  ✓ ${tablename}: ${result.rowCount} filas`);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`  ✗ ${tablename}: ${msg}`);
+        failedTables.push(tablename);
       }
     }
+    if (failedTables.length > 0) {
+      throw new Error(`${failedTables.length} tabla(s) fallaron al copiar: ${failedTables.join(", ")}. Abortando.`);
+    }
 
-    // PASO 5 — Sincronizar secuencias
-    console.log("\n[PASO 5] Sincronizando secuencias...");
-    const { rows: sequences } = await client.query(`
-      SELECT sequence_name FROM information_schema.sequences
-      WHERE sequence_schema = 'public'
-      AND sequence_name NOT LIKE 'tenants_%'
-      AND sequence_name NOT LIKE 'tenant_modules_%'
-      AND sequence_name NOT LIKE 'superadmin_%'
-      AND sequence_name NOT LIKE 'provision_%'
-      AND sequence_name NOT LIKE 'billing_%'
-    `);
-    for (const { sequence_name } of sequences) {
+    console.log("\n[PASO 5] Creando secuencias aisladas en", NEW_SCHEMA, "...");
+    const sequences = await getTenantSequences(client);
+    let seqCreated = 0;
+    let seqFailed = 0;
+    for (const seqName of sequences) {
       try {
-        const { rows: [seqVal] } = await client.query(
-          `SELECT last_value FROM public."${sequence_name}"`
+        const { rows } = await client.query<SeqValRow>(
+          `SELECT last_value FROM "${SOURCE_SCHEMA}"."${seqName}"`
         );
-        if (seqVal?.last_value) {
-          await client.query(
-            `SELECT setval('"${NEW_SCHEMA}"."${sequence_name}"', $1, true)`,
-            [seqVal.last_value]
-          );
-          console.log(`  ✓ ${sequence_name}: last_value=${seqVal.last_value}`);
-        }
-      } catch (err: any) {
-        console.log(`  ~ ${sequence_name}: ${err.message}`);
+        const sourceValue = Number(rows[0].last_value);
+        await createTenantSequence(client, seqName, sourceValue);
+        console.log(`  ✓ ${seqName}: ${sourceValue}`);
+        seqCreated++;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`  ✗ ${seqName}: ${msg}`);
+        seqFailed++;
       }
     }
+    if (seqFailed > 0) {
+      throw new Error(`${seqFailed} secuencia(s) fallaron. Abortando para evitar IDs compartidos.`);
+    }
+    console.log(`✓ ${seqCreated} secuencias creadas`);
 
-    // PASO 6 — Verificar integridad
-    console.log("\n[PASO 6] Verificando integridad...");
-    const criticalTables = ["orders", "order_items", "payments", "sales_ledger_items", "hr_time_punches", "users"];
-    const checkpoint = { orders: "358", order_items: "1886", payments: "11519", sales_ledger_items: "60231", hr_time_punches: "101", users: "14" };
+    console.log("\n[PASO 5b] Reescribiendo defaults a secuencias del tenant...");
+    const rewritten = await rewriteColumnDefaults(client, tables);
+    console.log(`✓ ${rewritten} columna(s) reescrita(s)`);
+
+    console.log("\n[PASO 6] Verificando integridad (source vs destination)...");
     let allOk = true;
-    for (const t of criticalTables) {
-      const { rows: [cnt] } = await client.query(
-        `SELECT COUNT(*) as count FROM "${NEW_SCHEMA}"."${t}"`
-      );
-      const expected = (checkpoint as any)[t];
-      const ok = Number(cnt.count) >= Number(expected);
-      console.log(`  ${ok ? "✓" : "✗"} ${t}: ${cnt.count} (esperado: ${expected})`);
+    for (const tablename of tables) {
+      const srcCount = await getRowCount(client, SOURCE_SCHEMA, tablename);
+      const dstCount = await getRowCount(client, NEW_SCHEMA, tablename);
+      const ok = dstCount >= srcCount;
+      if (!ok || srcCount > 0) {
+        console.log(`  ${ok ? "✓" : "✗"} ${tablename}: src=${srcCount} dst=${dstCount}`);
+      }
       if (!ok) allOk = false;
     }
-
     if (!allOk) {
-      throw new Error("Verificación de integridad FALLÓ. No se actualiza el tenant. Revisar errores arriba.");
+      throw new Error("Verificación de integridad FALLÓ. No se actualiza el tenant.");
+    }
+    console.log("✓ Todas las tablas verificadas");
+
+    console.log("\n[PASO 7] Cutover atómico...");
+    await client.query("BEGIN");
+    try {
+      await client.query(
+        `UPDATE public.tenants SET schema_name = $1 WHERE id = $2 AND slug = $3`,
+        [NEW_SCHEMA, tenant.id, TENANT_SLUG]
+      );
+
+      const migrationFiles = await getMigrationFiles(client);
+      for (const filename of migrationFiles) {
+        await client.query(
+          `INSERT INTO public.schema_migrations (schema_name, filename)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [NEW_SCHEMA, filename]
+        );
+      }
+
+      await client.query("COMMIT");
+      console.log(`✓ Tenant actualizado: schema_name = ${NEW_SCHEMA}`);
+      console.log(`✓ ${migrationFiles.length} migraciones marcadas como aplicadas`);
+    } catch (err: unknown) {
+      await client.query("ROLLBACK");
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Cutover falló, ROLLBACK aplicado: ${msg}`);
     }
 
-    // PASO 7 — Actualizar registro del tenant
-    console.log("\n[PASO 7] Actualizando schema_name del tenant...");
-    await client.query(
-      `UPDATE public.tenants SET schema_name = $1 WHERE id = $2`,
-      [NEW_SCHEMA, laAntigua.id]
-    );
-    console.log("✓ Tenant actualizado: schema_name =", NEW_SCHEMA);
-
-    // PASO 8 — Verificación final
     console.log("\n[PASO 8] Verificación final...");
-    const { rows: [updated] } = await client.query(
+    const { rows: [updated] } = await client.query<TenantRow>(
       `SELECT id, slug, schema_name, plan, is_active FROM public.tenants WHERE id = $1`,
-      [laAntigua.id]
+      [tenant.id]
     );
-    console.log("✓ Tenant final:", JSON.stringify(updated, null, 2));
+    console.log(`✓ Tenant: id=${updated.id} slug=${updated.slug} schema=${updated.schema_name} plan=${updated.plan}`);
+
+    const { rows: migChecks } = await client.query<CountRow>(
+      `SELECT COUNT(*) as count FROM public.schema_migrations WHERE schema_name = $1`,
+      [NEW_SCHEMA]
+    );
+    console.log(`✓ Migraciones registradas: ${migChecks[0].count}`);
 
     console.log("\n=== MIGRACIÓN COMPLETADA ✓ ===");
-    console.log("IMPORTANTE: El schema 'public' aún tiene los datos originales.");
+    console.log("El schema 'public' aún tiene los datos originales.");
     console.log("No limpiar public hasta verificar que el sistema funciona correctamente.");
+    console.log("Rollback: UPDATE public.tenants SET schema_name = 'public' WHERE slug = 'rms';");
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("\n=== ERROR EN MIGRACIÓN ===");
-    console.error(err.message);
-    console.error("El sistema NO fue modificado de forma irreversible.");
-    console.error("El tenant sigue apuntando a schema 'public'.");
+    console.error(err instanceof Error ? err.message : String(err));
+    console.error("Verificar estado del tenant antes de reintentar.");
   } finally {
     client.release();
     await pool.end();
   }
+}
+
+async function getMigrationFiles(client: PoolClient): Promise<string[]> {
+  const { rows } = await client.query<{ filename: string }>(
+    `SELECT DISTINCT filename FROM public.schema_migrations WHERE schema_name = 'public' ORDER BY filename`
+  );
+  return rows.map(r => r.filename);
 }
 
 run();
