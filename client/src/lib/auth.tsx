@@ -150,13 +150,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       || (window.navigator as any).standalone === true;
     if (!isPWA) return;
 
+    let hiddenAt: number | null = null;
+    const IDLE_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 horas
+
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden" && user) {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
         wsManager.pause();
-        navigator.sendBeacon("/api/auth/logout");
-        setUser(null);
-        setSessionToken(null);
-        queryClient.clear();
+      } else if (document.visibilityState === "visible") {
+        if (hiddenAt !== null && Date.now() - hiddenAt > IDLE_TIMEOUT_MS) {
+          wsManager.pause();
+          fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
+          setUser(null);
+          setSessionToken(null);
+          queryClient.clear();
+        } else {
+          wsManager.resume();
+        }
+        hiddenAt = null;
       }
     };
 
