@@ -1,0 +1,109 @@
+## Prompt 2 de 2 — Venta Rápida
+
+**Contexto:** Agregar un botón "Venta Rápida" en la pantalla de mesas, centrado en la barra de búsqueda. Abre un flujo igual al de una mesa normal pero sin mesa física — pide un nombre libre, permite agregar items, los items marcados para KDS van al KDS, y se cobra inmediatamente con el PayDialog existente.
+
+---
+
+### PARTE A — Base de datos
+
+Agregar en `migrations/0021_quick_sales.sql`:
+
+```sql
+--> statement-breakpoint
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "is_quick_sale" boolean NOT NULL DEFAULT false;
+--> statement-breakpoint
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "quick_sale_name" varchar(100);
+```
+
+Agregar en `shared/schema.ts` en la tabla `orders`:
+```typescript
+isQuickSale: boolean("is_quick_sale").notNull().default(false),
+quickSaleName: varchar("quick_sale_name", { length: 100 }),
+```
+
+---
+
+### PARTE B — Backend en `server/routes.ts`
+
+**1. Endpoint crear venta rápida:**
+```typescript
+app.post("/api/waiter/quick-sale", requireAuth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name?.trim()) return res.status(400).json({ message: "Nombre requerido" });
+
+    const businessDate = await getBusinessDate(req.tenantSchema);
+    const dailyNumber = await getNextDailyOrderNumber(req.db, businessDate);
+    const globalNumber = await getNextGlobalOrderNumber(req.db);
+
+    const [order] = await req.db.insert(orders).values({
+      tableId: null,
+      status: "OPEN",
+      isQuickSale: true,
+      quickSaleName: name.trim(),
+      businessDate,
+      dailyNumber,
+      globalNumber,
+      openedAt: new Date(),
+      responsibleWaiterId: req.session?.userId ?? null,
+    }).returning();
+
+    res.status(201).json(order);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+**2. Verificar que los endpoints existentes de mesa funcionan con `tableId = null`:**
+- `POST /api/waiter/tables/:id/send-round` — este usa `tableId`, para ventas rápidas usar el `orderId` directamente
+- Agregar endpoint alternativo:
+```typescript
+app.post("/api/waiter/orders/:orderId/send-round", requireAuth, async (req, res) => {
+  // Misma lógica que send-round pero recibe orderId directamente
+  // sin buscar mesa — para ventas rápidas
+});
+```
+
+**3. En `GET /api/pos/tables`** — incluir ventas rápidas abiertas junto con las mesas normales, con `tableName = order.quickSaleName` y un indicador `isQuickSale: true`.
+
+---
+
+### PARTE C — Frontend en `client/src/pages/tables.tsx`
+
+**1.** En la barra de búsqueda, agregar botón "⚡ Venta Rápida" centrado junto al input. Estilo coherente con el design system Linen actual — botón secundario, no dominante.
+
+**2.** Al hacer click, abrir un dialog pequeño con:
+- Campo de texto: "Nombre del cliente o descripción" (ej: "Juan mostrador", "Para llevar")
+- Botón "Crear" que llama `POST /api/waiter/quick-sale`
+- Al crear exitosamente, navegar directo a `/tables/quick/:orderId` o reutilizar la ruta existente de detalle de mesa
+
+**3.** Las ventas rápidas abiertas aparecen en la sección "Con cuenta abierta" con un badge especial "⚡ Rápida" en lugar del nombre de mesa.
+
+---
+
+### PARTE D — Frontend en `client/src/pages/table-detail.tsx`
+
+Reutilizar el componente existente de detalle de mesa para ventas rápidas con estos ajustes:
+
+**1.** Detectar si la orden es `isQuickSale = true` — mostrar el nombre libre en lugar del nombre de mesa.
+
+**2.** El botón "Enviar ronda" usa el endpoint `/api/waiter/orders/:orderId/send-round` en lugar del endpoint de mesa.
+
+**3.** Items marcados para KDS van al KDS normalmente — sin cambios en esa lógica.
+
+**4.** El botón de cobro abre el PayDialog existente — sin cambios.
+
+**5.** No mostrar opciones de transferir mesa ni QR en ventas rápidas.
+
+---
+
+### Criterios de aceptación:
+- [ ] Botón "Venta Rápida" visible en pantalla de mesas junto a la búsqueda
+- [ ] Dialog de nombre abre y crea la orden correctamente
+- [ ] La venta rápida aparece en "Con cuenta abierta" con badge "⚡ Rápida"
+- [ ] Se pueden agregar items y enviar al KDS si corresponde
+- [ ] Se puede cobrar con PayDialog normal con todos los métodos de pago
+- [ ] La orden pagada aparece en Dashboard y reportes normalmente
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] No hacer deploy hasta que compile y funcione en Replit

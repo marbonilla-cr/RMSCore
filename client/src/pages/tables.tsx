@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell, ArrowRightLeft, AlertTriangle, X } from "lucide-react";
+import { Search, Settings, Loader2, User, UtensilsCrossed, Clock, DollarSign, CalendarDays, Bell, ArrowRightLeft, AlertTriangle, X, Zap, Plus } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
 import { wsManager } from "@/lib/ws";
 import { useWsConnected } from "@/hooks/use-ws-connected";
 import { formatCurrency, timeAgo } from "@/lib/utils";
@@ -26,6 +27,7 @@ interface TableView {
   lastSentToKitchenAt: string | null;
   hasActiveReservation: boolean;
   subaccountNames: string[];
+  isQuickSale?: boolean;
   upcomingReservation: {
     id: number;
     guestName: string;
@@ -116,6 +118,9 @@ export default function TablesPage() {
   const [loadingSubaccounts, setLoadingSubaccounts] = useState(false);
   const [qrPopupTables, setQrPopupTables] = useState<{ id: number; name: string; count: number }[]>([]);
   const [qrPopupDismissed, setQrPopupDismissed] = useState(false);
+  const [quickSaleDialogOpen, setQuickSaleDialogOpen] = useState(false);
+  const [quickSaleName, setQuickSaleName] = useState("");
+  const [quickSaleLoading, setQuickSaleLoading] = useState(false);
   const prevQrCountsRef = useRef<Map<number, number>>(new Map());
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     try {
@@ -201,7 +206,7 @@ export default function TablesPage() {
     });
   };
 
-  const activeTables = tables.filter(t => t.active);
+  const activeTables = tables.filter(t => t.active && !t.isQuickSale);
   const filtered = search
     ? activeTables.filter(t => t.tableName.toLowerCase().includes(search.toLowerCase()) || t.tableCode.toLowerCase().includes(search.toLowerCase()))
     : activeTables;
@@ -281,6 +286,23 @@ export default function TablesPage() {
     }
   };
 
+  const handleCreateQuickSale = async () => {
+    setQuickSaleLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/waiter/quick-sale", { name: quickSaleName.trim() || undefined });
+      const data = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      setQuickSaleDialogOpen(false);
+      setQuickSaleName("");
+      navigate(`/tables/quick/${data.orderId}`);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setQuickSaleLoading(false);
+    }
+  };
+
+  const quickSales = tables.filter(t => t.isQuickSale);
   const occupiedTables = activeTables.filter(t => isEffectivelyOpen(t));
   const availableTables = activeTables.filter(t => !isEffectivelyOpen(t));
   const moveDestTables = moveMode === "subaccount"
@@ -813,6 +835,15 @@ export default function TablesPage() {
         </div>
         <button
           className="header-action"
+          onClick={() => { setQuickSaleDialogOpen(true); setQuickSaleName(""); }}
+          data-testid="button-quick-sale"
+          style={{ marginRight: 6 }}
+          title="Venta Rápida"
+        >
+          <Zap size={16} />
+        </button>
+        <button
+          className="header-action"
           onClick={() => { setMoveDialogOpen(true); setMoveSource(null); setMoveDest(null); setMoveMode("table"); setSelectedSubaccount(null); setSubaccounts([]); }}
           data-testid="button-move-table"
           style={{ marginRight: 6 }}
@@ -837,6 +868,46 @@ export default function TablesPage() {
         </button>
       </div>
       <ReservationsSheet open={reservationsOpen} onOpenChange={setReservationsOpen} />
+
+      {quickSaleDialogOpen && (
+        <>
+          <div className="move-overlay" onClick={() => setQuickSaleDialogOpen(false)} />
+          <div className="move-dialog" data-testid="dialog-quick-sale" style={{ maxWidth: 360 }}>
+            <div className="move-dialog-header">
+              <Zap size={18} />
+              <span>Venta Rápida</span>
+              <button onClick={() => setQuickSaleDialogOpen(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--text3)", cursor: "pointer", fontSize: 18 }}>&times;</button>
+            </div>
+            <div style={{ padding: "16px 18px" }}>
+              <div style={{ fontFamily: "var(--f-mono)", fontSize: 12, color: "var(--text3)", marginBottom: 8 }}>
+                Nombre del cliente o referencia (opcional)
+              </div>
+              <input
+                autoFocus
+                data-testid="input-quick-sale-name"
+                value={quickSaleName}
+                onChange={e => setQuickSaleName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleCreateQuickSale(); }}
+                placeholder="Ej: Juan, Para llevar, #001..."
+                style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--r-sm)", border: "1.5px solid var(--border-ds)", background: "var(--s2)", color: "var(--text)", fontFamily: "var(--f-body)", fontSize: 14 }}
+              />
+            </div>
+            <div className="move-dialog-footer">
+              <button className="move-cancel" onClick={() => setQuickSaleDialogOpen(false)}>Cancelar</button>
+              <button
+                className="move-confirm"
+                data-testid="button-confirm-quick-sale"
+                onClick={handleCreateQuickSale}
+                disabled={quickSaleLoading}
+              >
+                {quickSaleLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                Crear venta
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {moveDialogOpen && (
         <>
           <div className="move-overlay" onClick={() => setMoveDialogOpen(false)} />
@@ -1026,6 +1097,50 @@ export default function TablesPage() {
         </div>
       ) : (
         <div className="tables-scroll">
+          {quickSales.length > 0 && (
+            <>
+              <div className="section-label text-center">
+                <Zap size={14} style={{ display: "inline", marginRight: 4, color: "var(--green)" }} />
+                Ventas Rápidas
+                <span className="section-count">{quickSales.length}</span>
+              </div>
+              <div className="tables-grid stagger-children">
+                {quickSales.map(qs => {
+                  const badge = getTableBadge(qs);
+                  const statusCls = getTableStatusClass(qs);
+                  return (
+                    <Link
+                      key={`qs-${qs.orderId}`}
+                      href={`/tables/quick/${qs.orderId}`}
+                      className={`table-card ${statusCls}`}
+                      data-testid={`card-quick-sale-${qs.orderId}`}
+                    >
+                      <div className="tc-name" data-testid={`text-qs-name-${qs.orderId}`}>
+                        {qs.tableName}
+                        {qs.dailyNumber && <span className="tc-order-num"> #{qs.dailyNumber}</span>}
+                      </div>
+                      <div className={badge.cls}>{badge.label}</div>
+                      <div className="tc-meta">
+                        {visibleColumns.has("waiter") && qs.responsibleWaiterName && (
+                          <div className="tc-meta-row"><User size={11} /><span className="val">{qs.responsibleWaiterName}</span></div>
+                        )}
+                        {visibleColumns.has("items") && (
+                          <div className="tc-meta-row"><UtensilsCrossed size={11} /><span className="val">{qs.itemCount} items</span></div>
+                        )}
+                        {visibleColumns.has("time") && (
+                          <div className="tc-meta-row"><Clock size={11} /><span className="val">{formatElapsed(qs.openedAt)}</span></div>
+                        )}
+                        {visibleColumns.has("amount") && qs.totalAmount && (
+                          <div className="tc-amount"><DollarSign size={11} /><span className="val">{formatCurrency(qs.totalAmount)}</span></div>
+                        )}
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
           <div className="section-label text-center">
             Con cuenta abierta
             <span className="section-count">{withOrder.length}</span>

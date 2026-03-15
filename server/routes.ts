@@ -1923,14 +1923,88 @@ export async function registerRoutes(
         subaccountNames: order ? (subaccountNamesByOrder.get(order.id) || []) : [],
       };
     });
+    const quickSaleOrders = allOpenOrders.filter(o => o.isQuickSale && !o.parentOrderId);
+    const quickSaleResults = quickSaleOrders.map(o => {
+      const waiterName = o.responsibleWaiterId ? (waiterMap.get(o.responsibleWaiterId) || null) : null;
+      const items = itemsByOrder.get(o.id) || [];
+      const itemCount = items.filter(i => i.status !== "VOIDED").length;
+      const sentTimes = items.filter(i => i.status !== "VOIDED" && i.sentToKitchenAt).map(i => new Date(i.sentToKitchenAt!).getTime());
+      const lastSentToKitchenAt = sentTimes.length > 0 ? new Date(Math.max(...sentTimes)).toISOString() : null;
+      return {
+        id: -(o.id),
+        tableCode: `QS-${o.id}`,
+        tableName: o.quickSaleName || `Rápida #${o.dailyNumber}`,
+        active: true,
+        hasOpenOrder: true,
+        orderId: o.id,
+        orderStatus: o.status,
+        dailyNumber: o.dailyNumber,
+        responsibleWaiterName: waiterName,
+        openedAt: o.openedAt?.toISOString() || null,
+        pendingQrCount: 0,
+        itemCount,
+        totalAmount: Number(o.totalAmount) > 0 ? o.balanceDue : o.totalAmount,
+        lastSentToKitchenAt,
+        upcomingReservation: null,
+        hasActiveReservation: false,
+        subaccountNames: [],
+        isQuickSale: true,
+      };
+    });
+
     if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/waiter/tables ${Date.now() - t0}ms (${allTables.length} tables)`);
-    res.json(result);
+    res.json([...result, ...quickSaleResults]);
   });
 
   app.get("/api/waiter/tables/:id", requireRole("WAITER", "MANAGER"), async (req, res) => {
     const table = await storage.getTable(parseInt(req.params.id as string), req.db);
     if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     res.json(table);
+  });
+
+  app.get("/api/tables/quick/:orderId/current", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId as string);
+      const order = await storage.getOrder(orderId, req.db);
+      if (!order || !order.isQuickSale) return res.status(404).json({ message: "Venta rápida no encontrada" });
+
+      const virtualTable = {
+        id: null,
+        tableCode: `QS-${orderId}`,
+        tableName: order.quickSaleName || `Venta Rápida #${order.dailyNumber}`,
+        active: true,
+        capacity: 0,
+        isQuickSale: true,
+        orderId,
+      };
+
+      const [items, voidedItemsList, allMods] = await Promise.all([
+        storage.getOrderItems(orderId, req.db),
+        storage.getVoidedItemsForOrder(orderId, req.db),
+        storage.getOrderItemModifiersByOrderIds([orderId], req.db),
+      ]);
+
+      const modsByItem = new Map<number, typeof allMods>();
+      for (const m of allMods) {
+        if (!modsByItem.has(m.orderItemId)) modsByItem.set(m.orderItemId, []);
+        modsByItem.get(m.orderItemId)!.push(m);
+      }
+      const itemsWithMods = items.map(item => ({ ...item, modifiers: modsByItem.get(item.id) || [] }));
+
+      const voidedUserIds = Array.from(new Set(voidedItemsList.map(i => i.voidedByUserId).filter((id): id is number => id != null)));
+      const voidedUsers = await storage.getUsersByIds(voidedUserIds, req.db);
+      const voidedUsersMap = new Map<number, string>();
+      for (const u of voidedUsers) voidedUsersMap.set(u.id, u.displayName);
+      const voidedItemsWithNames = voidedItemsList.map(i => ({
+        ...i,
+        voidedAt: i.voidedAt?.toISOString() || null,
+        voidedByName: voidedUsersMap.get(i.voidedByUserId) || "Desconocido",
+      }));
+
+      res.json({ table: virtualTable, activeOrder: order, orderItems: itemsWithMods, pendingQrSubmissions: [], voidedItems: voidedItemsWithNames });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.get("/api/tables/:id/current", requireRole("WAITER", "MANAGER"), async (req, res) => {
@@ -2393,6 +2467,197 @@ export async function registerRoutes(
       }
       broadcast("order_updated", { tableId, orderId: order.id });
       broadcast("table_status_changed", { tableId });
+
+      res.json({ ok: true, ticketIds: createdTicketIds });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== WAITER: QUICK SALE ====================
+  app.post("/api/waiter/quick-sale", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const { name } = req.body;
+      if (!name?.trim()) return res.status(400).json({ message: "Nombre requerido" });
+
+      const businessDate = await getBusinessDate(req.tenantSchema);
+      const order = await storage.createOrder({
+        tableId: null as any,
+        status: "OPEN",
+        responsibleWaiterId: req.session?.userId ?? null,
+        businessDate,
+        isQuickSale: true,
+        quickSaleName: name.trim(),
+      } as any, req.db);
+
+      res.status(201).json(order);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/waiter/orders/:orderId/send-round", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId as string);
+      const userId = req.session.userId!;
+      const { items } = req.body;
+      if (!items || !items.length) return res.status(400).json({ message: "No hay items" });
+
+      const productIds = Array.from(new Set(items.map((i: any) => i.productId))) as number[];
+
+      const [order, allProducts, allCategories, allTaxCats, allProdTaxLinks] = await Promise.all([
+        storage.getOrder(orderId, req.db),
+        storage.getProductsByIds(productIds, req.db),
+        storage.getAllCategories(req.db),
+        storage.getAllTaxCategories(req.db),
+        Promise.all(productIds.map(pid => storage.getProductTaxCategories(pid, req.db).then(links => ({ pid, links })))),
+      ]);
+
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const productMap = new Map(allProducts.map(p => [p.id, p]));
+      const taxLinksMap = new Map(allProdTaxLinks.map(r => [r.pid, r.links]));
+
+      if (!order.responsibleWaiterId) {
+        await storage.updateOrder(orderId, { responsibleWaiterId: userId }, req.db);
+      }
+
+      const existingItems = await storage.getOrderItems(orderId, req.db);
+      const maxRound = existingItems.reduce((max, i) => Math.max(max, i.roundNumber), 0);
+      const roundNumber = maxRound + 1;
+
+      const kdsTickets: Map<string, number> = new Map();
+      const createdTicketIds: number[] = [];
+      const businessDate = await getBusinessDate(req.tenantSchema);
+      const now = new Date();
+      const displayName = order.quickSaleName || `Orden #${order.dailyNumber}`;
+
+      for (const item of items) {
+        const product = productMap.get(item.productId);
+        if (!product || !product.active) continue;
+
+        const category = allCategories.find(c => c.id === product.categoryId);
+        const kdsDestination = category?.kdsDestination || "cocina";
+
+        if (!kdsTickets.has(kdsDestination)) {
+          const ticket = await storage.createKitchenTicket({
+            orderId,
+            tableId: null as any,
+            tableNameSnapshot: displayName,
+            status: "NEW",
+            kdsDestination,
+          }, req.db);
+          kdsTickets.set(kdsDestination, ticket.id);
+          createdTicketIds.push(ticket.id);
+        }
+
+        const kitchenTicketId = kdsTickets.get(kdsDestination)!;
+
+        const waiterTaxLinks = taxLinksMap.get(product.id) || [];
+        let taxSnapshot: any[] | null = null;
+        if (waiterTaxLinks.length > 0) {
+          taxSnapshot = waiterTaxLinks.map(ptc => {
+            const tc = allTaxCats.find(t => t.id === ptc.taxCategoryId && t.active);
+            return tc ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
+          }).filter(Boolean);
+          if (taxSnapshot.length === 0) taxSnapshot = null;
+        }
+
+        const modNotes = item.modifiers && item.modifiers.length > 0
+          ? item.modifiers.map((m: any) => m.name).join(", ")
+          : "";
+        const fullNotes = [item.notes, modNotes].filter(Boolean).join(" | ");
+        const modDelta = (item.modifiers || []).reduce((s: number, m: any) => s + Number(m.priceDelta || 0) * (m.qty || 1), 0);
+        const unitWithMods = Number(product.price) + modDelta;
+
+        const orderItem = await storage.createOrderItem({
+          orderId,
+          productId: product.id,
+          productNameSnapshot: product.name,
+          productPriceSnapshot: product.price,
+          qty: item.qty,
+          notes: item.notes || null,
+          origin: "WAITER",
+          createdByUserId: userId,
+          responsibleWaiterId: userId,
+          status: "SENT",
+          roundNumber,
+          qrSubmissionId: null,
+        }, req.db);
+
+        const kdsItemOps: Promise<any>[] = [];
+        if (item.qty > 1) {
+          const groupId = crypto.randomUUID();
+          for (let seq = 1; seq <= item.qty; seq++) {
+            kdsItemOps.push(storage.createKitchenTicketItem({
+              kitchenTicketId,
+              orderItemId: orderItem.id,
+              productNameSnapshot: product.name,
+              qty: 1,
+              notes: fullNotes || null,
+              status: "NEW",
+              kitchenItemGroupId: groupId,
+              seqInGroup: seq,
+            }, req.db));
+          }
+        } else {
+          kdsItemOps.push(storage.createKitchenTicketItem({
+            kitchenTicketId,
+            orderItemId: orderItem.id,
+            productNameSnapshot: product.name,
+            qty: 1,
+            notes: fullNotes || null,
+            status: "NEW",
+          }, req.db));
+        }
+
+        await Promise.all([
+          storage.updateOrderItem(orderItem.id, { sentToKitchenAt: now, ...(taxSnapshot ? { taxSnapshotJson: taxSnapshot } : {}) }, req.db),
+          ...kdsItemOps,
+          storage.createSalesLedgerItem({
+            businessDate,
+            tableId: null as any,
+            tableNameSnapshot: displayName,
+            orderId,
+            orderItemId: orderItem.id,
+            productId: product.id,
+            productCodeSnapshot: (product as any).productCode || null,
+            productNameSnapshot: product.name,
+            categoryId: product.categoryId,
+            categoryCodeSnapshot: category?.categoryCode || null,
+            categoryNameSnapshot: category?.name || null,
+            qty: item.qty,
+            unitPrice: unitWithMods.toFixed(2),
+            lineSubtotal: (unitWithMods * item.qty).toFixed(2),
+            origin: "WAITER",
+            createdByUserId: userId,
+            responsibleWaiterId: userId,
+            status: "OPEN",
+            sentToKitchenAt: now,
+          }),
+          storage.createAuditEvent({
+            actorType: "USER",
+            actorUserId: userId,
+            action: "ORDER_ITEM_CREATED",
+            entityType: "order_item",
+            entityId: orderItem.id,
+            tableId: null,
+            metadata: { orderId, productId: product.id, qty: item.qty },
+          }),
+        ]);
+
+        try {
+          await onOrderItemsConfirmedSent(orderId, [orderItem.id], userId);
+        } catch {}
+      }
+
+      await storage.updateOrder(orderId, { status: "IN_KITCHEN" }, req.db);
+      await storage.recalcOrderTotal(orderId, req.db);
+
+      if (createdTicketIds.length > 0) {
+        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: null, tableName: displayName });
+      }
+      broadcast("order_updated", { tableId: null, orderId });
 
       res.json({ ok: true, ticketIds: createdTicketIds });
     } catch (err: any) {

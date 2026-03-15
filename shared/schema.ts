@@ -84,7 +84,7 @@ export const paymentMethods = pgTable("payment_methods", {
 
 export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
-  tableId: integer("table_id").notNull(),
+  tableId: integer("table_id"),
   status: text("status").notNull().default("OPEN"),
   responsibleWaiterId: integer("responsible_waiter_id"),
   openedAt: timestamp("opened_at").defaultNow(),
@@ -98,6 +98,8 @@ export const orders = pgTable("orders", {
   parentOrderId: integer("parent_order_id"),
   splitIndex: integer("split_index"),
   guestCount: integer("guest_count"),
+  isQuickSale: boolean("is_quick_sale").notNull().default(false),
+  quickSaleName: varchar("quick_sale_name", { length: 100 }),
 });
 
 export const orderItems = pgTable("order_items", {
