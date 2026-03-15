@@ -926,6 +926,12 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       const txCode = req.params.transactionCode;
       if (!txCode) return res.status(400).json({ message: "Código requerido" });
 
+      // If dispatch mode is disabled, immediately cancel any pending dispatch session
+      const [config] = await req.db.select().from(businessConfig).limit(1);
+      if (!config?.operationModeDispatch) {
+        return res.json({ dispatchStatus: "CANCELLED", reason: "dispatch_disabled" });
+      }
+
       const [order] = await req.db
         .select({ id: orders.id, dispatchStatus: (orders as any).dispatchStatus, status: orders.status })
         .from(orders)
