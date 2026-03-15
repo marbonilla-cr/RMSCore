@@ -151,8 +151,7 @@ export async function ensurePublicTables(): Promise<void> {
     }
     console.log(`[tenant-seed] ✓ ${PRO_MODULES.length} módulos PRO activados para Tenant 1`);
 
-    // ── Actualizar variable de entorno TENANT_ID si es necesario ───────────
-    // El middleware ya usa TENANT_SCHEMA=public para dev, esto es informativo
+    // ── Información de arranque ─────────────────────────────────────────────
     console.log(`[tenant-seed] ✓ Tenant 1 listo. TENANT_ID=${tenantId}, TENANT_SCHEMA=${OWN_TENANT.schemaName}`);
 
   } catch (err: any) {
