@@ -11,6 +11,33 @@ function getTenantId(req: any): number {
 
 export function registerLoyaltyRoutes(app: any) {
 
+  // POST /auth/google-callback — Google Identity Services redirect mode callback
+  // Google POSTs here with form-encoded body: { credential, g_csrf_token }
+  app.post("/auth/google-callback", async (req: any, res: any) => {
+    try {
+      const googleClientId = process.env.GOOGLE_CLIENT_ID;
+      if (!googleClientId || googleClientId === "pending") {
+        return res.redirect("/?error=oauth_not_configured");
+      }
+      const credential = req.body?.credential;
+      if (!credential) return res.redirect("/?error=no_credential");
+
+      const googleData = await verifyGoogleToken(credential);
+      const customer = await findOrCreateCustomer(googleData);
+      const token = Buffer.from(JSON.stringify({ customerId: customer.id, email: customer.email })).toString("base64");
+      const customerJson = encodeURIComponent(JSON.stringify({
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        photo_url: customer.photoUrl,
+      }));
+
+      res.redirect(`/?login_success=1&token=${encodeURIComponent(token)}&customer=${customerJson}`);
+    } catch (err: any) {
+      res.redirect(`/?error=${encodeURIComponent(err.message)}`);
+    }
+  });
+
   // POST /api/loyalty/auth/google
   app.post("/api/loyalty/auth/google", async (req: any, res: any) => {
     try {

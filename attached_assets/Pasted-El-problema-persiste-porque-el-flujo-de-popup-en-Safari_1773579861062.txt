@@ -1,0 +1,128 @@
+El problema persiste porque el flujo de popup en Safari/iOS tiene restricciones especiales — Safari bloquea popups de terceros por defecto.
+Vamos a cambiar la estrategia completamente. En lugar de popup, usar el flujo de redirect pero controlado donde Google regresa a nuestra URL con el token.
+Pídele al agente:
+
+El flujo de popup no funciona en Safari/iOS. Cambiar client-loyalty/loyalty-app.js para usar el flujo de redirect de Google Identity Services correctamente:
+Reemplazar completamente la lógica de autenticación:
+
+const GOOGLE_CLIENT_ID = "580542734412-01e4igcmvupjmihjm2tq9fk114r8m4oq.apps.googleusercontent.com";
+
+// Manejar el token que viene en el hash de la URL después del redirect
+function checkRedirectResult() {
+  // Google GIS con ux_mode="redirect" retorna el credential en un POST
+  // pero también podemos usar el hash fragment
+  const params = new URLSearchParams(window.location.search);
+  const credential = params.get("credential");
+  if (credential) {
+    // Limpiar la URL
+    window.history.replaceState({}, document.title, "/");
+    handleGoogleResponse({ credential });
+    return true;
+  }
+  return false;
+}
+
+function initGoogleSignIn() {
+  if (!window.google) return;
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleResponse,
+    auto_select: false,
+    ux_mode: "redirect",
+    login_uri: "https://loyalty.rmscore.app/auth/google-callback",
+  });
+}
+
+
+Agregar endpoint en server/loyalty-routes.ts que recibe el POST de Google y redirige con el token:
+
+// POST /auth/google-callback — recibe el credential de Google vía redirect
+app.post("/auth/google-callback", async (req: any, res: any) => {
+  try {
+    const { credential } = req.body;
+    if (!credential) return res.redirect("/?error=no_credential");
+    
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    if (!googleClientId || googleClientId === "pending") {
+      return res.redirect("/?error=oauth_not_configured");
+    }
+
+    const googleData = await verifyGoogleToken(credential);
+    const customer = await findOrCreateCustomer(googleData);
+    const token = Buffer.from(JSON.stringify({ 
+      customerId: customer.id, 
+      email: customer.email 
+    })).toString("base64");
+
+    // Redirigir de vuelta a la app con el token en el hash
+    res.redirect(`/?login_success=1&token=${encodeURIComponent(token)}&customer=${encodeURIComponent(JSON.stringify({ id: customer.id, name: customer.name, email: customer.email, photo_url: customer.photoUrl }))}`);
+  } catch (err: any) {
+    res.redirect(`/?error=${encodeURIComponent(err.message)}`);
+  }
+});
+
+
+En client-loyalty/loyalty-app.js, al inicio del init(), verificar si viene un login exitoso en los params:
+
+async function init() {
+  showLoading();
+  
+  // Verificar si viene de un redirect de Google
+  const params = new URLSearchParams(window.location.search);
+  const loginSuccess = params.get("login_success");
+  const token = params.get("token");
+  const customerParam = params.get("customer");
+  const error = params.get("error");
+  
+  if (error) {
+    window.history.replaceState({}, document.title, "/");
+    showError("Error al iniciar sesión: " + error);
+    setTimeout(renderLogin, 2000);
+    return;
+  }
+  
+  if (loginSuccess && token && customerParam) {
+    try {
+      state.token = token;
+      state.customer = JSON.parse(decodeURIComponent(customerParam));
+      saveSession();
+      window.history.replaceState({}, document.title, "/");
+      await loadHomeData();
+      renderHome();
+      return;
+    } catch (e) {
+      window.history.replaceState({}, document.title, "/");
+    }
+  }
+  
+  // Verificar sesión guardada
+  if (loadSession()) {
+    try {
+      await loadHomeData();
+      renderHome();
+      return;
+    } catch (e) {
+      clearSession();
+    }
+  }
+  
+  if (window.google) initGoogleSignIn();
+  renderLogin();
+}
+
+
+En Google Cloud Console, cambiar el URI de redireccionamiento a:
+
+https://loyalty.rmscore.app/auth/google-callback
+
+
+Verificación:
+
+npx tsc --noEmit
+
+
+Hacer deploy y probar en Safari/iOS.
+Criterios:
+	∙	Al click en Google abre la pantalla de Google normalmente
+	∙	Después de seleccionar cuenta regresa a loyalty.rmscore.app logueado
+	∙	Funciona en Safari iOS​​​​​​​​​​​​​​​​

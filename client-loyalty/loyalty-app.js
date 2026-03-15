@@ -95,26 +95,11 @@ function initGoogleSignIn() {
   if (!window.google) return;
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
-    callback: handleGoogleResponse,
     auto_select: false,
     cancel_on_tap_outside: true,
-    ux_mode: "popup",
+    ux_mode: "redirect",
+    login_uri: "https://loyalty.rmscore.app/auth/google-callback",
   });
-}
-
-async function handleGoogleResponse(response) {
-  try {
-    showLoading("Iniciando sesión...");
-    const result = await apiPost("/auth/google", { idToken: response.credential });
-    state.customer = result.customer;
-    state.token = result.token;
-    saveSession();
-    await loadHomeData();
-    renderHome();
-  } catch (err) {
-    showError("Error al iniciar sesión: " + err.message);
-    renderLogin();
-  }
 }
 
 async function loadHomeData() {
@@ -162,11 +147,6 @@ function renderLogin() {
           shape: "rectangular",
         }
       );
-      google.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          console.log("One Tap no disponible:", notification.getNotDisplayedReason());
-        }
-      });
     }
   };
 
@@ -328,6 +308,35 @@ function logout() {
 
 async function init() {
   showLoading();
+
+  // Handle redirect back from Google OAuth
+  const params = new URLSearchParams(window.location.search);
+  const loginSuccess = params.get("login_success");
+  const tokenParam = params.get("token");
+  const customerParam = params.get("customer");
+  const errorParam = params.get("error");
+
+  if (errorParam) {
+    window.history.replaceState({}, document.title, "/");
+    showError("Error al iniciar sesión: " + decodeURIComponent(errorParam));
+    setTimeout(renderLogin, 2000);
+    return;
+  }
+
+  if (loginSuccess && tokenParam && customerParam) {
+    try {
+      state.token = tokenParam;
+      state.customer = JSON.parse(decodeURIComponent(customerParam));
+      saveSession();
+      window.history.replaceState({}, document.title, "/");
+      await loadHomeData();
+      renderHome();
+      return;
+    } catch (e) {
+      window.history.replaceState({}, document.title, "/");
+    }
+  }
+
   if (loadSession()) {
     try {
       await loadHomeData();
