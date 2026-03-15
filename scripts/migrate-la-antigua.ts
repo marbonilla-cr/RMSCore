@@ -1,0 +1,141 @@
+import { Pool } from "pg";
+
+const DB_URL = process.env.DATABASE_URL!;
+const NEW_SCHEMA = "tenant_la_antigua";
+const SOURCE_SCHEMA = "public";
+
+const pool = new Pool({ connectionString: DB_URL, max: 1 });
+
+async function run() {
+  const client = await pool.connect();
+  try {
+    console.log("=== MIGRACIÓN LA ANTIGUA ===");
+    console.log("Source schema:", SOURCE_SCHEMA);
+    console.log("Target schema:", NEW_SCHEMA);
+
+    // PASO 1 — Verificar estado actual
+    console.log("\n[PASO 1] Verificando estado actual...");
+    const { rows: tenants } = await client.query(
+      `SELECT id, slug, schema_name, plan, is_active FROM public.tenants`
+    );
+    console.log("Tenants actuales:", JSON.stringify(tenants, null, 2));
+
+    const laAntigua = tenants.find((t: any) => t.schema_name === "public");
+    if (!laAntigua) {
+      throw new Error("No se encontró tenant con schema_name='public'. Abortando.");
+    }
+    console.log("✓ Tenant La Antigua encontrado:", laAntigua);
+
+    // PASO 2 — Crear nuevo schema
+    console.log("\n[PASO 2] Creando schema", NEW_SCHEMA, "...");
+    await client.query(`CREATE SCHEMA IF NOT EXISTS "${NEW_SCHEMA}"`);
+    console.log("✓ Schema creado");
+
+    // PASO 3 — Obtener todas las tablas del schema public que son de tenant
+    console.log("\n[PASO 3] Obteniendo tablas de tenant en schema public...");
+    const { rows: tables } = await client.query(`
+      SELECT tablename FROM pg_tables 
+      WHERE schemaname = 'public' 
+      AND tablename NOT IN ('tenants', 'tenant_modules', 'superadmin_users', 'provision_log', 'billing_events', 'schema_migrations')
+      ORDER BY tablename
+    `);
+    console.log(`✓ ${tables.length} tablas encontradas:`, tables.map((t: any) => t.tablename).join(", "));
+
+    // PASO 4 — Copiar estructura y datos tabla por tabla
+    console.log("\n[PASO 4] Copiando tablas...");
+    for (const { tablename } of tables) {
+      try {
+        await client.query(
+          `CREATE TABLE IF NOT EXISTS "${NEW_SCHEMA}"."${tablename}" 
+           (LIKE public."${tablename}" INCLUDING ALL)`
+        );
+        const { rowCount } = await client.query(
+          `INSERT INTO "${NEW_SCHEMA}"."${tablename}" 
+           SELECT * FROM public."${tablename}"
+           ON CONFLICT DO NOTHING`
+        );
+        console.log(`  ✓ ${tablename}: ${rowCount} filas copiadas`);
+      } catch (err: any) {
+        console.error(`  ✗ ${tablename}: ${err.message}`);
+      }
+    }
+
+    // PASO 5 — Sincronizar secuencias
+    console.log("\n[PASO 5] Sincronizando secuencias...");
+    const { rows: sequences } = await client.query(`
+      SELECT sequence_name FROM information_schema.sequences
+      WHERE sequence_schema = 'public'
+      AND sequence_name NOT LIKE 'tenants_%'
+      AND sequence_name NOT LIKE 'tenant_modules_%'
+      AND sequence_name NOT LIKE 'superadmin_%'
+      AND sequence_name NOT LIKE 'provision_%'
+      AND sequence_name NOT LIKE 'billing_%'
+    `);
+    for (const { sequence_name } of sequences) {
+      try {
+        const { rows: [seqVal] } = await client.query(
+          `SELECT last_value FROM public."${sequence_name}"`
+        );
+        if (seqVal?.last_value) {
+          await client.query(
+            `SELECT setval('"${NEW_SCHEMA}"."${sequence_name}"', $1, true)`,
+            [seqVal.last_value]
+          );
+          console.log(`  ✓ ${sequence_name}: last_value=${seqVal.last_value}`);
+        }
+      } catch (err: any) {
+        console.log(`  ~ ${sequence_name}: ${err.message}`);
+      }
+    }
+
+    // PASO 6 — Verificar integridad
+    console.log("\n[PASO 6] Verificando integridad...");
+    const criticalTables = ["orders", "order_items", "payments", "sales_ledger_items", "hr_time_punches", "users"];
+    const checkpoint = { orders: "358", order_items: "1886", payments: "11519", sales_ledger_items: "60231", hr_time_punches: "101", users: "14" };
+    let allOk = true;
+    for (const t of criticalTables) {
+      const { rows: [cnt] } = await client.query(
+        `SELECT COUNT(*) as count FROM "${NEW_SCHEMA}"."${t}"`
+      );
+      const expected = (checkpoint as any)[t];
+      const ok = Number(cnt.count) >= Number(expected);
+      console.log(`  ${ok ? "✓" : "✗"} ${t}: ${cnt.count} (esperado: ${expected})`);
+      if (!ok) allOk = false;
+    }
+
+    if (!allOk) {
+      throw new Error("Verificación de integridad FALLÓ. No se actualiza el tenant. Revisar errores arriba.");
+    }
+
+    // PASO 7 — Actualizar registro del tenant
+    console.log("\n[PASO 7] Actualizando schema_name del tenant...");
+    await client.query(
+      `UPDATE public.tenants SET schema_name = $1 WHERE id = $2`,
+      [NEW_SCHEMA, laAntigua.id]
+    );
+    console.log("✓ Tenant actualizado: schema_name =", NEW_SCHEMA);
+
+    // PASO 8 — Verificación final
+    console.log("\n[PASO 8] Verificación final...");
+    const { rows: [updated] } = await client.query(
+      `SELECT id, slug, schema_name, plan, is_active FROM public.tenants WHERE id = $1`,
+      [laAntigua.id]
+    );
+    console.log("✓ Tenant final:", JSON.stringify(updated, null, 2));
+
+    console.log("\n=== MIGRACIÓN COMPLETADA ✓ ===");
+    console.log("IMPORTANTE: El schema 'public' aún tiene los datos originales.");
+    console.log("No limpiar public hasta verificar que el sistema funciona correctamente.");
+
+  } catch (err: any) {
+    console.error("\n=== ERROR EN MIGRACIÓN ===");
+    console.error(err.message);
+    console.error("El sistema NO fue modificado de forma irreversible.");
+    console.error("El tenant sigue apuntando a schema 'public'.");
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
+run();
