@@ -299,7 +299,7 @@ export default function TablesPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       setQuickSaleDialogOpen(false);
       setQuickSaleName("");
-      navigate(`/tables/quick/${data.orderId}`);
+      navigate(`/tables/quick/${data.id}`);
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {

@@ -2502,7 +2502,7 @@ export async function registerRoutes(
   app.post("/api/waiter/quick-sale", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const { name } = req.body;
-      if (!name?.trim()) return res.status(400).json({ message: "Nombre requerido" });
+      const trimmedName = name?.trim() || null;
 
       const businessDate = await getBusinessDate(req.tenantSchema);
       let order = await storage.createOrder({
@@ -2511,7 +2511,7 @@ export async function registerRoutes(
         responsibleWaiterId: req.session?.userId ?? null,
         businessDate,
         isQuickSale: true,
-        quickSaleName: name.trim(),
+        quickSaleName: trimmedName,
       } as any, req.db);
 
       try {
