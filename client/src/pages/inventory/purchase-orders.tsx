@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -133,6 +134,8 @@ function statusBadgeStyle(status: string): React.CSSProperties | undefined {
 
 export default function PurchaseOrdersPage() {
   const { toast } = useToast();
+  const { role } = usePermissions();
+  const canViewCosts = role === "MANAGER";
   const [selectedPoId, setSelectedPoId] = useState<number | null>(null);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [newLine, setNewLine] = useState({ invItemId: "", qtyPurchaseUom: "", purchaseUom: "", unitPricePerPurchaseUom: "" });
@@ -684,8 +687,8 @@ export default function PurchaseOrdersPage() {
                       <TableHead>Artículo</TableHead>
                       <TableHead>Cantidad</TableHead>
                       <TableHead>UOM</TableHead>
-                      <TableHead>Precio Unit.</TableHead>
-                      <TableHead>Subtotal</TableHead>
+                      {canViewCosts && <TableHead>Precio Unit.</TableHead>}
+                      {canViewCosts && <TableHead>Subtotal</TableHead>}
                       <TableHead>Recibido</TableHead>
                       <TableHead>Estado</TableHead>
                       {isDraft && <TableHead></TableHead>}
@@ -703,8 +706,8 @@ export default function PurchaseOrdersPage() {
                           </TableCell>
                           <TableCell data-testid={`text-line-qty-${line.id}`}>{qty.toFixed(2)}</TableCell>
                           <TableCell data-testid={`text-line-uom-${line.id}`}>{line.purchaseUom}</TableCell>
-                          <TableCell data-testid={`text-line-price-${line.id}`}>{price.toFixed(2)}</TableCell>
-                          <TableCell data-testid={`text-line-subtotal-${line.id}`}>{(qty * price).toFixed(2)}</TableCell>
+                          {canViewCosts && <TableCell data-testid={`text-line-price-${line.id}`}>{price.toFixed(2)}</TableCell>}
+                          {canViewCosts && <TableCell data-testid={`text-line-subtotal-${line.id}`}>{(qty * price).toFixed(2)}</TableCell>}
                           <TableCell data-testid={`text-line-received-${line.id}`}>{received.toFixed(2)}</TableCell>
                           <TableCell data-testid={`badge-line-status-${line.id}`}>
                             <Badge variant="secondary">{line.lineStatus}</Badge>
@@ -726,6 +729,7 @@ export default function PurchaseOrdersPage() {
                       );
                     })}
                   </TableBody>
+                  {canViewCosts && (
                   <TableFooter>
                     <TableRow>
                       <TableCell colSpan={4} className="text-right font-semibold text-sm">
@@ -737,6 +741,7 @@ export default function PurchaseOrdersPage() {
                       <TableCell colSpan={isDraft ? 3 : 2}></TableCell>
                     </TableRow>
                   </TableFooter>
+                  )}
                 </Table>
               </div>
             )}
@@ -786,6 +791,7 @@ export default function PurchaseOrdersPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {canViewCosts && (
                   <div className="space-y-1 w-28">
                     <Label>Precio Unit.</Label>
                     <Input
@@ -796,6 +802,7 @@ export default function PurchaseOrdersPage() {
                       onChange={(e) => setNewLine({ ...newLine, unitPricePerPurchaseUom: e.target.value })}
                     />
                   </div>
+                  )}
                   <Button
                     data-testid="button-add-line"
                     onClick={handleAddLine}
@@ -824,7 +831,7 @@ export default function PurchaseOrdersPage() {
                       <TableRow>
                         <TableHead>Artículo</TableHead>
                         <TableHead>Cant. Recibida</TableHead>
-                        <TableHead>Precio Unit.</TableHead>
+                        {canViewCosts && <TableHead>Precio Unit.</TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -845,6 +852,7 @@ export default function PurchaseOrdersPage() {
                                 className="w-28"
                               />
                             </TableCell>
+                            {canViewCosts && (
                             <TableCell>
                               <Input
                                 data-testid={`input-receive-price-${rl.poLineId}`}
@@ -855,6 +863,7 @@ export default function PurchaseOrdersPage() {
                                 className="w-28"
                               />
                             </TableCell>
+                            )}
                           </TableRow>
                         );
                       })}
@@ -932,8 +941,8 @@ export default function PurchaseOrdersPage() {
                           <TableHead>Artículo</TableHead>
                           <TableHead className="text-center">Cantidad recibida</TableHead>
                           <TableHead className="text-center">UOM</TableHead>
-                          <TableHead className="text-right">Precio unit.</TableHead>
-                          <TableHead className="text-right">Subtotal</TableHead>
+                          {canViewCosts && <TableHead className="text-right">Precio unit.</TableHead>}
+                          {canViewCosts && <TableHead className="text-right">Subtotal</TableHead>}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -945,12 +954,16 @@ export default function PurchaseOrdersPage() {
                               <TableCell className="font-medium">{line.invItemName}</TableCell>
                               <TableCell className="text-center">{qty.toLocaleString("es-CR")}</TableCell>
                               <TableCell className="text-center text-muted-foreground">{line.purchaseUom ?? "—"}</TableCell>
+                              {canViewCosts && (
                               <TableCell className="text-right">
                                 ₡{price.toLocaleString("es-CR", { minimumFractionDigits: 2 })}
                               </TableCell>
+                              )}
+                              {canViewCosts && (
                               <TableCell className="text-right font-medium">
                                 ₡{(qty * price).toLocaleString("es-CR", { minimumFractionDigits: 2 })}
                               </TableCell>
+                              )}
                             </TableRow>
                           );
                         })}
@@ -1085,8 +1098,8 @@ export default function PurchaseOrdersPage() {
                       <TableHead className="text-right w-[80px]">Reorden</TableHead>
                       <TableHead className="w-[100px]">UOM</TableHead>
                       <TableHead className="w-[100px]">Cantidad</TableHead>
-                      <TableHead className="w-[110px]">Precio ₡</TableHead>
-                      <TableHead className="text-right w-[100px]">Subtotal</TableHead>
+                      {canViewCosts && <TableHead className="w-[110px]">Precio ₡</TableHead>}
+                      {canViewCosts && <TableHead className="text-right w-[100px]">Subtotal</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1126,6 +1139,7 @@ export default function PurchaseOrdersPage() {
                               }}
                             />
                           </TableCell>
+                          {canViewCosts && (
                           <TableCell>
                             <Input
                               data-testid={`input-newpo-price-${item.id}`}
@@ -1142,9 +1156,12 @@ export default function PurchaseOrdersPage() {
                               }}
                             />
                           </TableCell>
+                          )}
+                          {canViewCosts && (
                           <TableCell className="text-right text-sm font-medium">
                             {item.qtyOrdered > 0 ? formatCurrency(item.qtyOrdered * item.unitPrice) : "—"}
                           </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
@@ -1156,7 +1173,8 @@ export default function PurchaseOrdersPage() {
             {poItemsLoaded && poItems.length > 0 && (
               <div className="flex items-center justify-between flex-wrap gap-3 pt-2 border-t">
                 <div className="text-sm text-muted-foreground" data-testid="text-newpo-summary">
-                  {poLinesWithQty.length} producto{poLinesWithQty.length !== 1 ? "s" : ""} · Total estimado: {formatCurrency(poEstimatedTotal)}
+                  {poLinesWithQty.length} producto{poLinesWithQty.length !== 1 ? "s" : ""}
+                  {canViewCosts && ` · Total estimado: ${formatCurrency(poEstimatedTotal)}`}
                 </div>
                 <Button
                   data-testid="button-newpo-submit"
@@ -1295,7 +1313,7 @@ export default function PurchaseOrdersPage() {
                         <TableHead>Punto Reorden</TableHead>
                         <TableHead>Déficit</TableHead>
                         <TableHead>Proveedor</TableHead>
-                        <TableHead>Últ. Precio</TableHead>
+                        {canViewCosts && <TableHead>Últ. Precio</TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1326,9 +1344,11 @@ export default function PurchaseOrdersPage() {
                               <span className="text-muted-foreground text-xs">Sin proveedor</span>
                             )}
                           </TableCell>
+                          {canViewCosts && (
                           <TableCell data-testid={`text-suggestion-price-${s.invItemId}`}>
                             {s.preferredSupplier ? Number(s.preferredSupplier.lastPrice).toFixed(2) : "-"}
                           </TableCell>
+                          )}
                         </TableRow>
                       ))}
                     </TableBody>

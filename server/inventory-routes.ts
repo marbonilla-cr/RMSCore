@@ -452,8 +452,14 @@ export function registerInventoryRoutes(app: Express, wss: any) {
           ii.base_uom,
           CAST(ii.on_hand_qty_base AS FLOAT) AS on_hand_qty_base,
           CAST(ii.reorder_point_qty_base AS FLOAT) AS reorder_point_qty_base,
-          COALESCE(isi.purchase_uom, ii.base_uom) AS purchase_uom,
-          CAST(COALESCE(isi.last_price_per_purchase_uom, 0) AS FLOAT) AS last_price,
+          COALESCE(isi.purchase_uom, ii.purchase_presentation, ii.base_uom) AS purchase_uom,
+          CAST(
+            COALESCE(
+              NULLIF(isi.last_price_per_purchase_uom, 0),
+              NULLIF(ii.last_cost_per_presentation, 0),
+              0
+            ) AS FLOAT
+          ) AS last_price,
           COALESCE(isi.is_preferred, false) AS is_preferred
         FROM inv_items ii
         LEFT JOIN inv_supplier_items isi ON isi.inv_item_id = ii.id AND isi.supplier_id = $1
