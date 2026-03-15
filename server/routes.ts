@@ -3660,7 +3660,9 @@ export async function registerRoutes(
       storage.getAllOpenOrders(req.db),
     ]);
     const tableMap = new Map(allTables.map(t => [t.id, t]));
-    const relevantOrders = allOpenOrders.filter(o => tableMap.has(o.tableId));
+    const tableOrders = allOpenOrders.filter(o => o.tableId && tableMap.has(o.tableId));
+    const quickSaleOrders = allOpenOrders.filter(o => (o as any).isQuickSale && !o.tableId);
+    const relevantOrders = [...tableOrders, ...quickSaleOrders];
     if (relevantOrders.length === 0) return res.json([]);
 
     const orderIds = relevantOrders.map(o => o.id);
@@ -3688,15 +3690,26 @@ export async function registerRoutes(
     for (const order of relevantOrders) {
       const activeCount = itemCounts.get(order.id) || 0;
       if (activeCount === 0) continue;
-      const table = tableMap.get(order.tableId)!;
 
+      const isQuickSale = !!(order as any).isQuickSale && !order.tableId;
       const isChild = !!order.parentOrderId;
       const ticketNumber = isChild
         ? `${order.dailyNumber}-${order.splitIndex}`
         : `${order.dailyNumber}`;
-      const displayName = isChild
-        ? `${table.tableName} #${ticketNumber}`
-        : `${table.tableName} #${order.dailyNumber}`;
+
+      let displayName: string;
+      let tableId: number;
+      if (isQuickSale) {
+        const qsName = (order as any).quickSaleName || "Venta Rápida";
+        displayName = `${qsName} #${order.dailyNumber}`;
+        tableId = 0;
+      } else {
+        const table = tableMap.get(order.tableId)!;
+        displayName = isChild
+          ? `${table.tableName} #${ticketNumber}`
+          : `${table.tableName} #${order.dailyNumber}`;
+        tableId = table.id;
+      }
 
       const names = new Set<string>();
       const saNames = subaccountsByOrder.get(order.id) || [];
@@ -3707,7 +3720,7 @@ export async function registerRoutes(
       }
 
       result.push({
-        id: table.id,
+        id: tableId,
         tableName: displayName,
         orderId: order.id,
         parentOrderId: order.parentOrderId || null,
@@ -3721,6 +3734,7 @@ export async function registerRoutes(
         openedAt: order.openedAt,
         itemCount: activeCount,
         subaccountNames: Array.from(names),
+        isQuickSale,
       });
     }
     res.json(result);
@@ -3732,8 +3746,12 @@ export async function registerRoutes(
     const order = await storage.getOrder(orderId, req.db);
     if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-    const table = await storage.getTable(order.tableId, req.db);
-    if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+    const isQuickSale = !!(order as any).isQuickSale && !order.tableId;
+    let table: any = null;
+    if (!isQuickSale) {
+      table = await storage.getTable(order.tableId, req.db);
+      if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+    }
 
     const [allItems, allMods, allItemDiscounts, allItemTaxes, allSubaccounts] = await Promise.all([
       storage.getOrderItems(orderId, req.db),
@@ -3767,7 +3785,13 @@ export async function registerRoutes(
 
     const isChild = !!order.parentOrderId;
     const ticketNumber = isChild ? `${order.dailyNumber}-${order.splitIndex}` : `${order.dailyNumber}`;
-    const displayName = isChild ? `${table.tableName} #${ticketNumber}` : `${table.tableName} #${order.dailyNumber}`;
+    let displayName: string;
+    if (isQuickSale) {
+      const qsName = (order as any).quickSaleName || "Venta Rápida";
+      displayName = `${qsName} #${order.dailyNumber}`;
+    } else {
+      displayName = isChild ? `${table.tableName} #${ticketNumber}` : `${table.tableName} #${order.dailyNumber}`;
+    }
 
     const names = new Set<string>();
     for (const sa of allSubaccounts) { if (sa.label) names.add(sa.label); }
@@ -3776,7 +3800,7 @@ export async function registerRoutes(
     if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/table-detail/${orderId} ${Date.now() - t0}ms`);
 
     res.json({
-      id: table.id,
+      id: table?.id ?? 0,
       tableName: displayName,
       orderId: order.id,
       parentOrderId: order.parentOrderId || null,
