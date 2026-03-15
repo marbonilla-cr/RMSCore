@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { registerRoutes } from "./routes";
 import { ensureSystemPermissions, seedExtraTypes, seedDefaultRolePermissions } from "./storage";
 import { startHrBackgroundJobs } from "./hr-jobs";
+import { startDispatchBackgroundJobs } from "./dispatch-jobs";
 import { retryPendingSync } from "./quickbooks";
 import { runTenantLifecycleCheck } from "./provision/provision-service";
 import { ensurePublicTables } from "./provision/seed-own-tenant";
@@ -198,6 +199,7 @@ app.use((req, res, next) => {
     log(`serving on port ${port}`);
 
     startHrBackgroundJobs();
+    startDispatchBackgroundJobs();
 
     setInterval(() => {
       retryPendingSync().catch(err => console.error("[QBO] Retry queue error:", err.message));

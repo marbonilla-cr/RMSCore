@@ -101,6 +101,8 @@ export const orders = pgTable("orders", {
   isQuickSale: boolean("is_quick_sale").notNull().default(false),
   quickSaleName: varchar("quick_sale_name", { length: 100 }),
   transactionCode: varchar("transaction_code", { length: 3 }),
+  orderMode: varchar("order_mode", { length: 20 }).notNull().default("TABLE"),
+  dispatchStatus: varchar("dispatch_status", { length: 30 }),
 });
 
 export const orderItems = pgTable("order_items", {
@@ -981,6 +983,7 @@ export const businessConfig = pgTable("business_config", {
   operationModeTable: boolean("operation_mode_table").notNull().default(true),
   operationModeQr: boolean("operation_mode_qr").notNull().default(true),
   operationModeDispatch: boolean("operation_mode_dispatch").notNull().default(false),
+  dispatchOrderTimeoutMinutes: integer("dispatch_order_timeout_minutes").notNull().default(15),
 });
 
 export const printers = pgTable("printers", {

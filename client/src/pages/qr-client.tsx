@@ -368,7 +368,7 @@ export default function QRClientPage() {
   const tableCode = params?.tableCode || "";
   const { toast } = useToast();
 
-  const [screen, setScreen] = useState<"gc" | 0 | 1 | 2 | 3 | 4>("gc");
+  const [screen, setScreen] = useState<"gc" | 0 | 1 | 2 | 3 | 4 | "dispatch">("gc");
   const [gcInput, setGcInput] = useState("");
   const [name, setName] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -377,6 +377,8 @@ export default function QRClientPage() {
   const [sending, setSending] = useState(false);
   const [subaccountId, setSubaccountId] = useState<number | null>(null);
   const [qrToken, setQrToken] = useState<string>("");
+  const [dispatchInfo, setDispatchInfo] = useState<{ transactionCode: string; orderId: number } | null>(null);
+  const [dispatchStatus, setDispatchStatus] = useState<"PENDING_PAYMENT" | "PAID" | "CANCELLED" | null>(null);
 
   /* ─── Fetch daily QR token ─── */
   useEffect(() => {
@@ -554,7 +556,14 @@ export default function QRClientPage() {
         throw new Error(d.message);
       }
 
-      setScreen(4);
+      const data = await res.json();
+      if (data.dispatch) {
+        setDispatchInfo({ transactionCode: data.transactionCode, orderId: data.orderId });
+        setDispatchStatus("PENDING_PAYMENT");
+        setScreen("dispatch");
+      } else {
+        setScreen(4);
+      }
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
@@ -574,6 +583,25 @@ export default function QRClientPage() {
       }
     });
   }, [cart]);
+
+  /* ─── Dispatch status polling ─── */
+  useEffect(() => {
+    if (screen !== "dispatch" || !dispatchInfo) return;
+    if (dispatchStatus === "PAID" || dispatchStatus === "CANCELLED") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/qr/dispatch-status/${dispatchInfo.transactionCode}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.dispatchStatus && d.dispatchStatus !== dispatchStatus) {
+          setDispatchStatus(d.dispatchStatus);
+        }
+      } catch {}
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [screen, dispatchInfo, dispatchStatus]);
 
   /* ═══════════════════ Render ═══════════════════ */
 
@@ -1142,6 +1170,109 @@ export default function QRClientPage() {
         }}>
           + Pedir algo m&aacute;s
         </button>
+      </div>
+    );
+  }
+
+  if (screen === "dispatch" && dispatchInfo) {
+    const isPaid = dispatchStatus === "PAID";
+    const isCancelled = dispatchStatus === "CANCELLED";
+
+    return (
+      <div className="qr-page" style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        minHeight: "100dvh", padding: "40px 24px", textAlign: "center",
+      }}>
+        <style>{PAGE_CSS}</style>
+
+        <div style={{
+          width: 80, height: 80, borderRadius: 50,
+          background: isCancelled ? C.redD : isPaid ? C.accD : "#fff8e1",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 36, marginBottom: 16,
+        }}>
+          {isCancelled ? <X size={36} style={{ color: C.red }} /> :
+           isPaid ? <Check size={36} style={{ color: C.acc }} /> :
+           <ShoppingCart size={36} style={{ color: "#f59e0b" }} />}
+        </div>
+
+        <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+          {isCancelled ? "Orden cancelada" : isPaid ? "¡Pedido confirmado!" : "Tu código de despacho"}
+        </div>
+
+        <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 24 }}>
+          {isCancelled
+            ? "Tu orden fue cancelada. Podés realizar un nuevo pedido."
+            : isPaid
+            ? "Tu pago fue procesado. ¡Tu pedido está en cocina!"
+            : "Mostrá este código al cajero para pagar tu pedido."}
+        </div>
+
+        {!isCancelled && (
+          <div style={{
+            background: C.card, border: `2px solid ${C.border2}`, borderRadius: 16,
+            padding: "20px 32px", marginBottom: 24, minWidth: 240,
+          }}>
+            <div style={{ fontSize: 11, color: C.text3, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>
+              Código
+            </div>
+            <div data-testid="text-dispatch-code" style={{
+              fontFamily: mono, fontSize: 38, fontWeight: 700, color: C.acc,
+              letterSpacing: "0.12em",
+            }}>
+              {dispatchInfo.transactionCode}
+            </div>
+            {!isPaid && (
+              <div style={{ fontSize: 12, color: C.text3, marginTop: 8, display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+                <Loader2 size={12} className="animate-spin" />
+                Esperando pago…
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{
+          width: "100%", maxWidth: 400, borderRadius: 14, border: `1px solid ${C.border}`,
+          background: C.card, overflow: "hidden", textAlign: "left", marginBottom: 24,
+        }}>
+          {cart.map((item, i) => (
+            <div key={i} style={{
+              display: "flex", gap: 10, padding: "12px 16px",
+              borderBottom: i < cart.length - 1 ? `1px solid ${C.border}` : "none",
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>
+                  {item.product.name} <span style={{ color: C.text3, fontWeight: 400 }}>&times;{item.qty}</span>
+                </div>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.text, flexShrink: 0 }}>
+                {fmtPrice(item.unitPrice * item.qty)}
+              </div>
+            </div>
+          ))}
+          <div style={{
+            display: "flex", justifyContent: "space-between", padding: "12px 16px",
+            background: C.accD, borderTop: `1px solid ${C.accM}`,
+          }}>
+            <span style={{ fontFamily: serif, fontSize: 16, fontWeight: 700, color: C.text }}>Total</span>
+            <span style={{ fontFamily: serif, fontSize: 18, fontWeight: 700, color: C.acc }}>{fmtPrice(cartTotal)}</span>
+          </div>
+        </div>
+
+        {isCancelled && (
+          <button data-testid="button-dispatch-new-order" onClick={() => {
+            setCart([]);
+            setDispatchInfo(null);
+            setDispatchStatus(null);
+            setScreen(2);
+          }} style={{
+            padding: "14px 32px", borderRadius: 30, border: `1.5px solid ${C.acc}`,
+            background: C.card, color: C.acc, fontSize: 15, fontWeight: 600,
+            cursor: "pointer", minHeight: 48,
+          }}>
+            Hacer nuevo pedido
+          </button>
+        )}
       </div>
     );
   }

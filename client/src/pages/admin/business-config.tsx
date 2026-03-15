@@ -34,6 +34,7 @@ interface BusinessConfigData {
   operationModeTable?: boolean;
   operationModeQr?: boolean;
   operationModeDispatch?: boolean;
+  dispatchOrderTimeoutMinutes?: number;
 }
 
 const TIMEZONE_OPTIONS = [
@@ -69,6 +70,7 @@ export default function AdminBusinessConfigPage() {
     operationModeTable: true,
     operationModeQr: true,
     operationModeDispatch: false,
+    dispatchOrderTimeoutMinutes: 15,
   });
 
   const { data: config, isLoading, isError, error } = useQuery<BusinessConfigData>({
@@ -94,6 +96,7 @@ export default function AdminBusinessConfigPage() {
         operationModeTable: config.operationModeTable !== undefined ? config.operationModeTable : true,
         operationModeQr: config.operationModeQr !== undefined ? config.operationModeQr : true,
         operationModeDispatch: config.operationModeDispatch !== undefined ? config.operationModeDispatch : false,
+        dispatchOrderTimeoutMinutes: config.dispatchOrderTimeoutMinutes ?? 15,
       });
     }
   }, [config]);
@@ -328,6 +331,23 @@ export default function AdminBusinessConfigPage() {
                     onCheckedChange={(v) => setForm({ ...form, operationModeDispatch: v })}
                   />
                 </div>
+                {form.operationModeDispatch && (
+                  <div className="flex items-center justify-between pl-4 pt-2 border-t">
+                    <div>
+                      <p className="text-sm font-medium">Tiempo de expiración (despacho)</p>
+                      <p className="text-xs text-muted-foreground">Minutos hasta cancelar orden sin pagar</p>
+                    </div>
+                    <input
+                      data-testid="input-dispatch-timeout"
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={form.dispatchOrderTimeoutMinutes ?? 15}
+                      onChange={(e) => setForm({ ...form, dispatchOrderTimeoutMinutes: Number(e.target.value) })}
+                      className="w-20 px-2 py-1 text-sm border rounded"
+                    />
+                  </div>
+                )}
               </div>
             </div>
           </CardContent>

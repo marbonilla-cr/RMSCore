@@ -1,0 +1,239 @@
+Perfecto. Configurable en business_config con auto-eliminación automática. El flujo queda así:
+
+```
+business_config:
+  dispatch_order_timeout_minutes = 15 (configurable)
+  
+Job background cada 1 minuto:
+  → Buscar órdenes PENDING_PAYMENT con modo despacho
+  → Si created_at > timeout → auto-cancelar
+  → Cliente ve en celular: "Tu orden fue cancelada"
+```
+
+Ahora tengo todo el diseño completo. Aquí el prompt:
+
+---
+
+## Prompt — Loyalty Fase 4: Modelo de Despacho
+
+**Contexto:** Implementar el modelo de operación de despacho. El cliente escanea el QR del restaurante, hace su orden, recibe un código de 3 caracteres, paga en caja, y solo entonces la orden va a KDS. Órdenes no pagadas se auto-cancelan después de un tiempo configurable.
+
+---
+
+### PARTE A — Migración
+
+Crear `migrations/0025_dispatch_mode.sql`:
+
+```sql
+--> statement-breakpoint
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "order_mode" varchar(20) NOT NULL DEFAULT 'TABLE';
+--> statement-breakpoint
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "dispatch_status" varchar(30);
+--> statement-breakpoint
+ALTER TABLE "business_config" ADD COLUMN IF NOT EXISTS "dispatch_order_timeout_minutes" integer NOT NULL DEFAULT 15;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "orders_dispatch_status_idx" ON "orders"("dispatch_status") WHERE dispatch_status IS NOT NULL;
+```
+
+Agregar en `shared/schema.ts` en la tabla `orders`:
+```typescript
+orderMode: varchar("order_mode", { length: 20 }).notNull().default("TABLE"),
+dispatchStatus: varchar("dispatch_status", { length: 30 }),
+```
+
+Agregar en `businessConfig`:
+```typescript
+dispatchOrderTimeoutMinutes: integer("dispatch_order_timeout_minutes").notNull().default(15),
+```
+
+Los valores de `orderMode`: `TABLE` | `QR` | `DISPATCH`
+Los valores de `dispatchStatus`: `PENDING_PAYMENT` | `PAID` | `IN_KITCHEN` | `READY` | `CANCELLED`
+
+---
+
+### PARTE B — Lógica de órdenes en modo despacho
+
+**1.** En `server/routes.ts`, en el endpoint `POST /api/qr/:tableCode/submit`:
+
+Verificar si el tenant tiene `operationModeDispatch = true` en `business_config`. Si es así:
+- Crear la orden con `orderMode = 'DISPATCH'` y `dispatchStatus = 'PENDING_PAYMENT'`
+- **NO crear kitchen tickets todavía** — esperar al pago
+- Retornar el `transactionCode` al cliente en el response
+
+Si `operationModeDispatch = false` → comportamiento actual sin cambios.
+
+**2.** En `POST /api/pos/pay` — cuando se paga una orden con `orderMode = 'DISPATCH'`:
+- Cambiar `dispatchStatus` de `PENDING_PAYMENT` a `PAID`
+- **Ahora sí crear los kitchen tickets** — misma lógica que `send-round`
+- Emitir WebSocket event `dispatch_order_paid` con `{ orderId, transactionCode }`
+
+**3.** En `GET /api/pos/tables` — incluir órdenes con `dispatchStatus = 'PENDING_PAYMENT'` con indicador visual especial para que el cajero las vea y pueda cobrarlas.
+
+---
+
+### PARTE C — Job de auto-cancelación
+
+En `server/hr-jobs.ts` o crear `server/dispatch-jobs.ts`, agregar job que corre cada minuto:
+
+```typescript
+export async function startDispatchBackgroundJobs() {
+  setInterval(async () => {
+    try {
+      const { Pool } = require("pg");
+      const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+      const { rows: tenants } = await publicPool.query(
+        `SELECT schema_name FROM public.tenants WHERE is_active = true`
+      );
+      await publicPool.end();
+
+      for (const { schema_name } of tenants) {
+        try {
+          const tdb = getTenantDb(schema_name);
+          const config = await getBusinessConfig(tdb);
+          if (!config?.operationModeDispatch) continue;
+
+          const timeoutMinutes = config.dispatchOrderTimeoutMinutes || 15;
+          const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
+
+          // Auto-cancelar órdenes PENDING_PAYMENT vencidas
+          const cancelled = await tdb.update(orders)
+            .set({ 
+              dispatchStatus: "CANCELLED",
+              status: "CANCELLED",
+            })
+            .where(
+              and(
+                eq(orders.orderMode, "DISPATCH"),
+                eq(orders.dispatchStatus, "PENDING_PAYMENT"),
+                lt(orders.createdAt, cutoff)
+              )
+            )
+            .returning({ id: orders.id, transactionCode: orders.transactionCode });
+
+          for (const order of cancelled) {
+            console.log(`[Dispatch] Auto-cancelada orden ${order.transactionCode} en ${schema_name}`);
+            // Emitir WebSocket para notificar al cliente
+            broadcast({ type: "dispatch_order_cancelled", orderId: order.id, transactionCode: order.transactionCode });
+          }
+        } catch (err: any) {
+          console.error(`[Dispatch] Error en schema ${schema_name}:`, err.message);
+        }
+      }
+    } catch (err: any) {
+      console.error("[Dispatch] Job error:", err.message);
+    }
+  }, 60 * 1000); // cada minuto
+  console.log("[Dispatch] Background jobs started (auto-cancel every 1min)");
+}
+```
+
+Llamar `startDispatchBackgroundJobs()` desde `server/index.ts`.
+
+---
+
+### PARTE D — Pantalla de estado en QR client
+
+En `client/src/pages/qr-client.tsx`, después de enviar la orden exitosamente en modo despacho, en lugar de la pantalla "sent" actual mostrar una pantalla de estado en tiempo real:
+
+**Pantalla "dispatch_status":**
+```
+╔════════════════════════════╗
+║  Tu código de orden        ║
+║                            ║
+║      [ A7K ]               ║
+║                            ║
+║  Muéstralo al cajero       ║
+║  para pagar                ║
+╚════════════════════════════╝
+
+Estado actual:
+⏳ Esperando pago...
+
+─────────────────────────────
+Tu orden:
+  1x Café con leche   ₡2,500
+  1x Sandwich mixto  ₡4,500
+  ─────────────────
+  Total:             ₡7,000
+─────────────────────────────
+
+[Acumular puntos loyalty →]
+```
+
+Usar WebSocket para actualizar el estado en tiempo real:
+- `dispatch_order_paid` → cambiar a "✅ Pagado — preparando tu orden..."
+- `kitchen_item_status_changed` (todos READY) → cambiar a "🎉 ¡Tu orden está lista! Retírala en el mostrador"
+- `dispatch_order_cancelled` → cambiar a "❌ Orden cancelada — el tiempo de espera venció"
+
+El botón "Acumular puntos loyalty" abre `loyalty.rmscore.app` en nueva pestaña con el `transactionCode` como parámetro para reclamación futura.
+
+---
+
+### PARTE E — Cancelación manual por cajero
+
+En `client/src/pages/pos.tsx`, en las órdenes con `dispatchStatus = 'PENDING_PAYMENT'`:
+- Mostrar badge especial "⏳ Sin pagar" con tiempo transcurrido
+- Botón "Cancelar orden" visible para MANAGER o CASHIER
+- Al cancelar: `POST /api/pos/orders/:id/cancel-dispatch`
+
+Agregar endpoint en `server/routes.ts`:
+```typescript
+app.post("/api/pos/orders/:id/cancel-dispatch", requireAuth, async (req, res) => {
+  try {
+    const [order] = await req.db.update(orders)
+      .set({ dispatchStatus: "CANCELLED", status: "CANCELLED" })
+      .where(
+        and(
+          eq(orders.id, parseInt(req.params.id)),
+          eq(orders.dispatchStatus, "PENDING_PAYMENT")
+        )
+      )
+      .returning();
+    if (!order) return res.status(404).json({ message: "Orden no encontrada o ya procesada" });
+    broadcast({ type: "dispatch_order_cancelled", orderId: order.id, transactionCode: order.transactionCode });
+    res.json(order);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+---
+
+### PARTE F — Configuración en Admin
+
+En `client/src/pages/admin/business-config.tsx`, agregar campo en la sección de modos de operación:
+
+```
+[toggle] Despacho en Mostrador
+         El cliente ordena desde su celular y paga en caja
+
+  Cuando está activo:
+  [input] Tiempo máximo de espera sin pagar: [15] minutos
+          Las órdenes sin pagar se cancelan automáticamente
+```
+
+---
+
+### Verificación final
+
+```bash
+npx tsc --noEmit
+```
+
+Probar en Replit:
+1. Activar modo despacho en Admin → Configuración
+2. Escanear QR de mesa → crear orden → verificar que aparece con `dispatchStatus = 'PENDING_PAYMENT'` y NO hay kitchen tickets
+3. Cobrar en POS → verificar que se crean kitchen tickets y `dispatchStatus` cambia a `PAID`
+4. Esperar el timeout configurado sin pagar → verificar que la orden se auto-cancela
+5. Cancelar manualmente desde POS → verificar que funciona
+
+**Criterios de aceptación:**
+- [ ] Migración `0025_dispatch_mode.sql` aplicada
+- [ ] Órdenes de despacho no van a KDS hasta ser pagadas
+- [ ] Auto-cancelación funciona según el timeout configurado
+- [ ] Pantalla de estado en tiempo real funciona en el QR client
+- [ ] Cajero puede cancelar manualmente desde POS
+- [ ] Campo de timeout configurable en Admin → Configuración
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] No hacer deploy hasta que todos los criterios pasen en Replit

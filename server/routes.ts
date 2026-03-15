@@ -19,6 +19,7 @@ import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduc
 import * as qbo from "./quickbooks";
 import { tenantMiddleware } from "./middleware/tenant";
 import { registerDispatchRoutes, registerDispatchSession, notifyDispatchReady } from "./dispatch-routes";
+import { initDispatchJobs } from "./dispatch-jobs";
 import { registerLoyaltyRoutes } from "./loyalty-routes";
 import { registerProvisionRoutes } from "./provision/provision-routes";
 import { registerDataLoaderRoutes } from "./data-loader/data-loader-routes";
@@ -99,6 +100,8 @@ function broadcast(type: string, payload: any) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
 }
+
+initDispatchJobs(broadcast);
 
 // Login rate limiter - per IP, 5 attempts per 15 minutes
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
@@ -3682,6 +3685,79 @@ export async function registerRoutes(
     }
   }
 
+  async function createDispatchKitchenTickets(orderId: number, order: any, dbInstance: typeof db, now: Date) {
+    const allItems = await storage.getOrderItems(orderId, dbInstance);
+    const pendingItems = allItems.filter(i => i.status !== "VOIDED");
+    if (pendingItems.length === 0) return;
+
+    const uniqueProductIds = Array.from(new Set(pendingItems.map(i => i.productId)));
+    const [productsArr, allCategories] = await Promise.all([
+      uniqueProductIds.length > 0
+        ? dbInstance.select().from(products).where(inArray(products.id, uniqueProductIds))
+        : Promise.resolve([]),
+      storage.getAllCategories(dbInstance),
+    ]);
+
+    const productsMap = new Map(productsArr.map((p: any) => [p.id, p]));
+    const tableNameLabel = order.transactionCode ? `Despacho #${order.transactionCode}` : `Despacho #${order.dailyNumber || orderId}`;
+
+    const kdsTickets: Map<string, number> = new Map();
+    const createdTicketIds: number[] = [];
+
+    for (const item of pendingItems) {
+      const product = productsMap.get(item.productId);
+      const category = allCategories.find((c: any) => c.id === (product as any)?.categoryId);
+      const kdsDestination = (category as any)?.kdsDestination || "cocina";
+
+      if (!kdsTickets.has(kdsDestination)) {
+        const ticket = await storage.createKitchenTicket({
+          orderId,
+          tableId: order.tableId || null,
+          tableNameSnapshot: tableNameLabel,
+          status: "NEW",
+          kdsDestination,
+        }, dbInstance);
+        kdsTickets.set(kdsDestination, ticket.id);
+        createdTicketIds.push(ticket.id);
+      }
+
+      const ticketId = kdsTickets.get(kdsDestination)!;
+
+      await storage.updateOrderItem(item.id, { status: "SENT", sentToKitchenAt: now }, dbInstance);
+
+      if (item.qty > 1) {
+        const groupId = crypto.randomUUID();
+        for (let seq = 1; seq <= item.qty; seq++) {
+          await storage.createKitchenTicketItem({
+            kitchenTicketId: ticketId,
+            orderItemId: item.id,
+            productNameSnapshot: item.productNameSnapshot,
+            qty: 1,
+            notes: item.notes,
+            status: "NEW",
+            kitchenItemGroupId: groupId,
+            seqInGroup: seq,
+          }, dbInstance);
+        }
+      } else {
+        await storage.createKitchenTicketItem({
+          kitchenTicketId: ticketId,
+          orderItemId: item.id,
+          productNameSnapshot: item.productNameSnapshot,
+          qty: 1,
+          notes: item.notes,
+          status: "NEW",
+        }, dbInstance);
+      }
+    }
+
+    await dbInstance.update(orders).set({ dispatchStatus: "PAID" }).where(eq(orders.id, orderId));
+
+    if (createdTicketIds.length > 0) {
+      broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: order.tableId });
+    }
+  }
+
   // ==================== POS ====================
   app.get("/api/pos/tables", requirePermission("POS_VIEW"), async (req, res) => {
     const t0 = Date.now();
@@ -3715,6 +3791,21 @@ export async function registerRoutes(
     }
 
     if (Date.now() - t0 > 200) console.log(`[PERF] GET /api/pos/tables ${Date.now() - t0}ms (${relevantOrders.length} orders)`);
+
+    const dispatchOrders = await req.db.select().from(orders)
+      .where(and(
+        sql`${orders.status} = 'OPEN'`,
+        sql`${(orders as any).orderMode} = 'DISPATCH'`,
+        sql`${(orders as any).dispatchStatus} = 'PENDING_PAYMENT'`
+      ));
+    const dispatchOrderIds = dispatchOrders.map(o => o.id);
+    const dispatchItemCountRows = dispatchOrderIds.length > 0
+      ? await req.db.select({ orderId: orderItems.orderId, cnt: count() })
+          .from(orderItems)
+          .where(and(inArray(orderItems.orderId, dispatchOrderIds), sql`${orderItems.status} NOT IN ('VOIDED','PAID')`))
+          .groupBy(orderItems.orderId)
+      : [];
+    const dispatchItemCounts = new Map(dispatchItemCountRows.map(r => [r.orderId, Number(r.cnt)]));
 
     const result: any[] = [];
     for (const order of relevantOrders) {
@@ -3768,6 +3859,36 @@ export async function registerRoutes(
         transactionCode: (order as any).transactionCode || null,
       });
     }
+
+    for (const dOrder of dispatchOrders) {
+      const dCount = dispatchItemCounts.get(dOrder.id) || 0;
+      if (dCount === 0) continue;
+      const dTable = dOrder.tableId ? tableMap.get(dOrder.tableId) : null;
+      const dDisplayName = dTable
+        ? `${dTable.tableName} #${dOrder.dailyNumber} [Despacho]`
+        : `Despacho #${(dOrder as any).transactionCode || dOrder.dailyNumber}`;
+      result.push({
+        id: dTable?.id ?? 0,
+        tableName: dDisplayName,
+        orderId: dOrder.id,
+        parentOrderId: null,
+        splitIndex: null,
+        dailyNumber: dOrder.dailyNumber,
+        globalNumber: dOrder.globalNumber,
+        ticketNumber: `${dOrder.dailyNumber}`,
+        totalAmount: dOrder.totalAmount,
+        balanceDue: dOrder.balanceDue,
+        paidAmount: dOrder.paidAmount,
+        openedAt: dOrder.openedAt,
+        itemCount: dCount,
+        subaccountNames: [],
+        isQuickSale: false,
+        isDispatch: true,
+        dispatchStatus: (dOrder as any).dispatchStatus,
+        transactionCode: (dOrder as any).transactionCode || null,
+      });
+    }
+
     res.json(result);
   });
 
@@ -3794,7 +3915,12 @@ export async function registerRoutes(
       ),
     ]);
 
-    const activeItems = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PENDING" && i.status !== "PAID");
+    const isDispatch = (order as any).orderMode === "DISPATCH";
+    const activeItems = allItems.filter(i => {
+      if (i.status === "VOIDED" || i.status === "PAID") return false;
+      if (i.status === "PENDING" && !isDispatch) return false;
+      return true;
+    });
     const activeItemIds = new Set(activeItems.map(i => i.id));
 
     const modsMap = new Map<number, typeof allMods>();
@@ -3902,6 +4028,14 @@ export async function registerRoutes(
           await finalizePaymentTx(tx, { orderId, now, closeOrder: true });
         });
         await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema, req.db);
+        if ((order as any).orderMode === "DISPATCH" && (order as any).dispatchStatus === "PENDING_PAYMENT") {
+          try {
+            await createDispatchKitchenTickets(orderId, order, req.db, now);
+            broadcast("dispatch_order_paid", { orderId, transactionCode: (order as any).transactionCode });
+          } catch (dispatchErr: any) {
+            console.error("[Dispatch] Kitchen ticket creation error:", dispatchErr.message);
+          }
+        }
       }
 
       if (pm?.paymentCode === "CASH" && cashSession) {
@@ -4027,6 +4161,14 @@ export async function registerRoutes(
         });
         await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema, req.db);
         await maybeAutoCloseParentOrder(orderId, req.db);
+        if ((order as any).orderMode === "DISPATCH" && (order as any).dispatchStatus === "PENDING_PAYMENT") {
+          try {
+            await createDispatchKitchenTickets(orderId, order, req.db, now);
+            broadcast("dispatch_order_paid", { orderId, transactionCode: (order as any).transactionCode });
+          } catch (dispatchErr: any) {
+            console.error("[Dispatch] Kitchen ticket creation error (multi-pay):", dispatchErr.message);
+          }
+        }
       }
 
       if (hasCashLeg && cashSession) {
@@ -4146,6 +4288,34 @@ export async function registerRoutes(
       }));
       res.json(result);
     } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==================== POS: CANCEL DISPATCH ====================
+  app.post("/api/pos/orders/:orderId/cancel-dispatch", requirePermission("POS_PAY"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId as string);
+      const order = await storage.getOrder(orderId, req.db);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+      if ((order as any).orderMode !== "DISPATCH") return res.status(400).json({ message: "No es una orden de despacho" });
+      if ((order as any).dispatchStatus !== "PENDING_PAYMENT") return res.status(400).json({ message: "La orden ya fue pagada o cancelada" });
+
+      const allItems = await storage.getOrderItems(orderId, req.db);
+      const pendingItems = allItems.filter(i => i.status === "PENDING");
+      for (const item of pendingItems) {
+        await storage.updateOrderItem(item.id, { status: "VOIDED" }, req.db);
+      }
+      await req.db.update(orders).set({ dispatchStatus: "CANCELLED", status: "CANCELLED" } as any).where(eq(orders.id, orderId));
+      await storage.recalcOrderTotal(orderId, req.db);
+
+      broadcast("dispatch_order_cancelled", { orderId, transactionCode: (order as any).transactionCode });
+      broadcast("table_status_changed", { tableId: order.tableId });
+      broadcast("order_updated", { orderId });
+
+      res.json({ success: true, message: "Orden de despacho cancelada" });
+    } catch (err: any) {
+      console.error("[cancel-dispatch]", err.message);
       res.status(500).json({ message: err.message });
     }
   });
