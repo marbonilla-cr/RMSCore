@@ -3,9 +3,16 @@ import { customers, loyaltyAccounts, loyaltyEvents, loyaltyConfig } from "@share
 import { eq, and, desc } from "drizzle-orm";
 import { verifyGoogleToken, findOrCreateCustomer } from "./loyalty-auth";
 
+function resolveTenantId(req: any): number | null {
+  return req.tenantId ||
+    parseInt(req.headers["x-tenant-id"] as string) ||
+    parseInt(req.body?.tenantId) ||
+    null;
+}
+
 function getTenantId(req: any): number {
-  const tenantId = req.tenantId;
-  if (!tenantId) throw Object.assign(new Error("Tenant no identificado"), { status: 401 });
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw Object.assign(new Error("tenantId requerido"), { status: 400 });
   return tenantId;
 }
 
@@ -161,25 +168,20 @@ export function registerLoyaltyRoutes(app: any) {
   app.get("/api/loyalty/customers/:id", async (req: any, res: any) => {
     try {
       const customerId = parseInt(req.params.id);
-      const tenantId = req.headers["x-tenant-id"]
-        ? parseInt(req.headers["x-tenant-id"] as string)
-        : getTenantId(req);
+      const tenantId = resolveTenantId(req);
       const [customer] = await db.select().from(customers)
         .where(eq(customers.id, customerId));
       if (!customer) return res.status(404).json({ message: "Cliente no encontrado" });
-      const [account] = await db.select().from(loyaltyAccounts)
-        .where(and(
-          eq(loyaltyAccounts.customerId, customerId),
-          eq(loyaltyAccounts.tenantId, tenantId)
-        ));
-      const events = await db.select().from(loyaltyEvents)
-        .where(and(
-          eq(loyaltyEvents.customerId, customerId),
-          eq(loyaltyEvents.tenantId, tenantId)
-        ))
-        .orderBy(desc(loyaltyEvents.createdAt))
-        .limit(20);
-      res.json({ customer, account: account || null, events });
+      const account = tenantId
+        ? (await db.select().from(loyaltyAccounts)
+            .where(and(eq(loyaltyAccounts.customerId, customerId), eq(loyaltyAccounts.tenantId, tenantId))))[0] || null
+        : null;
+      const events = tenantId
+        ? await db.select().from(loyaltyEvents)
+            .where(and(eq(loyaltyEvents.customerId, customerId), eq(loyaltyEvents.tenantId, tenantId)))
+            .orderBy(desc(loyaltyEvents.createdAt)).limit(20)
+        : [];
+      res.json({ customer, account, events });
     } catch (err: any) {
       res.status(err.status || 500).json({ message: err.message });
     }

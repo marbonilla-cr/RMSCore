@@ -103,7 +103,7 @@ app.use((req, _res, next) => {
 // Loyalty PWA host detection
 app.use((req, res, next) => {
   const host = req.headers.host || "";
-  if (host.startsWith("loyalty.") && !req.path.startsWith("/api/")) {
+  if (host.startsWith("loyalty.") && !req.path.startsWith("/api/") && !req.path.startsWith("/auth/")) {
     const loyaltyDir = path.join(process.cwd(), "client-loyalty");
     if (req.path === "/" || !req.path.includes(".")) {
       return res.sendFile(path.join(loyaltyDir, "index.html"));

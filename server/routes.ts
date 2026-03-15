@@ -1086,11 +1086,16 @@ export async function registerRoutes(
     const host = req.headers.host || "localhost:5000";
     const protocol = req.headers["x-forwarded-proto"] || "http";
     const url = `${protocol}://${host}/qr/${table.tableCode}`;
+    const loyaltyUrl = req.tenantId ? `https://loyalty.rmscore.app?tenant=${req.tenantId}` : null;
+    const loyaltySvg = loyaltyUrl ? await QRCode.toString(loyaltyUrl, { type: "svg", margin: 2, width: 200 }) : "";
     const svg = await QRCode.toString(url, { type: "svg", margin: 2, width: 300 });
     const html = `<!DOCTYPE html><html><head><title>QR - ${table.tableName}</title>
-    <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;margin:0;padding:20px}
-    h1{margin-bottom:20px;font-size:24px}p{color:#666;margin-top:10px}</style></head>
-    <body><h1>${table.tableName}</h1>${svg}<p>${url}</p></body></html>`;
+    <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;margin:0;padding:20px;gap:40px}
+    h1{margin-bottom:20px;font-size:24px}p{color:#666;margin-top:10px}section{text-align:center}</style></head>
+    <body>
+      <section><h1>${table.tableName}</h1>${svg}<p>${url}</p></section>
+      ${loyaltyUrl ? `<section><h2 style="font-size:18px;margin-bottom:12px">Loyalty — Acumula puntos</h2>${loyaltySvg}<p style="font-size:12px">${loyaltyUrl}</p></section>` : ""}
+    </body></html>`;
     res.set("Content-Type", "text/html").send(html);
   });
 

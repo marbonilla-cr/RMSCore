@@ -38,6 +38,15 @@ export async function tenantMiddleware(req: Request, res: Response, next: NextFu
 
     const host = req.hostname;
     const parts = host.split(".");
+
+    // loyalty.* is a global subdomain — tenant comes from X-Tenant-Id header or body, not hostname
+    if (host.startsWith("loyalty.")) {
+      req.tenantSchema = "public";
+      req.tenantId = null;
+      req.db = getTenantDb("public");
+      return next();
+    }
+
     if (parts.length < 3 || parts[0] === "admin" || parts[0] === "www") {
       req.tenantSchema = "public";
       req.tenantId = null;

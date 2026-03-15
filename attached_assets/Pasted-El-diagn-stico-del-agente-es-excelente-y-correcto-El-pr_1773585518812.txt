@@ -1,0 +1,76 @@
+El diagnóstico del agente es excelente y correcto. El problema de raíz está identificado claramente.
+Pídele al agente que aplique estos fixes:
+
+Aplicar los siguientes cambios para que loyalty funcione correctamente desde loyalty.rmscore.app:
+CAMBIO 1 — Middleware de tenant para host loyalty.
+En server/middleware/tenant.ts, cuando el host empiece con loyalty., no lanzar error — simplemente continuar sin tenant:
+
+if (host.startsWith("loyalty.")) {
+  req.tenantSchema = null;
+  req.tenantId = null;
+  req.db = db; // db global
+  return next();
+}
+
+
+CAMBIO 2 — earn y redeem aceptan tenantId desde body o header:
+En server/loyalty-routes.ts, cambiar cómo se obtiene el tenantId en los endpoints earn, redeem, config, search y customers/:id:
+
+// En lugar de: const tenantId = req.tenantId;
+// Usar:
+const tenantId = req.tenantId || 
+                 parseInt(req.headers["x-tenant-id"] as string) || 
+                 parseInt(req.body?.tenantId);
+if (!tenantId) return res.status(400).json({ message: "tenantId requerido" });
+
+
+CAMBIO 3 — El cliente pasa tenantId en cada request.
+En client-loyalty/loyalty-app.js, cuando el cliente carga la app desde el QR de un restaurante, la URL puede contener el tenantId:
+
+https://loyalty.rmscore.app?tenant=3
+
+
+Al cargar, guardar el tenantId en el estado y pasarlo en cada request:
+
+// Al inicio de init():
+const params = new URLSearchParams(window.location.search);
+const tenantId = params.get("tenant");
+if (tenantId) {
+  state.tenantId = parseInt(tenantId);
+  localStorage.setItem("loyalty_tenant_id", tenantId);
+} else {
+  state.tenantId = parseInt(localStorage.getItem("loyalty_tenant_id") || "0");
+}
+
+// En apiPost y apiGet, agregar header:
+headers: {
+  "Content-Type": "application/json",
+  "X-Loyalty-Token": state.token || "",
+  "X-Tenant-Id": String(state.tenantId || ""),
+}
+
+
+CAMBIO 4 — El QR del restaurante incluye el tenantId.
+En server/routes.ts, en el endpoint que genera o retorna la info del QR de mesa, agregar el tenantId en la URL de loyalty que se muestra al cliente:
+
+// Cuando el cliente llega a la pantalla de estado post-orden:
+loyaltyUrl: `https://loyalty.rmscore.app?tenant=${req.tenantId}`
+
+
+CAMBIO 5 — Fix en POST /auth/google-callback.
+El callback no necesita tenant — procesa el token de Google y redirige. Verificar que este endpoint está registrado antes del middleware de tenant para que no sea bloqueado:
+
+// Registrar ANTES del middleware de tenant
+app.post("/auth/google-callback", async (req, res) => { ... });
+
+
+Verificación:
+
+npx tsc --noEmit
+
+
+Probar:
+	1.	Abrir https://loyalty.rmscore.app?tenant=3
+	2.	Login con Google → debe funcionar y mostrar home
+	3.	GET /api/loyalty/customers/1/accounts con header X-Tenant-Id: 3 → debe retornar datos
+No hacer deploy hasta que las 3 pruebas pasen en Replit.​​​​​​​​​​​​​​​​

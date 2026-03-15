@@ -5,6 +5,7 @@ let state = {
   screen: "loading",
   customer: null,
   token: null,
+  tenantId: 0,
   loyaltyAccounts: [],
 };
 
@@ -13,6 +14,7 @@ function saveSession() {
     localStorage.setItem("loyalty_session", JSON.stringify({
       customer: state.customer,
       token: state.token,
+      tenantId: state.tenantId,
     }));
   }
 }
@@ -21,9 +23,10 @@ function loadSession() {
   try {
     const saved = localStorage.getItem("loyalty_session");
     if (saved) {
-      const { customer, token } = JSON.parse(saved);
+      const { customer, token, tenantId } = JSON.parse(saved);
       state.customer = customer;
       state.token = token;
+      state.tenantId = tenantId || 0;
       return true;
     }
   } catch (e) {}
@@ -34,15 +37,22 @@ function clearSession() {
   localStorage.removeItem("loyalty_session");
   state.customer = null;
   state.token = null;
+  state.tenantId = 0;
+}
+
+function loyaltyHeaders(extra = {}) {
+  return {
+    "Content-Type": "application/json",
+    "X-Loyalty-Token": state.token || "",
+    "X-Tenant-Id": state.tenantId ? String(state.tenantId) : "",
+    ...extra,
+  };
 }
 
 async function apiPost(path, body) {
   const res = await fetch(`${API_BASE}/api/loyalty${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Loyalty-Token": state.token || "",
-    },
+    headers: loyaltyHeaders(),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -54,10 +64,7 @@ async function apiPost(path, body) {
 
 async function apiGet(path, extraHeaders = {}) {
   const res = await fetch(`${API_BASE}/api/loyalty${path}`, {
-    headers: {
-      "X-Loyalty-Token": state.token || "",
-      ...extraHeaders,
-    },
+    headers: loyaltyHeaders(extraHeaders),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -309,11 +316,20 @@ function logout() {
 async function init() {
   showLoading();
 
-  // Handle redirect back from Google OAuth
+  // Read tenant from URL param and persist it (QR scan sets ?tenant=X)
   const params = new URLSearchParams(window.location.search);
+  const tenantParam = params.get("tenant");
+  if (tenantParam) {
+    state.tenantId = parseInt(tenantParam);
+    localStorage.setItem("loyalty_tenant_id", tenantParam);
+  } else {
+    const stored = localStorage.getItem("loyalty_tenant_id");
+    if (stored) state.tenantId = parseInt(stored);
+  }
+
+  // Handle redirect back from Google OAuth
   const loginSuccess = params.get("login_success");
   const tokenParam = params.get("token");
-  const customerParam = params.get("customer");
   const errorParam = params.get("error");
 
   if (errorParam) {
