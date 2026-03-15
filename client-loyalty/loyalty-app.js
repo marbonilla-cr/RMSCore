@@ -323,10 +323,14 @@ async function init() {
     return;
   }
 
-  if (loginSuccess && tokenParam && customerParam) {
+  if (loginSuccess && tokenParam) {
     try {
       state.token = tokenParam;
-      state.customer = JSON.parse(decodeURIComponent(customerParam));
+      const customerId = JSON.parse(atob(tokenParam)).customerId;
+      const data = await fetch(`/api/loyalty/customers/${customerId}`, {
+        headers: { "X-Loyalty-Token": tokenParam },
+      }).then((r) => r.json());
+      state.customer = data.customer;
       saveSession();
       window.history.replaceState({}, document.title, "/");
       await loadHomeData();
