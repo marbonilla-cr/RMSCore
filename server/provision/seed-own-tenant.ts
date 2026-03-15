@@ -2,16 +2,16 @@
  * server/provision/seed-own-tenant.ts
  *
  * Registra el restaurante propio (La Antigua) como Tenant 1.
- * Apunta al schema 'public' donde ya viven todos los datos existentes.
+ * Apunta al schema 'tenant_la_antigua' donde viven los datos del tenant.
  * Operación 100% idempotente — se puede ejecutar múltiples veces sin riesgo.
  */
 
 import { pool } from "../db";
 
 const OWN_TENANT = {
-  slug:          "rest-la-antigua",
-  businessName:  "Restaurante La Antigua",
-  schemaName:    "public",
+  slug:          "rms",
+  businessName:  "Restaurante y Granja La Antigua Lechería",
+  schemaName:    "tenant_la_antigua",
   plan:          "PRO",
   billingEmail:  "admin@restlaantigua.com",
 };
@@ -153,7 +153,7 @@ export async function ensurePublicTables(): Promise<void> {
 
     // ── Actualizar variable de entorno TENANT_ID si es necesario ───────────
     // El middleware ya usa TENANT_SCHEMA=public para dev, esto es informativo
-    console.log(`[tenant-seed] ✓ Tenant 1 listo. TENANT_ID=${tenantId}, TENANT_SCHEMA=public`);
+    console.log(`[tenant-seed] ✓ Tenant 1 listo. TENANT_ID=${tenantId}, TENANT_SCHEMA=${OWN_TENANT.schemaName}`);
 
   } catch (err: any) {
     console.error("[tenant-seed] ERROR:", err.message);
