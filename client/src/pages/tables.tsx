@@ -251,14 +251,8 @@ export default function TablesPage() {
       if (!selectedSubaccount || !moveDest) return;
       setMoveLoading(true);
       try {
-        const res = await fetch("/api/tables/move-subaccount", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ subaccountId: selectedSubaccount, destTableId: moveDest }),
-        });
+        const res = await apiRequest("POST", "/api/tables/move-subaccount", { subaccountId: selectedSubaccount, destTableId: moveDest });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || "Error al mover subcuenta");
         toast({ title: "Subcuenta movida", description: data.message });
         setMoveDialogOpen(false);
         setMoveSource(null);
@@ -272,14 +266,8 @@ export default function TablesPage() {
       if (!moveSource || !moveDest) return;
       setMoveLoading(true);
       try {
-        const res = await fetch("/api/tables/move", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ sourceTableId: moveSource, destTableId: moveDest }),
-        });
+        const res = await apiRequest("POST", "/api/tables/move", { sourceTableId: moveSource, destTableId: moveDest });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || "Error al mover mesa");
         toast({ title: "Mesa movida", description: data.message });
         setMoveDialogOpen(false);
         setMoveSource(null);
