@@ -64,6 +64,42 @@ export function registerLoyaltyRoutes(app: any) {
     }
   });
 
+  app.post("/api/loyalty/auth/email", async (req: any, res: any) => {
+    try {
+      const { name, email, phone } = req.body;
+      if (!name || !email) return res.status(400).json({ message: "Nombre y correo son requeridos" });
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) return res.status(400).json({ message: "Correo electrónico inválido" });
+
+      let [customer] = await db.select().from(customers)
+        .where(eq(customers.email, email.toLowerCase().trim()));
+
+      if (customer) {
+        [customer] = await db.update(customers).set({
+          lastSeenAt: new Date(),
+          name: customer.name || name,
+          phone: phone || customer.phone,
+        }).where(eq(customers.id, customer.id)).returning();
+      } else {
+        [customer] = await db.insert(customers).values({
+          email: email.toLowerCase().trim(),
+          name: name.trim(),
+          phone: phone?.trim() || null,
+        }).returning();
+      }
+
+      res.json({
+        customer,
+        token: Buffer.from(JSON.stringify({ customerId: customer.id, email: customer.email })).toString("base64"),
+      });
+    } catch (err: any) {
+      if (err.code === "23505") {
+        return res.status(409).json({ message: "Este correo ya está registrado. Intenta iniciar sesión." });
+      }
+      res.status(500).json({ message: "Error al registrar: " + err.message });
+    }
+  });
+
   // GET /api/loyalty/config
   app.get("/api/loyalty/config", async (req: any, res: any) => {
     try {
