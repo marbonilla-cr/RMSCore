@@ -24,7 +24,12 @@ export function registerLoyaltyRoutes(app: any) {
 
       const googleData = await verifyGoogleToken(credential);
       const customer = await findOrCreateCustomer(googleData);
-      const token = Buffer.from(JSON.stringify({ customerId: customer.id, email: customer.email })).toString("base64");
+      const token = Buffer.from(JSON.stringify({
+        customerId: customer.id,
+        email: customer.email,
+        name: customer.name,
+        photoUrl: customer.photoUrl,
+      })).toString("base64");
 
       res.redirect(`/?login_success=1&token=${encodeURIComponent(token)}`);
     } catch (err: any) {

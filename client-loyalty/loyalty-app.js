@@ -325,18 +325,23 @@ async function init() {
 
   if (loginSuccess && tokenParam) {
     try {
+      const payload = JSON.parse(atob(tokenParam));
       state.token = tokenParam;
-      const customerId = JSON.parse(atob(tokenParam)).customerId;
-      const data = await fetch(`/api/loyalty/customers/${customerId}`, {
-        headers: { "X-Loyalty-Token": tokenParam },
-      }).then((r) => r.json());
-      state.customer = data.customer;
+      // Build a minimal customer from the token payload so we don't need
+      // an extra API call (avoids tenant-resolution issues during redirect).
+      state.customer = {
+        id: payload.customerId,
+        email: payload.email,
+        name: payload.name || payload.email,
+        photoUrl: payload.photoUrl || null,
+      };
       saveSession();
       window.history.replaceState({}, document.title, "/");
       await loadHomeData();
       renderHome();
       return;
     } catch (e) {
+      // If token is malformed, clear and fall through to login
       window.history.replaceState({}, document.title, "/");
     }
   }
