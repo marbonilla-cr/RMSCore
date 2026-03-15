@@ -1775,10 +1775,10 @@ export async function registerRoutes(
       storage.getAllOpenOrders(req.db),
     ]);
 
-    const parentOrders = allOpenOrders.filter(o => !o.parentOrderId);
+    const parentOrders = allOpenOrders.filter(o => !o.parentOrderId && o.tableId);
     const orderByTable = new Map<number, typeof parentOrders[0]>();
     for (const o of parentOrders) {
-      if (!orderByTable.has(o.tableId)) orderByTable.set(o.tableId, o);
+      if (!orderByTable.has(o.tableId!)) orderByTable.set(o.tableId!, o);
     }
 
     const orderIds = parentOrders.map(o => o.id);
@@ -2123,7 +2123,7 @@ export async function registerRoutes(
       const sourceOrder = await storage.getOrder(subaccount.orderId, req.db);
       if (!sourceOrder || sourceOrder.status === "CLOSED") return res.status(400).json({ message: "Orden origen no válida" });
 
-      const sourceTable = await storage.getTable(sourceOrder.tableId, req.db);
+      const sourceTable = await storage.getTable(sourceOrder.tableId!, req.db);
       const destTable = await storage.getTable(destTableId, req.db);
       if (!destTable || !destTable.active) return res.status(404).json({ message: "Mesa destino no encontrada o inactiva" });
       if (sourceOrder.tableId === destTableId) return res.status(400).json({ message: "La subcuenta ya está en esa mesa" });
@@ -2933,7 +2933,7 @@ export async function registerRoutes(
       const effectiveQty = (typeof qtyToVoid === "number" && qtyToVoid > 0 && qtyToVoid <= item.qty) ? qtyToVoid : item.qty;
       const isFullVoid = effectiveQty >= item.qty;
 
-      const table = await storage.getTable(order.tableId, req.db);
+      const table = order.tableId ? await storage.getTable(order.tableId, req.db) : null;
       const product = await storage.getProduct(item.productId, req.db);
       const allCategories = await storage.getAllCategories(req.db);
       const category = allCategories.find(c => c.id === product?.categoryId);
@@ -3704,7 +3704,7 @@ export async function registerRoutes(
         displayName = `${qsName} #${order.dailyNumber}`;
         tableId = 0;
       } else {
-        const table = tableMap.get(order.tableId)!;
+        const table = tableMap.get(order.tableId!)!;
         displayName = isChild
           ? `${table.tableName} #${ticketNumber}`
           : `${table.tableName} #${order.dailyNumber}`;
@@ -3749,7 +3749,7 @@ export async function registerRoutes(
     const isQuickSale = !!(order as any).isQuickSale && !order.tableId;
     let table: any = null;
     if (!isQuickSale) {
-      table = await storage.getTable(order.tableId, req.db);
+      table = await storage.getTable(order.tableId!, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     }
 
@@ -4268,7 +4268,7 @@ export async function registerRoutes(
 
       for (const sp of splitsWithItems) {
         const childOrder = await storage.createChildOrder({
-          tableId: order.tableId,
+          tableId: order.tableId!,
           status: "OPEN",
           responsibleWaiterId: order.responsibleWaiterId,
           businessDate: order.businessDate,
@@ -4439,7 +4439,7 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const table = await storage.getTable(order.tableId, req.db);
+      const table = order.tableId ? await storage.getTable(order.tableId, req.db) : null;
       const items = await storage.getOrderItems(orderId, req.db);
 
       let targetItems: typeof items;
@@ -4578,7 +4578,7 @@ export async function registerRoutes(
       const order = await storage.getOrder(orderId, req.db);
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
-      const table = await storage.getTable(order.tableId, req.db);
+      const table = order.tableId ? await storage.getTable(order.tableId, req.db) : null;
       const items = await storage.getOrderItems(orderId, req.db);
       const activeItems = items.filter(i => i.status !== "VOIDED");
 
@@ -4697,7 +4697,7 @@ export async function registerRoutes(
 
       const items = await storage.getOrderItems(orderId, req.db);
       const activeItems = items.filter(i => i.status !== "VOIDED");
-      const table = await storage.getTable(order.tableId, req.db);
+      const table = await storage.getTable(order.tableId!, req.db);
       let subtotal = 0;
       const emailItemsData: { name: string; qty: number; lineTotal: number }[] = [];
       for (const i of activeItems) {
@@ -4833,7 +4833,7 @@ export async function registerRoutes(
 
       const [items, table, allCategories] = await Promise.all([
         storage.getOrderItems(orderId, req.db),
-        storage.getTable(order.tableId, req.db),
+        storage.getTable(order.tableId!, req.db),
         storage.getAllCategories(req.db),
       ]);
 
@@ -5005,7 +5005,7 @@ export async function registerRoutes(
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
       const [table, items, orderPayments, allPaymentMethods] = await Promise.all([
-        storage.getTable(order.tableId, req.db),
+        storage.getTable(order.tableId!, req.db),
         storage.getOrderItems(orderId, req.db),
         storage.getPaymentsForOrder(orderId, req.db),
         storage.getAllPaymentMethods(req.db),
@@ -5103,7 +5103,7 @@ export async function registerRoutes(
       }
 
       const result = paidOrders.map(order => {
-        const table = tableMap.get(order.tableId);
+        const table = order.tableId ? tableMap.get(order.tableId) : undefined;
         const items = itemsByOrder.get(order.id) || [];
         const activeItems = items.filter(i => i.status !== "VOIDED");
         const orderPayments = paymentsByOrder.get(order.id) || [];
@@ -8073,7 +8073,7 @@ export async function registerRoutes(
           globalNumber: order?.globalNumber ? `G-${order.globalNumber}` : `#${p.orderId}`,
           businessDate: p.businessDate,
           paidAt: p.paidAt,
-          tableName: order ? (tableMap.get(order.tableId) || `Mesa ${order.tableId}`) : "",
+          tableName: order ? (order.tableId ? (tableMap.get(order.tableId) || `Mesa ${order.tableId}`) : ((order as any).quickSaleName || "Venta Rápida")) : "",
           amount: p.amount,
           paymentMethod: pmMap.get(p.paymentMethodId) || "Desconocido",
           categories: cats ? [...cats].sort().join(", ") : "",

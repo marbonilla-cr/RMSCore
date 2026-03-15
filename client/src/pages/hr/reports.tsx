@@ -330,26 +330,6 @@ function PayrollTab() {
   const [newExtraAmount, setNewExtraAmount] = useState("");
   const [newExtraNote, setNewExtraNote] = useState("");
 
-  const [chargesFilter, setChargesFilter] = useState<"pending" | "settled">("pending");
-  const { data: employeeCharges = [], refetch: refetchCharges, isFetching: chargesLoading } = useQuery<any[]>({
-    queryKey: ["/api/hr/employee-charges", chargesFilter],
-    queryFn: () =>
-      fetch(`/api/hr/employee-charges?settled=${chargesFilter === "settled"}`, { credentials: "include" })
-        .then(r => r.json()),
-    staleTime: 30_000,
-  });
-
-  const settleChargeMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("PATCH", `/api/hr/employee-charges/${id}/settle`, {});
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/employee-charges"] });
-      toast({ title: "Cargo liquidado" });
-    },
-    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
-  });
-
   const createExtraMutation = useMutation({
     mutationFn: async (body: { employeeId: number; appliesToDate: string; typeCode: string; amount: number; note: string }) => {
       await apiRequest("POST", "/api/hr/payroll-extras", body);
@@ -979,6 +959,26 @@ function ServiceChargeTab() {
   }, [ledger]);
 
   const grandTotal = useMemo(() => grouped.reduce((s, g) => s + g.total, 0), [grouped]);
+
+  const [chargesFilter, setChargesFilter] = useState<"pending" | "settled">("pending");
+  const { data: employeeCharges = [], refetch: refetchCharges, isFetching: chargesLoading } = useQuery<any[]>({
+    queryKey: ["/api/hr/employee-charges", chargesFilter],
+    queryFn: () =>
+      fetch(`/api/hr/employee-charges?settled=${chargesFilter === "settled"}`, { credentials: "include" })
+        .then(r => r.json()),
+    staleTime: 30_000,
+  });
+
+  const settleChargeMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("PATCH", `/api/hr/employee-charges/${id}/settle`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/employee-charges"] });
+      toast({ title: "Cargo liquidado" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
 
   const generateMutation = useMutation({
     mutationFn: async () => {
