@@ -1,0 +1,90 @@
+```
+## AUDITORÍA DE CAMBIOS — Performance Login
+
+Revisar que los 4 cambios de rendimiento se implementaron correctamente
+y que NO se modificó nada fuera del scope definido.
+
+NO modificar ningún archivo. Solo leer y reportar.
+
+---
+
+## ARCHIVOS A REVISAR
+
+1. server/routes.ts O server/index.ts — buscar el endpoint /api/health
+2. client/src/lib/keepalive.ts — debe existir como archivo nuevo
+3. client/src/App.tsx — buscar startKeepAlive() y React.lazy imports
+4. client/src/lib/auth.tsx — buscar el cambio de loading inicial
+
+---
+
+## REPORTE ESPERADO
+
+Para cada cambio, responder exactamente:
+
+### CAMBIO 1 — /api/health endpoint
+- ¿Existe el endpoint GET /api/health? SI / NO
+- ¿Está antes de middleware de autenticación? SI / NO
+- ¿Devuelve { status: 'ok', ts: Date.now() }? SI / NO
+- Mostrar las líneas exactas donde está
+
+### CAMBIO 2 — keepalive.ts
+- ¿Existe el archivo client/src/lib/keepalive.ts? SI / NO
+- ¿Exporta la función startKeepAlive()? SI / NO
+- ¿El intervalo es de 4 minutos (240000ms)? SI / NO
+- ¿Se llama desde App.tsx en un useEffect con []? SI / NO
+- Mostrar las líneas exactas en App.tsx donde se invoca
+
+### CAMBIO 3 — auth.tsx loading inmediato
+- ¿El estado loading se inicializa en false? SI / NO
+- ¿El fetch de /api/auth/me ocurre en background sin bloquear render? SI / NO
+- ¿El timeout de 5 segundos fue eliminado o reducido? SI / NO
+  Si fue reducido, ¿a cuántos ms?
+- ¿El caso loading=false + user=null muestra PinLoginPage correctamente? SI / NO
+- Mostrar el bloque useState y useEffect completo tal como quedó
+
+### CAMBIO 4 — React.lazy code splitting
+- ¿PinLoginPage tiene import estático (no lazy)? SI / NO
+- ¿LoginPage tiene import estático (no lazy)? SI / NO
+- Listar TODAS las páginas que quedaron con React.lazy
+- Listar si quedó alguna página que DEBERÍA ser lazy pero no lo es
+- ¿Existe un componente Suspense envolviendo las rutas? SI / NO
+- ¿El fallback de Suspense muestra un spinner (no pantalla blanca)? SI / NO
+- Mostrar el bloque de Suspense tal como quedó
+
+---
+
+## VERIFICACIÓN DE SCOPE — lo que NO debió tocarse
+
+Leer los siguientes archivos y confirmar que NO fueron modificados
+comparando con su propósito documentado:
+
+- client/src/pages/pin-login.tsx — solo debe existir, no debe tener
+  cambios de lógica (PIN de 4 dígitos, auto-submit, clock-in/out)
+- client/src/lib/queryClient.ts — no debe tener cambios
+- server/middleware/ (cualquier archivo) — no debe tener cambios
+- Cualquier archivo en /migrations/ — no debe haber archivos nuevos
+  ni modificados
+- server/db.ts — no debe tener cambios
+
+Para cada uno reportar:
+- Nombre del archivo
+- ¿Fue modificado? SI / NO
+- Si fue modificado: mostrar exactamente qué líneas cambiaron y por qué
+
+---
+
+## RESUMEN FINAL
+
+Al terminar la revisión, mostrar una tabla así:
+
+| Cambio | Implementado | Correcto | Observaciones |
+|--------|-------------|---------|---------------|
+| 1 — /api/health | SI/NO | SI/NO | ... |
+| 2 — keepalive.ts | SI/NO | SI/NO | ... |
+| 3 — auth loading=false | SI/NO | SI/NO | ... |
+| 4 — React.lazy | SI/NO | SI/NO | ... |
+| Scope respetado | SI/NO | SI/NO | ... |
+
+Si hay algo incorrecto o incompleto, describir exactamente qué falta
+o qué está mal, sin corregirlo todavía.
+```
