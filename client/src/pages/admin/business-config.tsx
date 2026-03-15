@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Save, Building2, Loader2, Upload, Package, Globe } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Save, Building2, Loader2, Upload, Package, Globe, Monitor } from "lucide-react";
 
 interface TaxCategory {
   id: number;
@@ -30,6 +31,9 @@ interface BusinessConfigData {
   legalNote: string;
   serviceTaxCategoryId?: number | null;
   timezone?: string;
+  operationModeTable?: boolean;
+  operationModeQr?: boolean;
+  operationModeDispatch?: boolean;
 }
 
 const TIMEZONE_OPTIONS = [
@@ -62,6 +66,9 @@ export default function AdminBusinessConfigPage() {
     legalNote: "",
     serviceTaxCategoryId: null,
     timezone: "America/Costa_Rica",
+    operationModeTable: true,
+    operationModeQr: true,
+    operationModeDispatch: false,
   });
 
   const { data: config, isLoading, isError, error } = useQuery<BusinessConfigData>({
@@ -84,6 +91,9 @@ export default function AdminBusinessConfigPage() {
         legalNote: config.legalNote || "",
         serviceTaxCategoryId: config.serviceTaxCategoryId || null,
         timezone: config.timezone || "America/Costa_Rica",
+        operationModeTable: config.operationModeTable !== undefined ? config.operationModeTable : true,
+        operationModeQr: config.operationModeQr !== undefined ? config.operationModeQr : true,
+        operationModeDispatch: config.operationModeDispatch !== undefined ? config.operationModeDispatch : false,
       });
     }
   }, [config]);
@@ -274,6 +284,51 @@ export default function AdminBusinessConfigPage() {
               <p className="text-xs text-muted-foreground">
                 Esta nota aparecerá al pie de cada tiquete impreso. Puede actualizarla en cualquier momento.
               </p>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-2">
+                <Monitor className="w-4 h-4 text-muted-foreground" />
+                <Label className="text-sm font-medium">Modos de Operación</Label>
+              </div>
+              <p className="text-xs text-muted-foreground -mt-1">
+                Activa los canales de venta habilitados para este negocio.
+              </p>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Mesa</p>
+                    <p className="text-xs text-muted-foreground">Ventas con mesa asignada y comandas</p>
+                  </div>
+                  <Switch
+                    data-testid="switch-operation-mode-table"
+                    checked={form.operationModeTable ?? true}
+                    onCheckedChange={(v) => setForm({ ...form, operationModeTable: v })}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">QR (Auto-servicio)</p>
+                    <p className="text-xs text-muted-foreground">Clientes ordenan desde su dispositivo</p>
+                  </div>
+                  <Switch
+                    data-testid="switch-operation-mode-qr"
+                    checked={form.operationModeQr ?? true}
+                    onCheckedChange={(v) => setForm({ ...form, operationModeQr: v })}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Despacho / Delivery</p>
+                    <p className="text-xs text-muted-foreground">Órdenes para llevar o con repartidor</p>
+                  </div>
+                  <Switch
+                    data-testid="switch-operation-mode-dispatch"
+                    checked={form.operationModeDispatch ?? false}
+                    onCheckedChange={(v) => setForm({ ...form, operationModeDispatch: v })}
+                  />
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>

@@ -977,6 +977,9 @@ export const businessConfig = pgTable("business_config", {
   orderGlobalStart: integer("order_global_start").default(1).notNull(),
   invoiceStart: integer("invoice_start").default(1).notNull(),
   timezone: varchar("timezone", { length: 100 }).notNull().default("America/Costa_Rica"),
+  operationModeTable: boolean("operation_mode_table").notNull().default(true),
+  operationModeQr: boolean("operation_mode_qr").notNull().default(true),
+  operationModeDispatch: boolean("operation_mode_dispatch").notNull().default(false),
 });
 
 export const printers = pgTable("printers", {
@@ -1273,3 +1276,55 @@ export const employeeCharges = pgTable("employee_charges", {
 export const insertEmployeeChargeSchema = createInsertSchema(employeeCharges).omit({ id: true, createdAt: true });
 export type EmployeeCharge = typeof employeeCharges.$inferSelect;
 export type InsertEmployeeCharge = z.infer<typeof insertEmployeeChargeSchema>;
+
+// ── Loyalty / Customers (schema public) ──────────────────────────────────────
+
+export const customers = pgTable("customers", {
+  id: serial("id").primaryKey(),
+  googleId: varchar("google_id", { length: 255 }).unique(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  name: varchar("name", { length: 200 }).notNull(),
+  photoUrl: text("photo_url"),
+  phone: varchar("phone", { length: 30 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+});
+
+export const loyaltyAccounts = pgTable("loyalty_accounts", {
+  id: serial("id").primaryKey(),
+  customerId: integer("customer_id").notNull().references(() => customers.id),
+  tenantId: integer("tenant_id").notNull(),
+  pointsBalance: numeric("points_balance", { precision: 12, scale: 2 }).notNull().default("0"),
+  lifetimePoints: numeric("lifetime_points", { precision: 12, scale: 2 }).notNull().default("0"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const loyaltyEvents = pgTable("loyalty_events", {
+  id: serial("id").primaryKey(),
+  customerId: integer("customer_id").notNull().references(() => customers.id),
+  tenantId: integer("tenant_id").notNull(),
+  eventType: varchar("event_type", { length: 20 }).notNull(),
+  points: numeric("points", { precision: 12, scale: 2 }).notNull(),
+  amountSpent: numeric("amount_spent", { precision: 12, scale: 2 }),
+  orderId: integer("order_id"),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const loyaltyConfig = pgTable("loyalty_config", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().unique(),
+  isActive: boolean("is_active").notNull().default(false),
+  earnRate: numeric("earn_rate", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  minRedeemPoints: numeric("min_redeem_points", { precision: 12, scale: 2 }).notNull().default("500"),
+  redeemRate: numeric("redeem_rate", { precision: 8, scale: 4 }).notNull().default("1.0000"),
+  pointsExpiryDays: integer("points_expiry_days").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type Customer = typeof customers.$inferSelect;
+export type LoyaltyAccount = typeof loyaltyAccounts.$inferSelect;
+export type LoyaltyEvent = typeof loyaltyEvents.$inferSelect;
+export type LoyaltyConfig = typeof loyaltyConfig.$inferSelect;

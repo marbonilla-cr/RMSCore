@@ -1,0 +1,525 @@
+Perfecto. Tengo todo lo que necesito. Aquí el prompt completo para la Fase 1:
+
+---
+
+## Prompt — Loyalty Fase 1: Infraestructura Base
+
+Implementar la infraestructura base del sistema de loyalty multi-tenant y los tres modos de operación configurables. Todo debe quedar conectado, probado y sin endpoints muertos.
+
+---
+
+### PARTE A — Migraciones de base de datos
+
+Crear `migrations/0023_loyalty_base.sql`:
+
+```sql
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "public"."customers" (
+  "id" serial PRIMARY KEY,
+  "google_id" varchar(255) UNIQUE,
+  "email" varchar(255) NOT NULL UNIQUE,
+  "name" varchar(200) NOT NULL,
+  "photo_url" text,
+  "phone" varchar(30),
+  "created_at" timestamp NOT NULL DEFAULT now(),
+  "last_seen_at" timestamp NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "public"."loyalty_accounts" (
+  "id" serial PRIMARY KEY,
+  "customer_id" integer NOT NULL REFERENCES "public"."customers"("id"),
+  "tenant_id" integer NOT NULL REFERENCES "public"."tenants"("id"),
+  "points_balance" numeric(12,2) NOT NULL DEFAULT 0,
+  "lifetime_points" numeric(12,2) NOT NULL DEFAULT 0,
+  "created_at" timestamp NOT NULL DEFAULT now(),
+  "updated_at" timestamp NOT NULL DEFAULT now(),
+  UNIQUE("customer_id", "tenant_id")
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "public"."loyalty_events" (
+  "id" serial PRIMARY KEY,
+  "customer_id" integer NOT NULL REFERENCES "public"."customers"("id"),
+  "tenant_id" integer NOT NULL REFERENCES "public"."tenants"("id"),
+  "event_type" varchar(20) NOT NULL,
+  "points" numeric(12,2) NOT NULL,
+  "amount_spent" numeric(12,2),
+  "order_id" integer,
+  "description" text,
+  "created_at" timestamp NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "public"."loyalty_config" (
+  "id" serial PRIMARY KEY,
+  "tenant_id" integer NOT NULL UNIQUE REFERENCES "public"."tenants"("id"),
+  "is_active" boolean NOT NULL DEFAULT false,
+  "earn_rate" numeric(5,2) NOT NULL DEFAULT 2.00,
+  "min_redeem_points" numeric(12,2) NOT NULL DEFAULT 500,
+  "redeem_rate" numeric(8,4) NOT NULL DEFAULT 1.0000,
+  "points_expiry_days" integer NOT NULL DEFAULT 0,
+  "created_at" timestamp NOT NULL DEFAULT now(),
+  "updated_at" timestamp NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+ALTER TABLE "business_config" ADD COLUMN IF NOT EXISTS "operation_mode_table" boolean NOT NULL DEFAULT true;
+--> statement-breakpoint
+ALTER TABLE "business_config" ADD COLUMN IF NOT EXISTS "operation_mode_qr" boolean NOT NULL DEFAULT true;
+--> statement-breakpoint
+ALTER TABLE "business_config" ADD COLUMN IF NOT EXISTS "operation_mode_dispatch" boolean NOT NULL DEFAULT false;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "loyalty_accounts_customer_id_idx" ON "public"."loyalty_accounts"("customer_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "loyalty_accounts_tenant_id_idx" ON "public"."loyalty_accounts"("tenant_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "loyalty_events_customer_id_idx" ON "public"."loyalty_events"("customer_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "loyalty_events_tenant_id_idx" ON "public"."loyalty_events"("tenant_id");
+```
+
+---
+
+### PARTE B — Schema Drizzle en `shared/schema.ts`
+
+Agregar las nuevas tablas. **Importante:** `customers`, `loyaltyAccounts`, `loyaltyEvents` y `loyaltyConfig` usan el pool de `public` directamente — no van en el schema del tenant.
+
+```typescript
+// === LOYALTY — tablas en schema public ===
+
+export const customers = pgTable("customers", {
+  id: serial("id").primaryKey(),
+  googleId: varchar("google_id", { length: 255 }).unique(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  name: varchar("name", { length: 200 }).notNull(),
+  photoUrl: text("photo_url"),
+  phone: varchar("phone", { length: 30 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+});
+
+export const loyaltyAccounts = pgTable("loyalty_accounts", {
+  id: serial("id").primaryKey(),
+  customerId: integer("customer_id").notNull().references(() => customers.id),
+  tenantId: integer("tenant_id").notNull(),
+  pointsBalance: numeric("points_balance", { precision: 12, scale: 2 }).notNull().default("0"),
+  lifetimePoints: numeric("lifetime_points", { precision: 12, scale: 2 }).notNull().default("0"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const loyaltyEvents = pgTable("loyalty_events", {
+  id: serial("id").primaryKey(),
+  customerId: integer("customer_id").notNull().references(() => customers.id),
+  tenantId: integer("tenant_id").notNull(),
+  eventType: varchar("event_type", { length: 20 }).notNull(),
+  points: numeric("points", { precision: 12, scale: 2 }).notNull(),
+  amountSpent: numeric("amount_spent", { precision: 12, scale: 2 }),
+  orderId: integer("order_id"),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const loyaltyConfig = pgTable("loyalty_config", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().unique(),
+  isActive: boolean("is_active").notNull().default(false),
+  earnRate: numeric("earn_rate", { precision: 5, scale: 2 }).notNull().default("2.00"),
+  minRedeemPoints: numeric("min_redeem_points", { precision: 12, scale: 2 }).notNull().default("500"),
+  redeemRate: numeric("redeem_rate", { precision: 8, scale: 4 }).notNull().default("1.0000"),
+  pointsExpiryDays: integer("points_expiry_days").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+Agregar en la tabla `businessConfig` existente:
+```typescript
+operationModeTable: boolean("operation_mode_table").notNull().default(true),
+operationModeQr: boolean("operation_mode_qr").notNull().default(true),
+operationModeDispatch: boolean("operation_mode_dispatch").notNull().default(false),
+```
+
+---
+
+### PARTE C — Backend: endpoints de loyalty
+
+Crear `server/loyalty-routes.ts` — archivo nuevo, no tocar `routes.ts` salvo para registrarlo.
+
+```typescript
+import { Router } from "express";
+import { db } from "./db"; // pool global para tablas public
+import { customers, loyaltyAccounts, loyaltyEvents, loyaltyConfig } from "@shared/schema";
+import { eq, and, desc } from "drizzle-orm";
+
+export function registerLoyaltyRoutes(app: any) {
+
+  // GET /api/loyalty/config — obtener config del tenant actual
+  app.get("/api/loyalty/config", async (req: any, res: any) => {
+    try {
+      const tenantId = req.tenantId;
+      const [config] = await db.select().from(loyaltyConfig)
+        .where(eq(loyaltyConfig.tenantId, tenantId));
+      res.json(config || null);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PUT /api/loyalty/config — crear o actualizar config
+  app.put("/api/loyalty/config", async (req: any, res: any) => {
+    try {
+      const tenantId = req.tenantId;
+      const { isActive, earnRate, minRedeemPoints, redeemRate, pointsExpiryDays } = req.body;
+      const existing = await db.select().from(loyaltyConfig)
+        .where(eq(loyaltyConfig.tenantId, tenantId));
+      let result;
+      if (existing.length === 0) {
+        [result] = await db.insert(loyaltyConfig).values({
+          tenantId, isActive, earnRate, minRedeemPoints, redeemRate, pointsExpiryDays,
+        }).returning();
+      } else {
+        [result] = await db.update(loyaltyConfig).set({
+          isActive, earnRate, minRedeemPoints, redeemRate, pointsExpiryDays,
+          updatedAt: new Date(),
+        }).where(eq(loyaltyConfig.tenantId, tenantId)).returning();
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/loyalty/customers/search?q=email_o_nombre
+  app.get("/api/loyalty/customers/search", async (req: any, res: any) => {
+    try {
+      const { q } = req.query;
+      if (!q || String(q).length < 2) return res.json([]);
+      const tenantId = req.tenantId;
+      const results = await db.execute(
+        `SELECT c.id, c.name, c.email, c.photo_url,
+                la.points_balance, la.lifetime_points
+         FROM public.customers c
+         LEFT JOIN public.loyalty_accounts la 
+           ON la.customer_id = c.id AND la.tenant_id = $1
+         WHERE c.email ILIKE $2 OR c.name ILIKE $2
+         LIMIT 10`,
+        [tenantId, `%${q}%`]
+      );
+      res.json(results.rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/loyalty/customers/:id — perfil + puntos en este tenant
+  app.get("/api/loyalty/customers/:id", async (req: any, res: any) => {
+    try {
+      const customerId = parseInt(req.params.id);
+      const tenantId = req.tenantId;
+      const [customer] = await db.select().from(customers)
+        .where(eq(customers.id, customerId));
+      if (!customer) return res.status(404).json({ message: "Cliente no encontrado" });
+      const [account] = await db.select().from(loyaltyAccounts)
+        .where(and(
+          eq(loyaltyAccounts.customerId, customerId),
+          eq(loyaltyAccounts.tenantId, tenantId)
+        ));
+      const events = await db.select().from(loyaltyEvents)
+        .where(and(
+          eq(loyaltyEvents.customerId, customerId),
+          eq(loyaltyEvents.tenantId, tenantId)
+        ))
+        .orderBy(desc(loyaltyEvents.createdAt))
+        .limit(20);
+      res.json({ customer, account: account || null, events });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/loyalty/earn — acumular puntos al cobrar
+  app.post("/api/loyalty/earn", async (req: any, res: any) => {
+    try {
+      const { customerId, orderId, amountSpent } = req.body;
+      const tenantId = req.tenantId;
+      if (!customerId || !amountSpent) {
+        return res.status(400).json({ message: "customerId y amountSpent requeridos" });
+      }
+      const [config] = await db.select().from(loyaltyConfig)
+        .where(eq(loyaltyConfig.tenantId, tenantId));
+      if (!config || !config.isActive) {
+        return res.json({ points: 0, message: "Loyalty no activo para este tenant" });
+      }
+      const earnRate = parseFloat(config.earnRate) / 100;
+      const pointsEarned = Math.floor(parseFloat(amountSpent) * earnRate);
+      if (pointsEarned <= 0) return res.json({ points: 0 });
+
+      // Upsert loyalty account
+      const existing = await db.select().from(loyaltyAccounts)
+        .where(and(
+          eq(loyaltyAccounts.customerId, customerId),
+          eq(loyaltyAccounts.tenantId, tenantId)
+        ));
+      if (existing.length === 0) {
+        await db.insert(loyaltyAccounts).values({
+          customerId, tenantId,
+          pointsBalance: String(pointsEarned),
+          lifetimePoints: String(pointsEarned),
+        });
+      } else {
+        await db.update(loyaltyAccounts).set({
+          pointsBalance: String(parseFloat(existing[0].pointsBalance) + pointsEarned),
+          lifetimePoints: String(parseFloat(existing[0].lifetimePoints) + pointsEarned),
+          updatedAt: new Date(),
+        }).where(eq(loyaltyAccounts.id, existing[0].id));
+      }
+
+      // Registrar evento
+      await db.insert(loyaltyEvents).values({
+        customerId, tenantId,
+        eventType: "EARN",
+        points: String(pointsEarned),
+        amountSpent: String(amountSpent),
+        orderId,
+        description: `Puntos acumulados por compra de ₡${parseInt(amountSpent).toLocaleString("es-CR")}`,
+      });
+
+      res.json({ points: pointsEarned, message: `+${pointsEarned} puntos RMS acumulados` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/loyalty/redeem — redimir puntos
+  app.post("/api/loyalty/redeem", async (req: any, res: any) => {
+    try {
+      const { customerId, pointsToRedeem, orderId } = req.body;
+      const tenantId = req.tenantId;
+      const [config] = await db.select().from(loyaltyConfig)
+        .where(eq(loyaltyConfig.tenantId, tenantId));
+      if (!config || !config.isActive) {
+        return res.status(400).json({ message: "Loyalty no activo" });
+      }
+      const [account] = await db.select().from(loyaltyAccounts)
+        .where(and(
+          eq(loyaltyAccounts.customerId, customerId),
+          eq(loyaltyAccounts.tenantId, tenantId)
+        ));
+      if (!account) return res.status(404).json({ message: "Cuenta de loyalty no encontrada" });
+      if (parseFloat(account.pointsBalance) < parseFloat(config.minRedeemPoints)) {
+        return res.status(400).json({ message: `Mínimo ${config.minRedeemPoints} puntos para redimir` });
+      }
+      if (parseFloat(account.pointsBalance) < pointsToRedeem) {
+        return res.status(400).json({ message: "Puntos insuficientes" });
+      }
+      const discountAmount = pointsToRedeem * parseFloat(config.redeemRate);
+
+      await db.update(loyaltyAccounts).set({
+        pointsBalance: String(parseFloat(account.pointsBalance) - pointsToRedeem),
+        updatedAt: new Date(),
+      }).where(eq(loyaltyAccounts.id, account.id));
+
+      await db.insert(loyaltyEvents).values({
+        customerId, tenantId,
+        eventType: "REDEEM",
+        points: String(-pointsToRedeem),
+        orderId,
+        description: `Redención de ${pointsToRedeem} puntos = ₡${discountAmount.toLocaleString("es-CR")} descuento`,
+      });
+
+      res.json({ discountAmount, pointsRedeemed: pointsToRedeem });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+}
+```
+
+Registrar en `server/routes.ts` o `server/index.ts`:
+```typescript
+import { registerLoyaltyRoutes } from "./loyalty-routes";
+// ...
+registerLoyaltyRoutes(app);
+```
+
+---
+
+### PARTE D — Google OAuth backend
+
+Instalar dependencias:
+```bash
+npm install google-auth-library
+```
+
+Crear `server/loyalty-auth.ts`:
+
+```typescript
+import { OAuth2Client } from "google-auth-library";
+import { db } from "./db";
+import { customers } from "@shared/schema";
+import { eq } from "drizzle-orm";
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+export async function verifyGoogleToken(idToken: string) {
+  const ticket = await client.verifyIdToken({
+    idToken,
+    audience: process.env.GOOGLE_CLIENT_ID,
+  });
+  const payload = ticket.getPayload();
+  if (!payload) throw new Error("Token inválido");
+  return {
+    googleId: payload.sub,
+    email: payload.email!,
+    name: payload.name!,
+    photoUrl: payload.picture,
+  };
+}
+
+export async function findOrCreateCustomer(googleData: {
+  googleId: string;
+  email: string;
+  name: string;
+  photoUrl?: string;
+}) {
+  // Buscar por googleId primero
+  let [customer] = await db.select().from(customers)
+    .where(eq(customers.googleId, googleData.googleId));
+
+  if (!customer) {
+    // Buscar por email (puede existir sin googleId)
+    [customer] = await db.select().from(customers)
+      .where(eq(customers.email, googleData.email));
+  }
+
+  if (customer) {
+    // Actualizar last_seen_at y googleId si falta
+    [customer] = await db.update(customers).set({
+      lastSeenAt: new Date(),
+      googleId: googleData.googleId,
+      photoUrl: googleData.photoUrl,
+    }).where(eq(customers.id, customer.id)).returning();
+  } else {
+    // Crear nuevo cliente
+    [customer] = await db.insert(customers).values({
+      googleId: googleData.googleId,
+      email: googleData.email,
+      name: googleData.name,
+      photoUrl: googleData.photoUrl,
+    }).returning();
+  }
+
+  return customer;
+}
+```
+
+Agregar endpoint de auth en `server/loyalty-routes.ts`:
+
+```typescript
+import { verifyGoogleToken, findOrCreateCustomer } from "./loyalty-auth";
+
+// POST /api/loyalty/auth/google
+app.post("/api/loyalty/auth/google", async (req: any, res: any) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken) return res.status(400).json({ message: "idToken requerido" });
+    const googleData = await verifyGoogleToken(idToken);
+    const customer = await findOrCreateCustomer(googleData);
+    res.json({ customer, token: Buffer.from(JSON.stringify({ customerId: customer.id, email: customer.email })).toString("base64") });
+  } catch (err: any) {
+    res.status(401).json({ message: "Token de Google inválido: " + err.message });
+  }
+});
+```
+
+Agregar variable de entorno en Railway:
+```
+GOOGLE_CLIENT_ID=<tu-client-id-de-google-cloud>
+```
+
+---
+
+### PARTE E — Modos de operación en Admin
+
+En `client/src/pages/admin/business-config.tsx`, agregar sección "Modos de Operación" con tres toggles:
+
+```
+[toggle] Atención en Mesa
+         El mesero toma la orden y la envía a cocina
+
+[toggle] Autopedido QR  
+         El cliente ordena desde su celular escaneando el QR de la mesa
+
+[toggle] Despacho en Mostrador
+         El cliente ordena en caja y retira cuando esté listo
+```
+
+Guardar via `PUT /api/admin/business-config` — los tres campos ya existen en el schema.
+
+---
+
+### PARTE F — Panel de Loyalty en Admin
+
+Crear `client/src/pages/admin/loyalty.tsx` — página nueva accesible desde el sidebar bajo Admin:
+
+**Sección 1 — Configuración:**
+- Toggle "Activar programa de loyalty"
+- Campo "Tasa de acumulación": X% del monto gastado en puntos (default 2%)
+- Campo "Puntos mínimos para redimir" (default 500)
+- Campo "Valor del punto": ₡X por punto (default ₡1)
+- Campo "Vencimiento de puntos": días (0 = no vencen)
+- Botón guardar → `PUT /api/loyalty/config`
+
+**Sección 2 — Clientes registrados:**
+- Lista de clientes con puntos en este tenant
+- Columnas: nombre, email, puntos disponibles, puntos lifetime, última visita
+- Búsqueda por nombre o email
+- Fetch a `GET /api/loyalty/customers/search?q=`
+
+Agregar ruta `/admin/loyalty` en `App.tsx` con permiso `MODULE_ADMIN_VIEW`.
+Agregar link en sidebar bajo la sección de Admin.
+
+---
+
+### PARTE G — Variable de entorno
+
+Agregar en Railway Variables:
+```
+GOOGLE_CLIENT_ID=pending
+```
+
+Por ahora con valor `pending` — el OAuth no funcionará hasta configurar Google Cloud, pero el resto del sistema sí debe funcionar. El endpoint `/api/loyalty/auth/google` debe retornar error claro si `GOOGLE_CLIENT_ID` no está configurado:
+
+```typescript
+if (!process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID === "pending") {
+  return res.status(503).json({ message: "Google OAuth no configurado aún" });
+}
+```
+
+---
+
+### Verificación final
+
+```bash
+npx tsc --noEmit
+```
+
+```bash
+grep -n "registerLoyaltyRoutes" server/routes.ts server/index.ts
+```
+
+```bash
+grep -n "loyalty_config\|loyalty_accounts\|loyalty_events\|customers" migrations/0023_loyalty_base.sql | wc -l
+```
+
+Todos deben retornar resultados. TypeScript sin errores.
+
+**Criterios de aceptación:**
+- [ ] Migración `0023_loyalty_base.sql` existe y es correcta
+- [ ] Tablas en `shared/schema.ts` agregadas
+- [ ] `GET /api/loyalty/config` retorna 200
+- [ ] `PUT /api/loyalty/config` guarda correctamente
+- [ ] `GET /api/loyalty/customers/search?q=test` retorna array (vacío si no hay clientes)
+- [ ] `POST /api/loyalty/earn` retorna `{ points: 0, message: "Loyalty no activo" }` cuando loyalty está inactivo
+- [ ] Tres toggles de modos de operación visibles en Admin → Configuración
+- [ ] Página `/admin/loyalty` carga sin errores
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] **No hacer deploy hasta que todos los criterios pasen en Replit**

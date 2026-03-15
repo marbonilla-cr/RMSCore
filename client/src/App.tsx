@@ -59,6 +59,7 @@ import ShortagesAuditPage from "@/pages/shortages/audit";
 import SalesCubePage from "@/pages/sales-cube";
 import AdminQuickBooksPage from "@/pages/admin/quickbooks";
 import DataLoaderPage from "@/pages/admin/data-loader";
+import AdminLoyaltyPage from "@/pages/admin/loyalty";
 import NotFound from "@/pages/not-found";
 
 function getDefaultRouteByPermissions(perms: string[]): string {
@@ -150,6 +151,7 @@ function AuthenticatedRouter() {
       <Route path="/admin/tax-categories" component={AdminTaxCategoriesPage} />
       <Route path="/admin/quickbooks" component={AdminQuickBooksPage} />
       <Route path="/admin/data-loader" component={DataLoaderPage} />
+      <Route path="/admin/loyalty" component={AdminLoyaltyPage} />
       <Route path="/hr/mi-turno" component={HrMiTurnoPage} />
       <Route path="/hr/horarios" component={HrSchedulesPage} />
       <Route path="/hr/marcas" component={HrPunchesPage} />

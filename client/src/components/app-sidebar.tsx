@@ -47,6 +47,7 @@ import {
   Factory,
   Database,
   Upload,
+  Gift,
 } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
@@ -136,6 +137,7 @@ const adminItems = [
   { title: "Impresoras", url: "/admin/printers", icon: Printer },
   { title: "QuickBooks", url: "/admin/quickbooks", icon: Link2 },
   { title: "Data Loader", url: "/admin/data-loader", icon: Upload },
+  { title: "Loyalty", url: "/admin/loyalty", icon: Gift },
 ];
 
 const productsItem = { title: "Productos", url: "/admin/products", icon: ShoppingBag };

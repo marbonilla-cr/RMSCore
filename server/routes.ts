@@ -18,6 +18,7 @@ import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduc
 import * as qbo from "./quickbooks";
 import { tenantMiddleware } from "./middleware/tenant";
 import { registerDispatchRoutes, registerDispatchSession, notifyDispatchReady } from "./dispatch-routes";
+import { registerLoyaltyRoutes } from "./loyalty-routes";
 import { registerProvisionRoutes } from "./provision/provision-routes";
 import { registerDataLoaderRoutes } from "./data-loader/data-loader-routes";
 import {
@@ -8091,6 +8092,7 @@ export async function registerRoutes(
   });
 
   registerDispatchRoutes(app, broadcast);
+  registerLoyaltyRoutes(app);
   registerProvisionRoutes(app);
   registerDataLoaderRoutes(app);
 

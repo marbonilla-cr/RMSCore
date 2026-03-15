@@ -6,6 +6,16 @@ This project is a Progressive Web Application (PWA) designed as a comprehensive 
 ## User Preferences
 I prefer simple language. I want iterative development. Ask before making major changes.
 
+## Loyalty System (Phase 1 — Migration 0023)
+- **Tables (public schema):** `customers`, `loyalty_accounts`, `loyalty_events`, `loyalty_config`
+- **Schema:** `shared/schema.ts` — loyalty tables + `businessConfig.operationModeTable/Qr/Dispatch`
+- **Backend:** `server/loyalty-routes.ts` (earn/redeem/config/customers), `server/loyalty-auth.ts` (Google OAuth verifyIdToken)
+- **Google Auth:** POST `/api/loyalty/auth/google` — returns 503 if `GOOGLE_CLIENT_ID` is "pending" or unset
+- **TenantId resolution:** Uses `req.tenantId` directly from `tenantMiddleware` (no extra DB query)
+- **Admin UI:** `/admin/loyalty` — config panel + customers tab with search; Loyalty link in sidebar
+- **Business Config:** 3 Switch toggles for Mesa / QR / Despacho operation modes
+- **Dependency:** `google-auth-library` installed
+
 ## System Architecture
 The system is built as a PWA with a mobile-first approach, ensuring broad accessibility and a responsive user experience.
 

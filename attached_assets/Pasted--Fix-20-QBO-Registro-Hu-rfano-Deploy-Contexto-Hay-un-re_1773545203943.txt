@@ -1,0 +1,76 @@
+# Fix #20 — QBO Registro Huérfano + Deploy
+
+## Contexto
+Hay un registro FAILED en `public.qbo_sync_log` (id=310, payment_id=146992) en la DB de
+producción (Railway). El SalesReceipt ya fue creado exitosamente en QuickBooks como
+TxnId=12651, pero el sistema lo intentó re-sincronizar y QBO rechazó con error 6140
+("DocNumber ya existe"). Como el registro sigue en FAILED, el job de retry continúa
+intentando indefinidamente.
+
+El código actual (ya committeado) incluye los 31 fix de TypeScript por order.tableId
+nullable y el motor de migraciones con SAVEPOINTs. Ambos cambios están en el repo pero
+no en producción — necesitan deploy.
+
+## Tareas a ejecutar — EN ESTE ORDEN EXACTO
+
+### Tarea 1 — UPDATE directo en DB de Railway
+Conectar a PostgreSQL Railway y ejecutar ÚNICAMENTE estas dos queries, nada más:
+
+**Query 1 — Actualizar el registro:**
+```sql
+UPDATE public.qbo_sync_log
+SET status = 'SUCCESS',
+    error_message = 'Sincronizado previamente - TxnId=12651',
+    updated_at = NOW()
+WHERE id = 310
+  AND payment_id = 146992;
+```
+
+**Query 2 — Verificar el resultado:**
+```sql
+SELECT id, status, error_message, payment_id, updated_at
+FROM public.qbo_sync_log
+WHERE id = 310;
+```
+
+Reportar el resultado de la query 2 antes de continuar. Si el UPDATE no afectó exactamente
+1 fila, DETENERSE y reportar.
+
+String de conexión: `postgresql://postgres:DzokcQxqwuOtRyCqItADAAXKKSslMgXg@nozomi.proxy.rlwy.net:49340/railway`
+
+### Tarea 2 — Deploy del código committeado
+Ejecutar el deploy en Replit para publicar el código ya committeado a Railway.
+NO modificar ningún archivo de código antes del deploy. El código está listo tal como está.
+
+### Tarea 3 — Verificación post-deploy
+Después de que Railway complete el deploy, ejecutar estas queries de verificación en la DB:
+
+**Verificación QBO sync — confirmar que no hay registros FAILED o PENDING sin resolver:**
+```sql
+SELECT id, status, payment_id, error_message, updated_at
+FROM public.qbo_sync_log
+WHERE status IN ('FAILED', 'PENDING')
+ORDER BY updated_at DESC
+LIMIT 10;
+```
+
+**Verificación de tenants — confirmar que el servidor levantó bien:**
+```sql
+SELECT id, slug, "schemaName", plan, "isActive"
+FROM public.tenants;
+```
+
+Reportar los resultados de ambas queries.
+
+## Restricciones absolutas
+- NO modificar ningún archivo de código en esta sesión
+- NO tocar tablas de órdenes, pagos, ledger, ni HR
+- NO ejecutar ninguna otra query SQL que no esté listada arriba
+- NO crear migraciones nuevas
+- Si algo no coincide con lo esperado, DETENERSE y reportar en lugar de intentar corregir
+
+## Definición de éxito
+1. `qbo_sync_log` id=310 muestra `status='SUCCESS'` en la DB de Railway
+2. No hay registros FAILED/PENDING adicionales en qbo_sync_log
+3. La tabla `public.tenants` devuelve al menos 1 fila (tenant activo)
+4. Railway muestra el deploy completado sin errores de build
