@@ -1,0 +1,524 @@
+## Prompt — Loyalty Fase 3: PWA del Cliente
+
+**Contexto:** Crear la Progressive Web App del cliente en `loyalty.rmscore.app`. Es una app separada dentro del mismo servidor Express — cuando el host es `loyalty.rmscore.app`, el servidor sirve el frontend de loyalty en lugar del RMS operativo. El cliente se registra con Google, ve sus puntos y su historial.
+
+---
+
+### PARTE A — Detección de host en el servidor
+
+En `server/index.ts` o `server/routes.ts`, agregar lógica para servir el frontend de loyalty cuando el host sea `loyalty.rmscore.app`:
+
+```typescript
+// Antes de las rutas del RMS, detectar si es loyalty
+app.use((req, res, next) => {
+  const host = req.headers.host || "";
+  if (host.startsWith("loyalty.")) {
+    req.isLoyaltyApp = true;
+  }
+  next();
+});
+```
+
+Agregar en los tipos de Express:
+```typescript
+declare global {
+  namespace Express {
+    interface Request {
+      isLoyaltyApp?: boolean;
+    }
+  }
+}
+```
+
+Servir el HTML de loyalty para cualquier ruta GET en el host loyalty:
+```typescript
+app.get("*", (req, res, next) => {
+  if (req.isLoyaltyApp && !req.path.startsWith("/api/")) {
+    return res.sendFile(path.join(__dirname, "../client-loyalty/index.html"));
+  }
+  next();
+});
+```
+
+---
+
+### PARTE B — Frontend PWA del cliente
+
+Crear directorio `client-loyalty/` en la raíz del proyecto con estos archivos:
+
+**`client-loyalty/index.html`:**
+```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RMSCore Loyalty</title>
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/loyalty-manifest.json">
+  <link rel="apple-touch-icon" href="/loyalty-icon-192.png">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      background: #0f0f1a;
+      color: #e8e8f0;
+      min-height: 100vh;
+    }
+    #app { max-width: 480px; margin: 0 auto; padding: 0; min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/loyalty-app.js"></script>
+</body>
+</html>
+```
+
+**`client-loyalty/loyalty-app.js`** — app completa en vanilla JS (sin framework, para mantener bundle pequeño):
+
+```javascript
+const API_BASE = "";
+const GOOGLE_CLIENT_ID = "580542734412-01e4igcmvupjmihjm2tq9fk114r8m4oq.apps.googleusercontent.com";
+
+// Estado de la app
+let state = {
+  screen: "loading", // loading | login | home | restaurant | history
+  customer: null,
+  token: null,
+  loyaltyAccounts: [],
+  currentTenantId: null,
+  currentAccount: null,
+  events: [],
+};
+
+// Persistencia local
+function saveSession() {
+  if (state.customer && state.token) {
+    localStorage.setItem("loyalty_session", JSON.stringify({
+      customer: state.customer,
+      token: state.token,
+    }));
+  }
+}
+
+function loadSession() {
+  try {
+    const saved = localStorage.getItem("loyalty_session");
+    if (saved) {
+      const { customer, token } = JSON.parse(saved);
+      state.customer = customer;
+      state.token = token;
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+function clearSession() {
+  localStorage.removeItem("loyalty_session");
+  state.customer = null;
+  state.token = null;
+}
+
+// API calls
+async function apiGet(path) {
+  const res = await fetch(`${API_BASE}/api/loyalty${path}`, {
+    headers: { "X-Loyalty-Token": state.token || "" }
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(`${API_BASE}/api/loyalty${path}`, {
+    method: "POST",
+    headers: { 
+      "Content-Type": "application/json",
+      "X-Loyalty-Token": state.token || ""
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+// Google Sign-In
+function initGoogleSignIn() {
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleResponse,
+    auto_select: false,
+  });
+}
+
+async function handleGoogleResponse(response) {
+  try {
+    showLoading("Iniciando sesión...");
+    const result = await apiPost("/auth/google", { idToken: response.credential });
+    state.customer = result.customer;
+    state.token = result.token;
+    saveSession();
+    await loadHomeData();
+    renderHome();
+  } catch (err) {
+    showError("Error al iniciar sesión: " + err.message);
+    renderLogin();
+  }
+}
+
+async function loadHomeData() {
+  try {
+    // Cargar cuentas de loyalty del cliente en todos los tenants
+    const accounts = await apiGet(`/customers/${state.customer.id}/accounts`);
+    state.loyaltyAccounts = accounts;
+  } catch (e) {
+    state.loyaltyAccounts = [];
+  }
+}
+
+// Renderizado
+function render(html) {
+  document.getElementById("app").innerHTML = html;
+}
+
+function showLoading(msg = "Cargando...") {
+  render(`
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:16px;">
+      <div style="width:48px;height:48px;border:3px solid #333;border-top-color:#6c63ff;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+      <p style="color:#888;">${msg}</p>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    </div>
+  `);
+}
+
+function showError(msg) {
+  render(`
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:16px;padding:24px;">
+      <div style="font-size:48px;">⚠️</div>
+      <p style="color:#ff6b6b;text-align:center;">${msg}</p>
+      <button onclick="init()" style="padding:12px 24px;background:#6c63ff;color:white;border:none;border-radius:8px;cursor:pointer;">
+        Reintentar
+      </button>
+    </div>
+  `);
+}
+
+function renderLogin() {
+  state.screen = "login";
+  render(`
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:32px;">
+      <div style="text-align:center;">
+        <div style="font-size:64px;margin-bottom:16px;">🏆</div>
+        <h1 style="font-size:28px;font-weight:700;color:#e8e8f0;margin-bottom:8px;">RMSCore Loyalty</h1>
+        <p style="color:#888;font-size:16px;">Acumula puntos en tus restaurantes favoritos</p>
+      </div>
+      <div style="width:100%;max-width:320px;">
+        <p style="color:#aaa;text-align:center;margin-bottom:16px;font-size:14px;">
+          Inicia sesión con tu cuenta de Google para ver tus puntos
+        </p>
+        <div id="google-btn" style="display:flex;justify-content:center;"></div>
+      </div>
+      <p style="color:#555;font-size:12px;text-align:center;">
+        Al iniciar sesión aceptas nuestros términos de servicio
+      </p>
+    </div>
+  `);
+  
+  // Renderizar botón de Google
+  setTimeout(() => {
+    if (window.google) {
+      google.accounts.id.renderButton(
+        document.getElementById("google-btn"),
+        { 
+          theme: "filled_black", 
+          size: "large", 
+          width: 280,
+          text: "continue_with",
+          locale: "es"
+        }
+      );
+    }
+  }, 100);
+}
+
+function renderHome() {
+  state.screen = "home";
+  const customer = state.customer;
+  const totalPoints = state.loyaltyAccounts.reduce(
+    (sum, a) => sum + parseFloat(a.points_balance || 0), 0
+  );
+  
+  const accountsHtml = state.loyaltyAccounts.length === 0 
+    ? `<div style="text-align:center;color:#555;padding:32px;">
+        <p>Aún no tienes puntos acumulados.</p>
+        <p style="margin-top:8px;font-size:14px;">Visita un restaurante RMSCore y pide que registren tu cuenta al pagar.</p>
+       </div>`
+    : state.loyaltyAccounts.map(a => `
+        <div onclick="loadRestaurantDetail(${a.tenant_id})" 
+             style="background:#1e1e30;border-radius:12px;padding:16px;cursor:pointer;border:1px solid #2a2a40;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <h3 style="font-size:16px;font-weight:600;color:#e8e8f0;">${a.business_name || "Restaurante"}</h3>
+              <p style="font-size:13px;color:#888;margin-top:4px;">Última visita: ${a.last_visit || "—"}</p>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:24px;font-weight:700;color:#6c63ff;">${parseInt(a.points_balance || 0).toLocaleString("es-CR")}</div>
+              <div style="font-size:11px;color:#888;">puntos RMS</div>
+            </div>
+          </div>
+        </div>
+      `).join("");
+
+  render(`
+    <div style="min-height:100vh;background:#0f0f1a;">
+      <!-- Header -->
+      <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);padding:32px 24px 24px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
+          <img src="${customer.photo_url || ''}" 
+               onerror="this.style.display='none'"
+               style="width:48px;height:48px;border-radius:50%;object-fit:cover;">
+          <div>
+            <p style="font-size:13px;color:#888;">Bienvenido,</p>
+            <h2 style="font-size:18px;font-weight:600;color:#e8e8f0;">${customer.name}</h2>
+          </div>
+          <button onclick="logout()" 
+                  style="margin-left:auto;background:transparent;border:1px solid #333;color:#888;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:12px;">
+            Salir
+          </button>
+        </div>
+        <!-- Total points -->
+        <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:16px;padding:20px;text-align:center;">
+          <p style="font-size:13px;color:#888;margin-bottom:4px;">Total de puntos RMS</p>
+          <div style="font-size:48px;font-weight:800;color:#6c63ff;">${totalPoints.toLocaleString("es-CR")}</div>
+          <p style="font-size:12px;color:#555;margin-top:4px;">válidos en todos los restaurantes RMSCore</p>
+        </div>
+      </div>
+      <!-- Restaurantes -->
+      <div style="padding:24px;">
+        <h3 style="font-size:16px;font-weight:600;color:#aaa;margin-bottom:16px;text-transform:uppercase;letter-spacing:1px;font-size:12px;">
+          MIS RESTAURANTES
+        </h3>
+        ${accountsHtml}
+      </div>
+    </div>
+  `);
+}
+
+async function loadRestaurantDetail(tenantId) {
+  showLoading("Cargando historial...");
+  try {
+    // Necesita header X-Tenant-Id para que el backend sepa qué tenant
+    const res = await fetch(`/api/loyalty/customers/${state.customer.id}`, {
+      headers: { 
+        "X-Loyalty-Token": state.token,
+        "X-Tenant-Id": String(tenantId)
+      }
+    });
+    const data = await res.json();
+    renderRestaurantDetail(data, tenantId);
+  } catch (err) {
+    showError("Error cargando historial");
+  }
+}
+
+function renderRestaurantDetail(data, tenantId) {
+  const { customer, account, events } = data;
+  const points = account ? parseFloat(account.points_balance) : 0;
+  
+  const eventsHtml = events.length === 0
+    ? `<p style="color:#555;text-align:center;padding:24px;">Sin transacciones aún</p>`
+    : events.map(e => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #1e1e30;">
+          <div>
+            <p style="font-size:14px;color:#e8e8f0;">${e.description || e.event_type}</p>
+            <p style="font-size:12px;color:#555;margin-top:2px;">${new Date(e.created_at).toLocaleDateString("es-CR")}</p>
+          </div>
+          <div style="font-size:16px;font-weight:600;color:${parseFloat(e.points) > 0 ? '#4ade80' : '#f87171'};">
+            ${parseFloat(e.points) > 0 ? '+' : ''}${parseInt(e.points).toLocaleString("es-CR")}
+          </div>
+        </div>
+      `).join("");
+
+  render(`
+    <div style="min-height:100vh;background:#0f0f1a;">
+      <div style="background:linear-gradient(135deg,#1a1a2e,#16213e);padding:24px;">
+        <button onclick="renderHome()" style="background:transparent;border:none;color:#6c63ff;cursor:pointer;font-size:14px;margin-bottom:16px;">
+          ← Volver
+        </button>
+        <h2 style="font-size:20px;font-weight:700;color:#e8e8f0;">Mis puntos aquí</h2>
+        <div style="margin-top:16px;text-align:center;">
+          <div style="font-size:48px;font-weight:800;color:#6c63ff;">${parseInt(points).toLocaleString("es-CR")}</div>
+          <p style="color:#888;font-size:13px;">puntos RMS disponibles</p>
+        </div>
+      </div>
+      <div style="padding:24px;">
+        <h3 style="font-size:12px;color:#aaa;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px;">HISTORIAL</h3>
+        ${eventsHtml}
+      </div>
+    </div>
+  `);
+}
+
+function logout() {
+  clearSession();
+  if (window.google) google.accounts.id.disableAutoSelect();
+  renderLogin();
+}
+
+// Endpoint adicional en backend necesario
+// GET /api/loyalty/customers/:id/accounts — retorna cuentas en todos los tenants
+
+// Init
+async function init() {
+  showLoading();
+  if (loadSession()) {
+    try {
+      await loadHomeData();
+      renderHome();
+      return;
+    } catch (e) {
+      clearSession();
+    }
+  }
+  if (window.google) {
+    initGoogleSignIn();
+  } else {
+    // Esperar a que cargue el SDK de Google
+    window.addEventListener("load", () => {
+      initGoogleSignIn();
+    });
+  }
+  renderLogin();
+}
+
+window.init = init;
+window.renderHome = renderHome;
+window.loadRestaurantDetail = loadRestaurantDetail;
+window.logout = logout;
+
+init();
+```
+
+---
+
+### PARTE C — Endpoint adicional en backend
+
+En `server/loyalty-routes.ts`, agregar:
+
+```typescript
+// GET /api/loyalty/customers/:id/accounts — cuentas en todos los tenants
+app.get("/api/loyalty/customers/:id/accounts", async (req: any, res: any) => {
+  try {
+    const customerId = parseInt(req.params.id);
+    const result = await db.execute(
+      `SELECT la.*, t.business_name, 
+              MAX(le.created_at) as last_visit
+       FROM public.loyalty_accounts la
+       JOIN public.tenants t ON t.id = la.tenant_id
+       LEFT JOIN public.loyalty_events le ON le.customer_id = la.customer_id 
+         AND le.tenant_id = la.tenant_id
+       WHERE la.customer_id = $1
+       GROUP BY la.id, t.business_name
+       ORDER BY last_visit DESC NULLS LAST`,
+      [customerId]
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+Agregar soporte para `X-Tenant-Id` header en loyalty routes para el detalle por restaurante:
+
+```typescript
+// Modificar GET /api/loyalty/customers/:id para aceptar X-Tenant-Id
+app.get("/api/loyalty/customers/:id", async (req: any, res: any) => {
+  try {
+    const customerId = parseInt(req.params.id);
+    // Usar X-Tenant-Id si viene en el header, sino usar req.tenantId
+    const tenantId = parseInt(req.headers["x-tenant-id"] as string) || req.tenantId;
+    // ... resto igual
+  }
+});
+```
+
+---
+
+### PARTE D — Servir archivos estáticos de loyalty
+
+En `server/index.ts`, agregar antes de las rutas:
+
+```typescript
+import path from "path";
+
+// Servir archivos de loyalty cuando el host sea loyalty.*
+app.use((req, res, next) => {
+  const host = req.headers.host || "";
+  if (host.startsWith("loyalty.") && !req.path.startsWith("/api/")) {
+    const loyaltyDir = path.join(process.cwd(), "client-loyalty");
+    if (req.path === "/" || !req.path.includes(".")) {
+      return res.sendFile(path.join(loyaltyDir, "index.html"));
+    }
+    return res.sendFile(path.join(loyaltyDir, req.path), (err) => {
+      if (err) res.sendFile(path.join(loyaltyDir, "index.html"));
+    });
+  }
+  next();
+});
+```
+
+---
+
+### PARTE E — Manifest PWA
+
+Crear `client-loyalty/loyalty-manifest.json`:
+
+```json
+{
+  "name": "RMSCore Loyalty",
+  "short_name": "Loyalty",
+  "description": "Tu programa de puntos en restaurantes RMSCore",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f1a",
+  "theme_color": "#6c63ff",
+  "icons": [
+    {
+      "src": "/loyalty-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
+```
+
+Crear un ícono simple `client-loyalty/loyalty-icon-192.png` — puede ser un placeholder por ahora.
+
+---
+
+### Verificación final
+
+```bash
+npx tsc --noEmit
+```
+
+```bash
+ls client-loyalty/
+```
+
+Debe mostrar: `index.html`, `loyalty-app.js`, `loyalty-manifest.json`
+
+Probar en Replit:
+1. Acceder a `http://localhost:5000` con header `Host: loyalty.rmscore.app` — debe retornar el HTML de loyalty
+2. `GET /api/loyalty/customers/1/accounts` — debe retornar `[]` sin error
+
+**Criterios de aceptación:**
+- [ ] `client-loyalty/` existe con los 3 archivos
+- [ ] El servidor detecta el host `loyalty.*` y sirve el frontend correcto
+- [ ] La pantalla de login con Google se ve en `loyalty.rmscore.app`
+- [ ] `GET /api/loyalty/customers/:id/accounts` retorna JSON válido
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] No hacer deploy hasta que todos los criterios pasen en Replit

@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import compression from "compression";
 import helmet from "helmet";
+import path from "path";
 import { createServer } from "http";
 import { registerRoutes } from "./routes";
 import { ensureSystemPermissions, seedExtraTypes, seedDefaultRolePermissions } from "./storage";
@@ -25,11 +26,11 @@ if (isProduction) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://accounts.google.com", "https://apis.google.com"],
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'", "ws:", "wss:"],
+        imgSrc: ["'self'", "data:", "blob:", "https://lh3.googleusercontent.com"],
+        connectSrc: ["'self'", "ws:", "wss:", "https://accounts.google.com"],
         frameSrc: ["'none'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
@@ -52,6 +53,14 @@ app.use(compression());
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
+  }
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      isLoyaltyApp?: boolean;
+    }
   }
 }
 
@@ -86,6 +95,21 @@ function sanitizeObject(obj: any): any {
 app.use((req, _res, next) => {
   if (req.body && typeof req.body === 'object' && ['POST', 'PUT', 'PATCH'].includes(req.method)) {
     req.body = sanitizeObject(req.body);
+  }
+  next();
+});
+
+// Loyalty PWA host detection
+app.use((req, res, next) => {
+  const host = req.headers.host || "";
+  if (host.startsWith("loyalty.") && !req.path.startsWith("/api/")) {
+    const loyaltyDir = path.join(process.cwd(), "client-loyalty");
+    if (req.path === "/" || !req.path.includes(".")) {
+      return res.sendFile(path.join(loyaltyDir, "index.html"));
+    }
+    return res.sendFile(path.join(loyaltyDir, req.path.replace(/^\//, "")), (err) => {
+      if (err) res.sendFile(path.join(loyaltyDir, "index.html"));
+    });
   }
   next();
 });

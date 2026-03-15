@@ -109,11 +109,35 @@ export function registerLoyaltyRoutes(app: any) {
     }
   });
 
+  // GET /api/loyalty/customers/:id/accounts — cuentas en todos los tenants
+  app.get("/api/loyalty/customers/:id/accounts", async (req: any, res: any) => {
+    try {
+      const customerId = parseInt(req.params.id);
+      const { rows } = await pool.query(
+        `SELECT la.*, t.business_name,
+                MAX(le.created_at) as last_visit
+         FROM public.loyalty_accounts la
+         JOIN public.tenants t ON t.id = la.tenant_id
+         LEFT JOIN public.loyalty_events le
+           ON le.customer_id = la.customer_id AND le.tenant_id = la.tenant_id
+         WHERE la.customer_id = $1
+         GROUP BY la.id, t.business_name
+         ORDER BY last_visit DESC NULLS LAST`,
+        [customerId]
+      );
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // GET /api/loyalty/customers/:id
   app.get("/api/loyalty/customers/:id", async (req: any, res: any) => {
     try {
       const customerId = parseInt(req.params.id);
-      const tenantId = getTenantId(req);
+      const tenantId = req.headers["x-tenant-id"]
+        ? parseInt(req.headers["x-tenant-id"] as string)
+        : getTenantId(req);
       const [customer] = await db.select().from(customers)
         .where(eq(customers.id, customerId));
       if (!customer) return res.status(404).json({ message: "Cliente no encontrado" });
