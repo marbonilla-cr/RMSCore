@@ -140,6 +140,7 @@ interface PayrollEmployee {
   extrasDeductions: number;
   extrasNet: number;
   servicePayTotal: number;
+  chargeDeductionTotal: number;
   ccssBase: number;
   ccssEmployee: number;
   ccssEmployer: number;
@@ -386,6 +387,7 @@ function PayrollTab() {
         basePayTotal: acc.basePayTotal + e.basePayTotal,
         extrasNet: acc.extrasNet + e.extrasNet,
         servicePayTotal: acc.servicePayTotal + e.servicePayTotal,
+        chargeDeductionTotal: acc.chargeDeductionTotal + (e.chargeDeductionTotal || 0),
         ccssEmployee: acc.ccssEmployee + (e.ccssEmployee || 0),
         ccssEmployer: acc.ccssEmployer + (e.ccssEmployer || 0),
         grossPay: acc.grossPay + (e.grossPay || 0),
@@ -393,7 +395,7 @@ function PayrollTab() {
         employerCost: acc.employerCost + (e.employerCost || 0),
         grandTotalPay: acc.grandTotalPay + e.grandTotalPay,
       }),
-      { basePayTotal: 0, extrasNet: 0, servicePayTotal: 0, ccssEmployee: 0, ccssEmployer: 0, grossPay: 0, netPay: 0, employerCost: 0, grandTotalPay: 0 }
+      { basePayTotal: 0, extrasNet: 0, servicePayTotal: 0, chargeDeductionTotal: 0, ccssEmployee: 0, ccssEmployer: 0, grossPay: 0, netPay: 0, employerCost: 0, grandTotalPay: 0 }
     );
   }, [data]);
 
@@ -529,6 +531,7 @@ function PayrollTab() {
                   <TableHead className="text-right whitespace-nowrap">Pago Base</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Extras</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Servicio</TableHead>
+                  <TableHead className="text-right whitespace-nowrap text-red-600">Cargos</TableHead>
                   {showCCSS && <TableHead className="text-right whitespace-nowrap">CCSS Empl.</TableHead>}
                   {showCCSS && <TableHead className="text-right whitespace-nowrap">CCSS Patr.</TableHead>}
                   <TableHead className="text-right whitespace-nowrap font-bold">{showCCSS ? "Neto" : "Total"}</TableHead>
@@ -591,9 +594,10 @@ function PayrollTab() {
                         <TableCell className="text-right whitespace-nowrap">{formatColones(emp.basePayTotal)}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">{emp.extrasNet !== 0 ? <span className={emp.extrasNet > 0 ? "text-green-600" : "text-red-600"}>{formatColones(emp.extrasNet)}</span> : "—"}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">{emp.servicePayTotal > 0 || emp.operatedAsWaiter ? formatColones(emp.servicePayTotal) : "—"}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">{(emp.chargeDeductionTotal || 0) > 0 ? <span className="text-red-600 font-medium">-{formatColones(emp.chargeDeductionTotal)}</span> : "—"}</TableCell>
                         {showCCSS && <TableCell className="text-right whitespace-nowrap text-xs">{emp.ccssEmployee > 0 ? formatColones(emp.ccssEmployee) : "—"}</TableCell>}
                         {showCCSS && <TableCell className="text-right whitespace-nowrap text-xs">{emp.ccssEmployer > 0 ? formatColones(emp.ccssEmployer) : "—"}</TableCell>}
-                        <TableCell className="text-right whitespace-nowrap font-bold">{formatColones(showCCSS ? emp.netPay : emp.grandTotalPay)}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap font-bold">{formatColones(showCCSS ? emp.netPay : emp.grandTotalPay - (emp.chargeDeductionTotal || 0))}</TableCell>
                       </TableRow>
                       {isExpanded && (() => {
                         const pendingOvertimeDays = emp.dailyBreakdown
@@ -605,7 +609,7 @@ function PayrollTab() {
                           .map((d: any) => ({ businessDate: d.date, overtimeMinutes: d.overtimeCalculatedMinutes }));
                         return (
                         <TableRow key={`${emp.employeeId}-detail`}>
-                          <TableCell colSpan={showCCSS ? 20 : 18} className="p-0">
+                          <TableCell colSpan={showCCSS ? 21 : 19} className="p-0">
                             <div className="bg-muted/30 p-3">
                               {pendingOvertimeDays.length > 0 && data.hrConfigSnapshot?.overtimeRequiresApproval && (
                                 <div className="flex items-center gap-2 mb-2">
@@ -796,9 +800,10 @@ function PayrollTab() {
                     <TableCell className="text-right whitespace-nowrap">{formatColones(totals.basePayTotal)}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">{totals.extrasNet !== 0 ? formatColones(totals.extrasNet) : "—"}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">{formatColones(totals.servicePayTotal)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{totals.chargeDeductionTotal > 0 ? <span className="text-red-600">-{formatColones(totals.chargeDeductionTotal)}</span> : "—"}</TableCell>
                     {showCCSS && <TableCell className="text-right whitespace-nowrap">{formatColones(totals.ccssEmployee)}</TableCell>}
                     {showCCSS && <TableCell className="text-right whitespace-nowrap">{formatColones(totals.ccssEmployer)}</TableCell>}
-                    <TableCell className="text-right whitespace-nowrap">{formatColones(showCCSS ? totals.netPay : totals.grandTotalPay)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{formatColones(showCCSS ? totals.netPay : totals.grandTotalPay - totals.chargeDeductionTotal)}</TableCell>
                   </TableRow>
                 )}
               </TableBody>

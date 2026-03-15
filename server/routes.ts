@@ -6100,7 +6100,7 @@ export async function registerRoutes(
         dailyRate: e.dailyRate,
       }));
 
-      const [punches, scheduleDays, extras, serviceLedger, extraTypes, waiterIdsFromSalesRows, waiterIdsFromServiceRows] = await Promise.all([
+      const [punches, scheduleDays, extras, serviceLedger, extraTypes, waiterIdsFromSalesRows, waiterIdsFromServiceRows, chargesInRange] = await Promise.all([
         storage.getPunchesForDateRange(dateFrom, dateTo, req.db),
         storage.getAllSchedulesForDateRange(dateFrom, dateTo, req.db),
         storage.getPayrollExtrasByRange(dateFrom, dateTo, undefined, req.db),
@@ -6108,6 +6108,9 @@ export async function registerRoutes(
         storage.getExtraTypes(req.db),
         req.db.execute(sql`SELECT DISTINCT responsible_waiter_id AS id FROM sales_ledger_items WHERE business_date >= ${dateFrom} AND business_date <= ${dateTo} AND responsible_waiter_id IS NOT NULL`),
         req.db.execute(sql`SELECT DISTINCT responsible_waiter_employee_id AS id FROM service_charge_ledger WHERE business_date >= ${serviceFrom} AND business_date <= ${serviceTo} AND responsible_waiter_employee_id IS NOT NULL`),
+        req.db.select({ employeeId: employeeCharges.employeeId, amount: employeeCharges.amount, businessDate: employeeCharges.businessDate })
+          .from(employeeCharges)
+          .where(and(gte(employeeCharges.businessDate, dateFrom), lte(employeeCharges.businessDate, dateTo))),
       ]);
 
       const operationalWaiterIds = new Set<number>();
@@ -6202,9 +6205,17 @@ export async function registerRoutes(
         serviceMode,
       });
 
+      const chargesByEmployee: Record<number, number> = {};
+      for (const c of chargesInRange) {
+        const empId = c.employeeId;
+        if (!empId) continue;
+        chargesByEmployee[empId] = (chargesByEmployee[empId] || 0) + Number(c.amount);
+      }
+
       const enrichedEmployees = payrollResult.map(emp => {
         const svcPay = serviceByEmployee[emp.employeeId] || 0;
         const grossPay = round2(emp.basePayTotal + emp.extrasNet + svcPay);
+        const chargeDeductionTotal = round2(chargesByEmployee[emp.employeeId] || 0);
 
         let ccssBase = 0, ccssEmployee = 0, ccssEmployer = 0;
         if (hrConfig.socialChargesEnabled) {
@@ -6217,10 +6228,11 @@ export async function registerRoutes(
           ...emp,
           servicePayTotal: svcPay,
           grossPay,
+          chargeDeductionTotal,
           ccssBase,
           ccssEmployee,
           ccssEmployer,
-          netPay: round2(grossPay - ccssEmployee),
+          netPay: round2(grossPay - ccssEmployee - chargeDeductionTotal),
           employerCost: round2(grossPay + ccssEmployer),
           grandTotalPay: grossPay,
           operatedAsWaiter: operationalWaiterIds.has(emp.employeeId),
