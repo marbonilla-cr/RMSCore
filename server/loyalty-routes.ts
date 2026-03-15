@@ -66,13 +66,15 @@ export function registerLoyaltyRoutes(app: any) {
 
   app.post("/api/loyalty/auth/email", async (req: any, res: any) => {
     try {
-      const { name, email, phone } = req.body;
+      const name = (req.body.name || "").trim();
+      const email = (req.body.email || "").trim().toLowerCase();
+      const phone = (req.body.phone || "").trim() || null;
       if (!name || !email) return res.status(400).json({ message: "Nombre y correo son requeridos" });
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) return res.status(400).json({ message: "Correo electrónico inválido" });
 
       let [customer] = await db.select().from(customers)
-        .where(eq(customers.email, email.toLowerCase().trim()));
+        .where(eq(customers.email, email));
 
       if (customer) {
         [customer] = await db.update(customers).set({
@@ -82,9 +84,9 @@ export function registerLoyaltyRoutes(app: any) {
         }).where(eq(customers.id, customer.id)).returning();
       } else {
         [customer] = await db.insert(customers).values({
-          email: email.toLowerCase().trim(),
-          name: name.trim(),
-          phone: phone?.trim() || null,
+          email,
+          name,
+          phone,
         }).returning();
       }
 
