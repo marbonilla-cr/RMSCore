@@ -98,6 +98,7 @@ function initGoogleSignIn() {
     callback: handleGoogleResponse,
     auto_select: false,
     cancel_on_tap_outside: true,
+    ux_mode: "popup",
   });
 }
 
@@ -161,6 +162,11 @@ function renderLogin() {
           shape: "rectangular",
         }
       );
+      google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          console.log("One Tap no disponible:", notification.getNotDisplayedReason());
+        }
+      });
     }
   };
 
