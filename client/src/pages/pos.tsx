@@ -81,6 +81,8 @@ interface POSTableSnapshot {
   openedAt?: string | null;
   itemCount: number;
   subaccountNames?: string[];
+  transactionCode?: string | null;
+  isQuickSale?: boolean;
 }
 
 interface POSTable extends POSTableSnapshot {
@@ -163,6 +165,7 @@ export default function POSPage() {
   const [printConfirmSplitLabel, setPrintConfirmSplitLabel] = useState<string>("");
   const [printConfirmPaidItemIds, setPrintConfirmPaidItemIds] = useState<number[]>([]);
   const [paidTicketActions, setPaidTicketActions] = useState<{orderId: number; tableName: string; ticketNumber: string} | null>(null);
+  const [tableSearch, setTableSearch] = useState("");
   const [paidEmailInput, setPaidEmailInput] = useState("");
   const [paidShowEmailForm, setPaidShowEmailForm] = useState(false);
   const [paidSendingEmail, setPaidSendingEmail] = useState(false);
@@ -1152,6 +1155,10 @@ export default function POSPage() {
         .pos-tc-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
         .pos-tc-name { font-family: var(--f-disp); font-size: 20px; font-weight: 800; }
         .pos-tc-order-num { font-size: 13px; font-weight: 600; opacity: 0.55; }
+        .pos-tc-tx-code { font-family: var(--f-mono); font-size: 12px; font-weight: 700; color: var(--c-amber, #f59e0b); letter-spacing: 0.05em; opacity: 0.9; }
+        .pos-table-search-bar { padding: 0 0 10px 0; }
+        .pos-table-search-input { width: 100%; padding: 9px 14px; border-radius: var(--r-sm); border: 1.5px solid var(--border-ds); background: var(--s1); color: inherit; font-size: 14px; outline: none; }
+        .pos-table-search-input:focus { border-color: var(--green); }
         .pos-tc-subs { font-size: 12px; color: var(--text3); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .pos-tc-items-badge {
           display: inline-flex; align-items: center; gap: 4px;
@@ -1906,8 +1913,25 @@ export default function POSPage() {
                     <div className="pos-empty-text">No hay mesas con consumos pendientes de pago</div>
                   </div>
                 ) : (
+                  <>
+                    <div className="pos-table-search-bar">
+                      <input
+                        className="pos-table-search-input"
+                        placeholder="Buscar por código (ej: A3B) o nombre..."
+                        value={tableSearch}
+                        onChange={e => setTableSearch(e.target.value)}
+                        data-testid="input-pos-table-search"
+                      />
+                    </div>
                   <div className="pos-table-grid">
-                    {[...posTableSnapshots].sort((a, b) => {
+                    {[...posTableSnapshots].filter(t => {
+                      if (!tableSearch) return true;
+                      const q = tableSearch.toLowerCase();
+                      return (
+                        t.tableName.toLowerCase().includes(q) ||
+                        (t.transactionCode && t.transactionCode.toLowerCase().includes(q))
+                      );
+                    }).sort((a, b) => {
                       if (a.id !== b.id) return a.id - b.id;
                       const aIsParent = !a.parentOrderId ? 0 : 1;
                       const bIsParent = !b.parentOrderId ? 0 : 1;
@@ -1926,6 +1950,7 @@ export default function POSPage() {
                           <span className="pos-tc-name">
                             {t.tableName.replace(/ #.*$/, '')}
                             {t.ticketNumber && <span className="pos-tc-order-num"> #{t.ticketNumber}</span>}
+                            {t.transactionCode && <span className="pos-tc-tx-code" data-testid={`text-pos-tx-code-${t.orderId}`}> · {t.transactionCode}</span>}
                           </span>
                           <span className="pos-tc-items-badge">{t.itemCount} items</span>
                         </div>
@@ -1984,6 +2009,7 @@ export default function POSPage() {
                       </div>
                     ))}
                   </div>
+                  </>
                 )}
               </>
             )}

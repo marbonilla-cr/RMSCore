@@ -1,0 +1,195 @@
+Perfecto, clarísimo. Son dos cosas completamente independientes:
+
+**Código 3 caracteres** — trazabilidad operativa de la transacción dentro del tenant. Solo sirve para pagar y recoger. No tiene relación con loyalty.
+
+**Loyalty** — se acumula automáticamente al cobrar si el cliente está vinculado a la orden. El cajero puede vincular o no — es opcional.
+
+Entonces el flujo es:
+
+```
+Orden creada en tenant X → genera código "A7K" (único en ese tenant en ese momento)
+                         → cliente paga con código "A7K"  
+                         → si tiene cuenta loyalty → puntos acumulados automáticamente
+                         → cocina llama "A7K" → cliente retira
+```
+
+El código es **por tenant, secuencial rotativo dentro del día, aleatorio entre tenants simultáneos**.
+
+Ahora sí tengo todo claro para escribir el prompt de Fase 2. Dame un momento para estructurarlo.
+
+---
+
+## Prompt — Loyalty Fase 2: Código de transacción + Integración POS
+
+**Contexto:** Agregar código alfanumérico de 3 caracteres por orden para trazabilidad operativa, e integrar loyalty en el flujo de cobro del PayDialog.
+
+---
+
+### PARTE A — Migración
+
+Crear `migrations/0024_order_transaction_code.sql`:
+
+```sql
+--> statement-breakpoint
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "transaction_code" varchar(3);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "orders_transaction_code_business_date_tenant_idx" 
+  ON "orders"("transaction_code", "business_date");
+--> statement-breakpoint
+ALTER TABLE "public"."customers" ADD COLUMN IF NOT EXISTS "daily_visit_code" varchar(10);
+```
+
+Agregar en `shared/schema.ts` en la tabla `orders`:
+```typescript
+transactionCode: varchar("transaction_code", { length: 3 }),
+```
+
+---
+
+### PARTE B — Generador de código en backend
+
+Crear `server/utils/transaction-code.ts`:
+
+```typescript
+import { eq, and, sql } from "drizzle-orm";
+import { orders } from "@shared/schema";
+
+const CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sin O,0,I,1 para evitar confusión
+
+export async function generateTransactionCode(
+  db: any,
+  businessDate: string
+): Promise<string> {
+  // Obtener todos los códigos usados hoy
+  const usedCodes = await db
+    .select({ code: orders.transactionCode })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.businessDate, businessDate),
+        sql`${orders.transactionCode} IS NOT NULL`
+      )
+    );
+
+  const used = new Set(usedCodes.map((r: any) => r.code));
+
+  // Generar código aleatorio que no esté en uso
+  let attempts = 0;
+  while (attempts < 1000) {
+    const code =
+      CHARS[Math.floor(Math.random() * CHARS.length)] +
+      CHARS[Math.floor(Math.random() * CHARS.length)] +
+      CHARS[Math.floor(Math.random() * CHARS.length)];
+    if (!used.has(code)) return code;
+    attempts++;
+  }
+  // Fallback: timestamp si se agotaron combinaciones (prácticamente imposible)
+  return Date.now().toString(36).slice(-3).toUpperCase();
+}
+```
+
+---
+
+### PARTE C — Asignar código al crear orden
+
+En `server/routes.ts`, en todos los endpoints que crean órdenes nuevas:
+- `POST /api/waiter/tables/:id/open-order` o equivalente
+- `POST /api/waiter/quick-sale`
+- `POST /api/waiter/orders/:orderId/send-round` (primera ronda)
+
+Agregar después de crear la orden:
+```typescript
+import { generateTransactionCode } from "./utils/transaction-code";
+
+// Al crear la orden
+const transactionCode = await generateTransactionCode(req.db, businessDate);
+await req.db.update(orders)
+  .set({ transactionCode })
+  .where(eq(orders.id, order.id));
+```
+
+**También** en `GET /api/pos/tables` y `GET /api/tables/:id/current` incluir `transactionCode` en el response.
+
+---
+
+### PARTE D — Mostrar código en UI
+
+**1. En `client/src/pages/tables.tsx`** — en cada tarjeta de mesa con cuenta abierta, mostrar el código de transacción como badge destacado:
+```
+[A7K] Terr 2 #3
+```
+Estilo: badge grande, fuente monospace `IBM Plex Mono`, fondo oscuro, texto blanco o accent — visible de un vistazo.
+
+**2. En `client/src/pages/table-detail.tsx`** — mostrar el código prominentemente en el header de la orden.
+
+**3. En el tiquete de impresión** (`client/src/lib/print-receipt.ts`) — agregar el código en grande en la parte superior del tiquete, antes del nombre de la mesa:
+```
+╔══════════════╗
+║    A7K       ║
+╚══════════════╝
+```
+
+---
+
+### PARTE E — Integración Loyalty en PayDialog
+
+En `client/src/components/pos/PayDialog.tsx`:
+
+**1. Sección "Cliente Loyalty" (opcional)** — agregar debajo del campo de nombre del cliente actual:
+
+```
+CLIENTE LOYALTY (OPCIONAL)
+[input de búsqueda] Buscar por nombre o email...
+[resultados dropdown con: foto, nombre, email, puntos disponibles]
+```
+
+Fetch a `GET /api/loyalty/customers/search?q=` con debounce de 300ms.
+
+**2. Si se selecciona un cliente:**
+- Mostrar su saldo de puntos: "🏆 1,250 puntos disponibles"
+- Si tiene suficientes puntos (≥ minRedeemPoints), mostrar opción:
+  ```
+  [checkbox] Redimir 500 puntos = ₡500 de descuento
+  ```
+- El descuento se aplica al total visible en tiempo real
+
+**3. Al confirmar el pago:**
+- Si hay cliente seleccionado → llamar `POST /api/loyalty/earn` con `{ customerId, orderId, amountSpent: totalFinal }`
+- Si redimió puntos → llamar `POST /api/loyalty/redeem` antes del cobro
+- Incluir `loyaltyCustomerId` en el body del `POST /api/pos/pay`
+
+---
+
+### PARTE F — Buscar orden por código en POS
+
+En `client/src/pages/pos.tsx` — agregar campo de búsqueda por código de transacción:
+
+```
+[input] Código de orden (ej: A7K)
+```
+
+Al escribir 3 caracteres, filtrar la lista de órdenes abiertas mostrando solo la que coincide. Búsqueda instantánea sin fetch adicional — filtrar sobre los datos ya cargados en `GET /api/pos/tables`.
+
+---
+
+### Verificación final
+
+```bash
+npx tsc --noEmit
+```
+
+Probar en Replit:
+1. Crear una orden nueva → verificar que tiene código de 3 caracteres asignado
+2. El código aparece en la tarjeta de mesa y en el detalle
+3. En POS escribir el código → la orden aparece filtrada
+4. Buscar cliente loyalty en PayDialog → retorna resultados o array vacío
+5. Cobrar con cliente loyalty vinculado → `POST /api/loyalty/earn` se llama y retorna puntos
+
+**Criterios de aceptación:**
+- [ ] Toda orden nueva tiene `transactionCode` de 3 caracteres únicos por día por tenant
+- [ ] Código visible en tarjeta de mesa, detalle de orden y tiquete impreso
+- [ ] Búsqueda por código en POS filtra correctamente
+- [ ] Búsqueda de cliente loyalty en PayDialog funciona
+- [ ] Puntos se acumulan al cobrar si hay cliente vinculado
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] No hacer deploy hasta que todos los criterios pasen en Replit

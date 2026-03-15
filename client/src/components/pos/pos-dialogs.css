@@ -1194,3 +1194,33 @@
   50% { transform: scale(1.06); }
   100% { transform: scale(1); }
 }
+
+/* ── LOYALTY PANEL ── */
+.loyalty-customer-card {
+  background: var(--bg2, #1a1a1a);
+  border: 1px solid var(--b-default, #333);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 4px;
+}
+.loyalty-results-dropdown {
+  position: absolute;
+  left: 0; right: 0; top: calc(100% + 4px);
+  background: var(--bg-card, #232323);
+  border: 1px solid var(--b-default, #333);
+  border-radius: 10px;
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  overflow: hidden;
+}
+.loyalty-result-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.loyalty-result-item:hover {
+  background: var(--bg2, #1a1a1a);
+}
+.loyalty-result-item + .loyalty-result-item {
+  border-top: 1px solid var(--b-default, #333);
+}

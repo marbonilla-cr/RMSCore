@@ -33,6 +33,7 @@ interface ReceiptData {
   clientName?: string;
   cashierName?: string;
   date: string;
+  transactionCode?: string | null;
 }
 
 function escapeHtml(str: string): string {
@@ -127,6 +128,7 @@ export function printReceipt(data: ReceiptData) {
     <span class="bold">Orden: ${escapeHtml(data.orderNumber)}</span>
     <span>${escapeHtml(data.tableName)}</span>
   </div>
+  ${data.transactionCode ? `<div style="font-size:10px;letter-spacing:0.08em;font-weight:700;">Código TX: ${escapeHtml(data.transactionCode)}</div>` : ""}
   <div style="font-size:10px;margin-bottom:2px;">
     ${escapeHtml(data.date)}
   </div>

@@ -100,6 +100,7 @@ export const orders = pgTable("orders", {
   guestCount: integer("guest_count"),
   isQuickSale: boolean("is_quick_sale").notNull().default(false),
   quickSaleName: varchar("quick_sale_name", { length: 100 }),
+  transactionCode: varchar("transaction_code", { length: 3 }),
 });
 
 export const orderItems = pgTable("order_items", {
@@ -1286,6 +1287,7 @@ export const customers = pgTable("customers", {
   name: varchar("name", { length: 200 }).notNull(),
   photoUrl: text("photo_url"),
   phone: varchar("phone", { length: 30 }),
+  dailyVisitCode: varchar("daily_visit_code", { length: 10 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
 });

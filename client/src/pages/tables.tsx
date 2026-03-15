@@ -28,6 +28,7 @@ interface TableView {
   hasActiveReservation: boolean;
   subaccountNames: string[];
   isQuickSale?: boolean;
+  transactionCode?: string | null;
   upcomingReservation: {
     id: number;
     guestName: string;
@@ -208,7 +209,11 @@ export default function TablesPage() {
 
   const activeTables = tables.filter(t => t.active && !t.isQuickSale);
   const filtered = search
-    ? activeTables.filter(t => t.tableName.toLowerCase().includes(search.toLowerCase()) || t.tableCode.toLowerCase().includes(search.toLowerCase()))
+    ? activeTables.filter(t =>
+        t.tableName.toLowerCase().includes(search.toLowerCase()) ||
+        t.tableCode.toLowerCase().includes(search.toLowerCase()) ||
+        (t.transactionCode && t.transactionCode.toLowerCase().includes(search.toLowerCase()))
+      )
     : activeTables;
   const isEffectivelyOpen = (t: TableView) =>
     t.hasOpenOrder && (t.itemCount > 0 || Number(t.totalAmount || 0) > 0 || t.pendingQrCount > 0);
@@ -398,6 +403,14 @@ export default function TablesPage() {
           font-size: 13px;
           font-weight: 600;
           opacity: 0.55;
+        }
+        .tc-tx-code {
+          font-family: var(--f-mono);
+          font-size: 11px;
+          font-weight: 700;
+          color: var(--c-amber, #f59e0b);
+          letter-spacing: 0.05em;
+          opacity: 0.85;
         }
         .tc-meta {
           display: grid;
@@ -1118,6 +1131,9 @@ export default function TablesPage() {
                       <div className="tc-name" data-testid={`text-qs-name-${qs.orderId}`}>
                         {qs.tableName}
                         {qs.dailyNumber && <span className="tc-order-num"> #{qs.dailyNumber}</span>}
+                        {qs.transactionCode && (
+                          <span className="tc-tx-code" data-testid={`text-tx-code-qs-${qs.orderId}`}> · {qs.transactionCode}</span>
+                        )}
                       </div>
                       <div className={badge.cls}>{badge.label}</div>
                       <div className="tc-meta">
@@ -1162,6 +1178,9 @@ export default function TablesPage() {
                     <div className="tc-name" data-testid={`text-table-name-${table.id}`}>
                       {table.tableName}
                       {table.dailyNumber && <span className="tc-order-num"> #{table.dailyNumber}</span>}
+                      {table.transactionCode && (
+                        <span className="tc-tx-code" data-testid={`text-tx-code-${table.id}`}> · {table.transactionCode}</span>
+                      )}
                     </div>
                     <div className={badge.cls} data-testid={`badge-status-${table.id}`}>{badge.label}</div>
                     {table.upcomingReservation && (

@@ -14,6 +14,7 @@ import { registerSalesCubeRoutes } from "./sales-cube-routes";
 import { registerQrSubaccountRoutes } from "./qr-subaccount-routes";
 import * as invStorage from "./inventory-storage";
 import { getTenantTimezone, getBusinessDateInTZ, getNowInTZ, invalidateTimezoneCache } from "./utils/timezone";
+import { generateTransactionCode } from "./utils/transaction-code";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import * as qbo from "./quickbooks";
 import { tenantMiddleware } from "./middleware/tenant";
@@ -46,12 +47,19 @@ async function getOrCreateOrderForTable(tableId: number, responsibleWaiterId: nu
   let order = await storage.getOpenOrderForTable(tableId, dbInstance);
   if (order) return order;
   try {
+    const businessDate = await getBusinessDate(schema);
     order = await storage.createOrder({
       tableId,
       status: "OPEN",
       responsibleWaiterId,
-      businessDate: await getBusinessDate(schema),
+      businessDate,
     }, dbInstance);
+    try {
+      const txCode = await generateTransactionCode(dbInstance || db, businessDate);
+      order = await storage.updateOrder(order.id, { transactionCode: txCode } as any, dbInstance);
+    } catch (codeErr) {
+      console.warn("[txCode] No se pudo asignar código de transacción:", codeErr);
+    }
   } catch (e: any) {
     order = await storage.getOpenOrderForTable(tableId, dbInstance);
     if (order) return order;
@@ -1922,6 +1930,7 @@ export async function registerRoutes(
         upcomingReservation,
         hasActiveReservation,
         subaccountNames: order ? (subaccountNamesByOrder.get(order.id) || []) : [],
+        transactionCode: (order as any)?.transactionCode || null,
       };
     });
     const quickSaleOrders = allOpenOrders.filter(o => o.isQuickSale && !o.parentOrderId);
@@ -1950,6 +1959,7 @@ export async function registerRoutes(
         hasActiveReservation: false,
         subaccountNames: [],
         isQuickSale: true,
+        transactionCode: (o as any).transactionCode || null,
       };
     });
 
@@ -2482,7 +2492,7 @@ export async function registerRoutes(
       if (!name?.trim()) return res.status(400).json({ message: "Nombre requerido" });
 
       const businessDate = await getBusinessDate(req.tenantSchema);
-      const order = await storage.createOrder({
+      let order = await storage.createOrder({
         tableId: null as any,
         status: "OPEN",
         responsibleWaiterId: req.session?.userId ?? null,
@@ -2490,6 +2500,13 @@ export async function registerRoutes(
         isQuickSale: true,
         quickSaleName: name.trim(),
       } as any, req.db);
+
+      try {
+        const txCode = await generateTransactionCode(req.db, businessDate);
+        order = await storage.updateOrder(order.id, { transactionCode: txCode } as any, req.db);
+      } catch (codeErr) {
+        console.warn("[txCode] quick-sale:", codeErr);
+      }
 
       res.status(201).json(order);
     } catch (err: any) {
@@ -3132,12 +3149,19 @@ export async function registerRoutes(
       if (isNaN(guestCount) || guestCount < 1) return res.status(400).json({ message: "Cantidad inválida" });
       let order = await storage.getOpenOrderForTable(table.id, req.db);
       if (!order) {
+        const businessDate = await getBusinessDate(req.tenantSchema);
         order = await storage.createOrder({
           tableId: table.id,
           status: "OPEN",
           responsibleWaiterId: null,
-          businessDate: await getBusinessDate(req.tenantSchema),
+          businessDate,
         }, req.db);
+        try {
+          const txCode = await generateTransactionCode(req.db, businessDate);
+          order = await storage.updateOrder(order.id, { transactionCode: txCode } as any, req.db);
+        } catch (codeErr) {
+          console.warn("[txCode] qr guest-count:", codeErr);
+        }
       }
       await storage.updateOrder(order.id, { guestCount }, req.db);
       res.json({ ok: true });
@@ -3736,6 +3760,7 @@ export async function registerRoutes(
         itemCount: activeCount,
         subaccountNames: Array.from(names),
         isQuickSale,
+        transactionCode: (order as any).transactionCode || null,
       });
     }
     res.json(result);

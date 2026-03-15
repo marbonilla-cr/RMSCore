@@ -109,6 +109,14 @@ export function PayDialog({
   const [legCashCustom, setLegCashCustom] = useState("");
   const [legCashDenom, setLegCashDenom] = useState<number | null>(null);
 
+  const [loyaltyQuery, setLoyaltyQuery] = useState("");
+  const [loyaltyResults, setLoyaltyResults] = useState<any[]>([]);
+  const [loyaltySearching, setLoyaltySearching] = useState(false);
+  const [selectedLoyaltyCustomer, setSelectedLoyaltyCustomer] = useState<any | null>(null);
+  const [redeemMode, setRedeemMode] = useState(false);
+  const [redeemInput, setRedeemInput] = useState("");
+  const loyaltyDebounceRef = useRef<any>(null);
+
   const total = splitId ? (splitTotal || 0) : Number(table?.totalAmount || 0);
   const change = received - total;
   const canPay = method === "CASH"
@@ -150,8 +158,26 @@ export function PayDialog({
       setLegCashReceived(0);
       setLegCashCustom("");
       setLegCashDenom(null);
+      setLoyaltyQuery("");
+      setLoyaltyResults([]);
+      setSelectedLoyaltyCustomer(null);
+      setRedeemMode(false);
+      setRedeemInput("");
     }
   }, [open]);
+
+  useEffect(() => {
+    if (loyaltyDebounceRef.current) clearTimeout(loyaltyDebounceRef.current);
+    if (!loyaltyQuery || loyaltyQuery.length < 2) { setLoyaltyResults([]); return; }
+    loyaltyDebounceRef.current = setTimeout(async () => {
+      setLoyaltySearching(true);
+      try {
+        const res = await fetch(`/api/loyalty/customers/search?q=${encodeURIComponent(loyaltyQuery)}`);
+        if (res.ok) setLoyaltyResults(await res.json());
+      } catch { setLoyaltyResults([]); }
+      finally { setLoyaltySearching(false); }
+    }, 350);
+  }, [loyaltyQuery]);
 
   const getMethodType = (pm: PaymentMethod): string => {
     const code = pm.paymentCode.toUpperCase();
@@ -233,6 +259,31 @@ export function PayDialog({
       const pm = paymentMethods.find(m => m.id.toString() === methodId);
       const wasCash = pm ? (pm.paymentCode.toUpperCase().includes("CASH") || pm.paymentCode.toUpperCase().includes("EFECT")) : false;
 
+      if (selectedLoyaltyCustomer) {
+        const orderId = table!.orderId;
+        const amountSpent = total;
+        fetch("/api/loyalty/earn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customerId: selectedLoyaltyCustomer.id, orderId, amountSpent }),
+        }).then(r => r.json()).then(d => {
+          if (d.points > 0) toast({ title: `+${d.points} puntos RMS`, description: `Para ${selectedLoyaltyCustomer.name}` });
+        }).catch(() => {});
+
+        if (redeemMode && redeemInput) {
+          const pts = parseInt(redeemInput);
+          if (pts > 0) {
+            fetch("/api/loyalty/redeem", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ customerId: selectedLoyaltyCustomer.id, pointsToRedeem: pts, orderId }),
+            }).then(r => r.json()).then(d => {
+              if (d.discountAmount) toast({ title: `Redención registrada`, description: `₡${Number(d.discountAmount).toLocaleString("es-CR")} descuento` });
+            }).catch(() => {});
+          }
+        }
+      }
+
       setTimeout(() => {
         onSuccess(methodId, clientName, clientEmail, wasCash, wasCash ? received : undefined, wasCash && change > 0 ? change : undefined, responsePaymentId, responsePaidItemIds);
         onClose();
@@ -241,7 +292,7 @@ export function PayDialog({
       toast({ title: "Error", description: err.message, variant: "destructive" });
       setProcessing(false);
     }
-  }, [table, methodId, method, selectedEmployeeId, splitId, clientName, clientEmail, processing, paymentMethods, onSuccess, onClose, toast]);
+  }, [table, methodId, method, selectedEmployeeId, splitId, clientName, clientEmail, processing, paymentMethods, selectedLoyaltyCustomer, redeemMode, redeemInput, total, onSuccess, onClose, toast]);
 
   const handleMultiProcess = useCallback(async () => {
     if (!table || processing || !multiCanPay) return;
@@ -260,6 +311,16 @@ export function PayDialog({
         dialogRef.current.classList.add("pos-flash-green");
       }
 
+      if (selectedLoyaltyCustomer && table) {
+        fetch("/api/loyalty/earn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customerId: selectedLoyaltyCustomer.id, orderId: table.orderId, amountSpent: total }),
+        }).then(r => r.json()).then(d => {
+          if (d.points > 0) toast({ title: `+${d.points} puntos RMS`, description: `Para ${selectedLoyaltyCustomer.name}` });
+        }).catch(() => {});
+      }
+
       setTimeout(() => {
         onSuccess("multi", clientName, clientEmail, data.hasCash || false);
         onClose();
@@ -268,7 +329,7 @@ export function PayDialog({
       toast({ title: "Error", description: err.message, variant: "destructive" });
       setProcessing(false);
     }
-  }, [table, processing, multiCanPay, legs, clientName, clientEmail, onSuccess, onClose, toast]);
+  }, [table, processing, multiCanPay, legs, clientName, clientEmail, selectedLoyaltyCustomer, total, onSuccess, onClose, toast]);
 
   const addLeg = (pmId: string, amount: number) => {
     const pm = activePaymentMethods.find(m => m.id.toString() === pmId);
@@ -724,6 +785,104 @@ export function PayDialog({
                 >
                   {sendTicketMutation.isPending ? "Enviando..." : "Enviar Ticket por Email"}
                 </button>
+              )}
+
+              <div className="pos-sep" />
+
+              <div className="pos-sect-lbl">Loyalty RMS (opcional)</div>
+              {selectedLoyaltyCustomer ? (
+                <div className="loyalty-customer-card" data-testid="loyalty-selected-customer">
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{selectedLoyaltyCustomer.name}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{selectedLoyaltyCustomer.email}</div>
+                      <div style={{ fontSize: 12, marginTop: 2 }}>
+                        <span style={{ color: "var(--c-amber, #f59e0b)", fontWeight: 600 }}>
+                          {Math.floor(Number(selectedLoyaltyCustomer.points_balance || 0)).toLocaleString()} pts
+                        </span>
+                        {" "}disponibles
+                      </div>
+                    </div>
+                    <button
+                      className="pos-secondary-btn"
+                      style={{ padding: "4px 10px", fontSize: 12 }}
+                      onClick={() => { setSelectedLoyaltyCustomer(null); setRedeemMode(false); setRedeemInput(""); }}
+                      data-testid="loyalty-clear-customer"
+                    >
+                      Cambiar
+                    </button>
+                  </div>
+                  {Number(selectedLoyaltyCustomer.points_balance || 0) >= 1 && (
+                    <div style={{ marginTop: 10, borderTop: "1px solid var(--b-default)", paddingTop: 8 }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                        <input
+                          type="checkbox"
+                          checked={redeemMode}
+                          onChange={e => { setRedeemMode(e.target.checked); if (!e.target.checked) setRedeemInput(""); }}
+                          data-testid="loyalty-redeem-toggle"
+                        />
+                        Redimir puntos en este pago
+                      </label>
+                      {redeemMode && (
+                        <div style={{ marginTop: 6, display: "flex", gap: 6, alignItems: "center" }}>
+                          <input
+                            className="pos-field-input"
+                            type="number"
+                            min="1"
+                            max={Math.floor(Number(selectedLoyaltyCustomer.points_balance || 0))}
+                            placeholder="Puntos a redimir"
+                            value={redeemInput}
+                            onChange={e => setRedeemInput(e.target.value)}
+                            style={{ flex: 1 }}
+                            data-testid="loyalty-redeem-input"
+                          />
+                          <button
+                            className="pos-secondary-btn"
+                            style={{ padding: "6px 10px", fontSize: 12, whiteSpace: "nowrap" }}
+                            onClick={() => setRedeemInput(String(Math.floor(Number(selectedLoyaltyCustomer.points_balance || 0))))}
+                            data-testid="loyalty-redeem-max"
+                          >
+                            Máx
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ position: "relative" }}>
+                  <input
+                    className="pos-field-input"
+                    placeholder="Buscar cliente por nombre o email..."
+                    value={loyaltyQuery}
+                    onChange={e => { setLoyaltyQuery(e.target.value); setSelectedLoyaltyCustomer(null); }}
+                    autoComplete="off"
+                    data-testid="loyalty-search-input"
+                  />
+                  {loyaltySearching && (
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "4px 2px" }}>Buscando...</div>
+                  )}
+                  {loyaltyResults.length > 0 && (
+                    <div className="loyalty-results-dropdown" data-testid="loyalty-results">
+                      {loyaltyResults.map((c: any) => (
+                        <div
+                          key={c.id}
+                          className="loyalty-result-item"
+                          onClick={() => { setSelectedLoyaltyCustomer(c); setLoyaltyQuery(""); setLoyaltyResults([]); }}
+                          data-testid={`loyalty-result-${c.id}`}
+                        >
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
+                          <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                            {c.email} · {Math.floor(Number(c.points_balance || 0)).toLocaleString()} pts
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {loyaltyQuery.length >= 2 && !loyaltySearching && loyaltyResults.length === 0 && (
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "4px 2px" }}>Sin resultados</div>
+                  )}
+                </div>
               )}
 
               <div className="pos-sep" />
