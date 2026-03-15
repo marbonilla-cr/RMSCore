@@ -1,0 +1,84 @@
+Sí, procede. Dale este prompt al agente:
+
+---
+
+Corregir `server/provision/seed-own-tenant.ts`. El tenant real después de la migración tiene `slug='rms'` y `schema_name='tenant_la_antigua'`. El seed está buscando los valores viejos y creando un tenant fantasma en cada restart.
+
+**CAMBIO 1 — Actualizar las constantes del tenant propio:**
+
+```typescript
+// ANTES:
+const OWN_TENANT = {
+  slug:         "rest-la-antigua",
+  businessName: "Restaurante La Antigua",
+  schemaName:   "public",
+  plan:         "PRO",
+  billingEmail: "admin@restlaantigua.com",
+};
+
+// DESPUÉS:
+const OWN_TENANT = {
+  slug:         "rms",
+  businessName: "Restaurante y Granja La Antigua Lechería",
+  schemaName:   "tenant_la_antigua",
+  plan:         "PRO",
+  billingEmail: "admin@restlaantigua.com",
+};
+```
+
+**CAMBIO 2 — Eliminar el tenant fantasma de la DB:**
+
+Crear y ejecutar `scripts/cleanup-phantom-tenant.ts`:
+
+```typescript
+import { Pool } from "pg";
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+
+async function cleanup() {
+  const client = await pool.connect();
+  try {
+    // Verificar antes
+    const { rows: before } = await client.query(
+      "SELECT id, slug, schema_name FROM public.tenants ORDER BY id"
+    );
+    console.log("Antes:", JSON.stringify(before, null, 2));
+
+    // Eliminar módulos del tenant fantasma
+    await client.query(
+      "DELETE FROM public.tenant_modules WHERE tenant_id = 9"
+    );
+    console.log("✓ Módulos del tenant fantasma eliminados");
+
+    // Eliminar tenant fantasma
+    await client.query(
+      "DELETE FROM public.tenants WHERE id = 9 AND slug = 'rest-la-antigua' AND schema_name = 'public'"
+    );
+    console.log("✓ Tenant fantasma eliminado");
+
+    // Verificar después
+    const { rows: after } = await client.query(
+      "SELECT id, slug, schema_name FROM public.tenants ORDER BY id"
+    );
+    console.log("Después:", JSON.stringify(after, null, 2));
+
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
+cleanup().catch(console.error);
+```
+
+Ejecutar con:
+```bash
+npx tsx scripts/cleanup-phantom-tenant.ts
+```
+
+**CAMBIO 3 — Hacer deploy** después de confirmar que el cleanup corrió correctamente y que solo queda `id=3, slug=rms, schema_name=tenant_la_antigua` en `public.tenants`.
+
+**Criterios de aceptación:**
+- [ ] `public.tenants` tiene exactamente un registro: `id=3, slug=rms, schema_name=tenant_la_antigua`
+- [ ] Los logs de Railway al iniciar muestran `TENANT_SCHEMA=tenant_la_antigua`
+- [ ] El sistema responde normalmente en `rms.restlaantigua.com`
