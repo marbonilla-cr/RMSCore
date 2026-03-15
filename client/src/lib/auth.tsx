@@ -150,29 +150,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       || (window.navigator as any).standalone === true;
     if (!isPWA) return;
 
-    let hiddenAt: number | null = null;
-    const IDLE_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 horas
+    // When the page is refreshed/navigated, pagehide fires after visibilitychange:hidden.
+    // We schedule the logout with setTimeout so pagehide can cancel it before it runs.
+    // On genuine sleep/background, pagehide does NOT fire, so the logout executes normally.
+    let logoutTimer: ReturnType<typeof setTimeout> | null = null;
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        hiddenAt = Date.now();
+      if (document.visibilityState === "hidden" && user) {
         wsManager.pause();
-      } else if (document.visibilityState === "visible") {
-        if (hiddenAt !== null && Date.now() - hiddenAt > IDLE_TIMEOUT_MS) {
-          wsManager.pause();
-          fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
+        logoutTimer = setTimeout(() => {
+          logoutTimer = null;
+          navigator.sendBeacon("/api/auth/logout");
           setUser(null);
           setSessionToken(null);
           queryClient.clear();
-        } else {
-          wsManager.resume();
+        }, 0);
+      } else if (document.visibilityState === "visible") {
+        if (logoutTimer) {
+          clearTimeout(logoutTimer);
+          logoutTimer = null;
         }
-        hiddenAt = null;
+        wsManager.resume();
+      }
+    };
+
+    const handlePageHide = () => {
+      // Page is being refreshed or navigated — cancel the logout
+      if (logoutTimer) {
+        clearTimeout(logoutTimer);
+        logoutTimer = null;
       }
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+      if (logoutTimer) clearTimeout(logoutTimer);
+    };
   }, [user]);
 
   return (
