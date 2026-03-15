@@ -125,6 +125,39 @@ async function rewriteColumnDefaults(client: PoolClient, tables: string[]): Prom
   return rewritten;
 }
 
+async function verifyIsolation(client: PoolClient): Promise<void> {
+  const { rows: seqs } = await client.query<CountRow>(
+    `SELECT COUNT(*) as count FROM information_schema.sequences WHERE sequence_schema = $1`,
+    [NEW_SCHEMA]
+  );
+  const seqCount = Number(seqs[0].count);
+
+  const { rows: stale } = await client.query<CountRow>(`
+    SELECT COUNT(*) as count FROM information_schema.columns
+    WHERE table_schema = $1
+    AND column_default LIKE 'nextval(%'
+    AND column_default NOT LIKE $2
+  `, [NEW_SCHEMA, `%${NEW_SCHEMA}%`]);
+  const staleCount = Number(stale[0].count);
+
+  const { rows: migs } = await client.query<CountRow>(
+    `SELECT COUNT(*) as count FROM public.schema_migrations WHERE schema_name = $1`,
+    [NEW_SCHEMA]
+  );
+  const migCount = Number(migs[0].count);
+
+  console.log(`  Secuencias en ${NEW_SCHEMA}: ${seqCount}`);
+  console.log(`  Defaults apuntando a public: ${staleCount}`);
+  console.log(`  Migraciones registradas: ${migCount}`);
+
+  if (staleCount > 0) {
+    console.warn(`  ⚠ ${staleCount} columna(s) aún apuntan a secuencias de public`);
+  }
+  if (seqCount === 0) {
+    console.warn(`  ⚠ No hay secuencias en ${NEW_SCHEMA} — aislamiento incompleto`);
+  }
+}
+
 async function run() {
   const client = await pool.connect();
   try {
@@ -145,7 +178,9 @@ async function run() {
     const tenant = tenants[0];
 
     if (tenant.schema_name === NEW_SCHEMA) {
-      console.log("Tenant ya apunta a", NEW_SCHEMA, "— migración ya completada.");
+      console.log("Tenant ya apunta a", NEW_SCHEMA, "— verificando estado...");
+      await verifyIsolation(client);
+      console.log("Migración ya completada y verificada.");
       return;
     }
     if (tenant.schema_name !== SOURCE_SCHEMA) {
@@ -279,6 +314,7 @@ async function run() {
     console.error("\n=== ERROR EN MIGRACIÓN ===");
     console.error(err instanceof Error ? err.message : String(err));
     console.error("Verificar estado del tenant antes de reintentar.");
+    process.exitCode = 1;
   } finally {
     client.release();
     await pool.end();
