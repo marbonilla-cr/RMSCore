@@ -1,0 +1,116 @@
+Perfecto. El diagnóstico es claro y el fix es exactamente replicar el patrón de `table-detail.tsx` en `qr-client.tsx`. Aquí el prompt:
+
+---
+
+## Prompt — Fix menú QR y Despacho: navegación 3 niveles
+
+**Contexto:** El menú en `qr-client.tsx` muestra las subcategorías como headers estáticos con todos los productos apilados debajo. El comportamiento correcto (igual que `table-detail.tsx`) es mostrar las subcategorías como pills interactivos y solo mostrar los productos de la subcategoría seleccionada.
+
+**Solo modificar `client/src/pages/qr-client.tsx`. No tocar ningún otro archivo.**
+
+---
+
+**CAMBIO 1 — Agregar estado `selectedCategory`**
+
+Agregar estado para la subcategoría seleccionada, cerca de donde está `selectedTopCode`:
+
+```typescript
+const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+```
+
+Cuando cambie `selectedTopCode`, resetear `selectedCategoryId` al primer subcategory disponible:
+
+```typescript
+useEffect(() => {
+  if (selectedTopCode && categoryGroups.length > 0) {
+    const firstCat = categoryGroups[0];
+    setSelectedCategoryId(firstCat?.catId ?? null);
+  }
+}, [selectedTopCode]);
+```
+
+---
+
+**CAMBIO 2 — Reemplazar headers estáticos por pills interactivos**
+
+Buscar el bloque que renderiza `categoryGroups.map(({ catName, products }) => ...)` y reemplazarlo con:
+
+```typescript
+{/* Pills de subcategorías */}
+<div style={{
+  display: "flex",
+  gap: "8px",
+  overflowX: "auto",
+  padding: "8px 16px",
+  scrollbarWidth: "none",
+}}>
+  {categoryGroups.map(({ catId, catName }) => (
+    <button
+      key={catId}
+      onClick={() => setSelectedCategoryId(catId)}
+      style={{
+        flexShrink: 0,
+        padding: "6px 14px",
+        borderRadius: "20px",
+        border: selectedCategoryId === catId 
+          ? "2px solid var(--color-sage, #6B8F71)" 
+          : "1px solid #ddd",
+        background: selectedCategoryId === catId 
+          ? "var(--color-sage, #6B8F71)" 
+          : "white",
+        color: selectedCategoryId === catId ? "white" : "#555",
+        fontSize: "13px",
+        fontWeight: selectedCategoryId === catId ? 600 : 400,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {catName}
+    </button>
+  ))}
+</div>
+
+{/* Solo productos de la subcategoría seleccionada */}
+<div style={{ padding: "0 16px" }}>
+  {(categoryGroups.find(g => g.catId === selectedCategoryId)?.products ?? [])
+    .map(p => (
+      // renderizado existente del producto — sin cambios
+    ))
+  }
+</div>
+```
+
+---
+
+**CAMBIO 3 — Asegurar que `categoryGroups` incluye `catId`**
+
+Verificar que el memo `categoryGroups` incluye el `id` de cada categoría además del nombre. Si solo tiene `catName`, agregar `catId`:
+
+```typescript
+const categoryGroups = useMemo(() => {
+  // Agrupar productos por categoría incluyendo el id
+  return categories
+    .filter(cat => /* misma lógica existente */)
+    .map(cat => ({
+      catId: cat.id,
+      catName: cat.name,
+      products: filteredProducts.filter(p => p.categoryId === cat.id),
+    }))
+    .filter(g => g.products.length > 0);
+}, [/* mismas dependencias */]);
+```
+
+---
+
+**Verificación:**
+```bash
+npx tsc --noEmit
+```
+
+Probar en Replit:
+1. Abrir QR de una mesa → verificar que se ven las subcategorías como pills
+2. Tocar una subcategoría → solo se muestran sus productos
+3. Cambiar de TOP category → pills se resetean a la primera subcategoría
+4. El flujo de agregar productos y enviar orden sigue funcionando igual
+
+No hacer deploy hasta que las 4 pruebas pasen.
