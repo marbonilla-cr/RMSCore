@@ -3145,7 +3145,17 @@ export async function registerRoutes(
 
   // ==================== QR CLIENT ====================
   app.get("/api/qr/:tableCode/info", async (req, res) => {
-    const table = await storage.getTableByCode(req.params.tableCode, req.db);
+    const tableCode = req.params.tableCode as string;
+
+    if (tableCode === "DISPATCH") {
+      const config = await storage.getBusinessConfig(req.tenantSchema);
+      if (!(config as any)?.operationModeDispatch) {
+        return res.status(404).json({ message: "Despacho no habilitado" });
+      }
+      return res.json({ tableCode: "DISPATCH", tableName: "Despacho", isDispatch: true, maxSubaccounts: 1, hasGuestCount: false, orderId: null });
+    }
+
+    const table = await storage.getTableByCode(tableCode, req.db);
     if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
     const config = await storage.getBusinessConfig(req.tenantSchema);
     const maxSubaccounts = (config as any)?.maxSubaccounts ?? 15;

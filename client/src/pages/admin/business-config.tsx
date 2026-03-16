@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
-import { Save, Building2, Loader2, Upload, Package, Globe, Monitor } from "lucide-react";
+import { Save, Building2, Loader2, Upload, Package, Globe, Monitor, Download, QrCode } from "lucide-react";
+import QRCode from "qrcode";
 
 interface TaxCategory {
   id: number;
@@ -332,21 +333,56 @@ export default function AdminBusinessConfigPage() {
                   />
                 </div>
                 {form.operationModeDispatch && (
-                  <div className="flex items-center justify-between pl-4 pt-2 border-t">
-                    <div>
-                      <p className="text-sm font-medium">Tiempo de expiración (despacho)</p>
-                      <p className="text-xs text-muted-foreground">Minutos hasta cancelar orden sin pagar</p>
+                  <>
+                    <div className="flex items-center justify-between pl-4 pt-2 border-t">
+                      <div>
+                        <p className="text-sm font-medium">Tiempo de expiración (despacho)</p>
+                        <p className="text-xs text-muted-foreground">Minutos hasta cancelar orden sin pagar</p>
+                      </div>
+                      <input
+                        data-testid="input-dispatch-timeout"
+                        type="number"
+                        min={1}
+                        max={120}
+                        value={form.dispatchOrderTimeoutMinutes ?? 15}
+                        onChange={(e) => setForm({ ...form, dispatchOrderTimeoutMinutes: Number(e.target.value) })}
+                        className="w-20 px-2 py-1 text-sm border rounded"
+                      />
                     </div>
-                    <input
-                      data-testid="input-dispatch-timeout"
-                      type="number"
-                      min={1}
-                      max={120}
-                      value={form.dispatchOrderTimeoutMinutes ?? 15}
-                      onChange={(e) => setForm({ ...form, dispatchOrderTimeoutMinutes: Number(e.target.value) })}
-                      className="w-20 px-2 py-1 text-sm border rounded"
-                    />
-                  </div>
+                    <div className="pl-4 pt-3 border-t space-y-2">
+                      <div className="flex items-center gap-2">
+                        <QrCode size={16} className="text-muted-foreground" />
+                        <p className="text-sm font-medium">QR de Despacho</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="text-xs bg-muted px-2 py-1 rounded break-all" data-testid="text-dispatch-url">
+                          {`${window.location.origin}/qr/DISPATCH`}
+                        </code>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-download-dispatch-qr"
+                        onClick={async () => {
+                          try {
+                            const url = `${window.location.origin}/qr/DISPATCH`;
+                            const canvas = document.createElement("canvas");
+                            await QRCode.toCanvas(canvas, url, { width: 512, margin: 2 });
+                            const link = document.createElement("a");
+                            link.download = `qr-despacho-${(form.businessName || "restaurant").replace(/\s+/g, "-").toLowerCase()}.png`;
+                            link.href = canvas.toDataURL("image/png");
+                            link.click();
+                          } catch {
+                            toast({ title: "Error generando QR", variant: "destructive" });
+                          }
+                        }}
+                      >
+                        <Download size={14} />
+                        Descargar QR
+                      </Button>
+                    </div>
+                  </>
                 )}
               </div>
             </div>

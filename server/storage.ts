@@ -829,18 +829,44 @@ export async function getActiveKitchenTickets(destination?: string, dbInstance?:
   const d = dbInstance || db;
   const conditions = [ne(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)];
   if (destination) conditions.push(eq(kitchenTickets.kdsDestination, destination));
-  return d.select().from(kitchenTickets)
+  const rows = await d.select({
+    id: kitchenTickets.id,
+    orderId: kitchenTickets.orderId,
+    tableId: kitchenTickets.tableId,
+    tableNameSnapshot: kitchenTickets.tableNameSnapshot,
+    status: kitchenTickets.status,
+    kdsDestination: kitchenTickets.kdsDestination,
+    createdAt: kitchenTickets.createdAt,
+    clearedAt: kitchenTickets.clearedAt,
+    transactionCode: orders.transactionCode,
+    orderMode: orders.orderMode,
+  }).from(kitchenTickets)
+    .leftJoin(orders, eq(kitchenTickets.orderId, orders.id))
     .where(and(...conditions))
     .orderBy(asc(kitchenTickets.createdAt));
+  return rows;
 }
 
 export async function getHistoryKitchenTickets(destination?: string, dbInstance?: typeof db) {
   const d = dbInstance || db;
   const conditions = [eq(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)];
   if (destination) conditions.push(eq(kitchenTickets.kdsDestination, destination));
-  return d.select().from(kitchenTickets)
+  const rows = await d.select({
+    id: kitchenTickets.id,
+    orderId: kitchenTickets.orderId,
+    tableId: kitchenTickets.tableId,
+    tableNameSnapshot: kitchenTickets.tableNameSnapshot,
+    status: kitchenTickets.status,
+    kdsDestination: kitchenTickets.kdsDestination,
+    createdAt: kitchenTickets.createdAt,
+    clearedAt: kitchenTickets.clearedAt,
+    transactionCode: orders.transactionCode,
+    orderMode: orders.orderMode,
+  }).from(kitchenTickets)
+    .leftJoin(orders, eq(kitchenTickets.orderId, orders.id))
     .where(and(...conditions))
     .orderBy(desc(kitchenTickets.createdAt));
+  return rows;
 }
 
 export async function updateKitchenTicket(id: number, data: any, dbInstance?: typeof db) {

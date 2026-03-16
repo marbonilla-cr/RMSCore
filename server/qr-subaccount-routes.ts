@@ -221,6 +221,142 @@ async function handleDispatchSubmit(
   });
 }
 
+async function handleDirectDispatchSubmit(
+  req: Request,
+  res: Response,
+  subaccountId: number | null,
+  items: any[],
+  broadcastFn: (type: string, payload: any) => void
+): Promise<void> {
+  const businessDate = await getBusinessDate((req as any).tenantSchema);
+  const txCode = await generateTransactionCode(req.db, businessDate);
+
+  const [order] = await req.db.insert(orders).values({
+    tableId: null,
+    status: "OPEN",
+    responsibleWaiterId: null,
+    businessDate,
+    transactionCode: txCode,
+    orderMode: "DISPATCH",
+    dispatchStatus: "PENDING_PAYMENT",
+  } as any).returning();
+
+  const uniqueProductIds = Array.from(new Set(items.map((i: any) => Number(i.productId))));
+  const allModOptionIds = Array.from(new Set(
+    items.flatMap((i: any) => (i.modifiers || []).map((m: any) => Number(m.optionId)))
+  ));
+
+  const [productsArr, modOptionsArr, allCategories, allTaxCats] = await Promise.all([
+    uniqueProductIds.length > 0
+      ? req.db.select().from(products).where(inArray(products.id, uniqueProductIds))
+      : Promise.resolve([]),
+    allModOptionIds.length > 0
+      ? req.db.select().from(modifierOptions).where(inArray(modifierOptions.id, allModOptionIds))
+      : Promise.resolve([]),
+    storage.getAllCategories(req.db),
+    storage.getAllTaxCategories(req.db),
+  ]);
+
+  const productsMap = new Map(productsArr.map((p: any) => [p.id, p]));
+  const modOptionsMap = new Map(modOptionsArr.map((o: any) => [o.id, o]));
+
+  const roundNumber = 1;
+
+  for (const item of items) {
+    const product = productsMap.get(Number(item.productId));
+    if (!product || !(product as any).active) continue;
+
+    const category = allCategories.find((c: any) => c.id === (product as any).categoryId);
+
+    const orderItem = await storage.createOrderItem({
+      orderId: order.id,
+      productId: (product as any).id,
+      productNameSnapshot: (product as any).name,
+      productPriceSnapshot: (product as any).price,
+      qty: item.qty,
+      notes: item.notes || null,
+      origin: "QR",
+      createdByUserId: null,
+      responsibleWaiterId: null,
+      status: "PENDING",
+      roundNumber,
+      qrSubmissionId: null,
+    }, req.db);
+
+    if (item.customerName) {
+      await req.db.update(orderItems).set({
+        customerNameSnapshot: item.customerName,
+      }).where(eq(orderItems.id, orderItem.id));
+    }
+
+    const taxLinks = (await storage.getProductTaxCategories((product as any).id, req.db)) || [];
+    if (taxLinks.length > 0) {
+      const taxSnapshot = taxLinks.map((ptc: any) => {
+        const tc = allTaxCats.find((t: any) => t.id === ptc.taxCategoryId && t.active);
+        return tc ? { taxCategoryId: tc.id, name: tc.name, rate: tc.rate, inclusive: tc.inclusive } : null;
+      }).filter(Boolean);
+      if (taxSnapshot.length > 0) {
+        await storage.updateOrderItem(orderItem.id, { taxSnapshotJson: taxSnapshot }, req.db);
+      }
+    }
+
+    if (item.modifiers && Array.isArray(item.modifiers)) {
+      for (const mod of item.modifiers) {
+        const option = modOptionsMap.get(Number(mod.optionId));
+        if (option) {
+          await storage.createOrderItemModifier({
+            orderItemId: orderItem.id,
+            modifierOptionId: (option as any).id,
+            nameSnapshot: (option as any).name,
+            priceDeltaSnapshot: (option as any).priceDelta || "0",
+            qty: 1,
+          }, req.db);
+        }
+      }
+    }
+
+    let modDelta = 0;
+    for (const mod of (item.modifiers || [])) {
+      const option = modOptionsMap.get(Number(mod.optionId));
+      if (option) modDelta += Number((option as any).priceDelta || 0);
+    }
+    const unitWithMods = Number((product as any).price) + modDelta;
+
+    await storage.createSalesLedgerItem({
+      businessDate,
+      tableId: null,
+      tableNameSnapshot: "Despacho",
+      orderId: order.id,
+      orderItemId: orderItem.id,
+      productId: (product as any).id,
+      productCodeSnapshot: (product as any).productCode,
+      productNameSnapshot: (product as any).name,
+      categoryId: (product as any).categoryId,
+      categoryCodeSnapshot: (category as any)?.categoryCode || null,
+      categoryNameSnapshot: (category as any)?.name || null,
+      qty: item.qty,
+      unitPrice: unitWithMods.toFixed(2),
+      lineSubtotal: (unitWithMods * item.qty).toFixed(2),
+      origin: "QR",
+      createdByUserId: null,
+      responsibleWaiterId: null,
+      status: "OPEN",
+    }, req.db);
+  }
+
+  await storage.recalcOrderTotal(order.id, req.db);
+
+  broadcastFn("order_updated", { orderId: order.id });
+  broadcastFn("table_status_changed", {});
+
+  res.json({
+    dispatch: true,
+    transactionCode: txCode,
+    orderId: order.id,
+    message: "Pedido recibido. Mostrá tu código al cajero para pagar.",
+  });
+}
+
 interface QrSecurityUtils {
   qrSubmitRateCheck: (req: Request, res: Response) => boolean;
   qrSubaccountRateCheck: (req: Request, res: Response) => boolean;
@@ -380,6 +516,14 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: "Items requeridos" });
+      }
+
+      if (tableCode === "DISPATCH") {
+        const [config] = await req.db.select().from(businessConfig).limit(1);
+        if (!config?.operationModeDispatch) {
+          return res.status(404).json({ message: "Despacho no habilitado" });
+        }
+        return handleDirectDispatchSubmit(req, res, subaccountId, items, broadcast);
       }
 
       const table = await storage.getTableByCode(tableCode, req.db);

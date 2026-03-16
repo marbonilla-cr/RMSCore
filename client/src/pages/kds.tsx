@@ -27,6 +27,8 @@ interface KDSTicket {
   status: string;
   createdAt: string;
   items: KDSTicketItem[];
+  transactionCode?: string | null;
+  orderMode?: string | null;
 }
 
 interface GroupedTicket {
@@ -36,6 +38,8 @@ interface GroupedTicket {
   ticketIds: number[];
   items: KDSTicketItem[];
   allReady: boolean;
+  transactionCode?: string | null;
+  orderMode?: string | null;
 }
 
 function formatElapsed(dateStr: string) {
@@ -105,6 +109,8 @@ function groupTicketsByOrder(tickets: KDSTicket[]): GroupedTicket[] {
         ticketIds: [t.id],
         items: [...t.items],
         allReady: false,
+        transactionCode: t.transactionCode,
+        orderMode: t.orderMode,
       });
     }
   }
@@ -392,6 +398,20 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
           display: flex;
           align-items: center;
           justify-content: space-between;
+        }
+        .kds-card.is-dispatch .kds-card-header {
+          background: linear-gradient(135deg, #f59e0b22, #f59e0b11);
+          border-bottom: 2px solid #f59e0b;
+        }
+        .kds-dispatch-badge {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-family: var(--f-mono);
+          font-size: 20px;
+          font-weight: 800;
+          color: #f59e0b;
+          letter-spacing: 0.06em;
         }
         .kds-table-name {
           font-family: var(--f-disp);
@@ -710,10 +730,17 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
               const hasNewItems = group.items.some(i => i.status === "NEW");
               const elapsedCls = getElapsedClass(group.earliestCreatedAt);
               return (
-                <div key={group.orderId} className={`kds-card ${hasNewItems ? "has-new" : ""}`} data-testid={`card-group-${group.orderId}`}>
+                <div key={group.orderId} className={`kds-card ${hasNewItems ? "has-new" : ""}${group.orderMode === "DISPATCH" ? " is-dispatch" : ""}`} data-testid={`card-group-${group.orderId}`}>
                   <div className="kds-card-header">
                     <div>
-                      <div className="kds-table-name">{group.tableNameSnapshot}</div>
+                      {group.orderMode === "DISPATCH" ? (
+                        <div className="kds-dispatch-badge" data-testid={`badge-dispatch-${group.orderId}`}>
+                          <span>&#9889; DESPACHO</span>
+                          {group.transactionCode && <span>[{group.transactionCode}]</span>}
+                        </div>
+                      ) : (
+                        <div className="kds-table-name">{group.tableNameSnapshot}</div>
+                      )}
                       <div className="kds-item-count">{group.items.length} {group.items.length === 1 ? "item" : "items"}</div>
                     </div>
                     <div className={`kds-elapsed ${elapsedCls}`}>

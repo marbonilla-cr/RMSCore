@@ -849,6 +849,11 @@ export default function TableDetailPage() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1 className="header-title" data-testid="text-table-name">
             {tableData?.tableName || `Mesa ${tableId}`}
+            {activeOrder?.orderMode === "DISPATCH" && activeOrder?.transactionCode && (
+              <span style={{ fontFamily: "var(--f-mono, monospace)", fontSize: 22, fontWeight: 800, color: "#f59e0b", letterSpacing: "0.08em", marginLeft: 8 }} data-testid="text-dispatch-code">
+                [{activeOrder.transactionCode}]
+              </span>
+            )}
           </h1>
           <p className="header-sub">
             {activeOrder ? `Orden #${activeOrder.id}` : "Sin orden abierta"}

@@ -28,6 +28,7 @@ interface TableView {
   hasActiveReservation: boolean;
   subaccountNames: string[];
   isQuickSale?: boolean;
+  isDispatch?: boolean;
   transactionCode?: string | null;
   upcomingReservation: {
     id: number;
@@ -394,11 +395,10 @@ export default function TablesPage() {
         }
         .tc-tx-code {
           font-family: var(--f-mono);
-          font-size: 11px;
-          font-weight: 700;
+          font-size: 22px;
+          font-weight: 800;
           color: var(--c-amber, #f59e0b);
-          letter-spacing: 0.05em;
-          opacity: 0.85;
+          letter-spacing: 0.08em;
         }
         .tc-meta {
           display: grid;
@@ -1166,7 +1166,7 @@ export default function TablesPage() {
                     <div className="tc-name" data-testid={`text-table-name-${table.id}`}>
                       {table.tableName}
                       {table.dailyNumber && <span className="tc-order-num"> #{table.dailyNumber}</span>}
-                      {table.transactionCode && (
+                      {(table.isDispatch || table.isQuickSale) && table.transactionCode && (
                         <span className="tc-tx-code" data-testid={`text-tx-code-${table.id}`}> · {table.transactionCode}</span>
                       )}
                     </div>
