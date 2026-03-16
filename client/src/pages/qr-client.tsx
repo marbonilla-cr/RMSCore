@@ -373,6 +373,7 @@ export default function QRClientPage() {
   const [name, setName] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [tab, setTab] = useState<string>("");
+  const [selectedCatName, setSelectedCatName] = useState<string | null>(null);
   const [popup, setPopup] = useState<QRProduct | null>(null);
   const [sending, setSending] = useState(false);
   const [subaccountId, setSubaccountId] = useState<number | null>(null);
@@ -469,6 +470,14 @@ export default function QRClientPage() {
       .map(([catName, products]) => ({ catName, products, sortOrder: products[0]?.categorySortOrder ?? 9999 }))
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [menu, tab, topCats]);
+
+  useEffect(() => {
+    if (categoryGroups.length > 0) {
+      setSelectedCatName(categoryGroups[0].catName);
+    } else {
+      setSelectedCatName(null);
+    }
+  }, [tab, categoryGroups]);
 
   /* ─── Cart helpers ─── */
 
@@ -878,72 +887,91 @@ export default function QRClientPage() {
               No hay productos disponibles
             </div>
           ) : (
-            categoryGroups.map(({ catName, products }) => (
-              <div key={catName} style={{ marginBottom: 20 }}>
+            <>
+              {categoryGroups.length > 1 && (
                 <div style={{
-                  fontSize: 13, fontWeight: 600, color: C.text3, textTransform: "uppercase",
-                  letterSpacing: "0.05em", marginBottom: 8, paddingLeft: 2,
-                }}>{catName}</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {products.map(p => {
-                    const inCart = cartItemForProduct(p.id);
-                    const modSummary = inCart ? getModSummary(inCart, modGroupsCache[p.id]) : "";
+                  display: "flex", gap: 8, overflowX: "auto", paddingBottom: 10, marginBottom: 4,
+                  WebkitOverflowScrolling: "touch", scrollbarWidth: "none",
+                }}>
+                  {categoryGroups.map(({ catName }) => {
+                    const isActive = selectedCatName === catName;
                     return (
-                      <button key={p.id} data-testid={`button-qr-product-${p.id}`}
-                        onClick={() => setPopup(p)}
+                      <button key={catName} data-testid={`button-qr-subcat-${catName}`}
+                        onClick={() => setSelectedCatName(catName)}
                         style={{
-                          display: "flex", alignItems: "center", gap: 12, padding: 14,
-                          borderRadius: 14, border: `1.5px solid ${inCart ? C.acc : C.border}`,
-                          background: inCart ? C.accT : C.card, cursor: "pointer",
-                          textAlign: "left", width: "100%",
+                          flexShrink: 0, padding: "6px 16px", borderRadius: 20,
+                          border: isActive ? `2px solid ${C.acc}` : `1px solid ${C.border}`,
+                          background: isActive ? C.acc : C.card,
+                          color: isActive ? "#fff" : C.text2,
+                          fontSize: 13, fontWeight: isActive ? 600 : 400,
+                          cursor: "pointer", whiteSpace: "nowrap", minHeight: 34,
                           transition: "all 0.15s ease",
                         }}>
-                        <div style={{
-                          width: 52, height: 52, borderRadius: 12, background: C.bg,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 24, flexShrink: 0,
-                        }}>
-                          <FoodIcon type={p.categoryFoodType} size={22} />
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                            <span style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{p.name}</span>
-                          </div>
-                          {p.description && (
-                            <div style={{
-                              fontSize: 12, color: C.text3, marginTop: 2,
-                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                            }}>{p.description}</div>
-                          )}
-                          <div style={{ fontSize: 15, fontWeight: 700, color: C.acc, marginTop: 4 }}>
-                            {inCart ? fmtPrice(inCart.unitPrice) : fmtPrice(Number(p.price))}
-                          </div>
-                          {inCart && modSummary && (
-                            <div style={{ fontSize: 11, color: C.acc, marginTop: 2 }}>
-                              &bull; {modSummary}
-                            </div>
-                          )}
-                          {inCart && inCart.note && (
-                            <div style={{ fontSize: 11, color: C.text3, marginTop: 1 }}>
-                              <Pencil size={10} style={{ display: "inline", marginRight: 3 }} />{inCart.note}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{
-                          width: 34, height: 34, borderRadius: 50, flexShrink: 0,
-                          background: inCart ? C.acc : C.accD,
-                          color: inCart ? "#fff" : C.acc,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: inCart ? 14 : 18, fontWeight: 700,
-                        }}>
-                          {inCart ? inCart.qty : "+"}
-                        </div>
+                        {catName}
                       </button>
                     );
                   })}
                 </div>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {(categoryGroups.find(g => g.catName === selectedCatName)?.products ?? categoryGroups[0]?.products ?? []).map(p => {
+                  const inCart = cartItemForProduct(p.id);
+                  const modSummary = inCart ? getModSummary(inCart, modGroupsCache[p.id]) : "";
+                  return (
+                    <button key={p.id} data-testid={`button-qr-product-${p.id}`}
+                      onClick={() => setPopup(p)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 12, padding: 14,
+                        borderRadius: 14, border: `1.5px solid ${inCart ? C.acc : C.border}`,
+                        background: inCart ? C.accT : C.card, cursor: "pointer",
+                        textAlign: "left", width: "100%",
+                        transition: "all 0.15s ease",
+                      }}>
+                      <div style={{
+                        width: 52, height: 52, borderRadius: 12, background: C.bg,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 24, flexShrink: 0,
+                      }}>
+                        <FoodIcon type={p.categoryFoodType} size={22} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{p.name}</span>
+                        </div>
+                        {p.description && (
+                          <div style={{
+                            fontSize: 12, color: C.text3, marginTop: 2,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>{p.description}</div>
+                        )}
+                        <div style={{ fontSize: 15, fontWeight: 700, color: C.acc, marginTop: 4 }}>
+                          {inCart ? fmtPrice(inCart.unitPrice) : fmtPrice(Number(p.price))}
+                        </div>
+                        {inCart && modSummary && (
+                          <div style={{ fontSize: 11, color: C.acc, marginTop: 2 }}>
+                            &bull; {modSummary}
+                          </div>
+                        )}
+                        {inCart && inCart.note && (
+                          <div style={{ fontSize: 11, color: C.text3, marginTop: 1 }}>
+                            <Pencil size={10} style={{ display: "inline", marginRight: 3 }} />{inCart.note}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{
+                        width: 34, height: 34, borderRadius: 50, flexShrink: 0,
+                        background: inCart ? C.acc : C.accD,
+                        color: inCart ? "#fff" : C.acc,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: inCart ? 14 : 18, fontWeight: 700,
+                      }}>
+                        {inCart ? inCart.qty : "+"}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
-            ))
+            </>
           )}
         </div>
 
