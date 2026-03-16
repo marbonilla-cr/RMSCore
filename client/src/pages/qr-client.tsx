@@ -629,9 +629,9 @@ export default function QRClientPage() {
         osc.stop(startTime + duration);
       };
       const now = ctx.currentTime;
-      playTone(520, now, 0.2);
-      playTone(660, now + 0.2, 0.2);
-      playTone(780, now + 0.4, 0.35);
+      playTone(520, now, 0.25);
+      playTone(780, now + 0.25, 0.35);
+      setTimeout(() => ctx.close().catch(() => {}), 1500);
     } catch {}
   }, [dispatchStatus]);
 
