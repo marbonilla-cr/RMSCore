@@ -391,7 +391,7 @@ export default function QRClientPage() {
 
   /* ─── Data fetching ─── */
 
-  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number; hasGuestCount: boolean; orderId: number | null }>({
+  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number; hasGuestCount: boolean; orderId: number | null; isDispatch?: boolean }>({
     queryKey: ["/api/qr", tableCode, "info"],
     queryFn: async () => {
       const r = await fetch(`/api/qr/${tableCode}/info`);
@@ -434,7 +434,7 @@ export default function QRClientPage() {
       if (!r.ok) return [];
       return r.json();
     },
-    enabled: !!tableCode && screen === 1 && !!qrToken,
+    enabled: !!tableCode && screen === 1 && !!qrToken && !info?.isDispatch,
     staleTime: 0,
     refetchOnMount: "always" as const,
   });
@@ -506,7 +506,7 @@ export default function QRClientPage() {
     setSending(true);
     try {
       let sid = subaccountId;
-      if (!sid) {
+      if (!sid && !info?.isDispatch) {
         const subRes = await fetch(`/api/qr/${tableCode}/subaccounts`, {
           method: "POST", headers: { "Content-Type": "application/json", ...(qrToken ? { "x-qr-token": qrToken } : {}) },
           body: JSON.stringify({ label: name }),
