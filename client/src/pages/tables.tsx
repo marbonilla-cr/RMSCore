@@ -1119,7 +1119,7 @@ export default function TablesPage() {
                       <div className="tc-name" data-testid={`text-qs-name-${qs.orderId}`}>
                         {qs.tableName}
                         {qs.dailyNumber && <span className="tc-order-num"> #{qs.dailyNumber}</span>}
-                        {qs.transactionCode && (
+                        {(qs.isDispatch || qs.isQuickSale) && qs.transactionCode && (
                           <span className="tc-tx-code" data-testid={`text-tx-code-qs-${qs.orderId}`}> · {qs.transactionCode}</span>
                         )}
                       </div>
