@@ -3929,8 +3929,9 @@ export async function registerRoutes(
     if (!order) return res.status(404).json({ message: "Orden no encontrada" });
 
     const isQuickSale = !!(order as any).isQuickSale && !order.tableId;
+    const isDispatchOrder = (order as any).orderMode === "DISPATCH";
     let table: any = null;
-    if (!isQuickSale) {
+    if (!isQuickSale && !isDispatchOrder) {
       table = await storage.getTable(order.tableId!, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
     }
@@ -3945,10 +3946,9 @@ export async function registerRoutes(
       ),
     ]);
 
-    const isDispatch = (order as any).orderMode === "DISPATCH";
     const activeItems = allItems.filter(i => {
       if (i.status === "VOIDED" || i.status === "PAID") return false;
-      if (i.status === "PENDING" && !isDispatch) return false;
+      if (i.status === "PENDING" && !isDispatchOrder) return false;
       return true;
     });
     const activeItemIds = new Set(activeItems.map(i => i.id));

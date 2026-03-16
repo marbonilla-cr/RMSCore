@@ -395,10 +395,12 @@ export default function TablesPage() {
         }
         .tc-tx-code {
           font-family: var(--f-mono);
-          font-size: 22px;
+          font-size: 32px;
           font-weight: 800;
           color: var(--c-amber, #f59e0b);
           letter-spacing: 0.08em;
+          display: block;
+          margin-top: 2px;
         }
         .tc-meta {
           display: grid;
@@ -1120,7 +1122,7 @@ export default function TablesPage() {
                         {qs.tableName}
                         {qs.dailyNumber && <span className="tc-order-num"> #{qs.dailyNumber}</span>}
                         {(qs.isDispatch || qs.isQuickSale) && qs.transactionCode && (
-                          <span className="tc-tx-code" data-testid={`text-tx-code-qs-${qs.orderId}`}> · {qs.transactionCode}</span>
+                          <span className="tc-tx-code" data-testid={`text-tx-code-qs-${qs.orderId}`}>{qs.transactionCode}</span>
                         )}
                       </div>
                       <div className={badge.cls}>{badge.label}</div>
@@ -1167,7 +1169,7 @@ export default function TablesPage() {
                       {table.tableName}
                       {table.dailyNumber && <span className="tc-order-num"> #{table.dailyNumber}</span>}
                       {(table.isDispatch || table.isQuickSale) && table.transactionCode && (
-                        <span className="tc-tx-code" data-testid={`text-tx-code-${table.id}`}> · {table.transactionCode}</span>
+                        <span className="tc-tx-code" data-testid={`text-tx-code-${table.id}`}>{table.transactionCode}</span>
                       )}
                     </div>
                     <div className={badge.cls} data-testid={`badge-status-${table.id}`}>{badge.label}</div>
