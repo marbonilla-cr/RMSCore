@@ -615,7 +615,8 @@ export default function QRClientPage() {
   useEffect(() => {
     if (dispatchStatus !== "READY") return;
     try {
-      const ctx = new AudioContext();
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AC();
       const playTone = (freq: number, startTime: number, duration: number) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
