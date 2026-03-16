@@ -5,7 +5,7 @@ import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
   Loader2, UtensilsCrossed, Coffee, ShoppingCart, User, Check,
-  Plus, Minus, ChevronLeft, Pencil, X, Users, Bell,
+  Plus, Minus, ChevronLeft, Pencil, X, Users, Bell, Smartphone,
 } from "lucide-react";
 
 /* ═══════════════════ Types ═══════════════════ */
@@ -611,6 +611,29 @@ export default function QRClientPage() {
 
     return () => clearInterval(interval);
   }, [screen, dispatchInfo, dispatchStatus]);
+
+  useEffect(() => {
+    if (dispatchStatus !== "READY") return;
+    try {
+      const ctx = new AudioContext();
+      const playTone = (freq: number, startTime: number, duration: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.3, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+      };
+      const now = ctx.currentTime;
+      playTone(520, now, 0.2);
+      playTone(660, now + 0.2, 0.2);
+      playTone(780, now + 0.4, 0.35);
+    } catch {}
+  }, [dispatchStatus]);
 
   /* ═══════════════════ Render ═══════════════════ */
 
@@ -1272,6 +1295,19 @@ export default function QRClientPage() {
                 Preparando tu pedido…
               </div>
             )}
+          </div>
+        )}
+
+        {!isReady && !isCancelled && (
+          <div data-testid="banner-keep-open" style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px",
+            background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12,
+            marginBottom: 20, maxWidth: 400, width: "100%",
+          }}>
+            <Smartphone size={20} style={{ color: "#d97706", flexShrink: 0 }} />
+            <div style={{ fontSize: 13, color: "#92400e", lineHeight: 1.4 }}>
+              <strong>No cierres tu pantalla.</strong> Te avisaremos cuando tu pedido esté listo.
+            </div>
           </div>
         )}
 
