@@ -3973,7 +3973,10 @@ export async function registerRoutes(
     const isChild = !!order.parentOrderId;
     const ticketNumber = isChild ? `${order.dailyNumber}-${order.splitIndex}` : `${order.dailyNumber}`;
     let displayName: string;
-    if (isQuickSale) {
+    if (isDispatchOrder) {
+      const txCode = (order as any).transactionCode || "";
+      displayName = txCode ? `Despacho ${txCode}` : `Despacho #${order.dailyNumber || order.id}`;
+    } else if (isQuickSale) {
       const qsName = (order as any).quickSaleName || "Venta Rápida";
       displayName = `${qsName} #${order.dailyNumber}`;
     } else {
