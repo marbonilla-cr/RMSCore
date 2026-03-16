@@ -387,6 +387,11 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
   app.get("/api/qr/:tableCode/subaccounts", tokenCheck, async (req, res) => {
     try {
       const tableCode = req.params.tableCode as string;
+
+      if (tableCode === "DISPATCH") {
+        return res.json([]);
+      }
+
       const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
 
@@ -407,6 +412,11 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     try {
       if (security && !security.qrSubaccountRateCheck(req, res)) return;
       const tableCode = req.params.tableCode as string;
+
+      if (tableCode === "DISPATCH") {
+        return res.status(400).json({ message: "Despacho no soporta subcuentas" });
+      }
+
       const { label, slotNumber: requestedSlot } = req.body || {};
 
       const table = await storage.getTableByCode(tableCode, req.db);
@@ -465,6 +475,11 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     try {
       if (security && !security.qrSubaccountRateCheck(req, res)) return;
       const tableCode = req.params.tableCode as string;
+
+      if (tableCode === "DISPATCH") {
+        return res.status(400).json({ message: "Despacho no soporta subcuentas" });
+      }
+
       const { count } = req.body || {};
 
       const table = await storage.getTableByCode(tableCode, req.db);
@@ -528,12 +543,6 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
-
-      const [config] = await req.db.select().from(businessConfig).limit(1);
-
-      if (config?.operationModeDispatch) {
-        return handleDispatchSubmit(req, res, table, subaccountId, items, broadcast);
-      }
 
       const pendingCount = await req.db.select({ count: sql<number>`count(*)` })
         .from(qrSubmissions)

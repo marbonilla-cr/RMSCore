@@ -35,7 +35,7 @@ import {
 import { printBridges as printBridgesTable, printers as printersTable } from "../shared/schema";
 import { pool } from "./db";
 import { getTenantDb } from "./db-tenant";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog, employeeCharges, users } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog, employeeCharges, users, businessConfig } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
 declare module "express-session" {
@@ -3195,8 +3195,20 @@ export async function registerRoutes(
 
   app.get("/api/qr/:tableCode/menu", async (req, res) => {
     const isEasyMode = req.query.mode === "easy";
-    const [table, prods, cats] = await Promise.all([
-      storage.getTableByCode(req.params.tableCode as string, req.db),
+    const tableCode = req.params.tableCode as string;
+
+    let table: any = null;
+    if (tableCode === "DISPATCH") {
+      const [config] = await req.db.select().from(businessConfig).limit(1);
+      if (!config?.operationModeDispatch) {
+        return res.status(404).json({ message: "Despacho no habilitado" });
+      }
+      table = { id: null, tableName: "Despacho", active: true };
+    } else {
+      table = await storage.getTableByCode(tableCode, req.db);
+    }
+
+    const [prods, cats] = await Promise.all([
       storage.getQRProducts(req.db),
       storage.getAllCategories(req.db),
     ]);
@@ -6734,6 +6746,13 @@ export async function registerRoutes(
   app.get("/api/qr/:tableCode/token", async (req, res) => {
     try {
       const tableCode = req.params.tableCode as string;
+
+      if (tableCode === "DISPATCH") {
+        const today = await getBusinessDateCR(req.tenantSchema);
+        const token = generateQrDailyToken("DISPATCH", today);
+        return res.json({ token, date: today });
+      }
+
       const table = await storage.getTableByCode(tableCode, req.db);
       if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
       const today = await getBusinessDateCR(req.tenantSchema);
