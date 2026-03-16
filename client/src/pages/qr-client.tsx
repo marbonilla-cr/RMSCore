@@ -402,7 +402,7 @@ export default function QRClientPage() {
   });
 
   useEffect(() => {
-    if (info && screen === "gc" && info.hasGuestCount) {
+    if (info && screen === "gc" && (info.hasGuestCount || info.isDispatch)) {
       setScreen(0);
     }
   }, [info, screen]);

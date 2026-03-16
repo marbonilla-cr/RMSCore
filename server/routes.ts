@@ -3166,6 +3166,9 @@ export async function registerRoutes(
 
   app.patch("/api/qr/:tableCode/guest-count", async (req, res) => {
     try {
+      if (req.params.tableCode === "DISPATCH") {
+        return res.json({ ok: true, skipped: true });
+      }
       const table = await storage.getTableByCode(req.params.tableCode, req.db);
       if (!table || !table.active) return res.status(404).json({ message: "Mesa no encontrada" });
       const guestCount = parseInt(req.body.guestCount);
