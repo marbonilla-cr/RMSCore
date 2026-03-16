@@ -3565,18 +3565,19 @@ export async function registerRoutes(
           const [ord] = await req.db.select().from(orders).where(eq(orders.id, ticket.orderId));
           if (ord && (ord as any).orderMode === "DISPATCH") {
             const ordItems = await req.db.select().from(orderItems).where(eq(orderItems.orderId, ord.id));
-            const allItemsReady = ordItems.every((i: any) => i.status === "READY" || i.status === "PAID" || i.status === "VOIDED");
+            const nonVoided = ordItems.filter((i: any) => i.status !== "VOIDED");
+            const allItemsReady = nonVoided.length > 0 && nonVoided.every((i: any) => i.status === "READY");
             if (allItemsReady) {
-              await req.db.update(orders).set({ dispatchStatus: "READY" } as any).where(eq(orders.id, ord.id));
+              await req.db.update(orders).set({ dispatchStatus: "READY" }).where(eq(orders.id, ord.id));
               broadcast("dispatch_order_ready", { orderId: ord.id, transactionCode: (ord as any).transactionCode });
+              notifyDispatchReady(ord.id, {
+                orderId: ord.id,
+                customerName: ordItems[0]?.customerNameSnapshot || "Cliente",
+                tableCode: ticket.tableNameSnapshot || "",
+                items: ordItems.map((i: any) => ({ name: i.productNameSnapshot, qty: i.qty })),
+                readyAt: new Date().toISOString(),
+              });
             }
-            notifyDispatchReady(ord.id, {
-              orderId: ord.id,
-              customerName: ordItems[0]?.customerNameSnapshot || "Cliente",
-              tableCode: ticket.tableNameSnapshot || "",
-              items: ordItems.map((i: any) => ({ name: i.productNameSnapshot, qty: i.qty })),
-              readyAt: new Date().toISOString(),
-            });
           }
         } catch (dispatchErr: any) {
           console.error("[dispatch-notify]", dispatchErr.message);
