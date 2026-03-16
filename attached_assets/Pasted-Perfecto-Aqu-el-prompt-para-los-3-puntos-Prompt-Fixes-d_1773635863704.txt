@@ -1,0 +1,75 @@
+Perfecto. Aquí el prompt para los 3 puntos:
+
+---
+
+## Prompt — Fixes de Despacho y QR
+
+**CAMBIO 1 — Código de 3 caracteres solo en órdenes de despacho**
+
+En `client/src/pages/tables.tsx` y `client/src/pages/table-detail.tsx`, el badge del código de 3 caracteres (`transactionCode`) solo debe mostrarse cuando `order.orderMode === 'DISPATCH'` o `order.isQuickSale === true`. En órdenes normales de mesa y QR no debe aparecer.
+
+Cuando sí aparece, hacerlo más grande y prominente — mínimo `text-2xl font-bold font-mono`.
+
+**CAMBIO 2 — Código de 3 caracteres en KDS para órdenes de despacho**
+
+En `client/src/pages/kds.tsx`, en cada ticket de KDS verificar si la orden es de despacho (`orderMode === 'DISPATCH'`). Si es así, mostrar el código de 3 caracteres en la tarjeta del ticket de forma prominente:
+
+```
+┌─────────────────────┐
+│  ⚡ DESPACHO  [A7K] │  ← grande y visible
+│  Americano x1       │
+│  Sandwich x2        │
+└─────────────────────┘
+```
+
+Para esto el backend debe incluir `transactionCode` y `orderMode` en el response de `GET /api/kds/tickets/active`. Verificar que estos campos están en el response — si no, agregarlos.
+
+**CAMBIO 3 — QR de despacho en Admin → Configuración**
+
+En `client/src/pages/admin/business-config.tsx`, en la sección de modos de operación, cuando `operationModeDispatch` está activo mostrar:
+
+```
+[toggle] Despacho en Mostrador ✅
+
+URL de despacho:
+https://rms.restlaantigua.com/qr/DISPATCH
+
+[Descargar QR] ← botón que genera y descarga el QR como PNG
+```
+
+La URL del QR de despacho es la misma URL del QR de mesa pero con un código especial `DISPATCH` que indica que no hay mesa física — el sistema lo trata como orden de despacho automáticamente.
+
+Para generar el QR en el frontend usar la librería `qrcode` — instalar si no existe:
+```bash
+npm install qrcode @types/qrcode
+```
+
+El botón genera un canvas con el QR y lo descarga como `qr-despacho-${businessName}.png`.
+
+**CAMBIO 4 — QR route para despacho en backend**
+
+En `server/routes.ts`, en `GET /api/qr/:tableCode/info`, cuando `tableCode === 'DISPATCH'`:
+- No buscar mesa física
+- Retornar `{ tableCode: 'DISPATCH', tableName: 'Despacho', isDispatch: true, maxSubaccounts: 1 }`
+- Verificar que `operationModeDispatch` está activo en `business_config` — si no, retornar 404
+
+En `POST /api/qr/:tableCode/submit`, cuando `tableCode === 'DISPATCH'`:
+- Crear orden con `orderMode = 'DISPATCH'` y `dispatchStatus = 'PENDING_PAYMENT'`
+- `tableId = null`
+- Retornar el `transactionCode` prominentemente en el response
+
+---
+
+**Verificación:**
+```bash
+npx tsc --noEmit
+```
+
+Probar en Replit:
+1. Activar modo despacho en Admin → Configuración
+2. Verificar que aparece botón "Descargar QR" y genera el PNG
+3. El código de 3 caracteres NO aparece en mesas normales
+4. El código de 3 caracteres SÍ aparece grande en órdenes de despacho
+5. KDS muestra el código en tickets de despacho
+
+No hacer deploy hasta que los 5 puntos pasen.
