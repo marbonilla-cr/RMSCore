@@ -5,7 +5,7 @@ import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
   Loader2, UtensilsCrossed, Coffee, ShoppingCart, User, Check,
-  Plus, Minus, ChevronLeft, Pencil, X, Users,
+  Plus, Minus, ChevronLeft, Pencil, X, Users, Bell,
 } from "lucide-react";
 
 /* ═══════════════════ Types ═══════════════════ */
@@ -379,7 +379,7 @@ export default function QRClientPage() {
   const [subaccountId, setSubaccountId] = useState<number | null>(null);
   const [qrToken, setQrToken] = useState<string>("");
   const [dispatchInfo, setDispatchInfo] = useState<{ transactionCode: string; orderId: number } | null>(null);
-  const [dispatchStatus, setDispatchStatus] = useState<"PENDING_PAYMENT" | "PAID" | "CANCELLED" | null>(null);
+  const [dispatchStatus, setDispatchStatus] = useState<"PENDING_PAYMENT" | "PAID" | "READY" | "CANCELLED" | null>(null);
 
   /* ─── Fetch daily QR token ─── */
   useEffect(() => {
@@ -596,7 +596,7 @@ export default function QRClientPage() {
   /* ─── Dispatch status polling ─── */
   useEffect(() => {
     if (screen !== "dispatch" || !dispatchInfo) return;
-    if (dispatchStatus === "PAID" || dispatchStatus === "CANCELLED") return;
+    if (dispatchStatus === "READY" || dispatchStatus === "CANCELLED") return;
 
     const interval = setInterval(async () => {
       try {
@@ -1203,6 +1203,7 @@ export default function QRClientPage() {
   }
 
   if (screen === "dispatch" && dispatchInfo) {
+    const isReady = dispatchStatus === "READY";
     const isPaid = dispatchStatus === "PAID";
     const isCancelled = dispatchStatus === "CANCELLED";
 
@@ -1211,26 +1212,35 @@ export default function QRClientPage() {
         display: "flex", flexDirection: "column", alignItems: "center",
         minHeight: "100dvh", padding: "40px 24px", textAlign: "center",
       }}>
-        <style>{PAGE_CSS}</style>
+        <style>{PAGE_CSS}{`
+          @keyframes dispatch-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.08); }
+          }
+        `}</style>
 
         <div style={{
           width: 80, height: 80, borderRadius: 50,
-          background: isCancelled ? C.redD : isPaid ? C.accD : "#fff8e1",
+          background: isCancelled ? C.redD : isReady ? "#dcfce7" : isPaid ? C.accD : "#fff8e1",
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 36, marginBottom: 16,
+          animation: isReady ? "dispatch-pulse 1.5s ease-in-out infinite" : "none",
         }}>
           {isCancelled ? <X size={36} style={{ color: C.red }} /> :
+           isReady ? <Bell size={36} style={{ color: "#16a34a" }} /> :
            isPaid ? <Check size={36} style={{ color: C.acc }} /> :
            <ShoppingCart size={36} style={{ color: "#f59e0b" }} />}
         </div>
 
         <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 8 }}>
-          {isCancelled ? "Orden cancelada" : isPaid ? "¡Pedido confirmado!" : "Tu código de despacho"}
+          {isCancelled ? "Orden cancelada" : isReady ? "¡Tu pedido está listo!" : isPaid ? "¡Pedido confirmado!" : "Tu código de despacho"}
         </div>
 
         <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 24 }}>
           {isCancelled
             ? "Tu orden fue cancelada. Podés realizar un nuevo pedido."
+            : isReady
+            ? "Acercáte al mostrador para retirarlo."
             : isPaid
             ? "Tu pago fue procesado. ¡Tu pedido está en cocina!"
             : "Mostrá este código al cajero para pagar tu pedido."}
@@ -1238,22 +1248,28 @@ export default function QRClientPage() {
 
         {!isCancelled && (
           <div style={{
-            background: C.card, border: `2px solid ${C.border2}`, borderRadius: 16,
+            background: C.card, border: `2px solid ${isReady ? "#16a34a" : C.border2}`, borderRadius: 16,
             padding: "20px 32px", marginBottom: 24, minWidth: 240,
           }}>
             <div style={{ fontSize: 11, color: C.text3, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>
               Código
             </div>
             <div data-testid="text-dispatch-code" style={{
-              fontFamily: mono, fontSize: 38, fontWeight: 700, color: C.acc,
+              fontFamily: mono, fontSize: 38, fontWeight: 700, color: isReady ? "#16a34a" : C.acc,
               letterSpacing: "0.12em",
             }}>
               {dispatchInfo.transactionCode}
             </div>
-            {!isPaid && (
+            {!isPaid && !isReady && (
               <div style={{ fontSize: 12, color: C.text3, marginTop: 8, display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
                 <Loader2 size={12} className="animate-spin" />
                 Esperando pago…
+              </div>
+            )}
+            {isPaid && !isReady && (
+              <div style={{ fontSize: 12, color: C.text3, marginTop: 8, display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+                <Loader2 size={12} className="animate-spin" />
+                Preparando tu pedido…
               </div>
             )}
           </div>
