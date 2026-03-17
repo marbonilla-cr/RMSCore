@@ -3166,7 +3166,7 @@ export async function registerRoutes(
       if (!(config as any)?.operationModeDispatch) {
         return res.status(404).json({ message: "Despacho no habilitado" });
       }
-      return res.json({ tableCode: "DISPATCH", tableName: "Despacho", isDispatch: true, maxSubaccounts: 1, hasGuestCount: false, orderId: null });
+      return res.json({ tableCode: "DISPATCH", tableName: "Despacho", isDispatch: true, maxSubaccounts: 1, hasGuestCount: false, orderId: null, googlePlaceId: config?.googlePlaceId || "", googleClientId: process.env.GOOGLE_CLIENT_ID || "" });
     }
 
     const table = await storage.getTableByCode(tableCode, req.db);
@@ -3175,7 +3175,7 @@ export async function registerRoutes(
     const maxSubaccounts = (config as any)?.maxSubaccounts ?? 15;
     const openOrder = await storage.getOpenOrderForTable(table.id, req.db);
     const hasGuestCount = !!(openOrder && openOrder.guestCount && openOrder.guestCount > 0);
-    res.json({ tableName: table.tableName, tableCode: table.tableCode, maxSubaccounts, hasGuestCount, orderId: openOrder?.id || null });
+    res.json({ tableName: table.tableName, tableCode: table.tableCode, maxSubaccounts, hasGuestCount, orderId: openOrder?.id || null, googlePlaceId: config?.googlePlaceId || "", googleClientId: process.env.GOOGLE_CLIENT_ID || "" });
   });
 
   app.patch("/api/qr/:tableCode/guest-count", async (req, res) => {

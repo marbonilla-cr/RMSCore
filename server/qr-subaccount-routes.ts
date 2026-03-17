@@ -1000,6 +1000,32 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
     }
   });
 
+  app.post("/api/qr/:tableCode/feedback", async (req, res) => {
+    try {
+      const { message, customerName } = req.body;
+      if (!message || !message.trim()) {
+        return res.status(400).json({ message: "El mensaje es requerido" });
+      }
+      const [config] = await req.db.select().from(businessConfig).limit(1);
+      if (!config?.reviewEmail) {
+        return res.status(200).json({ success: true, sent: false });
+      }
+      const { sendEmail } = await import("./services/email-service");
+      const html = `
+        <h2>Nuevo Mensaje de Cliente</h2>
+        <p><strong>Cliente:</strong> ${customerName || "Anónimo"}</p>
+        <p><strong>Mensaje:</strong></p>
+        <blockquote style="padding:12px 16px;background:#f9fafb;border-left:4px solid #6366f1;margin:0;border-radius:4px;">${message.trim()}</blockquote>
+        <p style="margin-top:16px;color:#6b7280;font-size:13px;">Enviado desde el flujo QR post-orden</p>
+      `;
+      await sendEmail(config.reviewEmail, `Mensaje de cliente — ${config.businessName || "RMSCore"}`, html);
+      res.json({ success: true, sent: true });
+    } catch (err: any) {
+      console.error("[feedback POST]", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/qr/dispatch-status/:transactionCode", async (req, res) => {
     try {
       const txCode = req.params.transactionCode;
