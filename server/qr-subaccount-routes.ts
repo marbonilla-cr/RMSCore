@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import crypto from "crypto";
-import { db } from "./db";
+import { db, pool } from "./db";
 import * as storage from "./storage";
 import * as invStorage from "./inventory-storage";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
@@ -388,6 +388,15 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         const [config] = await req.db.select().from(businessConfig).limit(1);
         if (!config?.operationModeDispatch) {
           return res.status(404).json({ message: "Despacho no habilitado" });
+        }
+        if (req.tenantId) {
+          const modCheck = await pool.query(
+            `SELECT is_active FROM public.tenant_modules WHERE tenant_id=$1 AND module_key='DISPATCH' LIMIT 1`,
+            [req.tenantId]
+          );
+          if (!modCheck.rows.length || !modCheck.rows[0].is_active) {
+            return res.status(404).json({ message: "Despacho no habilitado" });
+          }
         }
         return handleDirectDispatchSubmit(req, res, subaccountId, items, broadcast);
       }

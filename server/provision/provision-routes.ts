@@ -172,7 +172,18 @@ export function registerProvisionRoutes(app: Express) {
 
   app.delete("/api/superadmin/tenants/:id/modules/:moduleKey", requireSuperadmin, async (req, res) => {
     try {
-      await publicPool.query(`UPDATE public.tenant_modules SET is_active=false,deactivated_at=NOW() WHERE tenant_id=$1 AND module_key=$2`, [parseInt(req.params.id as string), req.params.moduleKey as string]);
+      const tenantId = parseInt(req.params.id as string);
+      const moduleKey = req.params.moduleKey as string;
+      await publicPool.query(`UPDATE public.tenant_modules SET is_active=false,deactivated_at=NOW() WHERE tenant_id=$1 AND module_key=$2`, [tenantId, moduleKey]);
+      if (moduleKey === "DISPATCH") {
+        const tenantRow = await publicPool.query(`SELECT schema_name FROM public.tenants WHERE id=$1 LIMIT 1`, [tenantId]);
+        if (tenantRow.rows.length) {
+          const schemaName = tenantRow.rows[0].schema_name;
+          await publicPool.query(
+            `UPDATE "${schemaName}".business_config SET operation_mode_dispatch=false`,
+          );
+        }
+      }
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
