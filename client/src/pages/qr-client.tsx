@@ -599,10 +599,10 @@ export default function QRClientPage() {
     });
   }, [cart]);
 
-  /* ─── Dispatch status polling ─── */
+  /* ─── Dispatch status polling (continues until DELIVERED or CANCELLED) ─── */
   useEffect(() => {
     if (screen !== "dispatch" || !dispatchInfo) return;
-    if (dispatchStatus === "READY" || dispatchStatus === "CANCELLED") return;
+    if (dispatchStatus === "DELIVERED" || dispatchStatus === "CANCELLED") return;
 
     const interval = setInterval(async () => {
       try {
@@ -665,16 +665,13 @@ export default function QRClientPage() {
     return () => clearTimeout(timer);
   }, [screen, reviewOrderId]);
 
-  /* ─── Review timer: 5s after dispatch READY ─── */
+  /* ─── Review trigger: when dispatch is DELIVERED ─── */
   useEffect(() => {
-    if (dispatchStatus !== "READY" || screen !== "dispatch") return;
-    const timer = setTimeout(() => {
-      setReviewOrderId(dispatchInfo?.orderId ?? null);
-      setSelectedRating(0);
-      setReviewComment("");
-      setScreen("review");
-    }, 5000);
-    return () => clearTimeout(timer);
+    if (dispatchStatus !== "DELIVERED" || screen !== "dispatch") return;
+    setReviewOrderId(dispatchInfo?.orderId ?? null);
+    setSelectedRating(0);
+    setReviewComment("");
+    setScreen("review");
   }, [dispatchStatus, screen]);
 
   /* ─── Handle review submit ─── */

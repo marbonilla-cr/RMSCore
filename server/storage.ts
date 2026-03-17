@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { getTenantDb } from "./db-tenant";
-import { eq, and, desc, asc, sql, isNull, ne, inArray, gte, lte, count } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, isNull, ne, inArray, gte, lte, count } from "drizzle-orm";
 import {
   users, tables, categories, products, paymentMethods,
   orders, orderItems, qrSubmissions, kitchenTickets, kitchenTicketItems,
@@ -827,8 +827,16 @@ export async function createKitchenTicket(data: InsertKitchenTicket, dbInstance?
 
 export async function getActiveKitchenTickets(destination?: string, dbInstance?: typeof db) {
   const d = dbInstance || db;
-  const conditions = [ne(kitchenTickets.status, "READY"), isNull(kitchenTickets.clearedAt)];
-  if (destination) conditions.push(eq(kitchenTickets.kdsDestination, destination));
+  const destConditions: any[] = [isNull(kitchenTickets.clearedAt)];
+  if (destination) destConditions.push(eq(kitchenTickets.kdsDestination, destination));
+  const statusCondition = or(
+    ne(kitchenTickets.status, "READY"),
+    and(
+      eq(kitchenTickets.status, "READY"),
+      eq(orders.orderMode, "DISPATCH"),
+      or(isNull(orders.dispatchStatus), ne(orders.dispatchStatus, "DELIVERED"))
+    )
+  );
   const rows = await d.select({
     id: kitchenTickets.id,
     orderId: kitchenTickets.orderId,
@@ -840,9 +848,10 @@ export async function getActiveKitchenTickets(destination?: string, dbInstance?:
     clearedAt: kitchenTickets.clearedAt,
     transactionCode: orders.transactionCode,
     orderMode: orders.orderMode,
+    dispatchStatus: orders.dispatchStatus,
   }).from(kitchenTickets)
     .leftJoin(orders, eq(kitchenTickets.orderId, orders.id))
-    .where(and(...conditions))
+    .where(and(...destConditions, statusCondition))
     .orderBy(asc(kitchenTickets.createdAt));
   return rows;
 }

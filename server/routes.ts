@@ -3605,6 +3605,22 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/dispatch/orders/:orderId/delivered", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId as string);
+      const [ord] = await req.db.select().from(orders).where(eq(orders.id, orderId));
+      if (!ord) return res.status(404).json({ message: "Orden no encontrada" });
+      if ((ord as any).orderMode !== "DISPATCH") return res.status(400).json({ message: "Solo aplica a órdenes de despacho" });
+      if ((ord as any).dispatchStatus === "DELIVERED") return res.status(409).json({ message: "Ya marcada como entregada" });
+      await req.db.update(orders).set({ dispatchStatus: "DELIVERED" } as any).where(eq(orders.id, orderId));
+      broadcast("dispatch_order_delivered", { orderId, transactionCode: (ord as any).transactionCode });
+      broadcast("kitchen_item_status_changed", { orderId, status: "DELIVERED" });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/kds/clear-history", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
     const destination = (req.query.destination as string) || undefined;
     await storage.clearKitchenHistory(destination, req.db);

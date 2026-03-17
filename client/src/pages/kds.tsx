@@ -29,6 +29,7 @@ interface KDSTicket {
   items: KDSTicketItem[];
   transactionCode?: string | null;
   orderMode?: string | null;
+  dispatchStatus?: string | null;
 }
 
 interface GroupedTicket {
@@ -40,6 +41,7 @@ interface GroupedTicket {
   allReady: boolean;
   transactionCode?: string | null;
   orderMode?: string | null;
+  dispatchStatus?: string | null;
 }
 
 function formatElapsed(dateStr: string) {
@@ -111,6 +113,7 @@ function groupTicketsByOrder(tickets: KDSTicket[]): GroupedTicket[] {
         allReady: false,
         transactionCode: t.transactionCode,
         orderMode: t.orderMode,
+        dispatchStatus: t.dispatchStatus,
       });
     }
   }
@@ -260,9 +263,44 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
       const previous = queryClient.getQueryData<KDSTicket[]>(activeQueryKey);
       const previousOrder = [...groupOrderRef.current];
       const idsSet = new Set(ticketIds);
+      const ticketsBeingMarked = previous?.filter(t => idsSet.has(t.id)) || [];
+      const isDispatch = ticketsBeingMarked.some(t => t.orderMode === "DISPATCH");
+      if (isDispatch) {
+        return { previous, previousOrder };
+      }
       queryClient.setQueryData<KDSTicket[]>(activeQueryKey, (old) => {
         if (!old) return old;
         const remaining = old.filter(t => !idsSet.has(t.id));
+        const remainingOrderIds = new Set(remaining.map(t => t.orderId));
+        groupOrderRef.current = groupOrderRef.current.filter(id => remainingOrderIds.has(id));
+        return remaining;
+      });
+      return { previous, previousOrder };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(activeQueryKey, context.previous);
+      }
+      if (context?.previousOrder) {
+        groupOrderRef.current = context.previousOrder;
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/kds/tickets"] });
+    },
+  });
+
+  const deliverDispatchMutation = useMutation({
+    mutationFn: async (orderId: number) => {
+      await apiRequest("PATCH", `/api/dispatch/orders/${orderId}/delivered`);
+    },
+    onMutate: async (orderId) => {
+      await queryClient.cancelQueries({ queryKey: activeQueryKey });
+      const previous = queryClient.getQueryData<KDSTicket[]>(activeQueryKey);
+      const previousOrder = [...groupOrderRef.current];
+      queryClient.setQueryData<KDSTicket[]>(activeQueryKey, (old) => {
+        if (!old) return old;
+        const remaining = old.filter(t => t.orderId !== orderId);
         const remainingOrderIds = new Set(remaining.map(t => t.orderId));
         groupOrderRef.current = groupOrderRef.current.filter(id => remainingOrderIds.has(id));
         return remaining;
@@ -537,6 +575,46 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
         }
         .kds-complete-btn:active:not(:disabled) { transform: scale(0.97); }
 
+        .kds-dispatch-ready-badge {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 8px 12px;
+          margin: 8px 12px 0;
+          border-radius: var(--r-sm);
+          background: #fef3c7;
+          color: #92400e;
+          font-family: var(--f-disp);
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+        }
+        .kds-deliver-btn {
+          margin: 0 12px 12px;
+          padding: 14px;
+          border-radius: var(--r-sm);
+          background: #f97316;
+          color: #fff;
+          font-family: var(--f-disp);
+          font-size: 16px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          border: none;
+          cursor: pointer;
+          transition: all var(--t-mid);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+        .kds-deliver-btn:disabled {
+          background: var(--s3);
+          color: var(--text3);
+          cursor: default;
+        }
+        .kds-deliver-btn:active:not(:disabled) { transform: scale(0.97); }
+
         .kds-hint {
           text-align: center;
           font-family: var(--f-mono);
@@ -791,14 +869,33 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
                     })}
                   </div>
                   {group.allReady ? (
-                    <button
-                      className="kds-complete-btn"
-                      disabled={markGroupReadyMutation.isPending}
-                      onClick={() => markGroupReadyMutation.mutate(group.ticketIds)}
-                      data-testid={`button-complete-group-${group.orderId}`}
-                    >
-                      <CheckCircle size={18} /> Ticket Completo
-                    </button>
+                    group.orderMode === "DISPATCH" && group.dispatchStatus === "READY" ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div className="kds-dispatch-ready-badge" data-testid={`badge-ready-${group.orderId}`}>
+                          <CheckCircle size={14} /> Listo &middot; Esperando entrega
+                        </div>
+                        <button
+                          className="kds-deliver-btn"
+                          disabled={deliverDispatchMutation.isPending}
+                          onClick={() => deliverDispatchMutation.mutate(group.orderId)}
+                          data-testid={`button-deliver-${group.orderId}`}
+                        >
+                          {deliverDispatchMutation.isPending
+                            ? <Loader2 size={18} className="animate-spin" />
+                            : <CheckCircle size={18} />}
+                          Entregar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="kds-complete-btn"
+                        disabled={markGroupReadyMutation.isPending}
+                        onClick={() => markGroupReadyMutation.mutate(group.ticketIds)}
+                        data-testid={`button-complete-group-${group.orderId}`}
+                      >
+                        <CheckCircle size={18} /> Ticket Completo
+                      </button>
+                    )
                   ) : (
                     <div className="kds-hint">Toque cada item para avanzar su estado</div>
                   )}

@@ -23,13 +23,20 @@ I prefer simple language. I want iterative development. Ask before making major 
   - Screen types extended: `"review" | "review_thanks"` added
   - `beforeunload` warning active on screens 2, 3, 4, dispatch, review
   - Screen 4 (order sent): sticky amber "No cierres tu pantalla" banner; captures `orderId` from submit response
-  - Review timer: 30min after QR order sent → shows review screen; 5s after dispatch READY → shows review screen
+  - Review timer: 30min after QR order sent → shows review screen; dispatch review triggers on DELIVERED (not READY)
   - Star rating UI (1–5), comment textarea, submit and skip buttons
   - `review_thanks` screen shows confirmation + loyalty points awarded (if any)
 - **Backend:** `POST /api/qr/:tableCode/review` (public, no auth) — validates, inserts, emails notification
 - **Admin reviews:** `GET /api/admin/reviews` (MANAGER) — returns reviews list + avg rating
 - **Admin UI (`/admin/loyalty`):** "Reseñas" tab with avg rating widget + full review list
 - **Admin UI (`/admin/business-config`):** Review Settings card — reviewPoints, reviewEmail, googlePlaceId fields
+
+## Dispatch "Entregado" Step (KDS)
+- **dispatchStatus flow**: `null` → `PENDING_PAYMENT` → `PAID` → `READY` → `DELIVERED`
+- **KDS (`kds.tsx`)**: Dispatch tickets stay visible after READY with "Listo · Esperando entrega" badge + orange "Entregar" button. Non-dispatch tickets disappear as before.
+- **Backend**: `PATCH /api/dispatch/orders/:orderId/delivered` (requireRole KITCHEN/MANAGER) — sets `dispatchStatus = "DELIVERED"`, broadcasts `dispatch_order_delivered`
+- **Storage**: `getActiveKitchenTickets` includes DISPATCH READY tickets where `dispatchStatus != "DELIVERED"`
+- **QR client**: Dispatch review trigger changed from 5s after READY to immediately on DELIVERED detection (via polling)
 
 ## System Architecture
 The system is built as a PWA with a mobile-first approach, ensuring broad accessibility and a responsive user experience.
