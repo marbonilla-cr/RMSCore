@@ -141,7 +141,6 @@ export function registerLoyaltyRoutes(app: any) {
 
   // POST /api/loyalty/session-award — award points for an order using a stored loyalty token
   app.post("/api/loyalty/session-award", async (req: any, res: any) => {
-    console.log("[session-award] HIT", req.body);
     try {
       const { loyaltyToken, orderId } = req.body;
       if (!loyaltyToken || !orderId) return res.status(400).json({ message: "loyaltyToken y orderId requeridos" });
