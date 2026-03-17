@@ -1,5 +1,5 @@
 import { db, pool } from "./db";
-import { customers, loyaltyAccounts, loyaltyEvents, loyaltyConfig } from "@shared/schema";
+import { customers, loyaltyAccounts, loyaltyEvents, loyaltyConfig, orders } from "@shared/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { verifyGoogleToken, findOrCreateCustomer } from "./loyalty-auth";
 
@@ -51,27 +51,162 @@ export function registerLoyaltyRoutes(app: any) {
       if (!googleClientId || googleClientId === "pending") {
         return res.status(503).json({ message: "Google OAuth no configurado aún" });
       }
-      const { idToken } = req.body;
+      const { idToken, orderId } = req.body;
       if (!idToken) return res.status(400).json({ message: "idToken requerido" });
       const googleData = await verifyGoogleToken(idToken);
       const customer = await findOrCreateCustomer(googleData);
       const tenantId = resolveTenantId(req);
       let pointsBalance = 0;
+      let earnedPoints = 0;
+
       if (tenantId) {
-        const d = req.db || db;
-        const [account] = await d.select({ pointsBalance: loyaltyAccounts.pointsBalance })
+        // Fetch loyalty account balance
+        const [account] = await db.select({ pointsBalance: loyaltyAccounts.pointsBalance, lifetimePoints: loyaltyAccounts.lifetimePoints, id: loyaltyAccounts.id })
           .from(loyaltyAccounts)
           .where(and(eq(loyaltyAccounts.customerId, customer.id), eq(loyaltyAccounts.tenantId, tenantId)))
           .limit(1);
-        if (account) pointsBalance = parseFloat(account.pointsBalance) || 0;
+
+        // Award points for this order if orderId provided and not already awarded
+        if (orderId) {
+          const [config] = await db.select().from(loyaltyConfig).where(eq(loyaltyConfig.tenantId, tenantId));
+          if (config?.isActive) {
+            // Check if points already awarded for this order + customer
+            const alreadyAwarded = await db.select({ id: loyaltyEvents.id })
+              .from(loyaltyEvents)
+              .where(and(
+                eq(loyaltyEvents.customerId, customer.id),
+                eq(loyaltyEvents.tenantId, tenantId),
+                eq(loyaltyEvents.orderId, Number(orderId)),
+                eq(loyaltyEvents.eventType, "EARN"),
+              ))
+              .limit(1);
+
+            if (alreadyAwarded.length === 0) {
+              // Get order total from tenant DB
+              const tenantDb = req.db || db;
+              const [order] = await tenantDb.select({ totalAmount: orders.totalAmount })
+                .from(orders)
+                .where(eq(orders.id, Number(orderId)))
+                .limit(1);
+
+              if (order && parseFloat(order.totalAmount || "0") > 0) {
+                const earnRate = parseFloat(config.earnRate) / 100;
+                earnedPoints = Math.floor(parseFloat(order.totalAmount) * earnRate);
+                if (earnedPoints > 0) {
+                  if (!account) {
+                    await db.insert(loyaltyAccounts).values({
+                      customerId: customer.id, tenantId,
+                      pointsBalance: String(earnedPoints),
+                      lifetimePoints: String(earnedPoints),
+                    });
+                  } else {
+                    const newBal = parseFloat(account.pointsBalance) + earnedPoints;
+                    const newLifetime = parseFloat(account.lifetimePoints) + earnedPoints;
+                    await db.update(loyaltyAccounts).set({
+                      pointsBalance: String(newBal),
+                      lifetimePoints: String(newLifetime),
+                      updatedAt: new Date(),
+                    }).where(eq(loyaltyAccounts.id, account.id));
+                  }
+                  await db.insert(loyaltyEvents).values({
+                    customerId: customer.id, tenantId, eventType: "EARN",
+                    points: String(earnedPoints), amountSpent: order.totalAmount,
+                    orderId: Number(orderId),
+                    description: `Puntos por compra — Orden #${orderId}`,
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Re-fetch balance after potential award
+        const [freshAccount] = await db.select({ pointsBalance: loyaltyAccounts.pointsBalance })
+          .from(loyaltyAccounts)
+          .where(and(eq(loyaltyAccounts.customerId, customer.id), eq(loyaltyAccounts.tenantId, tenantId)))
+          .limit(1);
+        if (freshAccount) pointsBalance = parseFloat(freshAccount.pointsBalance) || 0;
       }
+
       res.json({
         customer,
         pointsBalance,
+        earnedPoints,
         token: Buffer.from(JSON.stringify({ customerId: customer.id, email: customer.email })).toString("base64"),
       });
     } catch (err: any) {
       res.status(err.status || 401).json({ message: "Token de Google inválido: " + err.message });
+    }
+  });
+
+  // POST /api/loyalty/session-award — award points for an order using a stored loyalty token
+  app.post("/api/loyalty/session-award", async (req: any, res: any) => {
+    console.log("[session-award] HIT", req.body);
+    try {
+      const { loyaltyToken, orderId } = req.body;
+      if (!loyaltyToken || !orderId) return res.status(400).json({ message: "loyaltyToken y orderId requeridos" });
+      let customerId: number;
+      try {
+        const decoded = JSON.parse(Buffer.from(loyaltyToken, "base64").toString("utf8"));
+        customerId = decoded.customerId;
+        if (!customerId) throw new Error("invalid");
+      } catch { return res.status(400).json({ message: "Token inválido" }); }
+
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) return res.status(400).json({ message: "tenantId requerido" });
+
+      const [config] = await db.select().from(loyaltyConfig).where(eq(loyaltyConfig.tenantId, tenantId));
+      if (!config?.isActive) return res.json({ earnedPoints: 0, pointsBalance: 0 });
+
+      // Check if already awarded
+      const alreadyAwarded = await db.select({ id: loyaltyEvents.id })
+        .from(loyaltyEvents)
+        .where(and(
+          eq(loyaltyEvents.customerId, customerId),
+          eq(loyaltyEvents.tenantId, tenantId),
+          eq(loyaltyEvents.orderId, Number(orderId)),
+          eq(loyaltyEvents.eventType, "EARN"),
+        )).limit(1);
+
+      let earnedPoints = 0;
+      if (alreadyAwarded.length === 0) {
+        const tenantDb = req.db || db;
+        const [order] = await tenantDb.select({ totalAmount: orders.totalAmount })
+          .from(orders).where(eq(orders.id, Number(orderId))).limit(1);
+        if (order && parseFloat(order.totalAmount || "0") > 0) {
+          const earnRate = parseFloat(config.earnRate) / 100;
+          earnedPoints = Math.floor(parseFloat(order.totalAmount) * earnRate);
+          if (earnedPoints > 0) {
+            const [account] = await db.select({ pointsBalance: loyaltyAccounts.pointsBalance, lifetimePoints: loyaltyAccounts.lifetimePoints, id: loyaltyAccounts.id })
+              .from(loyaltyAccounts)
+              .where(and(eq(loyaltyAccounts.customerId, customerId), eq(loyaltyAccounts.tenantId, tenantId)))
+              .limit(1);
+            if (!account) {
+              await db.insert(loyaltyAccounts).values({ customerId, tenantId, pointsBalance: String(earnedPoints), lifetimePoints: String(earnedPoints) });
+            } else {
+              await db.update(loyaltyAccounts).set({
+                pointsBalance: String(parseFloat(account.pointsBalance) + earnedPoints),
+                lifetimePoints: String(parseFloat(account.lifetimePoints) + earnedPoints),
+                updatedAt: new Date(),
+              }).where(eq(loyaltyAccounts.id, account.id));
+            }
+            await db.insert(loyaltyEvents).values({
+              customerId, tenantId, eventType: "EARN",
+              points: String(earnedPoints), amountSpent: order.totalAmount,
+              orderId: Number(orderId), description: `Puntos por compra — Orden #${orderId}`,
+            });
+          }
+        }
+      }
+
+      const [freshAccount] = await db.select({ pointsBalance: loyaltyAccounts.pointsBalance })
+        .from(loyaltyAccounts)
+        .where(and(eq(loyaltyAccounts.customerId, customerId), eq(loyaltyAccounts.tenantId, tenantId)))
+        .limit(1);
+      const pointsBalance = freshAccount ? parseFloat(freshAccount.pointsBalance) || 0 : 0;
+      res.json({ earnedPoints, pointsBalance });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 

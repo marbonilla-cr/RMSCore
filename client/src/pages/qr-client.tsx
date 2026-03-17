@@ -391,6 +391,7 @@ export default function QRClientPage() {
     } catch { return null; }
   });
   const [loyaltyLoading, setLoyaltyLoading] = useState(false);
+  const [earnedPoints, setEarnedPoints] = useState(0);
 
   /* ─── Fetch daily QR token ─── */
   useEffect(() => {
@@ -676,6 +677,32 @@ export default function QRClientPage() {
     setScreen("loyalty_post");
   }, [dispatchStatus, screen]);
 
+  /* ─── Award points for returning customer on loyalty_post ─── */
+  useEffect(() => {
+    if (screen !== "loyalty_post" || !loyaltyCustomer || !reviewOrderId) return;
+    const token = localStorage.getItem("rms_loyalty_token");
+    if (!token) return;
+    (async () => {
+      try {
+        const r = await fetch("/api/loyalty/session-award", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ loyaltyToken: token, orderId: reviewOrderId }),
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data.earnedPoints > 0) {
+          setEarnedPoints(data.earnedPoints);
+          setLoyaltyCustomer(prev => {
+            const updated = prev ? { ...prev, points: data.pointsBalance } : prev;
+            if (updated) localStorage.setItem("rms_loyalty_customer", JSON.stringify(updated));
+            return updated;
+          });
+        }
+      } catch {}
+    })();
+  }, [screen, loyaltyCustomer?.name, reviewOrderId]);
+
   /* ─── Google Identity Services: load script on loyalty_post ─── */
   useEffect(() => {
     if (screen !== "loyalty_post") return;
@@ -694,12 +721,13 @@ export default function QRClientPage() {
       const r = await fetch("/api/loyalty/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken: response.credential }),
+        body: JSON.stringify({ idToken: response.credential, orderId: reviewOrderId || undefined }),
       });
       if (!r.ok) throw new Error("Auth failed");
       const data = await r.json();
       const cust = { name: data.customer.name, points: data.pointsBalance || 0 };
       setLoyaltyCustomer(cust);
+      setEarnedPoints(data.earnedPoints || 0);
       localStorage.setItem("rms_loyalty_customer", JSON.stringify(cust));
       localStorage.setItem("rms_loyalty_token", data.token);
     } catch {
@@ -707,7 +735,7 @@ export default function QRClientPage() {
     } finally {
       setLoyaltyLoading(false);
     }
-  }, [toast]);
+  }, [toast, reviewOrderId]);
 
   useEffect(() => {
     if (screen !== "loyalty_post" || loyaltyCustomer) return;
@@ -1503,14 +1531,26 @@ export default function QRClientPage() {
               data-testid="text-loyalty-greeting">
               &iexcl;Hola {loyaltyCustomer.name.split(" ")[0]}!
             </div>
+            {earnedPoints > 0 && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "10px 20px",
+                background: "#fef9c3", border: "1.5px solid #fbbf24", borderRadius: 12,
+                marginTop: 12, marginBottom: 4,
+              }} data-testid="text-earned-points">
+                <Star size={18} style={{ color: "#d97706", fill: "#d97706" }} />
+                <span style={{ fontSize: 15, color: "#92400e", fontWeight: 700 }}>
+                  +{earnedPoints} puntos ganados en esta compra
+                </span>
+              </div>
+            )}
             <div style={{
               display: "flex", alignItems: "center", gap: 8, padding: "14px 24px",
               background: C.accT, border: `1.5px solid ${C.accM}`, borderRadius: 14,
-              marginBottom: 8, marginTop: 12,
+              marginBottom: 8, marginTop: 8,
             }} data-testid="text-loyalty-points">
               <Star size={20} style={{ color: C.acc, fill: C.acc }} />
               <span style={{ fontSize: 18, color: C.acc, fontWeight: 700 }}>
-                {loyaltyCustomer.points} puntos
+                {loyaltyCustomer.points} puntos totales
               </span>
             </div>
             <div style={{ fontSize: 13, color: C.text3, marginBottom: 32 }}>
