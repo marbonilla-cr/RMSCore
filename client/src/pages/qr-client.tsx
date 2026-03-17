@@ -368,7 +368,7 @@ export default function QRClientPage() {
   const tableCode = params?.tableCode || "";
   const { toast } = useToast();
 
-  const [screen, setScreen] = useState<"gc" | 0 | 1 | 2 | 3 | 4 | "dispatch" | "review" | "review_thanks">("gc");
+  const [screen, setScreen] = useState<"gc" | 0 | 1 | 2 | 3 | 4 | "dispatch" | "loyalty_post" | "review" | "review_thanks">("gc");
   const [gcInput, setGcInput] = useState("");
   const [name, setName] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -379,7 +379,7 @@ export default function QRClientPage() {
   const [subaccountId, setSubaccountId] = useState<number | null>(null);
   const [qrToken, setQrToken] = useState<string>("");
   const [dispatchInfo, setDispatchInfo] = useState<{ transactionCode: string; orderId: number } | null>(null);
-  const [dispatchStatus, setDispatchStatus] = useState<"PENDING_PAYMENT" | "PAID" | "READY" | "CANCELLED" | null>(null);
+  const [dispatchStatus, setDispatchStatus] = useState<"PENDING_PAYMENT" | "PAID" | "READY" | "DELIVERED" | "CANCELLED" | null>(null);
   const [reviewOrderId, setReviewOrderId] = useState<number | null>(null);
   const [selectedRating, setSelectedRating] = useState<number>(0);
   const [reviewComment, setReviewComment] = useState<string>("");
@@ -644,7 +644,7 @@ export default function QRClientPage() {
 
   /* ─── Beforeunload warning ─── */
   useEffect(() => {
-    const shouldWarn = screen === 2 || screen === 3 || screen === 4 || screen === "dispatch" || screen === "review";
+    const shouldWarn = screen === 2 || screen === 3 || screen === 4 || screen === "dispatch" || screen === "loyalty_post" || screen === "review";
     if (!shouldWarn) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
@@ -665,14 +665,20 @@ export default function QRClientPage() {
     return () => clearTimeout(timer);
   }, [screen, reviewOrderId]);
 
-  /* ─── Review trigger: when dispatch is DELIVERED ─── */
+  /* ─── Post-order trigger: when dispatch is DELIVERED → loyalty_post ─── */
   useEffect(() => {
     if (dispatchStatus !== "DELIVERED" || screen !== "dispatch") return;
     setReviewOrderId(dispatchInfo?.orderId ?? null);
     setSelectedRating(0);
     setReviewComment("");
-    setScreen("review");
+    setScreen("loyalty_post");
   }, [dispatchStatus, screen]);
+
+  /* ─── loyalty_post: placeholder until task #30 implements full loyalty screen ─── */
+  useEffect(() => {
+    if (screen !== "loyalty_post") return;
+    setScreen("review");
+  }, [screen]);
 
   /* ─── Handle review submit ─── */
   const handleSubmitReview = async () => {

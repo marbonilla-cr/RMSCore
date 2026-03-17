@@ -107,7 +107,7 @@ export function registerDispatchRoutes(app: Express, broadcast: Function) {
       const db = (req as any).db || globalDb;
       const [order] = await db.select().from(schema.orders).where(eq(schema.orders.id, orderId));
       if (!order) return res.status(404).json({ message: "Orden no encontrada" });
-      res.json({ orderId, status: order.status, isReady: order.status === "READY", hasActiveSession: dispatchSessions.has(orderId) });
+      res.json({ orderId, status: order.status, isReady: order.status === "READY", isDelivered: order.dispatchStatus === "DELIVERED", dispatchStatus: order.dispatchStatus, hasActiveSession: dispatchSessions.has(orderId) });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 

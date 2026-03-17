@@ -36,7 +36,8 @@ I prefer simple language. I want iterative development. Ask before making major 
 - **KDS (`kds.tsx`)**: Dispatch tickets stay visible after READY with "Listo · Esperando entrega" badge + orange "Entregar" button. Non-dispatch tickets disappear as before.
 - **Backend**: `PATCH /api/dispatch/orders/:orderId/delivered` (requireRole KITCHEN/MANAGER) — sets `dispatchStatus = "DELIVERED"`, broadcasts `dispatch_order_delivered`
 - **Storage**: `getActiveKitchenTickets` includes DISPATCH READY tickets where `dispatchStatus != "DELIVERED"`
-- **QR client**: Dispatch review trigger changed from 5s after READY to immediately on DELIVERED detection (via polling)
+- **QR client**: Dispatch flow goes DELIVERED → `loyalty_post` → `review` (loyalty_post is placeholder for task #30)
+- **Dispatch status endpoint**: `GET /api/dispatch/order/:orderId/status` returns `isDelivered` + `dispatchStatus` fields
 
 ## System Architecture
 The system is built as a PWA with a mobile-first approach, ensuring broad accessibility and a responsive user experience.
