@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
-import { Save, Building2, Loader2, Upload, Package, Globe, Monitor, Download, QrCode } from "lucide-react";
+import { Save, Building2, Loader2, Upload, Package, Globe, Monitor, Download, QrCode, Star } from "lucide-react";
 import QRCode from "qrcode";
 
 interface TaxCategory {
@@ -36,6 +36,9 @@ interface BusinessConfigData {
   operationModeQr?: boolean;
   operationModeDispatch?: boolean;
   dispatchOrderTimeoutMinutes?: number;
+  reviewPoints?: number;
+  reviewEmail?: string;
+  googlePlaceId?: string;
 }
 
 const TIMEZONE_OPTIONS = [
@@ -72,6 +75,9 @@ export default function AdminBusinessConfigPage() {
     operationModeQr: true,
     operationModeDispatch: false,
     dispatchOrderTimeoutMinutes: 15,
+    reviewPoints: 0,
+    reviewEmail: "",
+    googlePlaceId: "",
   });
 
   const { data: config, isLoading, isError, error } = useQuery<BusinessConfigData>({
@@ -98,6 +104,9 @@ export default function AdminBusinessConfigPage() {
         operationModeQr: config.operationModeQr !== undefined ? config.operationModeQr : true,
         operationModeDispatch: config.operationModeDispatch !== undefined ? config.operationModeDispatch : false,
         dispatchOrderTimeoutMinutes: config.dispatchOrderTimeoutMinutes ?? 15,
+        reviewPoints: config.reviewPoints ?? 0,
+        reviewEmail: config.reviewEmail || "",
+        googlePlaceId: config.googlePlaceId || "",
       });
     }
   }, [config]);
@@ -385,6 +394,59 @@ export default function AdminBusinessConfigPage() {
                   </>
                 )}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mt-4">
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <Star className="w-4 h-4 text-muted-foreground" />
+              <span className="font-semibold">Reseñas de Clientes</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Configura la pantalla de reseña QR que aparece al cliente tras su visita.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label htmlFor="reviewPoints">Puntos por Reseña (Loyalty)</Label>
+                <input
+                  id="reviewPoints"
+                  data-testid="input-review-points"
+                  type="number"
+                  min={0}
+                  value={form.reviewPoints ?? 0}
+                  onChange={(e) => setForm({ ...form, reviewPoints: parseInt(e.target.value) || 0 })}
+                  className="w-full px-3 py-2 text-sm border rounded-md"
+                />
+                <p className="text-xs text-muted-foreground">0 = no award points for reviews</p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="reviewEmail">Email para notificaciones de reseña</Label>
+                <Input
+                  id="reviewEmail"
+                  data-testid="input-review-email"
+                  type="email"
+                  value={form.reviewEmail || ""}
+                  onChange={(e) => setForm({ ...form, reviewEmail: e.target.value })}
+                  placeholder="reseñas@mirestaurante.com"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="googlePlaceId">Google Place ID</Label>
+              <Input
+                id="googlePlaceId"
+                data-testid="input-google-place-id"
+                value={form.googlePlaceId || ""}
+                onChange={(e) => setForm({ ...form, googlePlaceId: e.target.value })}
+                placeholder="ChIJ..."
+              />
+              <p className="text-xs text-muted-foreground">
+                Futuro: se usará para redirigir reseñas 5★ a Google Maps.
+              </p>
             </div>
           </CardContent>
         </Card>

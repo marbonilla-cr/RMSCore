@@ -9,7 +9,24 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Save, Gift, Users, Search, Star, TrendingUp, Settings } from "lucide-react";
+import { Loader2, Save, Gift, Users, Search, Star, TrendingUp, Settings, MessageSquare } from "lucide-react";
+
+interface ReviewRow {
+  id: number;
+  orderId: number;
+  rating: number;
+  comment: string | null;
+  customerName: string | null;
+  orderMode: string;
+  businessDate: string | null;
+  createdAt: string;
+}
+
+interface ReviewsResponse {
+  reviews: ReviewRow[];
+  avg: string | null;
+  total: number;
+}
 
 interface LoyaltyConfig {
   id?: number;
@@ -35,7 +52,7 @@ interface CustomerRow {
 export default function AdminLoyaltyPage() {
   const { toast } = useToast();
   const [searchQ, setSearchQ] = useState("");
-  const [tab, setTab] = useState<"config" | "customers">("config");
+  const [tab, setTab] = useState<"config" | "customers" | "reviews">("config");
 
   const { data: config, isLoading: configLoading } = useQuery<LoyaltyConfig | null>({
     queryKey: ["/api/loyalty/config"],
@@ -86,13 +103,18 @@ export default function AdminLoyaltyPage() {
 
   const displayCustomers = searchQ.length >= 2 ? (searchResults || []) : (customers || []);
 
+  const { data: reviewsData, isLoading: reviewsLoading } = useQuery<ReviewsResponse>({
+    queryKey: ["/api/admin/reviews"],
+    enabled: tab === "reviews",
+  });
+
   return (
     <div className="p-4 max-w-3xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <Gift className="w-6 h-6 text-primary" />
         <div>
-          <h1 className="text-xl font-semibold" data-testid="text-loyalty-title">Sistema de Loyalty</h1>
-          <p className="text-sm text-muted-foreground">Gestiona puntos, configuración y clientes del programa</p>
+          <h1 className="text-xl font-semibold" data-testid="text-loyalty-title">Loyalty & Reseñas</h1>
+          <p className="text-sm text-muted-foreground">Gestiona puntos, configuración, clientes y reseñas</p>
         </div>
         {config?.isActive && (
           <Badge className="ml-auto" data-testid="badge-loyalty-active">Activo</Badge>
@@ -102,7 +124,7 @@ export default function AdminLoyaltyPage() {
         )}
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <Button
           variant={tab === "config" ? "default" : "outline"}
           size="sm"
@@ -118,6 +140,14 @@ export default function AdminLoyaltyPage() {
           data-testid="button-tab-customers"
         >
           <Users className="w-4 h-4 mr-1" /> Clientes
+        </Button>
+        <Button
+          variant={tab === "reviews" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setTab("reviews")}
+          data-testid="button-tab-reviews"
+        >
+          <MessageSquare className="w-4 h-4 mr-1" /> Reseñas
         </Button>
       </div>
 
@@ -273,6 +303,87 @@ export default function AdminLoyaltyPage() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {tab === "reviews" && (
+        <div className="space-y-4">
+          {reviewsLoading ? (
+            <Skeleton className="h-48 w-full" />
+          ) : !reviewsData || reviewsData.total === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <MessageSquare className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground" data-testid="text-no-reviews">
+                  Aún no hay reseñas de clientes.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card>
+                <CardContent className="py-4">
+                  <div className="flex items-center gap-6 flex-wrap">
+                    <div className="text-center">
+                      <p className="text-3xl font-bold" data-testid="text-avg-rating">
+                        {reviewsData.avg ? parseFloat(reviewsData.avg).toFixed(1) : "—"}
+                      </p>
+                      <div className="flex gap-0.5 justify-center mt-1">
+                        {[1,2,3,4,5].map(s => (
+                          <Star key={s} size={14} style={{
+                            color: reviewsData.avg && s <= Math.round(parseFloat(reviewsData.avg)) ? "#f59e0b" : "#e5e7eb",
+                            fill: reviewsData.avg && s <= Math.round(parseFloat(reviewsData.avg)) ? "#f59e0b" : "none",
+                          }} />
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">Promedio</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-3xl font-bold" data-testid="text-total-reviews">{reviewsData.total}</p>
+                      <p className="text-xs text-muted-foreground mt-1">Total reseñas</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="space-y-2">
+                {reviewsData.reviews.map((r) => (
+                  <Card key={r.id} data-testid={`card-review-${r.id}`}>
+                    <CardContent className="py-3 px-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="flex gap-0.5">
+                              {[1,2,3,4,5].map(s => (
+                                <Star key={s} size={14} style={{
+                                  color: s <= r.rating ? "#f59e0b" : "#e5e7eb",
+                                  fill: s <= r.rating ? "#f59e0b" : "none",
+                                }} />
+                              ))}
+                            </div>
+                            <span className="text-xs text-muted-foreground font-mono">
+                              {r.customerName || "Anónimo"}
+                            </span>
+                            <Badge variant="outline" className="text-xs ml-auto">
+                              {r.orderMode === "DISPATCH" ? "Despacho" : "Mesa"}
+                            </Badge>
+                          </div>
+                          {r.comment && (
+                            <p className="text-sm mt-1 text-muted-foreground" data-testid={`text-review-comment-${r.id}`}>
+                              "{r.comment}"
+                            </p>
+                          )}
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Orden #{r.orderId} · {r.businessDate || new Date(r.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       )}
     </div>
   );

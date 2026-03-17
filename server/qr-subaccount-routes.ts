@@ -9,6 +9,7 @@ import {
   orderSubaccounts, orderItems, qrSubmissions, orders, tables,
   businessConfig, products, categories, orderItemModifiers,
   modifierOptions, salesLedgerItems, kitchenTickets, kitchenTicketItems,
+  orderReviews,
   type OrderSubaccount,
 } from "@shared/schema";
 import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
@@ -426,7 +427,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id, itemsCount: items.length });
       broadcast("qr_submission", { tableId: table.id, submissionId: sub.id });
 
-      res.json({ submissionId: sub.id, message: "Pedido enviado" });
+      res.json({ submissionId: sub.id, orderId: order.id, message: "Pedido enviado" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -920,6 +921,81 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       res.json(result);
     } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/qr/:tableCode/review", async (req, res) => {
+    try {
+      const { tableCode } = req.params;
+      const { orderId, rating, comment, customerName } = req.body;
+
+      if (!orderId || !rating || rating < 1 || rating > 5) {
+        return res.status(400).json({ message: "orderId y rating (1-5) requeridos" });
+      }
+
+      if (tableCode !== "DISPATCH") {
+        const [table] = await req.db
+          .select({ id: tables.id })
+          .from(tables)
+          .where(eq(tables.tableCode, tableCode))
+          .limit(1);
+        if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+      }
+
+      const [order] = await req.db
+        .select({ id: orders.id, orderMode: (orders as any).orderMode })
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+
+      const existing = await req.db
+        .select({ id: orderReviews.id })
+        .from(orderReviews)
+        .where(eq(orderReviews.orderId, orderId))
+        .limit(1);
+      if (existing.length > 0) {
+        return res.status(409).json({ message: "Esta orden ya tiene una reseña" });
+      }
+
+      const businessDate = await getBusinessDate((req as any).tenantSchema);
+      const [config] = await req.db.select().from(businessConfig).limit(1);
+
+      const [review] = await req.db
+        .insert(orderReviews)
+        .values({
+          orderId,
+          tenantId: (req as any).tenantId || 0,
+          rating,
+          comment: comment || null,
+          customerName: customerName || null,
+          orderMode: order.orderMode || "TABLE",
+          businessDate,
+        })
+        .returning();
+
+      const awardedPoints = config?.reviewPoints || 0;
+
+      if (config?.reviewEmail) {
+        try {
+          const { sendEmail } = await import("./services/email-service");
+          const stars = "★".repeat(rating) + "☆".repeat(5 - rating);
+          const html = `
+            <h2>Nueva Reseña — ${stars} (${rating}/5)</h2>
+            <p><strong>Cliente:</strong> ${customerName || "Anónimo"}</p>
+            <p><strong>Orden #:</strong> ${orderId}</p>
+            <p><strong>Modo:</strong> ${order.orderMode || "TABLE"}</p>
+            ${comment ? `<p><strong>Comentario:</strong> ${comment}</p>` : ""}
+            <p><strong>Fecha:</strong> ${businessDate}</p>
+          `;
+          await sendEmail(config.reviewEmail, `Nueva reseña ${stars} — ${config.businessName || "RMSCore"}`, html);
+        } catch {}
+      }
+
+      res.json({ success: true, reviewId: review.id, awardedPoints });
+    } catch (err: any) {
+      console.error("[review POST]", err.message);
       res.status(500).json({ message: err.message });
     }
   });

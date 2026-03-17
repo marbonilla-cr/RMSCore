@@ -5,7 +5,7 @@ import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
   Loader2, UtensilsCrossed, Coffee, ShoppingCart, User, Check,
-  Plus, Minus, ChevronLeft, Pencil, X, Users, Bell, Smartphone,
+  Plus, Minus, ChevronLeft, Pencil, X, Users, Bell, Smartphone, Star,
 } from "lucide-react";
 
 /* ═══════════════════ Types ═══════════════════ */
@@ -368,7 +368,7 @@ export default function QRClientPage() {
   const tableCode = params?.tableCode || "";
   const { toast } = useToast();
 
-  const [screen, setScreen] = useState<"gc" | 0 | 1 | 2 | 3 | 4 | "dispatch">("gc");
+  const [screen, setScreen] = useState<"gc" | 0 | 1 | 2 | 3 | 4 | "dispatch" | "review" | "review_thanks">("gc");
   const [gcInput, setGcInput] = useState("");
   const [name, setName] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -380,6 +380,11 @@ export default function QRClientPage() {
   const [qrToken, setQrToken] = useState<string>("");
   const [dispatchInfo, setDispatchInfo] = useState<{ transactionCode: string; orderId: number } | null>(null);
   const [dispatchStatus, setDispatchStatus] = useState<"PENDING_PAYMENT" | "PAID" | "READY" | "CANCELLED" | null>(null);
+  const [reviewOrderId, setReviewOrderId] = useState<number | null>(null);
+  const [selectedRating, setSelectedRating] = useState<number>(0);
+  const [reviewComment, setReviewComment] = useState<string>("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewAwardedPoints, setReviewAwardedPoints] = useState<number>(0);
 
   /* ─── Fetch daily QR token ─── */
   useEffect(() => {
@@ -571,6 +576,7 @@ export default function QRClientPage() {
         setDispatchStatus("PENDING_PAYMENT");
         setScreen("dispatch");
       } else {
+        if (data.orderId) setReviewOrderId(data.orderId);
         setScreen(4);
       }
     } catch (err: any) {
@@ -635,6 +641,70 @@ export default function QRClientPage() {
       setTimeout(() => ctx.close().catch(() => {}), 1500);
     } catch {}
   }, [dispatchStatus]);
+
+  /* ─── Beforeunload warning ─── */
+  useEffect(() => {
+    const shouldWarn = screen === 2 || screen === 3 || screen === 4 || screen === "dispatch" || screen === "review";
+    if (!shouldWarn) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [screen]);
+
+  /* ─── Review timer: 30 min after QR order sent ─── */
+  useEffect(() => {
+    if (screen !== 4 || !reviewOrderId) return;
+    const timer = setTimeout(() => {
+      setSelectedRating(0);
+      setReviewComment("");
+      setScreen("review");
+    }, 30 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [screen, reviewOrderId]);
+
+  /* ─── Review timer: 5s after dispatch READY ─── */
+  useEffect(() => {
+    if (dispatchStatus !== "READY" || screen !== "dispatch") return;
+    const timer = setTimeout(() => {
+      setReviewOrderId(dispatchInfo?.orderId ?? null);
+      setSelectedRating(0);
+      setReviewComment("");
+      setScreen("review");
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [dispatchStatus, screen]);
+
+  /* ─── Handle review submit ─── */
+  const handleSubmitReview = async () => {
+    if (!selectedRating || !reviewOrderId) return;
+    setReviewSubmitting(true);
+    try {
+      const res = await fetch(`/api/qr/${tableCode}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: reviewOrderId,
+          rating: selectedRating,
+          comment: reviewComment.trim() || undefined,
+          customerName: name || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 409) {
+        toast({ title: "Error al enviar reseña", description: data.message, variant: "destructive" });
+        return;
+      }
+      setReviewAwardedPoints(data.awardedPoints || 0);
+      setScreen("review_thanks");
+    } catch {
+      toast({ title: "Error de conexión", variant: "destructive" });
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
 
   /* ═══════════════════ Render ═══════════════════ */
 
@@ -1159,6 +1229,19 @@ export default function QRClientPage() {
         minHeight: "100dvh", padding: "48px 24px", textAlign: "center",
       }}>
         <style>{PAGE_CSS}</style>
+
+        <div data-testid="banner-keep-open-qr" style={{
+          position: "sticky", top: 0, zIndex: 10, width: "100%", maxWidth: 440,
+          display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+          background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12,
+          marginBottom: 24,
+        }}>
+          <Smartphone size={18} style={{ color: "#d97706", flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: "#92400e", lineHeight: 1.4 }}>
+            <strong>No cierres tu pantalla.</strong> En unos minutos podrás dejar tu reseña.
+          </span>
+        </div>
+
         <div style={{
           width: 96, height: 96, borderRadius: 50, background: C.accD,
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -1353,6 +1436,132 @@ export default function QRClientPage() {
           }}>
             Hacer nuevo pedido
           </button>
+        )}
+      </div>
+    );
+  }
+
+  /* ── Review Screen ── */
+  if (screen === "review") {
+    return (
+      <div className="qr-page" style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        minHeight: "100dvh", padding: "48px 24px", textAlign: "center",
+      }}>
+        <style>{PAGE_CSS}</style>
+        <div style={{
+          width: 88, height: 88, borderRadius: 50, background: "#fef3c7",
+          display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20,
+        }}>
+          <Star size={40} style={{ color: "#f59e0b", fill: "#f59e0b" }} />
+        </div>
+        <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+          &iquest;C&oacute;mo estuvo tu experiencia?
+        </div>
+        <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 28 }}>
+          Tu opini&oacute;n nos ayuda a mejorar.
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              data-testid={`button-star-${star}`}
+              onClick={() => setSelectedRating(star)}
+              style={{
+                background: "none", border: "none", cursor: "pointer", padding: 4,
+                transform: star <= selectedRating ? "scale(1.15)" : "scale(1)",
+                transition: "transform 0.15s ease",
+              }}
+            >
+              <Star
+                size={44}
+                style={{
+                  color: star <= selectedRating ? "#f59e0b" : C.border2,
+                  fill: star <= selectedRating ? "#f59e0b" : "none",
+                  transition: "all 0.15s ease",
+                }}
+              />
+            </button>
+          ))}
+        </div>
+
+        <div style={{ width: "100%", maxWidth: 400, marginBottom: 20 }}>
+          <textarea
+            data-testid="input-review-comment"
+            placeholder="Cuéntanos más (opcional)..."
+            value={reviewComment}
+            onChange={(e) => setReviewComment(e.target.value)}
+            rows={3}
+            style={{
+              width: "100%", padding: "12px 14px", borderRadius: 12,
+              border: `1.5px solid ${C.border2}`, background: C.card,
+              fontFamily: body, fontSize: 14, color: C.text, resize: "none",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        <button
+          data-testid="button-submit-review"
+          disabled={!selectedRating || reviewSubmitting}
+          onClick={handleSubmitReview}
+          style={{
+            width: "100%", maxWidth: 400, padding: "15px 24px", borderRadius: 30,
+            background: selectedRating ? C.acc : C.border2, color: "#fff", border: "none",
+            fontSize: 16, fontWeight: 700, cursor: selectedRating ? "pointer" : "not-allowed",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            minHeight: 52, transition: "background 0.2s",
+          }}
+        >
+          {reviewSubmitting ? <Loader2 size={18} className="animate-spin" /> : "Enviar reseña"}
+        </button>
+
+        <button
+          data-testid="button-skip-review"
+          onClick={() => setScreen("review_thanks")}
+          style={{
+            marginTop: 14, background: "none", border: "none", color: C.text3,
+            fontSize: 13, cursor: "pointer", textDecoration: "underline",
+          }}
+        >
+          Omitir
+        </button>
+      </div>
+    );
+  }
+
+  /* ── Review Thanks Screen ── */
+  if (screen === "review_thanks") {
+    return (
+      <div className="qr-page" style={{
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        minHeight: "100dvh", padding: "48px 24px", textAlign: "center",
+      }}>
+        <style>{PAGE_CSS}</style>
+        <div style={{
+          width: 96, height: 96, borderRadius: 50, background: C.accD,
+          display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20,
+        }}>
+          <Check size={44} style={{ color: C.acc }} />
+        </div>
+        <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+          &iexcl;Gracias por tu rese&ntilde;a!
+        </div>
+        <div style={{ fontSize: 14, color: C.text2, maxWidth: 280, lineHeight: 1.6, marginBottom: 24 }}>
+          Tu opini&oacute;n es muy valiosa para nosotros.
+        </div>
+        {reviewAwardedPoints > 0 && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "12px 20px",
+            background: C.accT, border: `1.5px solid ${C.accM}`, borderRadius: 12,
+            marginBottom: 20,
+          }}>
+            <Star size={18} style={{ color: C.acc, fill: C.acc }} />
+            <span style={{ fontSize: 15, color: C.acc, fontWeight: 600 }}>
+              +{reviewAwardedPoints} puntos de loyalty ganados
+            </span>
+          </div>
         )}
       </div>
     );

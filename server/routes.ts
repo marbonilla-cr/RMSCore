@@ -35,7 +35,7 @@ import {
 import { printBridges as printBridgesTable, printers as printersTable } from "../shared/schema";
 import { pool } from "./db";
 import { getTenantDb } from "./db-tenant";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog, employeeCharges, users, businessConfig } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog, employeeCharges, users, businessConfig, orderReviews } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
 declare module "express-session" {
@@ -1262,6 +1262,20 @@ export async function registerRoutes(
   app.get("/api/business-config", requireAuth, async (req, res) => {
     const config = await storage.getBusinessConfig(req.tenantSchema);
     res.json(config || { businessName: "", legalName: "", taxId: "", address: "", phone: "", email: "", legalNote: "" });
+  });
+
+  app.get("/api/admin/reviews", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const { date, limit: limitStr } = req.query as Record<string, string>;
+      const limitN = Math.min(parseInt(limitStr || "100"), 500);
+      const rows = date
+        ? await req.db.select().from(orderReviews).where(eq(orderReviews.businessDate, date)).orderBy(desc(orderReviews.createdAt)).limit(limitN)
+        : await req.db.select().from(orderReviews).orderBy(desc(orderReviews.createdAt)).limit(limitN);
+      const avg = rows.length > 0 ? (rows.reduce((s, r) => s + r.rating, 0) / rows.length).toFixed(2) : null;
+      res.json({ reviews: rows, avg, total: rows.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // ==================== ADMIN: PRINTERS ====================

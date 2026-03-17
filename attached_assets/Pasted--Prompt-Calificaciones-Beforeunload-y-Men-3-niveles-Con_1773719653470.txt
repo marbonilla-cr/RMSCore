@@ -1,0 +1,409 @@
+## Prompt — Calificaciones, Beforeunload y Menú 3 niveles
+
+**Contexto:** Tres features en un solo prompt. Son independientes pero van en el mismo deploy.
+
+---
+
+### PARTE A — Migración de base de datos
+
+Crear `migrations/0026_order_reviews.sql`:
+
+```sql
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "order_reviews" (
+  "id" serial PRIMARY KEY,
+  "order_id" integer NOT NULL REFERENCES "orders"("id"),
+  "customer_id" integer REFERENCES "public"."customers"("id"),
+  "rating" integer NOT NULL CHECK (rating >= 1 AND rating <= 5),
+  "comment" text,
+  "points_awarded" numeric(12,2) NOT NULL DEFAULT 0,
+  "business_date" date NOT NULL,
+  "created_at" timestamp NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "order_reviews_order_id_idx" ON "order_reviews"("order_id");
+--> statement-breakpoint
+ALTER TABLE "business_config" ADD COLUMN IF NOT EXISTS "review_points" integer NOT NULL DEFAULT 50;
+--> statement-breakpoint
+ALTER TABLE "business_config" ADD COLUMN IF NOT EXISTS "review_email" text;
+--> statement-breakpoint
+ALTER TABLE "business_config" ADD COLUMN IF NOT EXISTS "google_place_id" text;
+```
+
+Agregar en `shared/schema.ts`:
+
+```typescript
+export const orderReviews = pgTable("order_reviews", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull().references(() => orders.id),
+  customerId: integer("customer_id"),
+  rating: integer("rating").notNull(),
+  comment: text("comment"),
+  pointsAwarded: numeric("points_awarded", { precision: 12, scale: 2 }).notNull().default("0"),
+  businessDate: date("business_date").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+```
+
+Agregar en `businessConfig`:
+```typescript
+reviewPoints: integer("review_points").notNull().default(50),
+reviewEmail: text("review_email"),
+googlePlaceId: text("google_place_id"),
+```
+
+---
+
+### PARTE B — Backend
+
+**1. Endpoint para guardar review:**
+
+```typescript
+app.post("/api/qr/:tableCode/review", async (req, res) => {
+  try {
+    const { orderId, rating, comment, customerId } = req.body;
+    if (!orderId || !rating) return res.status(400).json({ message: "orderId y rating requeridos" });
+
+    const config = await getBusinessConfig(req.db);
+    const businessDate = await getBusinessDate(req.tenantSchema);
+
+    // Verificar que la orden existe y no tiene review
+    const existing = await req.db.select().from(orderReviews)
+      .where(eq(orderReviews.orderId, orderId));
+    if (existing.length > 0) return res.status(409).json({ message: "Ya existe una calificación para esta orden" });
+
+    const pointsAwarded = config?.reviewPoints || 50;
+
+    // Guardar review
+    const [review] = await req.db.insert(orderReviews).values({
+      orderId,
+      customerId: customerId || null,
+      rating,
+      comment: comment || null,
+      pointsAwarded: String(pointsAwarded),
+      businessDate,
+    }).returning();
+
+    // Acreditar puntos si hay cliente loyalty
+    if (customerId) {
+      const { db: publicDb } = await import("./db");
+      const existing = await publicDb.select().from(loyaltyAccounts)
+        .where(and(
+          eq(loyaltyAccounts.customerId, customerId),
+          eq(loyaltyAccounts.tenantId, req.tenantId)
+        ));
+      if (existing.length > 0) {
+        await publicDb.update(loyaltyAccounts).set({
+          pointsBalance: String(parseFloat(existing[0].pointsBalance) + pointsAwarded),
+          lifetimePoints: String(parseFloat(existing[0].lifetimePoints) + pointsAwarded),
+          updatedAt: new Date(),
+        }).where(eq(loyaltyAccounts.id, existing[0].id));
+
+        await publicDb.insert(loyaltyEvents).values({
+          customerId,
+          tenantId: req.tenantId,
+          eventType: "REVIEW",
+          points: String(pointsAwarded),
+          orderId,
+          description: `+${pointsAwarded} puntos por calificación ⭐`.repeat(rating).slice(0, 50),
+        });
+      }
+    }
+
+    // Si rating <= 3, enviar email a gerencia
+    if (rating <= 3 && config?.reviewEmail) {
+      const { sendEmail } = await import("./services/email-service");
+      await sendEmail({
+        to: config.reviewEmail,
+        subject: `⚠️ Calificación baja: ${rating}/5 estrellas`,
+        html: `
+          <h2>Calificación recibida: ${"⭐".repeat(rating)}</h2>
+          <p><strong>Orden:</strong> #${orderId}</p>
+          <p><strong>Comentario:</strong> ${comment || "Sin comentario"}</p>
+          <p><strong>Fecha:</strong> ${businessDate}</p>
+        `,
+      });
+    }
+
+    res.json({ review, pointsAwarded });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+**2. WebSocket: evento `review_prompt` a los 30 minutos para QR de mesa:**
+
+En el handler de `kitchen_item_status_changed` o donde se detecta que todos los items de una orden están READY, agregar:
+
+```typescript
+// Si la orden es QR (no despacho), programar review prompt a los 30 min
+if (order.orderMode === 'QR' || order.orderMode === 'TABLE') {
+  setTimeout(() => {
+    broadcast({
+      type: "review_prompt",
+      orderId: order.id,
+      tableCode: order.tableCode,
+      pointsAwarded: config.reviewPoints,
+    });
+  }, 30 * 60 * 1000); // 30 minutos
+}
+```
+
+Para despacho, el `review_prompt` se emite inmediatamente cuando `dispatch_order_ready` se dispara.
+
+**3. Endpoint para ver reviews en Admin:**
+
+```typescript
+app.get("/api/admin/reviews", requireRole("MANAGER"), async (req, res) => {
+  try {
+    const reviews = await req.db.select().from(orderReviews)
+      .orderBy(desc(orderReviews.createdAt))
+      .limit(100);
+    res.json(reviews);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+---
+
+### PARTE C — Frontend QR Client (`client/src/pages/qr-client.tsx`)
+
+**1. Mensaje sticky post-envío de orden:**
+
+En la pantalla `sent` (después de enviar la orden exitosamente), agregar banner sticky al fondo:
+
+```tsx
+<div style={{
+  position: "fixed",
+  bottom: 0,
+  left: 0,
+  right: 0,
+  background: "var(--color-sage, #6B8F71)",
+  color: "white",
+  padding: "12px 16px",
+  textAlign: "center",
+  fontSize: "13px",
+  zIndex: 50,
+}}>
+  💬 Queremos tu opinión — no cierres esta pantalla,
+  en unos minutos te pediremos que nos califiques y ganarás puntos
+</div>
+```
+
+**2. Pantalla de calificación (`review` screen):**
+
+Agregar nuevo estado `"review"` al tipo `Step`. Cuando llega el WebSocket event `review_prompt` con el `orderId` correcto, cambiar a screen `"review"`.
+
+```tsx
+// Pantalla de calificación
+if (screen === "review") {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px", gap: "24px" }}>
+      <div style={{ fontSize: "48px" }}>🙏</div>
+      <h2 style={{ fontSize: "22px", fontWeight: 700, textAlign: "center" }}>
+        ¿Cómo estuvo tu experiencia?
+      </h2>
+      <p style={{ color: "#888", textAlign: "center", fontSize: "14px" }}>
+        Tu opinión nos ayuda a mejorar
+      </p>
+
+      {/* Estrellas */}
+      <div style={{ display: "flex", gap: "12px" }}>
+        {[1,2,3,4,5].map(star => (
+          <button
+            key={star}
+            onClick={() => setSelectedRating(star)}
+            style={{
+              fontSize: "40px",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              opacity: selectedRating >= star ? 1 : 0.3,
+              transform: selectedRating >= star ? "scale(1.1)" : "scale(1)",
+              transition: "all 0.15s",
+            }}
+          >
+            ⭐
+          </button>
+        ))}
+      </div>
+
+      {selectedRating > 0 && (
+        <>
+          {selectedRating <= 3 && (
+            <p style={{ color: "#e67e22", fontSize: "13px", textAlign: "center" }}>
+              Lamentamos tu experiencia — tu comentario llega directo a la gerencia
+            </p>
+          )}
+          <textarea
+            placeholder="Comentario opcional..."
+            value={reviewComment}
+            onChange={e => setReviewComment(e.target.value)}
+            style={{
+              width: "100%",
+              maxWidth: "320px",
+              padding: "12px",
+              borderRadius: "8px",
+              border: "1px solid #ddd",
+              fontSize: "14px",
+              minHeight: "80px",
+              resize: "none",
+            }}
+          />
+          <button
+            onClick={handleSubmitReview}
+            disabled={reviewSubmitting}
+            style={{
+              width: "100%",
+              maxWidth: "320px",
+              padding: "16px",
+              background: "var(--color-sage, #6B8F71)",
+              color: "white",
+              border: "none",
+              borderRadius: "12px",
+              fontSize: "16px",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            {reviewSubmitting ? "Enviando..." : `Enviar y ganar ${reviewPoints} puntos ⭐`}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+```
+
+Agregar estados necesarios:
+```typescript
+const [selectedRating, setSelectedRating] = useState(0);
+const [reviewComment, setReviewComment] = useState("");
+const [reviewSubmitting, setReviewSubmitting] = useState(false);
+const [reviewPoints, setReviewPoints] = useState(50);
+const [reviewOrderId, setReviewOrderId] = useState<number | null>(null);
+```
+
+Función `handleSubmitReview`:
+```typescript
+async function handleSubmitReview() {
+  if (!selectedRating || !reviewOrderId) return;
+  setReviewSubmitting(true);
+  try {
+    await fetch(`/api/qr/${tableCode}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        orderId: reviewOrderId,
+        rating: selectedRating,
+        comment: reviewComment,
+        customerId: loyaltyCustomerId || null,
+      }),
+    });
+    setScreen("review_thanks");
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setReviewSubmitting(false);
+  }
+}
+```
+
+Pantalla de agradecimiento `review_thanks`:
+```tsx
+if (screen === "review_thanks") {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px", gap: "16px" }}>
+      <div style={{ fontSize: "64px" }}>🎉</div>
+      <h2 style={{ fontSize: "24px", fontWeight: 700, textAlign: "center" }}>
+        ¡Gracias por tu opinión!
+      </h2>
+      <p style={{ color: "var(--color-sage, #6B8F71)", fontSize: "20px", fontWeight: 700 }}>
+        +{reviewPoints} puntos acreditados
+      </p>
+      <p style={{ color: "#888", fontSize: "14px", textAlign: "center" }}>
+        Hasta la próxima visita 👋
+      </p>
+    </div>
+  );
+}
+```
+
+**3. Beforeunload — evitar cierre accidental:**
+
+Agregar en el `useEffect` principal del componente:
+
+```typescript
+useEffect(() => {
+  const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+    if (["menu", "review", "sent", "dispatch"].includes(screen)) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  };
+  window.addEventListener("beforeunload", handleBeforeUnload);
+  return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+}, [screen]);
+```
+
+**4. Fix menú 3 niveles:**
+
+Aplicar los cambios descritos en el diagnóstico anterior:
+- Agregar estado `selectedCategoryId`
+- Reemplazar headers estáticos por pills interactivos
+- Filtrar productos por subcategoría seleccionada
+- Reset al cambiar TOP category
+
+---
+
+### PARTE D — Admin: configuración de reviews
+
+En `client/src/pages/admin/business-config.tsx`, agregar sección "Calificaciones":
+
+```
+[input] Puntos por calificación: [50]
+[input] Email de gerencia para calificaciones bajas: [email]
+```
+
+Guardar via `PUT /api/admin/business-config`.
+
+---
+
+### PARTE E — Admin: ver calificaciones
+
+En `client/src/pages/admin/loyalty.tsx`, agregar sección "Calificaciones recibidas":
+
+- Fetch a `GET /api/admin/reviews`
+- Tabla con: fecha, orden #, estrellas (iconos), comentario, puntos otorgados
+- Promedio de calificación visible al tope
+- Filtro por rango de fechas
+
+---
+
+### Verificación final
+
+```bash
+npx tsc --noEmit
+```
+
+Probar en Replit:
+1. Activar modo despacho → crear orden → marcar READY en KDS → pantalla de calificación aparece inmediatamente
+2. Crear orden QR normal → marcar READY → esperar el evento (reducir timer a 30 segundos para prueba, luego volver a 30 minutos)
+3. Calificar con 5 estrellas → puntos acreditados
+4. Calificar con 2 estrellas → email enviado a gerencia
+5. Menú QR muestra pills de subcategorías correctamente
+6. Beforeunload funciona al intentar cerrar durante una orden activa
+
+**Criterios de aceptación:**
+- [ ] Tabla `order_reviews` creada en migración
+- [ ] Pantalla de calificación aparece en momento correcto
+- [ ] Puntos acreditados al calificar
+- [ ] Email a gerencia en calificaciones bajas
+- [ ] Mensaje sticky visible en pantalla post-envío
+- [ ] Beforeunload activo en pantallas relevantes
+- [ ] Menú QR con 3 niveles de navegación
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] No hacer deploy hasta que todos los criterios pasen

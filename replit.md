@@ -12,9 +12,24 @@ I prefer simple language. I want iterative development. Ask before making major 
 - **Backend:** `server/loyalty-routes.ts` (earn/redeem/config/customers), `server/loyalty-auth.ts` (Google OAuth verifyIdToken)
 - **Google Auth:** POST `/api/loyalty/auth/google` — returns 503 if `GOOGLE_CLIENT_ID` is "pending" or unset
 - **TenantId resolution:** Uses `req.tenantId` directly from `tenantMiddleware` (no extra DB query)
-- **Admin UI:** `/admin/loyalty` — config panel + customers tab with search; Loyalty link in sidebar
+- **Admin UI:** `/admin/loyalty` — config panel + customers tab with search + reviews tab; Loyalty link in sidebar
 - **Business Config:** 3 Switch toggles for Mesa / QR / Despacho operation modes
 - **Dependency:** `google-auth-library` installed
+
+## Customer Reviews System (Migration 0026)
+- **Table:** `order_reviews` (id, orderId, tenantId, rating, comment, customerName, orderMode, businessDate, createdAt)
+- **businessConfig new fields:** `reviewPoints`, `reviewEmail`, `googlePlaceId`
+- **QR Client (`qr-client.tsx`):**
+  - Screen types extended: `"review" | "review_thanks"` added
+  - `beforeunload` warning active on screens 2, 3, 4, dispatch, review
+  - Screen 4 (order sent): sticky amber "No cierres tu pantalla" banner; captures `orderId` from submit response
+  - Review timer: 30min after QR order sent → shows review screen; 5s after dispatch READY → shows review screen
+  - Star rating UI (1–5), comment textarea, submit and skip buttons
+  - `review_thanks` screen shows confirmation + loyalty points awarded (if any)
+- **Backend:** `POST /api/qr/:tableCode/review` (public, no auth) — validates, inserts, emails notification
+- **Admin reviews:** `GET /api/admin/reviews` (MANAGER) — returns reviews list + avg rating
+- **Admin UI (`/admin/loyalty`):** "Reseñas" tab with avg rating widget + full review list
+- **Admin UI (`/admin/business-config`):** Review Settings card — reviewPoints, reviewEmail, googlePlaceId fields
 
 ## System Architecture
 The system is built as a PWA with a mobile-first approach, ensuring broad accessibility and a responsive user experience.

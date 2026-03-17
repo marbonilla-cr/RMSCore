@@ -984,6 +984,9 @@ export const businessConfig = pgTable("business_config", {
   operationModeQr: boolean("operation_mode_qr").notNull().default(true),
   operationModeDispatch: boolean("operation_mode_dispatch").notNull().default(false),
   dispatchOrderTimeoutMinutes: integer("dispatch_order_timeout_minutes").notNull().default(15),
+  reviewPoints: integer("review_points").notNull().default(0),
+  reviewEmail: text("review_email").notNull().default(""),
+  googlePlaceId: text("google_place_id").notNull().default(""),
 });
 
 export const printers = pgTable("printers", {
@@ -1333,3 +1336,19 @@ export type Customer = typeof customers.$inferSelect;
 export type LoyaltyAccount = typeof loyaltyAccounts.$inferSelect;
 export type LoyaltyEvent = typeof loyaltyEvents.$inferSelect;
 export type LoyaltyConfig = typeof loyaltyConfig.$inferSelect;
+
+export const orderReviews = pgTable("order_reviews", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull(),
+  tenantId: integer("tenant_id").notNull(),
+  rating: integer("rating").notNull(),
+  comment: text("comment"),
+  customerName: text("customer_name"),
+  orderMode: varchar("order_mode", { length: 20 }).notNull().default("TABLE"),
+  businessDate: varchar("business_date", { length: 10 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertOrderReviewSchema = createInsertSchema(orderReviews).omit({ id: true, createdAt: true });
+export type OrderReview = typeof orderReviews.$inferSelect;
+export type InsertOrderReview = z.infer<typeof insertOrderReviewSchema>;
