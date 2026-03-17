@@ -55,8 +55,19 @@ export function registerLoyaltyRoutes(app: any) {
       if (!idToken) return res.status(400).json({ message: "idToken requerido" });
       const googleData = await verifyGoogleToken(idToken);
       const customer = await findOrCreateCustomer(googleData);
+      const tenantId = resolveTenantId(req);
+      let pointsBalance = 0;
+      if (tenantId) {
+        const d = req.db || db;
+        const [account] = await d.select({ pointsBalance: loyaltyAccounts.pointsBalance })
+          .from(loyaltyAccounts)
+          .where(and(eq(loyaltyAccounts.customerId, customer.id), eq(loyaltyAccounts.tenantId, tenantId)))
+          .limit(1);
+        if (account) pointsBalance = parseFloat(account.pointsBalance) || 0;
+      }
       res.json({
         customer,
+        pointsBalance,
         token: Buffer.from(JSON.stringify({ customerId: customer.id, email: customer.email })).toString("base64"),
       });
     } catch (err: any) {

@@ -698,7 +698,7 @@ export default function QRClientPage() {
       });
       if (!r.ok) throw new Error("Auth failed");
       const data = await r.json();
-      const cust = { name: data.customer.name, points: data.customer.points || 0 };
+      const cust = { name: data.customer.name, points: data.pointsBalance || 0 };
       setLoyaltyCustomer(cust);
       localStorage.setItem("rms_loyalty_customer", JSON.stringify(cust));
       localStorage.setItem("rms_loyalty_token", data.token);
