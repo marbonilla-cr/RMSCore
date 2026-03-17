@@ -1522,17 +1522,25 @@ export default function QRClientPage() {
             <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 8 }}>
               &iexcl;Gracias por tu visita!
             </div>
-            <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 24 }}>
-              Inicia sesi&oacute;n para ver tus puntos de lealtad
-            </div>
-            {loyaltyLoading ? (
-              <div style={{ marginBottom: 24 }}><Loader2 size={24} className="animate-spin" style={{ color: C.acc }} /></div>
+            {info?.googleClientId ? (
+              <>
+                <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 24 }}>
+                  Inicia sesi&oacute;n para ver tus puntos de lealtad
+                </div>
+                {loyaltyLoading ? (
+                  <div style={{ marginBottom: 24 }}><Loader2 size={24} className="animate-spin" style={{ color: C.acc }} /></div>
+                ) : (
+                  <div id="gsi-btn-container" data-testid="button-google-signin" style={{ marginBottom: 24, minHeight: 44 }} />
+                )}
+                <div style={{ fontSize: 12, color: C.text3, marginBottom: 20 }}>
+                  Opcional — puedes continuar sin iniciar sesi&oacute;n
+                </div>
+              </>
             ) : (
-              <div id="gsi-btn-container" data-testid="button-google-signin" style={{ marginBottom: 24, minHeight: 44 }} />
+              <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 28 }}>
+                Nos alegra que hayas disfrutado tu visita
+              </div>
             )}
-            <div style={{ fontSize: 12, color: C.text3, marginBottom: 20 }}>
-              Opcional — puedes continuar sin iniciar sesi&oacute;n
-            </div>
           </>
         )}
 
