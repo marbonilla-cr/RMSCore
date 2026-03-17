@@ -386,19 +386,39 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       if (tableCode === "DISPATCH") {
         const [config] = await req.db.select().from(businessConfig).limit(1);
-        if (!config?.operationModeDispatch) {
-          return res.status(404).json({ message: "Despacho no habilitado" });
-        }
-        if (req.tenantId) {
+        let dispatchEnabled = config?.operationModeDispatch === true;
+        if (dispatchEnabled && req.tenantId) {
           const modCheck = await pool.query(
             `SELECT is_active FROM public.tenant_modules WHERE tenant_id=$1 AND module_key='DISPATCH' LIMIT 1`,
             [req.tenantId]
           );
           if (!modCheck.rows.length || !modCheck.rows[0].is_active) {
-            return res.status(404).json({ message: "Despacho no habilitado" });
+            dispatchEnabled = false;
           }
         }
-        return handleDirectDispatchSubmit(req, res, subaccountId, items, broadcast);
+        if (dispatchEnabled) {
+          return handleDirectDispatchSubmit(req, res, subaccountId, items, broadcast);
+        }
+        // Dispatch disabled: fall through to normal QR flow using a virtual DISPATCH table row
+        const inserted = await req.db
+          .insert(tables)
+          .values({ tableCode: "DISPATCH", tableName: "Despacho", active: false, sortOrder: -1 } as any)
+          .onConflictDoNothing()
+          .returning();
+        const virtualTable = inserted[0] ?? (await storage.getTableByCode("DISPATCH", req.db));
+        if (!virtualTable) {
+          return res.status(404).json({ message: "Despacho no habilitado" });
+        }
+        const order = await getOrCreateOrderForTable(virtualTable.id, req.db);
+        const [sub] = await req.db.insert(qrSubmissions).values({
+          orderId: order.id,
+          tableId: virtualTable.id,
+          status: "SUBMITTED",
+        }).returning();
+        await req.db.update(qrSubmissions).set({ payloadSnapshot: { subaccountId, items } } as any).where(eq(qrSubmissions.id, sub.id));
+        broadcast("qr_submission_created", { tableId: virtualTable.id, tableName: virtualTable.tableName, submissionId: sub.id, itemsCount: items.length });
+        broadcast("qr_submission", { tableId: virtualTable.id, submissionId: sub.id });
+        return res.json({ submissionId: sub.id, orderId: order.id, message: "Pedido enviado" });
       }
 
       const table = await storage.getTableByCode(tableCode, req.db);
