@@ -6,6 +6,7 @@
  * en routes.ts y qr-subaccount-routes.ts.
  */
 
+import type { Request, Response, NextFunction } from "express";
 import { businessConfig } from "@shared/schema";
 
 /**
@@ -18,6 +19,7 @@ export function isConfigDispatchEnabled(config: any): boolean {
 
 /**
  * Helper async: lee businessConfig del tenant y evalúa operationModeDispatch.
+ * Siempre resuelve (nunca rechaza): retorna false ante cualquier error de DB.
  * @param tenantDb  Instancia de drizzle del tenant (req.db)
  */
 export async function isDispatchEnabled(tenantDb: any): Promise<boolean> {
@@ -32,18 +34,13 @@ export async function isDispatchEnabled(tenantDb: any): Promise<boolean> {
 /**
  * Express middleware: retorna 404 si despacho no está activo.
  * Para uso en rutas dispatch-exclusivas (futuras).
+ * Delega el manejo de errores en isDispatchEnabled (ya atrapa internamente).
  */
-export function requireDispatchEnabled(req: any, res: any, next: any): void {
-  isDispatchEnabled(req.db)
-    .then(enabled => {
-      if (!enabled) {
-        return res.status(404).json({
-          message: "El servicio de despacho no está disponible en este restaurante.",
-        });
-      }
-      next();
-    })
-    .catch(() => {
-      res.status(500).json({ message: "Error verificando configuración de despacho" });
-    });
+export async function requireDispatchEnabled(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const enabled = await isDispatchEnabled((req as any).db);
+  if (!enabled) {
+    res.status(404).json({ message: "El servicio de despacho no está disponible en este restaurante." });
+    return;
+  }
+  next();
 }
