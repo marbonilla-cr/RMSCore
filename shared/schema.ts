@@ -987,6 +987,7 @@ export const businessConfig = pgTable("business_config", {
   reviewPoints: integer("review_points").notNull().default(0),
   reviewEmail: text("review_email").notNull().default(""),
   googlePlaceId: text("google_place_id").notNull().default(""),
+  googleMapsReviewUrl: text("google_maps_review_url"),
 });
 
 export const printers = pgTable("printers", {
@@ -1352,3 +1353,18 @@ export const orderReviews = pgTable("order_reviews", {
 export const insertOrderReviewSchema = createInsertSchema(orderReviews).omit({ id: true, createdAt: true });
 export type OrderReview = typeof orderReviews.$inferSelect;
 export type InsertOrderReview = z.infer<typeof insertOrderReviewSchema>;
+
+export const feedbackMessages = pgTable("feedback_messages", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").references(() => orders.id),
+  rating: integer("rating").notNull(),
+  comment: text("comment"),
+  customerName: varchar("customer_name", { length: 200 }),
+  isRead: boolean("is_read").notNull().default(false),
+  businessDate: date("business_date").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertFeedbackMessageSchema = createInsertSchema(feedbackMessages).omit({ id: true, createdAt: true });
+export type FeedbackMessage = typeof feedbackMessages.$inferSelect;
+export type InsertFeedbackMessage = z.infer<typeof insertFeedbackMessageSchema>;

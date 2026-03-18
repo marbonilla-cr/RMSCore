@@ -36,7 +36,7 @@ import {
 import { printBridges as printBridgesTable, printers as printersTable } from "../shared/schema";
 import { pool } from "./db";
 import { getTenantDb } from "./db-tenant";
-import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog, employeeCharges, users, businessConfig, orderReviews } from "@shared/schema";
+import { loginSchema, pinLoginSchema, enrollPinSchema, insertBusinessConfigSchema, insertPrinterSchema, insertModifierGroupSchema, insertModifierOptionSchema, insertDiscountSchema, insertTaxCategorySchema, insertHrSettingsSchema, insertHrWeeklyScheduleSchema, insertHrScheduleDaySchema, insertHrTimePunchSchema, insertServiceChargeLedgerSchema, insertServiceChargePayoutSchema, reservations, reservationDurationConfig, reservationSettings, tables as tablesSchema, orders, qrSubmissions, kitchenTickets, orderSubaccounts, orderItems, kitchenTicketItems, salesLedgerItems, categories, products, voidedItems, payments, splitItems, splitAccounts, auditEvents, orderItemDiscounts, hrOvertimeApprovals, qboSyncLog, employeeCharges, users, businessConfig, orderReviews, feedbackMessages } from "@shared/schema";
 import { VOID_REASON_CODES, type VoidReasonCode } from "@shared/voidReasons";
 
 declare module "express-session" {
@@ -3596,6 +3596,27 @@ export async function registerRoutes(
         } catch (dispatchErr: any) {
           console.error("[dispatch-notify]", dispatchErr.message);
         }
+
+        try {
+          const [reviewOrder] = await req.db.select({
+            id: orders.id,
+            orderMode: (orders as any).orderMode,
+            transactionCode: (orders as any).transactionCode,
+          }).from(orders).where(eq(orders.id, ticket.orderId));
+          if (reviewOrder) {
+            const [cfg] = await req.db.select().from(businessConfig).limit(1);
+            broadcast("order_review_ready", {
+              orderId: reviewOrder.id,
+              transactionCode: reviewOrder.transactionCode || null,
+              orderMode: reviewOrder.orderMode || "TABLE",
+              reviewPoints: (cfg as any)?.reviewPoints || 50,
+              googleMapsReviewUrl: (cfg as any)?.googleMapsReviewUrl || null,
+            });
+            console.log(`[Review] order_review_ready emitido → orden ${reviewOrder.id} (${reviewOrder.orderMode || "TABLE"})`);
+          }
+        } catch (reviewErr: any) {
+          console.error("[review-notify]", reviewErr.message);
+        }
       }
 
       broadcast("kitchen_item_status_changed", { ticketId, status: "READY" });
@@ -3625,6 +3646,106 @@ export async function registerRoutes(
     const destination = (req.query.destination as string) || undefined;
     await storage.clearKitchenHistory(destination, req.db);
     res.json({ ok: true });
+  });
+
+  // ==================== REVIEW / FEEDBACK INBOX ====================
+
+  app.post("/api/qr/:tableCode/submit-review", async (req, res) => {
+    try {
+      const { orderId, rating, comment, customerName } = req.body;
+      if (!orderId || !rating) {
+        return res.status(400).json({ message: "orderId y rating requeridos" });
+      }
+      const [cfg] = await req.db.select().from(businessConfig).limit(1);
+      const businessDate = await getBusinessDate(req.tenantSchema);
+
+      const existing = await req.db.select().from(feedbackMessages)
+        .where(eq(feedbackMessages.orderId, orderId));
+      if (existing.length > 0) {
+        return res.status(409).json({ message: "Ya existe una calificación para esta orden" });
+      }
+
+      await req.db.insert(feedbackMessages).values({
+        orderId,
+        rating,
+        comment: comment || null,
+        customerName: customerName || null,
+        isRead: false,
+        businessDate,
+      });
+
+      if (rating <= 3 && (cfg as any)?.email) {
+        try {
+          const { sendEmail } = await import("./services/email-service");
+          await sendEmail(
+            (cfg as any).email,
+            `⚠️ Calificación baja: ${rating}/5 estrellas`,
+            `<h2>Calificación recibida: ${"⭐".repeat(rating)}</h2>
+<p><strong>Orden:</strong> #${orderId}</p>
+<p><strong>Cliente:</strong> ${customerName || "Anónimo"}</p>
+<p><strong>Comentario:</strong> ${comment || "Sin comentario"}</p>
+<p><strong>Fecha:</strong> ${businessDate}</p>`,
+          );
+        } catch (emailErr: any) {
+          console.error("[Review] Error enviando email a gerencia:", emailErr.message);
+        }
+      }
+
+      broadcast("feedback_received", { rating, orderId, isLow: rating <= 3 });
+
+      res.json({
+        success: true,
+        reviewPoints: (cfg as any)?.reviewPoints || 50,
+        googleMapsReviewUrl: rating >= 4 ? ((cfg as any)?.googleMapsReviewUrl || null) : null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/admin/feedback", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const messages = await req.db.select().from(feedbackMessages)
+        .orderBy(desc(feedbackMessages.createdAt))
+        .limit(100);
+      res.json(messages);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/admin/feedback/unread-count", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const [result] = await req.db.select({
+        count: sql<number>`count(*)::int`,
+      }).from(feedbackMessages).where(eq(feedbackMessages.isRead, false));
+      res.json({ count: result?.count || 0 });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/admin/feedback/:id/read", requireRole("MANAGER"), async (req, res) => {
+    try {
+      const [updated] = await req.db.update(feedbackMessages)
+        .set({ isRead: true })
+        .where(eq(feedbackMessages.id, parseInt(req.params.id as string)))
+        .returning();
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/feedback/mark-all-read", requireRole("MANAGER"), async (req, res) => {
+    try {
+      await req.db.update(feedbackMessages)
+        .set({ isRead: true })
+        .where(eq(feedbackMessages.isRead, false));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // ==================== POS: PAYMENT METHODS (for cashier access) ====================

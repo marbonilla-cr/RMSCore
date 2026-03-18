@@ -458,6 +458,152 @@ function formatPeriodLabel(period: PeriodType, dateValue: string): string {
   return dateValue;
 }
 
+interface FeedbackMsg {
+  id: number;
+  orderId: number | null;
+  rating: number;
+  comment: string | null;
+  customerName: string | null;
+  isRead: boolean;
+  businessDate: string;
+  createdAt: string;
+}
+
+function FeedbackInboxSection() {
+  const { data: messages = [] } = useQuery<FeedbackMsg[]>({
+    queryKey: ["/api/admin/feedback"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/feedback", { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    refetchInterval: 30000,
+  });
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ["/api/admin/feedback/unread-count"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/feedback/unread-count", { credentials: "include" });
+      if (!r.ok) return { count: 0 };
+      return r.json();
+    },
+    refetchInterval: 30000,
+  });
+  const unreadCount = unreadData?.count || 0;
+
+  useEffect(() => {
+    const unsub = wsManager.on("feedback_received", () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/feedback"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/feedback/unread-count"] });
+    });
+    return () => unsub();
+  }, []);
+
+  const markRead = async (id: number) => {
+    await fetch(`/api/admin/feedback/${id}/read`, { method: "PATCH", credentials: "include" });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/feedback"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/feedback/unread-count"] });
+  };
+
+  const markAllRead = async () => {
+    await fetch("/api/admin/feedback/mark-all-read", { method: "POST", credentials: "include" });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/feedback"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/feedback/unread-count"] });
+  };
+
+  const todayMsgs = messages.filter(m => m.businessDate === getToday());
+  const avgRating = todayMsgs.length
+    ? (todayMsgs.reduce((s, m) => s + m.rating, 0) / todayMsgs.length).toFixed(1)
+    : null;
+
+  return (
+    <div className="dash-section" data-testid="card-feedback-inbox" style={{ marginTop: 16 }}>
+      <div className="dash-section-label" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span>📬</span>
+          Buzón de Retroalimentación
+          {unreadCount > 0 && (
+            <span style={{
+              background: "#dc2626", color: "#fff", borderRadius: 10,
+              fontSize: 11, fontWeight: 700, padding: "2px 7px",
+            }} data-testid="badge-unread-feedback">
+              {unreadCount} nuevo{unreadCount !== 1 ? "s" : ""}
+            </span>
+          )}
+        </span>
+        {avgRating && (
+          <span style={{ fontSize: 13, color: "var(--text2)", fontWeight: 600 }}>
+            Promedio hoy: ⭐ {avgRating}
+          </span>
+        )}
+      </div>
+
+      {unreadCount > 0 && (
+        <button
+          data-testid="button-mark-all-read"
+          onClick={markAllRead}
+          style={{
+            marginBottom: 12, fontSize: 13, background: "none", border: "1px solid var(--border)",
+            color: "var(--text2)", padding: "6px 14px", borderRadius: 8, cursor: "pointer",
+          }}
+        >
+          ✓ Marcar todos como leídos
+        </button>
+      )}
+
+      {messages.length === 0 ? (
+        <p className="dash-meta">No hay calificaciones aún.</p>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: "var(--text3)", textAlign: "left" }}>
+                <th style={{ padding: "6px 10px", fontWeight: 600 }}>Fecha</th>
+                <th style={{ padding: "6px 10px", fontWeight: 600 }}>Orden</th>
+                <th style={{ padding: "6px 10px", fontWeight: 600 }}>Estrellas</th>
+                <th style={{ padding: "6px 10px", fontWeight: 600 }}>Cliente</th>
+                <th style={{ padding: "6px 10px", fontWeight: 600 }}>Comentario</th>
+                <th style={{ padding: "6px 10px", fontWeight: 600 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {messages.map(m => (
+                <tr
+                  key={m.id}
+                  data-testid={`row-feedback-${m.id}`}
+                  style={{
+                    background: !m.isRead ? "rgba(220,38,38,0.06)" : "transparent",
+                    borderTop: "1px solid var(--border)",
+                  }}
+                >
+                  <td style={{ padding: "8px 10px", color: "var(--text2)" }}>{m.businessDate}</td>
+                  <td style={{ padding: "8px 10px" }}>#{m.orderId || "—"}</td>
+                  <td style={{ padding: "8px 10px" }}>{"⭐".repeat(m.rating)}</td>
+                  <td style={{ padding: "8px 10px", color: "var(--text2)" }}>{m.customerName || "Anónimo"}</td>
+                  <td style={{ padding: "8px 10px", color: "var(--text2)", maxWidth: 200 }}>{m.comment || "—"}</td>
+                  <td style={{ padding: "8px 10px" }}>
+                    {!m.isRead && (
+                      <button
+                        data-testid={`button-mark-read-${m.id}`}
+                        onClick={() => markRead(m.id)}
+                        title="Marcar como leído"
+                        style={{
+                          background: "none", border: "1px solid var(--border)",
+                          color: "var(--text2)", padding: "4px 10px", borderRadius: 6,
+                          cursor: "pointer", fontSize: 12,
+                        }}
+                      >✓</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [historicalMode, setHistoricalMode] = useState(false);
   const [period, setPeriod] = useState<PeriodType>("day");
@@ -993,6 +1139,8 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
+
+        <FeedbackInboxSection />
 
         <div className="dash-section" data-testid="card-qbo-export">
           <div className="dash-section-label">

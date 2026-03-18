@@ -1,0 +1,616 @@
+## Prompt — Flujo Loyalty + Calificación + Buzón de Retroalimentación
+
+### ¿Qué queremos lograr?
+
+Cuando un cliente termina de ser atendido — sea en una orden QR de mesa o en despacho en mostrador — queremos aprovechar ese momento de satisfacción para tres cosas simultáneas:
+
+1. **Mostrarle sus puntos de loyalty** — el cliente ve inmediatamente cuánto ganó por su visita, reforzando el valor del programa
+2. **Pedirle una calificación** — mientras tiene el teléfono en la mano y la experiencia fresca
+3. **Dirigir las buenas experiencias a Google** — las calificaciones de 4-5 estrellas van a Google Business donde otros clientes las ven; las malas van directo a gerencia de forma privada
+
+El resultado esperado es un ciclo virtuoso: cliente satisfecho → ve sus puntos → califica positivamente → reseña pública en Google → más clientes → más ventas → más puntos para clientes. Las malas experiencias van a gerencia antes de llegar a Google, protegiendo la reputación del restaurante.
+
+**Este flujo no requiere ninguna acción del personal** — se dispara automáticamente cuando el KDS marca el ticket como terminado.
+
+---
+
+### Flujo completo esperado
+
+```
+KDS → "Ticket Terminado"
+  → WebSocket event inmediato → teléfono del cliente
+  → Pantalla 1: "¡Tu orden está lista! 🏆 +50 puntos ganados"
+    → [Ver mis puntos →] abre loyalty.rmscore.app
+    → [Calificarnos ⭐] avanza a pantalla 2
+  → Pantalla 2: "¿Cómo estuvo tu experiencia?" ⭐⭐⭐⭐⭐
+    → 4-5 estrellas → botón "Calificar en Google" → Google Business
+    → 1-3 estrellas → mensaje privado a gerencia + email
+  → Pantalla 3: "¡Gracias! Hasta la próxima 👋"
+```
+
+---
+
+### ¿Por qué no funciona hoy?
+
+El diagnóstico confirmó exactamente qué falta:
+
+1. **El backend SÍ emite `dispatch_ready`** cuando despacho termina — pero el cliente no escucha ese evento
+2. **No existe el evento `order_review_ready`** que unifique ambos flujos (QR y despacho) en un solo trigger
+3. **No existe listener WebSocket** en `qr-client.tsx` para ninguno de estos eventos
+4. **No existe tabla** para guardar calificaciones negativas (buzón interno)
+
+Son exactamente 4 piezas que faltan. Nada más.
+
+---
+
+### PARTE A — Migración de base de datos
+
+Crear `migrations/0027_feedback_inbox.sql`:
+
+```sql
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "feedback_messages" (
+  "id" serial PRIMARY KEY,
+  "order_id" integer REFERENCES "orders"("id"),
+  "rating" integer NOT NULL,
+  "comment" text,
+  "customer_name" varchar(200),
+  "is_read" boolean NOT NULL DEFAULT false,
+  "business_date" date NOT NULL,
+  "created_at" timestamp NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "feedback_messages_is_read_idx" 
+  ON "feedback_messages"("is_read");
+--> statement-breakpoint
+ALTER TABLE "business_config" 
+  ADD COLUMN IF NOT EXISTS "google_maps_review_url" text;
+--> statement-breakpoint
+ALTER TABLE "business_config" 
+  ADD COLUMN IF NOT EXISTS "review_points" integer NOT NULL DEFAULT 50;
+```
+
+Agregar en `shared/schema.ts`:
+
+```typescript
+export const feedbackMessages = pgTable("feedback_messages", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").references(() => orders.id),
+  rating: integer("rating").notNull(),
+  comment: text("comment"),
+  customerName: varchar("customer_name", { length: 200 }),
+  isRead: boolean("is_read").notNull().default(false),
+  businessDate: date("business_date").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+```
+
+Agregar en `businessConfig`:
+```typescript
+googleMapsReviewUrl: text("google_maps_review_url"),
+reviewPoints: integer("review_points").notNull().default(50),
+```
+
+---
+
+### PARTE B — Backend: emitir evento unificado
+
+**El cambio más crítico.** En `server/routes.ts`, en el handler `PATCH /api/kds/tickets/:id` donde se marca el ticket como completado/terminado, agregar inmediatamente después de actualizar el estado:
+
+```typescript
+// Obtener la orden asociada al ticket
+const [order] = await req.db.select({
+  id: orders.id,
+  orderMode: orders.orderMode,
+  transactionCode: orders.transactionCode,
+}).from(orders).where(eq(orders.id, ticket.orderId));
+
+if (order) {
+  const config = await getBusinessConfig(req.db);
+  // Emitir a TODOS los clientes conectados — el frontend filtra por orderId
+  broadcast("order_review_ready", {
+    orderId: order.id,
+    transactionCode: order.transactionCode,
+    orderMode: order.orderMode,
+    reviewPoints: config?.reviewPoints || 50,
+    googleMapsReviewUrl: config?.googleMapsReviewUrl || null,
+  });
+  console.log(`[Review] order_review_ready emitido → orden ${order.id} (${order.orderMode})`);
+}
+```
+
+**Endpoint para guardar la calificación:**
+
+```typescript
+app.post("/api/qr/:tableCode/submit-review", async (req, res) => {
+  try {
+    const { orderId, rating, comment, customerName } = req.body;
+    if (!orderId || !rating) {
+      return res.status(400).json({ message: "orderId y rating requeridos" });
+    }
+
+    const config = await getBusinessConfig(req.db);
+    const businessDate = await getBusinessDate(req.tenantSchema);
+
+    // Idempotente — no crear duplicados
+    const existing = await req.db.select()
+      .from(feedbackMessages)
+      .where(eq(feedbackMessages.orderId, orderId));
+    if (existing.length > 0) {
+      return res.status(409).json({ message: "Ya existe una calificación para esta orden" });
+    }
+
+    const [feedback] = await req.db.insert(feedbackMessages).values({
+      orderId,
+      rating,
+      comment: comment || null,
+      customerName: customerName || null,
+      isRead: false,
+      businessDate,
+    }).returning();
+
+    // Calificación baja → email a gerencia (silencioso, no falla el request)
+    if (rating <= 3 && config?.email) {
+      try {
+        const { sendEmail } = await import("./services/email-service");
+        await sendEmail({
+          to: config.email,
+          subject: `⚠️ Calificación baja: ${rating}/5 estrellas`,
+          html: `
+            <h2>Calificación recibida: ${"⭐".repeat(rating)}</h2>
+            <p><strong>Orden:</strong> #${orderId}</p>
+            <p><strong>Cliente:</strong> ${customerName || "Anónimo"}</p>
+            <p><strong>Comentario:</strong> ${comment || "Sin comentario"}</p>
+            <p><strong>Fecha:</strong> ${businessDate}</p>
+          `,
+        });
+      } catch (emailErr) {
+        console.error("[Review] Error enviando email a gerencia:", emailErr);
+      }
+    }
+
+    // Notificar dashboard en tiempo real
+    broadcast("feedback_received", { rating, orderId, isLow: rating <= 3 });
+
+    res.json({
+      success: true,
+      reviewPoints: config?.reviewPoints || 50,
+      // Solo retornar URL de Google si la calificación es positiva
+      googleMapsReviewUrl: rating >= 4 ? (config?.googleMapsReviewUrl || null) : null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+**Endpoints del buzón:**
+
+```typescript
+// Listar mensajes
+app.get("/api/admin/feedback", requireRole("MANAGER"), async (req, res) => {
+  try {
+    const messages = await req.db.select()
+      .from(feedbackMessages)
+      .orderBy(desc(feedbackMessages.createdAt))
+      .limit(100);
+    res.json(messages);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Contar no leídos
+app.get("/api/admin/feedback/unread-count", requireRole("MANAGER"), async (req, res) => {
+  try {
+    const [result] = await req.db.select({
+      count: sql<number>`count(*)::int`
+    }).from(feedbackMessages)
+      .where(eq(feedbackMessages.isRead, false));
+    res.json({ count: result?.count || 0 });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Marcar como leído
+app.patch("/api/admin/feedback/:id/read", requireRole("MANAGER"), async (req, res) => {
+  try {
+    const [updated] = await req.db.update(feedbackMessages)
+      .set({ isRead: true })
+      .where(eq(feedbackMessages.id, parseInt(req.params.id)))
+      .returning();
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Marcar todos como leídos
+app.post("/api/admin/feedback/mark-all-read", requireRole("MANAGER"), async (req, res) => {
+  try {
+    await req.db.update(feedbackMessages)
+      .set({ isRead: true })
+      .where(eq(feedbackMessages.isRead, false));
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+---
+
+### PARTE C — Frontend: listener WebSocket y pantallas
+
+**Este es el fix más crítico del lado del cliente.**
+
+En `client/src/pages/qr-client.tsx`, en el `useEffect` donde están registrados los otros listeners de WebSocket, agregar:
+
+```typescript
+// LA PIEZA QUE FALTABA — escuchar cuando la orden está lista
+const unsubReviewReady = wsManager.on("order_review_ready", (data: any) => {
+  // Filtrar: solo reaccionar a la orden del cliente actual
+  if (data.orderId === currentOrderId || 
+      (currentTransactionCode && data.transactionCode === currentTransactionCode)) {
+    setReviewPoints(data.reviewPoints || 50);
+    setGoogleMapsUrl(data.googleMapsReviewUrl || null);
+    setScreen("loyalty_post");
+  }
+});
+
+// Agregar al cleanup del useEffect:
+return () => {
+  // ...otros unsubs existentes...
+  unsubReviewReady();
+};
+```
+
+Agregar estados necesarios cerca de los otros estados del componente:
+```typescript
+const [reviewPoints, setReviewPoints] = useState(50);
+const [googleMapsUrl, setGoogleMapsUrl] = useState<string | null>(null);
+const [selectedRating, setSelectedRating] = useState(0);
+const [reviewComment, setReviewComment] = useState("");
+const [reviewSubmitting, setReviewSubmitting] = useState(false);
+```
+
+**Pantalla `loyalty_post` — puntos ganados:**
+
+```tsx
+if (screen === "loyalty_post") {
+  return (
+    <div style={{
+      minHeight: "100vh",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "32px",
+      gap: "24px",
+      background: "linear-gradient(135deg, #0f0f1a, #1a1a2e)",
+      color: "white",
+      textAlign: "center",
+    }}>
+      <div style={{ fontSize: "64px" }}>🏆</div>
+      <h2 style={{ fontSize: "26px", fontWeight: 800 }}>
+        ¡Tu orden está lista!
+      </h2>
+      <div style={{
+        background: "rgba(108,99,255,0.2)",
+        border: "1px solid rgba(108,99,255,0.4)",
+        borderRadius: "16px",
+        padding: "20px 32px",
+      }}>
+        <p style={{ fontSize: "14px", color: "#aaa", marginBottom: "4px" }}>
+          Puntos ganados en esta visita
+        </p>
+        <div style={{ fontSize: "56px", fontWeight: 800, color: "#6c63ff" }}>
+          +{reviewPoints}
+        </div>
+        <p style={{ fontSize: "12px", color: "#666", marginTop: "4px" }}>
+          puntos RMS
+        </p>
+      </div>
+      
+        href="https://loyalty.rmscore.app"
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          padding: "14px 28px",
+          background: "#6c63ff",
+          color: "white",
+          borderRadius: "12px",
+          textDecoration: "none",
+          fontSize: "15px",
+          fontWeight: 600,
+          width: "100%",
+          maxWidth: "280px",
+          textAlign: "center",
+        }}
+      >
+        Ver mis puntos →
+      </a>
+      <button
+        onClick={() => setScreen("review_prompt")}
+        style={{
+          background: "transparent",
+          border: "1px solid #444",
+          color: "#ccc",
+          padding: "12px 24px",
+          borderRadius: "12px",
+          cursor: "pointer",
+          fontSize: "14px",
+          width: "100%",
+          maxWidth: "280px",
+        }}
+      >
+        Calificarnos ⭐
+      </button>
+      <p style={{ color: "#444", fontSize: "12px" }}>
+        Tu opinión nos ayuda a mejorar
+      </p>
+    </div>
+  );
+}
+```
+
+**Pantalla `review_prompt` — calificación:**
+
+```tsx
+if (screen === "review_prompt") {
+  return (
+    <div style={{
+      minHeight: "100vh",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "32px",
+      gap: "20px",
+      background: "#0f0f1a",
+      color: "white",
+      textAlign: "center",
+    }}>
+      <div style={{ fontSize: "48px" }}>🙏</div>
+      <h2 style={{ fontSize: "22px", fontWeight: 700 }}>
+        ¿Cómo estuvo tu experiencia?
+      </h2>
+      <p style={{ color: "#888", fontSize: "14px" }}>
+        Tu opinión nos ayuda a mejorar
+      </p>
+
+      <div style={{ display: "flex", gap: "8px" }}>
+        {[1, 2, 3, 4, 5].map(star => (
+          <button
+            key={star}
+            onClick={() => setSelectedRating(star)}
+            style={{
+              fontSize: "44px",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              opacity: selectedRating >= star ? 1 : 0.25,
+              transform: selectedRating >= star ? "scale(1.15)" : "scale(1)",
+              transition: "all 0.15s ease",
+            }}
+          >
+            ⭐
+          </button>
+        ))}
+      </div>
+
+      {selectedRating > 0 && (
+        <>
+          {selectedRating <= 3 && (
+            <p style={{
+              color: "#f39c12",
+              fontSize: "13px",
+              padding: "8px 16px",
+              background: "rgba(243,156,18,0.1)",
+              borderRadius: "8px",
+            }}>
+              Lamentamos tu experiencia — tu mensaje llegará directo a la gerencia
+            </p>
+          )}
+          <textarea
+            placeholder="Comentario opcional..."
+            value={reviewComment}
+            onChange={e => setReviewComment(e.target.value)}
+            style={{
+              width: "100%",
+              maxWidth: "320px",
+              padding: "12px",
+              borderRadius: "10px",
+              border: "1px solid #333",
+              background: "#1a1a2e",
+              color: "white",
+              fontSize: "14px",
+              minHeight: "80px",
+              resize: "none",
+            }}
+          />
+          <button
+            onClick={async () => {
+              if (reviewSubmitting || !currentOrderId) return;
+              setReviewSubmitting(true);
+              try {
+                const res = await fetch(`/api/qr/${tableCode}/submit-review`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    orderId: currentOrderId,
+                    rating: selectedRating,
+                    comment: reviewComment || null,
+                    customerName: customerName || null,
+                  }),
+                });
+                const data = await res.json();
+                if (selectedRating >= 4 && data.googleMapsReviewUrl) {
+                  setGoogleMapsUrl(data.googleMapsReviewUrl);
+                }
+                setScreen("review_done");
+              } catch (err) {
+                console.error("[Review] Error:", err);
+              } finally {
+                setReviewSubmitting(false);
+              }
+            }}
+            disabled={reviewSubmitting}
+            style={{
+              width: "100%",
+              maxWidth: "320px",
+              padding: "16px",
+              background: selectedRating >= 4 ? "#27ae60" : "#e74c3c",
+              color: "white",
+              border: "none",
+              borderRadius: "12px",
+              fontSize: "16px",
+              fontWeight: 700,
+              cursor: reviewSubmitting ? "not-allowed" : "pointer",
+              opacity: reviewSubmitting ? 0.7 : 1,
+            }}
+          >
+            {reviewSubmitting ? "Enviando..." : "Enviar calificación"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+```
+
+**Pantalla `review_done` — agradecimiento + Google:**
+
+```tsx
+if (screen === "review_done") {
+  return (
+    <div style={{
+      minHeight: "100vh",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "32px",
+      gap: "20px",
+      background: "#0f0f1a",
+      color: "white",
+      textAlign: "center",
+    }}>
+      <div style={{ fontSize: "64px" }}>
+        {selectedRating >= 4 ? "🎉" : "💙"}
+      </div>
+      <h2 style={{ fontSize: "24px", fontWeight: 700 }}>
+        {selectedRating >= 4
+          ? "¡Gracias por tu calificación!"
+          : "Gracias por tu honestidad"}
+      </h2>
+      <p style={{ color: "#888", fontSize: "14px" }}>
+        {selectedRating >= 4
+          ? "¿Nos ayudás con una reseña en Google? Solo toma 30 segundos."
+          : "Tu mensaje llegó a la gerencia. Trabajaremos para mejorar."}
+      </p>
+      {selectedRating >= 4 && googleMapsUrl && (
+        
+          href={googleMapsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            padding: "14px 28px",
+            background: "#4285F4",
+            color: "white",
+            borderRadius: "12px",
+            textDecoration: "none",
+            fontSize: "15px",
+            fontWeight: 600,
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            width: "100%",
+            maxWidth: "280px",
+            justifyContent: "center",
+          }}
+        >
+          <span style={{ fontWeight: 800 }}>G</span>
+          Calificar en Google
+        </a>
+      )}
+      <p style={{ color: "#555", fontSize: "12px", marginTop: "8px" }}>
+        ¡Hasta la próxima visita! 👋
+      </p>
+    </div>
+  );
+}
+```
+
+---
+
+### PARTE D — Dashboard: Buzón de Retroalimentación
+
+**Propósito:** El gerente ve en tiempo real las calificaciones negativas antes de que lleguen a Google. Puede tomar acción correctiva inmediata.
+
+En `client/src/pages/dashboard.tsx`, agregar sección "Buzón de Retroalimentación" visible solo para MANAGER, después de las secciones existentes:
+
+```tsx
+{user?.role === "MANAGER" && <FeedbackInboxSection />}
+```
+
+El componente `FeedbackInboxSection` (puede ser inline en dashboard.tsx):
+- Fetch a `GET /api/admin/feedback` con `refetchInterval: 30000`
+- Fetch a `GET /api/admin/feedback/unread-count`
+- WebSocket listener para `feedback_received` → invalidar ambas queries
+- Header de sección con badge rojo de no leídos: "📬 Buzón de Retroalimentación (3 nuevos)"
+- Tabla responsive con columnas: Fecha, Orden #, Estrellas, Cliente, Comentario, Acciones
+- Filas no leídas con fondo ligeramente destacado
+- Botón "✓" por fila para marcar como leído
+- Botón "Marcar todos como leídos" cuando hay no leídos
+- Promedio de calificación del día visible al tope de la sección
+
+---
+
+### PARTE E — Admin: configurar Google Maps URL y puntos
+
+En `client/src/pages/admin/business-config.tsx`, agregar en la sección de configuración existente:
+
+```
+Programa de Calificaciones
+─────────────────────────────
+Puntos por calificación: [50]
+(Los clientes ganan estos puntos al calificarte)
+
+URL de reseñas en Google:
+[https://g.page/r/tu-restaurante/review         ]
+Instrucción: Ve a Google Business → "Obtener más reseñas" → copia el enlace
+```
+
+---
+
+### Verificación final — estos comandos deben retornar resultados
+
+```bash
+npx tsc --noEmit
+```
+
+```bash
+grep -n "order_review_ready" server/routes.ts client/src/pages/qr-client.tsx
+```
+
+```bash
+grep -n "loyalty_post\|review_prompt\|review_done" client/src/pages/qr-client.tsx
+```
+
+```bash
+grep -n "feedback_messages\|FeedbackInbox" client/src/pages/dashboard.tsx server/routes.ts
+```
+
+**Criterios de aceptación — probar en Replit antes de deploy:**
+
+- [ ] Migración `0027_feedback_inbox.sql` creada
+- [ ] KDS "Ticket Terminado" emite `order_review_ready` en consola del servidor
+- [ ] Cliente QR ve pantalla `loyalty_post` inmediatamente después
+- [ ] Botón "Calificarnos" lleva a pantalla de estrellas
+- [ ] 4-5 estrellas → pantalla final con botón de Google (si URL configurada)
+- [ ] 1-3 estrellas → guardado en DB + email a gerencia
+- [ ] Dashboard muestra buzón con badge de no leídos
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] **No hacer deploy hasta que todos los criterios pasen**

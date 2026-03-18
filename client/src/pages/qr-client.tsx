@@ -3,6 +3,7 @@ import { useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { wsManager } from "@/lib/ws";
 import {
   Loader2, UtensilsCrossed, Coffee, ShoppingCart, User, Check,
   Plus, Minus, ChevronLeft, Pencil, X, Users, Bell, Smartphone, Star,
@@ -392,6 +393,11 @@ export default function QRClientPage() {
   });
   const [loyaltyLoading, setLoyaltyLoading] = useState(false);
   const [earnedPoints, setEarnedPoints] = useState(0);
+  const [reviewPoints, setReviewPoints] = useState(50);
+  const [googleMapsUrl, setGoogleMapsUrl] = useState<string | null>(null);
+  const [selectedRating, setSelectedRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
 
   /* ─── Fetch daily QR token ─── */
   useEffect(() => {
@@ -676,6 +682,23 @@ export default function QRClientPage() {
     setReviewOrderId(dispatchInfo?.orderId ?? null);
     setScreen("loyalty_post");
   }, [dispatchStatus, screen]);
+
+  /* ─── WebSocket: order_review_ready → pantalla loyalty_post inmediata ─── */
+  useEffect(() => {
+    wsManager.connect();
+    const unsubReviewReady = wsManager.on("order_review_ready", (data: any) => {
+      const matchesQr = data.orderId && reviewOrderId && data.orderId === reviewOrderId;
+      const matchesDispatch = data.orderId && dispatchInfo && data.orderId === dispatchInfo.orderId;
+      const matchesTxCode = data.transactionCode && dispatchInfo && data.transactionCode === dispatchInfo.transactionCode;
+      if (matchesQr || matchesDispatch || matchesTxCode) {
+        if (data.reviewPoints) setReviewPoints(data.reviewPoints);
+        if (data.googleMapsReviewUrl) setGoogleMapsUrl(data.googleMapsReviewUrl);
+        if (!reviewOrderId && data.orderId) setReviewOrderId(data.orderId);
+        setScreen("loyalty_post");
+      }
+    });
+    return () => { unsubReviewReady(); };
+  }, [reviewOrderId, dispatchInfo]);
 
   /* ─── Award points for returning customer on loyalty_post ─── */
   useEffect(() => {
@@ -1603,122 +1626,100 @@ export default function QRClientPage() {
 
   /* ── Review Prompt Screen ── */
   if (screen === "review_prompt") {
-    const googlePlaceId = info?.googlePlaceId;
     return (
       <div className="qr-page" style={{
         display: "flex", flexDirection: "column", alignItems: "center",
         minHeight: "100dvh", padding: "48px 24px", textAlign: "center",
       }}>
         <style>{PAGE_CSS}</style>
-        <div style={{
-          width: 88, height: 88, borderRadius: 50, background: "#fef3c7",
-          display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20,
-        }}>
-          <Star size={40} style={{ color: "#f59e0b", fill: "#f59e0b" }} />
-        </div>
-        <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 8 }}>
-          &iquest;Nos ayudas con una rese&ntilde;a?
+        <div style={{ fontSize: 52, marginBottom: 12 }}>🙏</div>
+        <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+          &iquest;C&oacute;mo estuvo tu experiencia?
         </div>
         <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 28 }}>
-          Tu opini&oacute;n nos ayuda a seguir mejorando.
+          Tu opini&oacute;n nos ayuda a mejorar
         </div>
 
-        {googlePlaceId ? (
-          <>
-            <a
-              data-testid="link-google-review"
-              href={`https://search.google.com/local/writereview?placeid=${googlePlaceId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setTimeout(() => setScreen("review_done"), 800)}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          {[1, 2, 3, 4, 5].map(star => (
+            <button
+              key={star}
+              data-testid={`button-star-${star}`}
+              onClick={() => setSelectedRating(star)}
               style={{
-                width: "100%", maxWidth: 400, padding: "15px 24px", borderRadius: 30,
-                background: "#4285f4", color: "#fff", border: "none",
-                fontSize: 16, fontWeight: 700, cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                minHeight: 52, textDecoration: "none",
+                fontSize: 40, background: "transparent", border: "none", cursor: "pointer",
+                opacity: selectedRating >= star ? 1 : 0.25,
+                transform: selectedRating >= star ? "scale(1.15)" : "scale(1)",
+                transition: "all 0.15s ease", padding: 4,
+              }}
+            >⭐</button>
+          ))}
+        </div>
+
+        {selectedRating > 0 && (
+          <>
+            {selectedRating <= 3 && (
+              <div style={{
+                fontSize: 13, color: "#f59e0b", padding: "8px 16px",
+                background: "rgba(245,158,11,0.1)", borderRadius: 8, marginBottom: 12,
+              }}>
+                Lamentamos tu experiencia — tu mensaje llegar&aacute; directo a la gerencia
+              </div>
+            )}
+            <textarea
+              data-testid="input-review-comment"
+              placeholder="Comentario opcional..."
+              value={reviewComment}
+              onChange={e => setReviewComment(e.target.value)}
+              rows={3}
+              style={{
+                width: "100%", maxWidth: 340, padding: "12px 14px", borderRadius: 12,
+                border: `1.5px solid ${C.border2}`, background: C.card,
+                fontFamily: body, fontSize: 14, color: C.text, resize: "none",
+                outline: "none", boxSizing: "border-box", marginBottom: 12,
+              }}
+            />
+            <button
+              data-testid="button-submit-review"
+              disabled={reviewSubmitting}
+              onClick={async () => {
+                if (reviewSubmitting || !reviewOrderId) return;
+                setReviewSubmitting(true);
+                try {
+                  const r = await fetch(`/api/qr/${tableCode}/submit-review`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      orderId: reviewOrderId,
+                      rating: selectedRating,
+                      comment: reviewComment || null,
+                      customerName: loyaltyCustomer?.name || name || null,
+                    }),
+                  });
+                  const data = await r.json();
+                  if (selectedRating >= 4 && data.googleMapsReviewUrl) {
+                    setGoogleMapsUrl(data.googleMapsReviewUrl);
+                  }
+                  setScreen("review_done");
+                } catch (err) {
+                  console.error("[Review] Error:", err);
+                  setScreen("review_done");
+                } finally {
+                  setReviewSubmitting(false);
+                }
+              }}
+              style={{
+                width: "100%", maxWidth: 340, padding: "15px 24px", borderRadius: 30,
+                background: selectedRating >= 4 ? "#16a34a" : "#dc2626", color: "#fff", border: "none",
+                fontSize: 16, fontWeight: 700,
+                cursor: reviewSubmitting ? "not-allowed" : "pointer",
+                opacity: reviewSubmitting ? 0.7 : 1,
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                minHeight: 52,
               }}
             >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-              Calificar en Google
-            </a>
-
-            {!feedbackSent ? (
-              <button
-                data-testid="button-internal-feedback"
-                onClick={() => {
-                  const el = document.getElementById("feedback-section");
-                  if (el) el.style.display = el.style.display === "none" ? "block" : "none";
-                }}
-                style={{
-                  marginTop: 16, background: "none", border: "none", color: C.text2,
-                  fontSize: 13, cursor: "pointer", textDecoration: "underline",
-                }}
-              >
-                Prefiero enviar un comentario al restaurante
-              </button>
-            ) : null}
-
-            <div id="feedback-section" style={{ display: "none", width: "100%", maxWidth: 400, marginTop: 16 }}>
-              <textarea
-                data-testid="input-feedback-message"
-                placeholder="Escribe tu mensaje..."
-                value={feedbackMessage}
-                onChange={(e) => setFeedbackMessage(e.target.value)}
-                rows={3}
-                style={{
-                  width: "100%", padding: "12px 14px", borderRadius: 12,
-                  border: `1.5px solid ${C.border2}`, background: C.card,
-                  fontFamily: body, fontSize: 14, color: C.text, resize: "none",
-                  outline: "none", boxSizing: "border-box",
-                }}
-              />
-              <button
-                data-testid="button-send-feedback"
-                disabled={!feedbackMessage.trim() || feedbackSubmitting}
-                onClick={handleFeedbackSubmit}
-                style={{
-                  width: "100%", marginTop: 10, padding: "13px 24px", borderRadius: 30,
-                  background: feedbackMessage.trim() ? C.acc : C.border2, color: "#fff", border: "none",
-                  fontSize: 15, fontWeight: 700, cursor: feedbackMessage.trim() ? "pointer" : "not-allowed",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                }}
-              >
-                {feedbackSubmitting ? <Loader2 size={18} className="animate-spin" /> : "Enviar mensaje"}
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={{ width: "100%", maxWidth: 400 }}>
-              <textarea
-                data-testid="input-feedback-message"
-                placeholder="Escribe tu comentario..."
-                value={feedbackMessage}
-                onChange={(e) => setFeedbackMessage(e.target.value)}
-                rows={3}
-                style={{
-                  width: "100%", padding: "12px 14px", borderRadius: 12,
-                  border: `1.5px solid ${C.border2}`, background: C.card,
-                  fontFamily: body, fontSize: 14, color: C.text, resize: "none",
-                  outline: "none", boxSizing: "border-box",
-                }}
-              />
-              <button
-                data-testid="button-send-feedback"
-                disabled={!feedbackMessage.trim() || feedbackSubmitting}
-                onClick={handleFeedbackSubmit}
-                style={{
-                  width: "100%", marginTop: 10, padding: "15px 24px", borderRadius: 30,
-                  background: feedbackMessage.trim() ? C.acc : C.border2, color: "#fff", border: "none",
-                  fontSize: 16, fontWeight: 700, cursor: feedbackMessage.trim() ? "pointer" : "not-allowed",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  minHeight: 52,
-                }}
-              >
-                {feedbackSubmitting ? <Loader2 size={18} className="animate-spin" /> : "Enviar comentario"}
-              </button>
-            </div>
+              {reviewSubmitting ? <Loader2 size={18} className="animate-spin" /> : "Enviar calificaci\u00f3n"}
+            </button>
           </>
         )}
 
@@ -1738,24 +1739,50 @@ export default function QRClientPage() {
 
   /* ── Review Done Screen ── */
   if (screen === "review_done") {
+    const isPositive = selectedRating >= 4;
+    const effectiveGoogleUrl = googleMapsUrl || (info?.googlePlaceId
+      ? `https://search.google.com/local/writereview?placeid=${info.googlePlaceId}`
+      : null);
     return (
       <div className="qr-page" style={{
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
         minHeight: "100dvh", padding: "48px 24px", textAlign: "center",
       }}>
         <style>{PAGE_CSS}</style>
-        <div style={{
-          width: 96, height: 96, borderRadius: 50, background: C.accD,
-          display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20,
-        }}>
-          <Check size={44} style={{ color: C.acc }} />
+        <div style={{ fontSize: 64, marginBottom: 16 }}>
+          {isPositive ? "🎉" : "💙"}
         </div>
-        <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 700, color: C.text, marginBottom: 8 }}
+        <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 8 }}
           data-testid="text-review-done-title">
-          &iexcl;Muchas gracias por su preferencia!
+          {isPositive ? "\u00a1Gracias por tu calificaci\u00f3n!" : "Gracias por tu honestidad"}
         </div>
-        <div style={{ fontSize: 14, color: C.text2, maxWidth: 280, lineHeight: 1.6, marginBottom: 32 }}>
-          Esperamos verle pronto de nuevo.
+        <div style={{ fontSize: 14, color: C.text2, maxWidth: 280, lineHeight: 1.6, marginBottom: 28 }}>
+          {isPositive
+            ? "\u00bfNos ayud\u00e1s con una rese\u00f1a en Google? Solo toma 30 segundos."
+            : "Tu mensaje lleg\u00f3 a la gerencia. Trabajaremos para mejorar."}
+        </div>
+
+        {isPositive && effectiveGoogleUrl && (
+          <a
+            data-testid="link-google-review"
+            href={effectiveGoogleUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              width: "100%", maxWidth: 340, padding: "15px 24px", borderRadius: 30,
+              background: "#4285f4", color: "#fff",
+              fontSize: 16, fontWeight: 700,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              minHeight: 52, textDecoration: "none", marginBottom: 16,
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+            Calificar en Google
+          </a>
+        )}
+
+        <div style={{ fontSize: 13, color: C.text3, marginBottom: 24 }}>
+          &iexcl;Hasta la pr&oacute;xima visita! 👋
         </div>
         <button
           data-testid="link-back-to-menu"

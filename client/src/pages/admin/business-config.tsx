@@ -39,6 +39,7 @@ interface BusinessConfigData {
   reviewPoints?: number;
   reviewEmail?: string;
   googlePlaceId?: string;
+  googleMapsReviewUrl?: string;
 }
 
 const TIMEZONE_OPTIONS = [
@@ -78,6 +79,7 @@ export default function AdminBusinessConfigPage() {
     reviewPoints: 0,
     reviewEmail: "",
     googlePlaceId: "",
+    googleMapsReviewUrl: "",
   });
 
   const { data: config, isLoading, isError, error } = useQuery<BusinessConfigData>({
@@ -107,6 +109,7 @@ export default function AdminBusinessConfigPage() {
         reviewPoints: config.reviewPoints ?? 0,
         reviewEmail: config.reviewEmail || "",
         googlePlaceId: config.googlePlaceId || "",
+        googleMapsReviewUrl: config.googleMapsReviewUrl || "",
       });
     }
   }, [config]);
@@ -445,7 +448,20 @@ export default function AdminBusinessConfigPage() {
                 placeholder="ChIJ..."
               />
               <p className="text-xs text-muted-foreground">
-                Futuro: se usará para redirigir reseñas 5★ a Google Maps.
+                ID de lugar de Google (fallback para reseñas).
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="googleMapsReviewUrl">URL de Reseñas en Google</Label>
+              <Input
+                id="googleMapsReviewUrl"
+                data-testid="input-google-maps-review-url"
+                value={form.googleMapsReviewUrl || ""}
+                onChange={(e) => setForm({ ...form, googleMapsReviewUrl: e.target.value })}
+                placeholder="https://g.page/r/tu-restaurante/review"
+              />
+              <p className="text-xs text-muted-foreground">
+                Ve a Google Business → "Obtener más reseñas" → copia el enlace directo.
               </p>
             </div>
           </CardContent>
