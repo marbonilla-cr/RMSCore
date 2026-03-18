@@ -113,12 +113,25 @@ async function handleDirectDispatchSubmit(
   const modOptionsMap = new Map(modOptionsArr.map((o: any) => [o.id, o]));
 
   const roundNumber = 1;
+  const kdsTickets: Map<string, number> = new Map();
 
   for (const item of items) {
     const product = productsMap.get(Number(item.productId));
     if (!product || !(product as any).active) continue;
 
     const category = allCategories.find((c: any) => c.id === (product as any).categoryId);
+    const kdsDestination: string = (category as any)?.kdsDestination || "cocina";
+
+    if (!kdsTickets.has(kdsDestination)) {
+      const ticket = await storage.createKitchenTicket({
+        orderId: order.id,
+        tableId: null,
+        tableNameSnapshot: "Despacho",
+        status: "NEW",
+        kdsDestination,
+      }, req.db);
+      kdsTickets.set(kdsDestination, ticket.id);
+    }
 
     const orderItem = await storage.createOrderItem({
       orderId: order.id,
@@ -130,7 +143,7 @@ async function handleDirectDispatchSubmit(
       origin: "QR",
       createdByUserId: null,
       responsibleWaiterId: null,
-      status: "PENDING",
+      status: "SENT",
       roundNumber,
       qrSubmissionId: null,
     }, req.db);
@@ -138,7 +151,10 @@ async function handleDirectDispatchSubmit(
     if (item.customerName) {
       await req.db.update(orderItems).set({
         customerNameSnapshot: item.customerName,
+        sentToKitchenAt: new Date(),
       }).where(eq(orderItems.id, orderItem.id));
+    } else {
+      await req.db.update(orderItems).set({ sentToKitchenAt: new Date() }).where(eq(orderItems.id, orderItem.id));
     }
 
     const taxLinks = (await storage.getProductTaxCategories((product as any).id, req.db)) || [];
@@ -194,12 +210,49 @@ async function handleDirectDispatchSubmit(
       responsibleWaiterId: null,
       status: "OPEN",
     }, req.db);
+
+    const ticketId = kdsTickets.get(kdsDestination)!;
+    const modNote = (item.modifiers || [])
+      .map((m: any) => modOptionsMap.get(Number(m.optionId)))
+      .filter(Boolean)
+      .map((o: any) => o.name)
+      .join(", ");
+    const customerNote = item.customerName ? `(${item.customerName})` : "";
+    const fullNotes = [item.notes, modNote, customerNote].filter(Boolean).join(" | ");
+
+    if (item.qty > 1) {
+      const groupId = crypto.randomUUID();
+      for (let seq = 1; seq <= item.qty; seq++) {
+        await storage.createKitchenTicketItem({
+          kitchenTicketId: ticketId,
+          orderItemId: orderItem.id,
+          productNameSnapshot: (product as any).name,
+          qty: 1,
+          notes: fullNotes || null,
+          status: "NEW",
+          kitchenItemGroupId: groupId,
+          seqInGroup: seq,
+        }, req.db);
+      }
+    } else {
+      await storage.createKitchenTicketItem({
+        kitchenTicketId: ticketId,
+        orderItemId: orderItem.id,
+        productNameSnapshot: (product as any).name,
+        qty: 1,
+        notes: fullNotes || null,
+        status: "NEW",
+      }, req.db);
+    }
   }
 
   await storage.recalcOrderTotal(order.id, req.db);
 
   broadcastFn("order_updated", { orderId: order.id });
   broadcastFn("table_status_changed", {});
+  if (kdsTickets.size > 0) {
+    broadcastFn("kitchen_item_status_changed", { orderId: order.id });
+  }
 
   res.json({
     dispatch: true,
