@@ -249,6 +249,70 @@ export function registerLoyaltyRoutes(app: any) {
     }
   });
 
+  // POST /api/loyalty/auth/phone — register or find customer by phone
+  app.post("/api/loyalty/auth/phone", async (req: any, res: any) => {
+    try {
+      const name = (req.body.name || "").trim();
+      const rawPhone = (req.body.phone || "").trim();
+      const email = (req.body.email || "").trim().toLowerCase() || null;
+      if (!name || !rawPhone) return res.status(400).json({ message: "Nombre y teléfono son requeridos" });
+
+      const digits = rawPhone.replace(/\D/g, "");
+      if (digits.length < 7) return res.status(400).json({ message: "Teléfono inválido" });
+
+      let customer: any;
+
+      if (email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) return res.status(400).json({ message: "Correo electrónico inválido" });
+        [customer] = await db.select().from(customers).where(eq(customers.email, email));
+      }
+
+      if (!customer) {
+        [customer] = await db.select().from(customers).where(eq(customers.phone, rawPhone));
+      }
+
+      if (customer) {
+        [customer] = await db.update(customers).set({
+          lastSeenAt: new Date(),
+          name: customer.name || name,
+          phone: customer.phone || rawPhone,
+        }).where(eq(customers.id, customer.id)).returning();
+      } else {
+        const syntheticEmail = email || `loyalty_phone_${digits}@noemail.local`;
+        try {
+          [customer] = await db.insert(customers).values({
+            email: syntheticEmail,
+            name,
+            phone: rawPhone,
+          }).returning();
+        } catch (insertErr: any) {
+          if (insertErr.code === "23505") {
+            [customer] = await db.select().from(customers).where(eq(customers.email, syntheticEmail));
+            if (!customer) return res.status(409).json({ message: "Ya existe una cuenta con ese teléfono." });
+          } else {
+            throw insertErr;
+          }
+        }
+      }
+
+      const token = Buffer.from(JSON.stringify({ customerId: customer.id, email: customer.email })).toString("base64");
+
+      const tenantId = resolveTenantId(req);
+      let pointsBalance = 0;
+      if (tenantId) {
+        const [account] = await db.select({ pointsBalance: loyaltyAccounts.pointsBalance })
+          .from(loyaltyAccounts)
+          .where(and(eq(loyaltyAccounts.customerId, customer.id), eq(loyaltyAccounts.tenantId, tenantId)));
+        pointsBalance = account ? parseFloat(account.pointsBalance) || 0 : 0;
+      }
+
+      res.json({ customer, token, pointsBalance });
+    } catch (err: any) {
+      res.status(500).json({ message: "Error al registrar: " + err.message });
+    }
+  });
+
   // GET /api/loyalty/config
   app.get("/api/loyalty/config", async (req: any, res: any) => {
     try {

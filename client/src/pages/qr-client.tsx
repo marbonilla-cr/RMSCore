@@ -398,6 +398,11 @@ export default function QRClientPage() {
   const [selectedRating, setSelectedRating] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [regName, setRegName] = useState("");
+  const [regPhone, setRegPhone] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regLoading, setRegLoading] = useState(false);
+  const [regError, setRegError] = useState("");
 
   /* ─── Fetch daily QR token ─── */
   useEffect(() => {
@@ -1582,14 +1587,14 @@ export default function QRClientPage() {
           </>
         ) : (
           <>
-            <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+            <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 4 }}>
               &iexcl;Gracias por tu visita!
             </div>
             {reviewPoints > 0 && (
               <div style={{
                 display: "flex", alignItems: "center", gap: 8, padding: "10px 20px",
                 background: "#fef9c3", border: "1.5px solid #fbbf24", borderRadius: 12,
-                marginTop: 4, marginBottom: 16,
+                marginTop: 8, marginBottom: 12,
               }} data-testid="text-potential-points">
                 <Star size={18} style={{ color: "#d97706", fill: "#d97706" }} />
                 <span style={{ fontSize: 15, color: "#92400e", fontWeight: 700 }}>
@@ -1597,45 +1602,134 @@ export default function QRClientPage() {
                 </span>
               </div>
             )}
-            {info?.googleClientId ? (
+            <div style={{ fontSize: 13, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 16 }}>
+              Registr&aacute;te para acumular puntos con cada visita
+            </div>
+            <div style={{ width: "100%", maxWidth: 340 }}>
+              <input
+                data-testid="input-reg-name"
+                type="text"
+                placeholder="Tu nombre *"
+                value={regName}
+                onChange={e => setRegName(e.target.value)}
+                style={{
+                  width: "100%", padding: "12px 14px", borderRadius: 10, marginBottom: 8,
+                  border: `1.5px solid ${C.border2}`, background: C.card,
+                  fontFamily: body, fontSize: 14, color: C.text, outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+              <input
+                data-testid="input-reg-phone"
+                type="tel"
+                placeholder="Celular *"
+                value={regPhone}
+                onChange={e => setRegPhone(e.target.value)}
+                style={{
+                  width: "100%", padding: "12px 14px", borderRadius: 10, marginBottom: 8,
+                  border: `1.5px solid ${C.border2}`, background: C.card,
+                  fontFamily: body, fontSize: 14, color: C.text, outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+              <input
+                data-testid="input-reg-email"
+                type="email"
+                placeholder="Correo electrónico (opcional)"
+                value={regEmail}
+                onChange={e => setRegEmail(e.target.value)}
+                style={{
+                  width: "100%", padding: "12px 14px", borderRadius: 10, marginBottom: 8,
+                  border: `1.5px solid ${C.border2}`, background: C.card,
+                  fontFamily: body, fontSize: 14, color: C.text, outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+              {regError && (
+                <div style={{ fontSize: 12, color: C.red, marginBottom: 8 }}>{regError}</div>
+              )}
+              <button
+                data-testid="button-reg-submit"
+                disabled={regLoading}
+                onClick={async () => {
+                  if (regLoading) return;
+                  setRegError("");
+                  setRegLoading(true);
+                  try {
+                    const r = await fetch("/api/loyalty/auth/phone", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        name: regName,
+                        phone: regPhone,
+                        email: regEmail || undefined,
+                        tenantId: info?.tenantId,
+                      }),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) { setRegError(data.message || "Error al registrar"); return; }
+                    const cust = { name: data.customer.name, points: data.pointsBalance || 0 };
+                    setLoyaltyCustomer(cust);
+                    localStorage.setItem("rms_loyalty_customer", JSON.stringify(cust));
+                    localStorage.setItem("rms_loyalty_token", data.token);
+                  } catch {
+                    setRegError("Error de conexión. Intenta de nuevo.");
+                  } finally {
+                    setRegLoading(false);
+                  }
+                }}
+                style={{
+                  width: "100%", padding: "13px 24px", borderRadius: 30,
+                  background: C.acc, color: "#fff", border: "none",
+                  fontSize: 15, fontWeight: 700,
+                  cursor: regLoading ? "not-allowed" : "pointer",
+                  opacity: regLoading ? 0.7 : 1,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  minHeight: 48, marginBottom: 8,
+                }}
+              >
+                {regLoading ? <Loader2 size={16} className="animate-spin" /> : "Registrar y acumular puntos"}
+              </button>
+            </div>
+            {info?.googleClientId && (
               <>
-                <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 24 }}>
-                  {reviewPoints > 0
-                    ? "Inicia sesi\u00f3n con Google para acumular tus puntos"
-                    : "Inicia sesi\u00f3n para ver tus puntos de lealtad"}
-                </div>
+                <div style={{ fontSize: 12, color: C.text3, margin: "4px 0 8px" }}>— o inicia sesi\u00f3n con —</div>
                 {loyaltyLoading ? (
-                  <div style={{ marginBottom: 24 }}><Loader2 size={24} className="animate-spin" style={{ color: C.acc }} /></div>
+                  <div style={{ marginBottom: 8 }}><Loader2 size={20} className="animate-spin" style={{ color: C.acc }} /></div>
                 ) : (
-                  <div id="gsi-btn-container" data-testid="button-google-signin" style={{ marginBottom: 24, minHeight: 44 }} />
+                  <div id="gsi-btn-container" data-testid="button-google-signin" style={{ marginBottom: 8, minHeight: 44 }} />
                 )}
-                <div style={{ fontSize: 12, color: C.text3, marginBottom: 20 }}>
-                  Opcional — puedes continuar sin iniciar sesi&oacute;n
-                </div>
               </>
-            ) : (
-              <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 28 }}>
-                {reviewPoints > 0
-                  ? "Acumula puntos con cada visita"
-                  : "Nos alegra que hayas disfrutado tu visita"}
-              </div>
             )}
           </>
         )}
 
-        <button
-          data-testid="button-loyalty-continue"
-          onClick={() => setScreen("review_prompt")}
-          style={{
-            width: "100%", maxWidth: 400, padding: "15px 24px", borderRadius: 30,
-            background: C.acc, color: "#fff", border: "none",
-            fontSize: 16, fontWeight: 700, cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            minHeight: 52,
-          }}
-        >
-          Continuar &rarr;
-        </button>
+        {loyaltyCustomer ? (
+          <button
+            data-testid="button-loyalty-continue"
+            onClick={() => setScreen("review_prompt")}
+            style={{
+              width: "100%", maxWidth: 400, padding: "15px 24px", borderRadius: 30,
+              background: C.acc, color: "#fff", border: "none",
+              fontSize: 16, fontWeight: 700, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              minHeight: 52,
+            }}
+          >
+            Calific&aacute; tu experiencia &rarr;
+          </button>
+        ) : (
+          <button
+            data-testid="button-loyalty-skip"
+            onClick={() => setScreen("review_prompt")}
+            style={{
+              marginTop: 12, background: "none", border: "none", color: C.text3,
+              fontSize: 13, cursor: "pointer", textDecoration: "underline",
+            }}
+          >
+            Continuar sin registrarse
+          </button>
+        )}
       </div>
     );
   }
