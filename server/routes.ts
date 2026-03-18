@@ -3835,7 +3835,6 @@ export async function registerRoutes(
     const tableOrders = allOpenOrders.filter(o => o.tableId && tableMap.has(o.tableId));
     const quickSaleOrders = allOpenOrders.filter(o => (o as any).isQuickSale && !o.tableId);
     const relevantOrders = [...tableOrders, ...quickSaleOrders];
-    if (relevantOrders.length === 0) return res.json([]);
 
     const orderIds = relevantOrders.map(o => o.id);
     const parentOrderIds = relevantOrders.filter(o => o.parentOrderId).map(o => o.parentOrderId!);
