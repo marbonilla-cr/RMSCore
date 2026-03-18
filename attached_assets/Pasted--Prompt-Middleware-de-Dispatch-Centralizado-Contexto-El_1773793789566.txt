@@ -1,0 +1,130 @@
+## Prompt — Middleware de Dispatch Centralizado
+
+**Contexto:** El check de `operationModeDispatch` está duplicado en 4 lugares inline. Hay que centralizarlo en un solo archivo como fuente de verdad.
+
+---
+
+**PASO 1 — Crear `server/middleware/dispatch.ts`:**
+
+```typescript
+/**
+ * server/middleware/dispatch.ts
+ * 
+ * Fuente única de verdad para verificar si el modo despacho está activo.
+ * Usar estas funciones en lugar de checks inline en routes.ts y qr-subaccount-routes.ts.
+ */
+
+import { getBusinessConfig } from "../storage";
+
+/**
+ * Helper async: retorna true si operationModeDispatch está activo para el tenant.
+ */
+export async function isDispatchEnabled(db: any): Promise<boolean> {
+  try {
+    const config = await getBusinessConfig(db);
+    return config?.operationModeDispatch === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Middleware Express: retorna 404 si despacho no está activo.
+ * Usar en rutas públicas del QR de despacho.
+ */
+export function requireDispatchEnabled(
+  req: any,
+  res: any,
+  next: any
+): void {
+  isDispatchEnabled(req.db)
+    .then(enabled => {
+      if (!enabled) {
+        return res.status(404).json({
+          message: "El servicio de despacho no está disponible en este restaurante."
+        });
+      }
+      next();
+    })
+    .catch(() => {
+      res.status(500).json({ message: "Error verificando configuración de despacho" });
+    });
+}
+```
+
+---
+
+**PASO 2 — Reemplazar los 4 checks inline:**
+
+Buscar y reemplazar en `server/routes.ts` y `server/qr-subaccount-routes.ts`:
+
+```typescript
+// ANTES (routes.ts ~línea 3166):
+if (!(config as any)?.operationModeDispatch) {
+  return res.status(404)...
+}
+
+// DESPUÉS — agregar requireDispatchEnabled como middleware en la ruta:
+import { requireDispatchEnabled, isDispatchEnabled } from "./middleware/dispatch";
+app.get("/api/qr/:tableCode/info", requireDispatchEnabled, async (req, res) => {
+  // ... sin el check inline
+});
+```
+
+```typescript
+// ANTES (routes.ts ~línea 3220):
+if (!config?.operationModeDispatch) {
+  return res.status(404)...
+}
+
+// DESPUÉS — mismo patrón, agregar requireDispatchEnabled a la ruta
+```
+
+```typescript
+// ANTES (qr-subaccount-routes.ts ~línea 389):
+const dispatchEnabled = config?.operationModeDispatch === true;
+
+// DESPUÉS:
+import { isDispatchEnabled } from "./middleware/dispatch";
+const dispatchEnabled = await isDispatchEnabled(req.db);
+```
+
+```typescript
+// ANTES (qr-subaccount-routes.ts ~línea 1056):
+if (!config?.operationModeDispatch) {
+  return res.status(404)...
+}
+
+// DESPUÉS — agregar requireDispatchEnabled como middleware en esa ruta
+```
+
+---
+
+**PASO 3 — Verificar que no quedan checks inline:**
+
+```bash
+grep -n "operationModeDispatch" server/routes.ts server/qr-subaccount-routes.ts
+```
+
+Debe retornar 0 líneas. Todas las ocurrencias deben estar solo en `server/middleware/dispatch.ts`.
+
+---
+
+**PASO 4 — Verificación final:**
+
+```bash
+npx tsc --noEmit
+```
+
+```bash
+grep -rn "operationModeDispatch" server/ | grep -v "dispatch.ts\|storage.ts\|schema.ts\|migration"
+```
+
+Segunda verificación debe retornar 0 líneas.
+
+**Criterios de aceptación:**
+- [ ] `server/middleware/dispatch.ts` existe con `isDispatchEnabled` y `requireDispatchEnabled`
+- [ ] 0 checks inline de `operationModeDispatch` en `routes.ts` y `qr-subaccount-routes.ts`
+- [ ] `npx tsc --noEmit` sin errores
+- [ ] Despacho sigue funcionando end-to-end en Replit
+- [ ] No hacer deploy hasta que todos los criterios pasen
