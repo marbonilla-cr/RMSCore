@@ -83,7 +83,8 @@ export function registerLoyaltyRoutes(app: any) {
 
             if (alreadyAwarded.length === 0) {
               // Get order total from tenant DB
-              const tenantDb = req.db || db;
+              const tenantDb = req.db;
+              if (!tenantDb) return res.status(400).json({ message: "Contexto de tenant requerido" });
               const [order] = await tenantDb.select({ totalAmount: orders.totalAmount })
                 .from(orders)
                 .where(eq(orders.id, Number(orderId)))
@@ -169,7 +170,8 @@ export function registerLoyaltyRoutes(app: any) {
 
       let earnedPoints = 0;
       if (alreadyAwarded.length === 0) {
-        const tenantDb = req.db || db;
+        const tenantDb = req.db;
+        if (!tenantDb) return res.status(400).json({ message: "Contexto de tenant requerido" });
         const [order] = await tenantDb.select({ totalAmount: orders.totalAmount })
           .from(orders).where(eq(orders.id, Number(orderId))).limit(1);
         if (order && parseFloat(order.totalAmount || "0") > 0) {

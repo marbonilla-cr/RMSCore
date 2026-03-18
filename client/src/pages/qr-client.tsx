@@ -404,7 +404,7 @@ export default function QRClientPage() {
 
   /* ─── Data fetching ─── */
 
-  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number; hasGuestCount: boolean; orderId: number | null; isDispatch?: boolean; googlePlaceId?: string; googleClientId?: string }>({
+  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number; hasGuestCount: boolean; orderId: number | null; isDispatch?: boolean; googlePlaceId?: string; googleClientId?: string; tenantId?: number }>({
     queryKey: ["/api/qr", tableCode, "info"],
     queryFn: async () => {
       const r = await fetch(`/api/qr/${tableCode}/info`);
@@ -687,7 +687,7 @@ export default function QRClientPage() {
         const r = await fetch("/api/loyalty/session-award", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ loyaltyToken: token, orderId: reviewOrderId }),
+          body: JSON.stringify({ loyaltyToken: token, orderId: reviewOrderId, tenantId: info?.tenantId }),
         });
         if (!r.ok) return;
         const data = await r.json();
@@ -721,7 +721,7 @@ export default function QRClientPage() {
       const r = await fetch("/api/loyalty/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken: response.credential, orderId: reviewOrderId || undefined }),
+        body: JSON.stringify({ idToken: response.credential, orderId: reviewOrderId || undefined, tenantId: info?.tenantId }),
       });
       if (!r.ok) throw new Error("Auth failed");
       const data = await r.json();
