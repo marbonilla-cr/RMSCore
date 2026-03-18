@@ -3167,7 +3167,7 @@ export async function registerRoutes(
       if (!isConfigDispatchEnabled(config)) {
         return res.status(404).json({ message: "Despacho no habilitado" });
       }
-      return res.json({ tableCode: "DISPATCH", tableName: "Despacho", isDispatch: true, maxSubaccounts: 1, hasGuestCount: false, orderId: null, tenantId: req.tenantId, googlePlaceId: (config as any)?.googlePlaceId || "", googleClientId: process.env.GOOGLE_CLIENT_ID || "" });
+      return res.json({ tableCode: "DISPATCH", tableName: "Despacho", isDispatch: true, maxSubaccounts: 1, hasGuestCount: false, orderId: null, tenantId: req.tenantId, googlePlaceId: config?.googlePlaceId ?? "", googleClientId: process.env.GOOGLE_CLIENT_ID || "" });
     }
 
     const table = await storage.getTableByCode(tableCode, req.db);
