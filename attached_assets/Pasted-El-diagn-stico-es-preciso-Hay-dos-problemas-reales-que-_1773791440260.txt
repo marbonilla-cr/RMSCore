@@ -1,0 +1,80 @@
+El diagnóstico es preciso. Hay dos problemas reales que hay que corregir antes de deploy:
+
+**❌ Punto 3** — El `tenantId` en dev no coincide con la DB. En producción funciona porque el middleware lo resuelve correctamente, pero el env var `TENANT_ID=1` es una trampa.
+
+**⚠️ Punto 2** — El fallback `req.db || db` es silencioso y peligroso en multi-tenant.
+
+**❌ Punto 4** — Los fetches del QR client no pasan `tenantId` — dependen 100% del middleware.
+
+Pídele al agente que aplique estos fixes **antes** de hacer deploy:
+
+---
+
+Aplicar los siguientes fixes de arquitectura multi-tenant en loyalty. No modificar lógica de negocio.
+
+**FIX 1 — Eliminar fallback riesgoso en `server/loyalty-routes.ts`:**
+
+Buscar todas las ocurrencias de `req.db || db` y reemplazar por `req.db` con validación explícita:
+
+```typescript
+// ANTES:
+const tenantDb = req.db || db;
+
+// DESPUÉS:
+const tenantDb = req.db;
+if (!tenantDb) return res.status(400).json({ message: "Contexto de tenant requerido" });
+```
+
+**FIX 2 — `resolveTenantId` debe fallar explícitamente si no hay tenant:**
+
+```typescript
+// ANTES:
+function resolveTenantId(req: any): number | null {
+  return req.tenantId ||
+    parseInt(req.headers["x-tenant-id"]) ||
+    parseInt(req.body?.tenantId) ||
+    null;
+}
+
+// DESPUÉS:
+function resolveTenantId(req: any): number {
+  const id = req.tenantId ||
+    parseInt(req.headers["x-tenant-id"] as string) ||
+    parseInt(req.body?.tenantId);
+  if (!id || isNaN(id)) throw new Error("tenantId no resuelto — verificar middleware de tenant");
+  return id;
+}
+```
+
+Envolver todas las llamadas a `resolveTenantId` en try/catch que retornen 400.
+
+**FIX 3 — El QR client pasa `tenantId` explícitamente en fetches de loyalty:**
+
+En `client/src/pages/qr-client.tsx`, en todos los fetches a `/api/loyalty/*`, agregar `tenantId` en el body:
+
+```typescript
+body: JSON.stringify({ 
+  loyaltyToken: token, 
+  orderId: reviewOrderId,
+  tenantId: tableInfo?.tenantId, // ← agregar
+})
+```
+
+El `tenantId` viene de `tableInfo` que ya se obtiene en `GET /api/qr/:tableCode/info`. Verificar que ese endpoint retorna `tenantId` en el response.
+
+**FIX 4 — En dev, eliminar `TENANT_ID` del env si existe:**
+
+El env var `TENANT_ID=1` no debe existir — el tenantId debe resolverse siempre por middleware desde la DB. Verificar en `.env` o en la configuración de Replit y eliminar si está presente.
+
+**Verificación:**
+```bash
+grep -n "req\.db || db\|TENANT_ID" server/loyalty-routes.ts server/.env 2>/dev/null | head -20
+```
+
+Debe retornar 0 ocurrencias de `req.db || db`.
+
+```bash
+npx tsc --noEmit
+```
+
+Sin errores. Reportar resultado de ambos comandos antes de hacer deploy.
