@@ -410,7 +410,7 @@ export default function QRClientPage() {
 
   /* ─── Data fetching ─── */
 
-  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number; hasGuestCount: boolean; orderId: number | null; isDispatch?: boolean; googlePlaceId?: string; googleClientId?: string; tenantId?: number }>({
+  const { data: info, isLoading: infoLoading } = useQuery<{ tableName: string; maxSubaccounts: number; hasGuestCount: boolean; orderId: number | null; isDispatch?: boolean; googlePlaceId?: string; googleMapsReviewUrl?: string; googleClientId?: string; tenantId?: number }>({
     queryKey: ["/api/qr", tableCode, "info"],
     queryFn: async () => {
       const r = await fetch(`/api/qr/${tableCode}/info`);
@@ -1585,10 +1585,24 @@ export default function QRClientPage() {
             <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 8 }}>
               &iexcl;Gracias por tu visita!
             </div>
+            {reviewPoints > 0 && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "10px 20px",
+                background: "#fef9c3", border: "1.5px solid #fbbf24", borderRadius: 12,
+                marginTop: 4, marginBottom: 16,
+              }} data-testid="text-potential-points">
+                <Star size={18} style={{ color: "#d97706", fill: "#d97706" }} />
+                <span style={{ fontSize: 15, color: "#92400e", fontWeight: 700 }}>
+                  +{reviewPoints} puntos por esta compra
+                </span>
+              </div>
+            )}
             {info?.googleClientId ? (
               <>
                 <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 24 }}>
-                  Inicia sesi&oacute;n para ver tus puntos de lealtad
+                  {reviewPoints > 0
+                    ? "Inicia sesi\u00f3n con Google para acumular tus puntos"
+                    : "Inicia sesi\u00f3n para ver tus puntos de lealtad"}
                 </div>
                 {loyaltyLoading ? (
                   <div style={{ marginBottom: 24 }}><Loader2 size={24} className="animate-spin" style={{ color: C.acc }} /></div>
@@ -1601,7 +1615,9 @@ export default function QRClientPage() {
               </>
             ) : (
               <div style={{ fontSize: 14, color: C.text2, maxWidth: 300, lineHeight: 1.5, marginBottom: 28 }}>
-                Nos alegra que hayas disfrutado tu visita
+                {reviewPoints > 0
+                  ? "Acumula puntos con cada visita"
+                  : "Nos alegra que hayas disfrutado tu visita"}
               </div>
             )}
           </>
@@ -1740,7 +1756,7 @@ export default function QRClientPage() {
   /* ── Review Done Screen ── */
   if (screen === "review_done") {
     const isPositive = selectedRating >= 4;
-    const effectiveGoogleUrl = googleMapsUrl || (info?.googlePlaceId
+    const effectiveGoogleUrl = googleMapsUrl || info?.googleMapsReviewUrl || (info?.googlePlaceId
       ? `https://search.google.com/local/writereview?placeid=${info.googlePlaceId}`
       : null);
     return (
