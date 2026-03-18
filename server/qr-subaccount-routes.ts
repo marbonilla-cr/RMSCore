@@ -13,6 +13,7 @@ import {
   type OrderSubaccount,
 } from "@shared/schema";
 import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
+import { isDispatchEnabled } from "./middleware/dispatch";
 
 const MAX_PENDING_QR_REQUESTS = 8;
 
@@ -385,8 +386,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       }
 
       if (tableCode === "DISPATCH") {
-        const [config] = await req.db.select().from(businessConfig).limit(1);
-        const dispatchEnabled = config?.operationModeDispatch === true;
+        const dispatchEnabled = await isDispatchEnabled(req.db);
         if (dispatchEnabled) {
           return handleDirectDispatchSubmit(req, res, subaccountId, items, broadcast);
         }
@@ -1052,8 +1052,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       if (!txCode) return res.status(400).json({ message: "Código requerido" });
 
       // If dispatch mode is disabled, immediately cancel any pending dispatch session
-      const [config] = await req.db.select().from(businessConfig).limit(1);
-      if (!config?.operationModeDispatch) {
+      if (!await isDispatchEnabled(req.db)) {
         return res.json({ dispatchStatus: "CANCELLED", reason: "dispatch_disabled" });
       }
 

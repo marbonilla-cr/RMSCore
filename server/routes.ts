@@ -21,6 +21,7 @@ import { tenantMiddleware } from "./middleware/tenant";
 import { registerDispatchRoutes, registerDispatchSession, notifyDispatchReady } from "./dispatch-routes";
 import { initDispatchJobs } from "./dispatch-jobs";
 import { registerLoyaltyRoutes } from "./loyalty-routes";
+import { isConfigDispatchEnabled, isDispatchEnabled } from "./middleware/dispatch";
 import { registerProvisionRoutes } from "./provision/provision-routes";
 import { registerDataLoaderRoutes } from "./data-loader/data-loader-routes";
 import {
@@ -3162,11 +3163,11 @@ export async function registerRoutes(
     const tableCode = req.params.tableCode as string;
 
     if (tableCode === "DISPATCH") {
-      const config = await storage.getBusinessConfig(req.tenantSchema);
-      if (!(config as any)?.operationModeDispatch) {
+      const [config] = await req.db.select().from(businessConfig).limit(1);
+      if (!isConfigDispatchEnabled(config)) {
         return res.status(404).json({ message: "Despacho no habilitado" });
       }
-      return res.json({ tableCode: "DISPATCH", tableName: "Despacho", isDispatch: true, maxSubaccounts: 1, hasGuestCount: false, orderId: null, tenantId: req.tenantId, googlePlaceId: config?.googlePlaceId || "", googleClientId: process.env.GOOGLE_CLIENT_ID || "" });
+      return res.json({ tableCode: "DISPATCH", tableName: "Despacho", isDispatch: true, maxSubaccounts: 1, hasGuestCount: false, orderId: null, tenantId: req.tenantId, googlePlaceId: (config as any)?.googlePlaceId || "", googleClientId: process.env.GOOGLE_CLIENT_ID || "" });
     }
 
     const table = await storage.getTableByCode(tableCode, req.db);
@@ -3216,8 +3217,7 @@ export async function registerRoutes(
 
     let table: any = null;
     if (tableCode === "DISPATCH") {
-      const [config] = await req.db.select().from(businessConfig).limit(1);
-      if (!config?.operationModeDispatch) {
+      if (!await isDispatchEnabled(req.db)) {
         return res.status(404).json({ message: "Despacho no habilitado" });
       }
       table = { id: null, tableName: "Despacho", active: true };
