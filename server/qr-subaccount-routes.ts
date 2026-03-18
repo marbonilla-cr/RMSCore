@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import crypto from "crypto";
-import { db, pool } from "./db";
+import { db } from "./db";
 import * as storage from "./storage";
 import * as invStorage from "./inventory-storage";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
@@ -386,16 +386,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
 
       if (tableCode === "DISPATCH") {
         const [config] = await req.db.select().from(businessConfig).limit(1);
-        let dispatchEnabled = config?.operationModeDispatch === true;
-        if (dispatchEnabled && req.tenantId) {
-          const modCheck = await pool.query(
-            `SELECT is_active FROM public.tenant_modules WHERE tenant_id=$1 AND module_key='DISPATCH' LIMIT 1`,
-            [req.tenantId]
-          );
-          if (!modCheck.rows.length || !modCheck.rows[0].is_active) {
-            dispatchEnabled = false;
-          }
-        }
+        const dispatchEnabled = config?.operationModeDispatch === true;
         if (dispatchEnabled) {
           return handleDirectDispatchSubmit(req, res, subaccountId, items, broadcast);
         }
