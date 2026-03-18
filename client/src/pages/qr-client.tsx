@@ -735,7 +735,7 @@ export default function QRClientPage() {
     } finally {
       setLoyaltyLoading(false);
     }
-  }, [toast, reviewOrderId]);
+  }, [toast, reviewOrderId, info?.tenantId]);
 
   useEffect(() => {
     if (screen !== "loyalty_post" || loyaltyCustomer) return;
