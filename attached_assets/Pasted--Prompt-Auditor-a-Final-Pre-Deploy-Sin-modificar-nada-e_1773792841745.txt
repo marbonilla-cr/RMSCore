@@ -1,0 +1,69 @@
+## Prompt — Auditoría Final Pre-Deploy
+
+Sin modificar nada, ejecutar cada verificación y reportar resultado:
+
+---
+
+**1. TypeScript limpio:**
+```bash
+npx tsc --noEmit
+```
+
+**2. Sin fallbacks riesgosos:**
+```bash
+grep -n "req\.db || db\|req\.db || \||| db" server/loyalty-routes.ts server/routes.ts server/qr-subaccount-routes.ts
+```
+Debe retornar 0 líneas.
+
+**3. Sin TENANT_ID hardcodeado:**
+```bash
+grep -rn "TENANT_ID" server/ .env* 2>/dev/null | grep -v "//\|#"
+```
+No debe existir como variable de entorno activa.
+
+**4. Dispatch guard centralizado:**
+```bash
+grep -n "operationModeDispatch" server/routes.ts server/qr-subaccount-routes.ts
+```
+Solo debe aparecer en `server/middleware/dispatch.ts`. Si aparece en routes.ts o qr-subaccount-routes.ts es un ❌.
+
+**5. Tablas loyalty usan `db` global, tablas de tenant usan `req.db`:**
+```bash
+grep -n "await db\." server/loyalty-routes.ts | head -20
+grep -n "await req\.db\." server/loyalty-routes.ts | head -20
+```
+- `db.` → debe ser solo para: `loyaltyAccounts`, `loyaltyEvents`, `loyaltyConfig`, `customers`
+- `req.db.` → debe ser solo para: `orders`, `orderReviews`, `businessConfig`
+
+**6. `resolveTenantId` lanza error si no hay tenant:**
+```bash
+grep -A 10 "function resolveTenantId" server/loyalty-routes.ts
+```
+Debe tener `throw new Error` si el id no se resuelve.
+
+**7. QR client pasa `tenantId` en fetches de loyalty:**
+```bash
+grep -n "tenantId" client/src/pages/qr-client.tsx | grep -i "loyalty\|fetch\|body" | head -10
+```
+Debe mostrar que `tenantId` se incluye en los fetches.
+
+**8. Flujo de despacho end-to-end:**
+```bash
+grep -n "isDispatchEnabled\|requireDispatchEnabled" server/routes.ts server/qr-subaccount-routes.ts | head -10
+```
+Debe mostrar que se usan las funciones del middleware, no checks inline.
+
+**9. Migración de reviews existe:**
+```bash
+cat migrations/0026_order_reviews.sql | head -10
+```
+
+**10. Sin `console.log` de debug sensibles:**
+```bash
+grep -n "console.log.*token\|console.log.*password\|console.log.*secret" server/ -r | head -10
+```
+Debe retornar 0 líneas.
+
+---
+
+Reportar ✅ o ❌ para cada punto con la línea exacta donde hay problema. No hacer deploy hasta que todos sean ✅.
