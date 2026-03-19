@@ -7041,14 +7041,15 @@ export async function registerRoutes(
           const result = await validateBridgeToken(headerToken, t.schema_name);
           if (result.valid && result.bridgeId) {
             const bridgeId = result.bridgeId;
+            const tenantSchema = t.schema_name;
             registerBridge(bridgeId, t.schema_name, ws);
             printBridges.set(bridgeId, ws);
             ws.on('close', () => {
-              unregisterBridge(bridgeId);
+              unregisterBridge(bridgeId, tenantSchema);
               printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
             });
             ws.on('error', () => {
-              unregisterBridge(bridgeId);
+              unregisterBridge(bridgeId, tenantSchema);
               printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
             });
             ws.on('message', (data) => {
@@ -7143,6 +7144,7 @@ export async function registerRoutes(
             const bridgeId = await ensureUserBridge(sess.userId, tenantSchema, displayName);
             registerBridge(bridgeId, tenantSchema, ws);
             (ws as any).printBridgeId = bridgeId;
+            (ws as any).printTenantSchema = tenantSchema;
             printBridges.set(bridgeId, ws);
             ws.send(JSON.stringify({ type: "CONNECTED", bridgeId, schema: tenantSchema }));
           } catch (err: any) {
@@ -7162,13 +7164,15 @@ export async function registerRoutes(
     });
     ws.on("close", () => {
       const bridgeId = (ws as any).printBridgeId;
-      if (bridgeId) unregisterBridge(bridgeId);
+      const tenantSchema = (ws as any).printTenantSchema;
+      if (bridgeId && tenantSchema) unregisterBridge(bridgeId, tenantSchema);
       wsClients.delete(ws);
       printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
     });
     ws.on("error", () => {
       const bridgeId = (ws as any).printBridgeId;
-      if (bridgeId) unregisterBridge(bridgeId);
+      const tenantSchema = (ws as any).printTenantSchema;
+      if (bridgeId && tenantSchema) unregisterBridge(bridgeId, tenantSchema);
       wsClients.delete(ws);
       printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
     });

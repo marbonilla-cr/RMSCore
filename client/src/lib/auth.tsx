@@ -150,6 +150,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       || (window.navigator as any).standalone === true;
     if (!isPWA) return;
 
+    const isCapacitorNativeAndroid = (() => {
+      const ua = navigator.userAgent || "";
+      return /Capacitor/i.test(ua) && /Android/i.test(ua);
+    })();
+    // For native Android (APK), don't force auto-logout on background.
+    // Otherwise the print bridge WS stops working when the screen goes off.
+    if (isCapacitorNativeAndroid) return;
+
     // When the page is refreshed/navigated, pagehide fires after visibilitychange:hidden.
     // We schedule the logout with setTimeout so pagehide can cancel it before it runs.
     // On genuine sleep/background, pagehide does NOT fire, so the logout executes normally.
