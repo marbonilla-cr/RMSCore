@@ -29,6 +29,7 @@ import {
   unregisterBridge,
   validateBridgeToken,
   authenticateBridgeByMessage,
+  ensureUserBridge,
   isBridgeConnected,
   getConnectedBridgesForTenant,
   dispatchPrintJobViaBridge,
@@ -1294,6 +1295,8 @@ export async function registerRoutes(
     try {
       const body = { ...req.body };
       if (!body.bridgeId || body.bridgeId === "none") body.bridgeId = null;
+      if (body.bridgeId == null && req.session?.userId)
+        body.bridgeId = `user-${req.session.userId}`;
       const parsed = insertPrinterSchema.parse({
         ...body,
         port: Number(body.port) || 9100,
@@ -4930,6 +4933,12 @@ export async function registerRoutes(
 
       const buffer = buildReceiptBuffer(receiptData, cajaPrinter.paperWidth);
 
+      if (cajaPrinter.bridgeId) {
+        const result = await dispatchPrintJobViaBridge(req.tenantSchema, cajaPrinter.id, buffer.toString("base64"), "receipt");
+        if (!result.success)
+          return res.status(503).json({ message: result.error || "No hay Print Bridge conectado" });
+        return res.json({ ok: true, printer: cajaPrinter.name, via: "bridge" });
+      }
       const dispatch = (app as any).dispatchPrintJob;
       if (typeof dispatch === "function") {
         const sent = dispatch({
@@ -5015,6 +5024,12 @@ export async function registerRoutes(
 
       const buffer = buildReceiptBuffer(receiptData, cajaPrinter.paperWidth);
 
+      if (cajaPrinter.bridgeId) {
+        const result = await dispatchPrintJobViaBridge(req.tenantSchema, cajaPrinter.id, buffer.toString("base64"), "receipt");
+        if (!result.success)
+          return res.status(503).json({ message: result.error || "No hay Print Bridge conectado" });
+        return res.json({ ok: true, printer: cajaPrinter.name, via: "bridge" });
+      }
       const dispatch = (app as any).dispatchPrintJob;
       if (typeof dispatch === "function") {
         const sent = dispatch({
@@ -5046,23 +5061,17 @@ export async function registerRoutes(
       }
       const drawerData = buildDrawerKickData();
 
-      const dispatch = (app as any).dispatchPrintJob;
-      if (cajaPrinter.bridgeId && typeof dispatch === "function") {
-        const sent = dispatch({
-          jobType: "raw",
-          destination: cajaPrinter.type || "caja",
-          payload: { raw: drawerData.toString("base64") }
-        });
-        if (!sent) {
-          return res.json({ ok: false, message: "No hay Print Bridge conectado" });
-        }
-        res.json({ ok: true, printer: cajaPrinter.name, via: "bridge" });
-      } else if (cajaPrinter.ipAddress) {
-        await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, drawerData);
-        res.json({ ok: true, printer: cajaPrinter.name, via: "direct" });
-      } else {
-        return res.json({ ok: false, message: "Impresora de caja sin bridge ni IP configurado" });
+      if (cajaPrinter.bridgeId) {
+        const result = await dispatchPrintJobViaBridge(req.tenantSchema, cajaPrinter.id, drawerData.toString("base64"), "raw");
+        if (!result.success)
+          return res.json({ ok: false, message: result.error || "No hay Print Bridge conectado" });
+        return res.json({ ok: true, printer: cajaPrinter.name, via: "bridge" });
       }
+      if (cajaPrinter.ipAddress) {
+        await sendToPrinter(cajaPrinter.ipAddress, cajaPrinter.port, drawerData);
+        return res.json({ ok: true, printer: cajaPrinter.name, via: "direct" });
+      }
+      return res.json({ ok: false, message: "Impresora de caja sin bridge ni IP configurado" });
     } catch (err: any) {
       res.json({ ok: false, message: err.message });
     }
@@ -7031,13 +7040,15 @@ export async function registerRoutes(
         for (const t of tenants) {
           const result = await validateBridgeToken(headerToken, t.schema_name);
           if (result.valid && result.bridgeId) {
-            registerBridge(headerToken, result.bridgeId, t.schema_name, ws);
-            printBridges.set(result.bridgeId, ws);
+            const bridgeId = result.bridgeId;
+            registerBridge(bridgeId, t.schema_name, ws);
+            printBridges.set(bridgeId, ws);
             ws.on('close', () => {
-              unregisterBridge(headerToken);
+              unregisterBridge(bridgeId);
               printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
             });
             ws.on('error', () => {
+              unregisterBridge(bridgeId);
               printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
             });
             ws.on('message', (data) => {
@@ -7114,6 +7125,32 @@ export async function registerRoutes(
           console.log(`[PrintBridge] Registrado: ${bridgeId}`);
           ws.send(JSON.stringify({ type: "pong" }));
         }
+        if (msg.type === "register_as_print_bridge") {
+          const sess = (_request as any).session;
+          if (!sess?.userId) {
+            ws.send(JSON.stringify({ type: "AUTH_ERROR", message: "Sesión requerida" }));
+            return;
+          }
+          const tenantSchema = (sess as any).tenantSchema as string | undefined;
+          if (!tenantSchema) {
+            ws.send(JSON.stringify({ type: "AUTH_ERROR", message: "Tenant no definido en sesión" }));
+            return;
+          }
+          try {
+            const tdb = getTenantDb(tenantSchema);
+            const user = await storage.getUser(sess.userId, tdb);
+            const displayName = user?.displayName ? `Tablet - ${user.displayName}` : undefined;
+            const bridgeId = await ensureUserBridge(sess.userId, tenantSchema, displayName);
+            registerBridge(bridgeId, tenantSchema, ws);
+            (ws as any).printBridgeId = bridgeId;
+            printBridges.set(bridgeId, ws);
+            ws.send(JSON.stringify({ type: "CONNECTED", bridgeId, schema: tenantSchema }));
+          } catch (err: any) {
+            console.error("[print] register_as_print_bridge error:", err?.message);
+            ws.send(JSON.stringify({ type: "AUTH_ERROR", message: err?.message || "Error al registrar bridge" }));
+          }
+          return;
+        }
         if (msg.type === "dispatch_register") {
           const orderId = msg.payload?.orderId;
           if (orderId) {
@@ -7124,10 +7161,14 @@ export async function registerRoutes(
       } catch {}
     });
     ws.on("close", () => {
+      const bridgeId = (ws as any).printBridgeId;
+      if (bridgeId) unregisterBridge(bridgeId);
       wsClients.delete(ws);
       printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
     });
     ws.on("error", () => {
+      const bridgeId = (ws as any).printBridgeId;
+      if (bridgeId) unregisterBridge(bridgeId);
       wsClients.delete(ws);
       printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
     });

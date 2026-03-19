@@ -161,6 +161,11 @@ function connect() {
         return;
       }
 
+      if (msg.type === "PRINT_JOB") {
+        handlePrintJobPRINT_JOB(msg);
+        return;
+      }
+
       if (msg.type === "print_job") {
         handlePrintJob(msg.payload);
         return;
@@ -221,6 +226,18 @@ function scheduleReconnect() {
     reconnectTimer = null;
     connect();
   }, delay);
+}
+
+function handlePrintJobPRINT_JOB(msg) {
+  const { printerIp, printerPort, payload } = msg;
+  if (!printerIp || !payload) {
+    log("PRINT_JOB invalido: falta printerIp o payload");
+    return;
+  }
+  const port = typeof printerPort === "number" ? printerPort : 9100;
+  const buffer = Buffer.from(payload, "base64");
+  const printer = { ipAddress: printerIp, port, name: `${printerIp}:${port}` };
+  enqueuePrint(printer, buffer, "PRINT_JOB");
 }
 
 async function handlePrintJob(job) {

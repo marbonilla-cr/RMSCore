@@ -22,6 +22,7 @@
   "author": "",
   "license": "UNLICENSED",
   "dependencies": {
+    "capacitor-print-tcp": "file:./plugins/capacitor-print-tcp",
     "@capacitor/android": "^8.1.0",
     "@capacitor/app": "^8.0.1",
     "@capacitor/cli": "^7.5.0",

@@ -13,6 +13,12 @@ export const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
+// Prevent pg-pool idle client errors from crashing the process.
+// These can happen transiently (network hiccups, Railway proxy resets, etc).
+pool.on("error", (err) => {
+  console.error("[db] Pool error (non-fatal):", err?.message ?? err);
+});
+
 export const db = drizzle(pool, { schema });
 
 pool.query(`

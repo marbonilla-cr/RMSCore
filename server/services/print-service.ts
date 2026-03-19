@@ -1,9 +1,11 @@
+import * as crypto from 'crypto';
 import { getTenantDb } from '../db-tenant';
 import { printers, printBridges } from '../../shared/schema';
 import { eq, and } from 'drizzle-orm';
 import type { WebSocket } from 'ws';
 import { pool } from '../db';
 
+/** Keyed by bridgeId (not token) so we can dispatch by printer.bridgeId and support session-based bridges (user-{userId}). */
 const bridgeConnections = new Map<string, {
   ws: WebSocket;
   bridgeId: string;
@@ -12,12 +14,11 @@ const bridgeConnections = new Map<string, {
 }>();
 
 export function registerBridge(
-  token: string,
   bridgeId: string,
   tenantSchema: string,
   ws: WebSocket
 ): void {
-  bridgeConnections.set(token, {
+  bridgeConnections.set(bridgeId, {
     ws, bridgeId, tenantSchema, connectedAt: new Date()
   });
   console.log(`[print] Bridge registrado: ${bridgeId} (${tenantSchema})`);
@@ -29,10 +30,10 @@ export function registerBridge(
     .catch(() => {});
 }
 
-export function unregisterBridge(token: string): void {
-  const c = bridgeConnections.get(token);
+export function unregisterBridge(bridgeId: string): void {
+  const c = bridgeConnections.get(bridgeId);
   if (c) console.log(`[print] Bridge desconectado: ${c.bridgeId}`);
-  bridgeConnections.delete(token);
+  bridgeConnections.delete(bridgeId);
 }
 
 export async function validateBridgeToken(
@@ -70,8 +71,8 @@ export async function authenticateBridgeByMessage(
     for (const tenant of tenants) {
       const result = await validateBridgeToken(token, tenant.schema_name);
       if (result.valid && result.bridgeId) {
-        registerBridge(token, result.bridgeId, tenant.schema_name, ws);
-        ws.on('close', () => unregisterBridge(token));
+        registerBridge(result.bridgeId, tenant.schema_name, ws);
+        ws.on('close', () => unregisterBridge(result.bridgeId!));
         ws.send(JSON.stringify({
           type: 'CONNECTED',
           bridgeId: result.bridgeId,
@@ -115,7 +116,7 @@ export async function dispatchPrintJobViaBridge(
   if (!bridge)
     return { success: false, error: 'Bridge no configurado' };
 
-  const conn = bridgeConnections.get(bridge.token);
+  const conn = bridgeConnections.get(printer.bridgeId);
   if (!conn || conn.ws.readyState !== 1)
     return { success: false, error: `Bridge "${bridge.displayName}" no conectado` };
 
@@ -143,8 +144,49 @@ export function isBridgeConnected(tenantSchema: string): boolean {
 export function getConnectedBridgesForTenant(tenantSchema: string) {
   return Array.from(bridgeConnections.entries())
     .filter(([, c]) => c.tenantSchema === tenantSchema)
-    .map(([, c]) => ({
-      bridgeId: c.bridgeId,
+    .map(([bridgeId, c]) => ({
+      bridgeId,
       connectedAt: c.connectedAt,
     }));
+}
+
+/**
+ * Ensures a print_bridges row exists for session-based bridge (user-{userId}).
+ * Called when a user registers as print bridge via WebSocket with session auth.
+ * Returns the bridgeId to use for registerBridge().
+ */
+export async function ensureUserBridge(
+  userId: number,
+  tenantSchema: string,
+  displayName?: string
+): Promise<string> {
+  const bridgeId = `user-${userId}`;
+  const db = getTenantDb(tenantSchema);
+  const existing = await db
+    .select()
+    .from(printBridges)
+    .where(eq(printBridges.bridgeId, bridgeId))
+    .limit(1);
+  if (existing.length > 0) {
+    await db
+      .update(printBridges)
+      .set({
+        lastSeenAt: new Date(),
+        ...(displayName && { displayName }),
+      })
+      .where(eq(printBridges.bridgeId, bridgeId))
+      .execute();
+    return bridgeId;
+  }
+  const token = `internal-${crypto.randomBytes(16).toString('hex')}`;
+  await db
+    .insert(printBridges)
+    .values({
+      bridgeId,
+      displayName: displayName || `Tablet (user ${userId})`,
+      token,
+      isActive: true,
+    })
+    .execute();
+  return bridgeId;
 }

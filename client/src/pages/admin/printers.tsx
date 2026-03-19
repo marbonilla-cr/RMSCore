@@ -11,8 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Printer, Loader2, Wifi, Send, Copy, Router } from "lucide-react";
+import { Plus, Pencil, Trash2, Printer, Loader2, Wifi, Send, Copy, Router, Search } from "lucide-react";
 import type { Printer as PrinterType } from "@shared/schema";
+import { discoverPrinters } from "@/lib/capacitor-print";
+import { isPrintBridgeAvailable } from "@/lib/print-bridge-client";
 
 const PRINTER_TYPES = [
   { value: "caja", label: "Caja" },
@@ -40,6 +42,11 @@ export default function AdminPrintersPage() {
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeName, setBridgeName] = useState("");
   const [newToken, setNewToken] = useState<string | null>(null);
+
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredHosts, setDiscoveredHosts] = useState<{ host: string; port: number }[]>([]);
+  const [selectedDiscovered, setSelectedDiscovered] = useState<{ host: string; port: number } | null>(null);
+  const [setupPrinterName, setSetupPrinterName] = useState("");
 
   const { data: printersList = [], isLoading } = useQuery<PrinterType[]>({
     queryKey: ["/api/admin/printers"],
@@ -475,6 +482,96 @@ export default function AdminPrintersPage() {
           )}
         </CardContent>
       </Card>
+
+      {isPrintBridgeAvailable() && (
+        <Card className="mb-4">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Wifi className="w-5 h-5" />
+              Configurar mi impresora (tablet)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+              <p className="text-sm text-muted-foreground mb-3">
+                Busca impresoras en la red local y asígnalas a esta tablet. Se guardará como impresora de caja asociada a tu sesión.
+              </p>
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={discovering}
+                  onClick={async () => {
+                    setDiscovering(true);
+                    setDiscoveredHosts([]);
+                    setSelectedDiscovered(null);
+                    try {
+                      const hosts = await discoverPrinters({ port: 9100, timeoutMs: 600 });
+                      setDiscoveredHosts(hosts);
+                      if (hosts.length === 0) toast({ title: "No se encontraron impresoras en la red", variant: "destructive" });
+                    } catch (e) {
+                      toast({ title: "Error al buscar", description: String(e), variant: "destructive" });
+                    } finally {
+                      setDiscovering(false);
+                    }
+                  }}
+                >
+                  {discovering ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Search className="w-4 h-4 mr-1" />}
+                  Buscar impresoras
+                </Button>
+              </div>
+              {discoveredHosts.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm">Selecciona una impresora</Label>
+                  <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+                    {discoveredHosts.map((h) => (
+                      <Button
+                        key={`${h.host}:${h.port}`}
+                        type="button"
+                        variant={selectedDiscovered?.host === h.host ? "default" : "outline"}
+                        size="sm"
+                        className="justify-start"
+                        onClick={() => setSelectedDiscovered(h)}
+                      >
+                        {h.host}:{h.port}
+                      </Button>
+                    ))}
+                  </div>
+                  {selectedDiscovered && (
+                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                      <Input
+                        placeholder="Nombre (ej. Impresora Caja)"
+                        value={setupPrinterName}
+                        onChange={(e) => setSetupPrinterName(e.target.value)}
+                        className="max-w-xs"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={!setupPrinterName.trim() || saveMutation.isPending}
+                        onClick={() => {
+                          saveMutation.mutate({
+                            name: setupPrinterName.trim() || `Impresora ${selectedDiscovered.host}`,
+                            type: "caja",
+                            ipAddress: selectedDiscovered.host,
+                            port: selectedDiscovered.port,
+                            paperWidth: 80,
+                            enabled: true,
+                          });
+                          setSelectedDiscovered(null);
+                          setSetupPrinterName("");
+                          setDiscoveredHosts([]);
+                        }}
+                      >
+                        {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                        Guardar como impresora de caja
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+          </CardContent>
+        </Card>
+      )}
 
       {isLoading ? (
         <div className="space-y-3">

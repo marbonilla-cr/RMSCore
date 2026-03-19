@@ -8,6 +8,10 @@ import { Pool } from "pg";
 import { createTenant, suspendTenant, reactivateTenant, changeTenantPlan, activateAddon, validateSlug, reprovisionTenant, sendTenantPasswordReset, type ReprovisionInput } from "./provision-service";
 import { getMigrationStatus, markMigrationsAsApplied, propagateMigrations } from "./migrate-tenants";
 import { ADDON_PRICES, PLAN_PRICES, PLAN_MODULES } from "@shared/schema-public";
+import { getConnectedBridgesForTenant } from "../services/print-service";
+import { getTenantDb } from "../db-tenant";
+import { printBridges } from "@shared/schema";
+import { inArray } from "drizzle-orm";
 
 const publicPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
 
@@ -232,6 +236,34 @@ export function registerProvisionRoutes(app: Express) {
       const r = await publicPool.query(`SELECT COUNT(*) FILTER (WHERE is_active) AS active_tenants, COUNT(*) FILTER (WHERE plan='TRIAL') AS trial_tenants, COUNT(*) FILTER (WHERE plan='BASIC' AND is_active) AS basic_tenants, COUNT(*) FILTER (WHERE plan='PRO' AND is_active) AS pro_tenants, COUNT(*) FILTER (WHERE plan='ENTERPRISE' AND is_active) AS enterprise_tenants, COUNT(*) FILTER (WHERE status='SUSPENDED') AS suspended_tenants FROM public.tenants`);
       res.json(r.rows[0]);
     } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.get("/api/superadmin/print-bridges", requireSuperadmin, async (_req, res) => {
+    try {
+      const tenants = await publicPool.query(`SELECT id, slug, schema_name FROM public.tenants WHERE is_active = true ORDER BY id`);
+      const result: { tenantId: number; tenantSlug: string; schemaName: string; bridges: { bridgeId: string; displayName: string | null; connectedAt: Date }[] }[] = [];
+      for (const t of tenants.rows) {
+        const connected = getConnectedBridgesForTenant(t.schema_name);
+        const bridgeIds = connected.map((c) => c.bridgeId);
+        let displayNames: Map<string, string> = new Map();
+        if (bridgeIds.length > 0) {
+          try {
+            const db = getTenantDb(t.schema_name);
+            const rows = await db.select({ bridgeId: printBridges.bridgeId, displayName: printBridges.displayName }).from(printBridges).where(inArray(printBridges.bridgeId, bridgeIds));
+            rows.forEach((r) => displayNames.set(r.bridgeId, r.displayName));
+          } catch (_) {}
+        }
+        result.push({
+          tenantId: t.id,
+          tenantSlug: t.slug,
+          schemaName: t.schema_name,
+          bridges: connected.map((c) => ({ bridgeId: c.bridgeId, displayName: displayNames.get(c.bridgeId) ?? null, connectedAt: c.connectedAt })),
+        });
+      }
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.post("/api/superadmin/setup", requireSuperadmin, async (_req, res) => {

@@ -12,6 +12,7 @@ import { usePreventPullRefresh } from "@/hooks/use-prevent-pull-refresh";
 import { Loader2, LogOut, RefreshCw, Grid3x3, CreditCard, ChefHat, Wine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { startKeepAlive } from "@/lib/keepalive";
+import { startPrintBridgeClient, stopPrintBridgeClient, isPrintBridgeAvailable } from "@/lib/print-bridge-client";
 import PinLoginPage from "@/pages/pin-login";
 import LoginPage from "@/pages/login";
 import AuthPage from "@/pages/auth-page";
@@ -123,6 +124,11 @@ function NoAccess() {
 function AuthenticatedRouter() {
   const { user } = useAuth();
   const { permissions, isLoading: permsLoading } = usePermissions();
+
+  useEffect(() => {
+    if (user && isPrintBridgeAvailable()) startPrintBridgeClient();
+    return () => stopPrintBridgeClient();
+  }, [user]);
 
   if (!user) return null;
   if (permsLoading) {
