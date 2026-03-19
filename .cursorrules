@@ -1,0 +1,395 @@
+.cursorrules
+# RMSCore — Cursor AI Rules
+# Restaurant Management System · Multi-tenant SaaS
+# Tenant 1: Restaurante y Granja La Antigua Lechería (Costa Rica)
+# Developer: Marcelo Bonilla · GitHub: marbonilla-cr/RMSCore
+# Last updated: March 2026
+
+---
+
+## 1. PROJECT IDENTITY
+
+RMSCore is a mobile-first, multi-tenant SaaS restaurant management platform.
+It is NOT a simple POS. It covers the full operational loop: waiter order-taking,
+QR self-ordering, kitchen production (KDS), POS + cash control, inventory,
+shortages, HR/payroll, analytics, accounting export (QuickBooks Online), loyalty,
+and reservations.
+
+---
+
+## 2. DEVELOPMENT ENVIRONMENT & DEPLOY PIPELINE
+
+### Workflow
+- **Development:** Cursor AI (local) — this is the active development environment.
+- **Version control:** GitHub (`marbonilla-cr/RMSCore`, branch strategy below).
+- **Staging:** Railway staging environment — deploys from `develop` branch.
+- **Production:** Railway production environment — deploys from `main` branch.
+
+### Branch Strategy
+```
+main          →  Railway PRODUCTION (auto-deploy)
+develop       →  Railway STAGING (auto-deploy)
+feature/*     →  local dev → PR into develop
+hotfix/*      →  local dev → PR into main + backmerge into develop
+```
+
+### Deploy Rules
+- **Never push directly to `main`.** All changes go through `develop` first.
+- Staging must be validated before merging to `main`.
+- Production deploys are triggered by merging `develop` → `main` via Pull Request.
+- Railway build: `npm install` + `npm run build` → zero-downtime swap (60–120s).
+- Database migrations run at server startup automatically.
+- For emergency hotfixes only: branch from `main`, fix, PR directly to `main`, then backmerge to `develop`.
+
+### Environment Variables
+- Local `.env` file for Cursor development (never commit this file, it is in `.gitignore`).
+- Railway staging and production each have their own env vars in the Railway dashboard.
+- Key vars: `DATABASE_URL`, `SESSION_SECRET`, `QBO_ENCRYPT_KEY`, `PRINT_BRIDGE_TOKEN`,
+  `SUPERADMIN_TOKEN`, `RESEND_API_KEY`, `REDIS_URL` (optional), `TENANT_SCHEMA`.
+
+### Local Development
+- Run backend: `npm run dev` (Express + tsx watch).
+- Run frontend: `npm run dev:client` (Vite dev server).
+- Local DB: connect to Railway staging DB via `DATABASE_URL` in `.env`, or a local PostgreSQL instance.
+- TypeScript check before every commit: `npx tsc --noEmit`.
+
+---
+
+## 3. TECH STACK — FIXED, DO NOT CHANGE
+
+### Frontend
+- React + Vite + TypeScript
+- Tailwind CSS (utility-first)
+- shadcn/ui — use for all new UI unless explicitly stated otherwise
+- wouter (routing — **NOT react-router, never suggest react-router**)
+- TanStack Query v5 (object syntax only: `{ queryKey, queryFn }`)
+- WebSocket via `wsManager` singleton (`client/src/lib/ws.ts`)
+- PWA shell (manifest.json + service worker)
+
+### Backend
+- Node.js + Express + TypeScript
+- Drizzle ORM (type-safe PostgreSQL queries)
+- PostgreSQL on Railway (schema-per-tenant model)
+- express-session + memorystore (auth sessions, with optional Redis fallback)
+- ws library (native WebSocket — **NOT socket.io, never suggest socket.io**)
+- Resend (email — via `server/services/email-service.ts` ONLY)
+
+### Infrastructure
+- Railway: staging + production hosting
+- Cloudflare: DNS/CDN, wildcard `*.rmscore.app`
+- GitHub: `marbonilla-cr/RMSCore`
+- Capacitor: Android APK (sideloaded) — handled separately, do not touch Capacitor config unless explicitly asked
+
+---
+
+## 4. MANDATORY CODING RULES
+
+### 4.1 Timezone — CRITICAL
+- **NEVER use `new Date()` directly for business logic.**
+- **ALWAYS use utilities from `server/utils/timezone.ts`:**
+  - `getTenantTimezone()`
+  - `getBusinessDateInTZ()`
+  - `getNowInTZ()`
+- Business timezone: `America/Costa_Rica` (UTC-6).
+- All timestamps stored as UTC. Business date extraction uses double AT TIME ZONE:
+  `(ts AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'`
+- Timezone offset strings MUST use `padStart(2, '0')`:
+  `getTimezoneOffset()` returns `-6:00` (non-ISO), must be `-06:00`.
+
+### 4.2 Multi-Tenant Architecture — CRITICAL
+- **NEVER hardcode a schema name anywhere in application code.**
+- **ALWAYS use `req.db`** for tenant-scoped queries (injected by tenant middleware).
+- `req.tenantSchema` is set by `server/middleware/tenant.ts`.
+- Background jobs and WebSocket handlers MUST be tenant-aware.
+- `retryPendingSync()` iterates all active tenants from `public.tenants`.
+- Tenant 1 (La Antigua): `TENANT_SCHEMA=tenant_la_antigua`, plan: ENTERPRISE, all modules active.
+- Loyalty customer profiles live in the `public` schema — shared across all tenants.
+- Module access middleware: `requireModule('MOD_KEY')` must wrap all module-protected routes.
+
+### 4.3 Database Migrations — CRITICAL
+- ALL schema changes go in `/migrations/` as numbered `.sql` files.
+- **NEVER run raw DDL against Railway DB** except documented emergencies.
+- DML seeds go in `/migrations/data/` with idempotent queries (`ON CONFLICT DO NOTHING`).
+- Idempotency must cover **ALL unique constraints** on a table, not just the primary key.
+  Example: `ON CONFLICT (slug) DO NOTHING` must also handle `tenants_schema_name_key`.
+- Retroactive data fixes require explicit SQL scripts — code-level fixes do not clean existing records.
+
+### 4.4 Authentication & Sessions
+- Session-based: express-session + memorystore (Redis fallback when `REDIS_URL` is present).
+- PIN login: `POST /api/auth/pin-login` → `{ pin: "1234" }`.
+- Roles: `MANAGER | FARM_MANAGER | CASHIER | WAITER | KITCHEN | STAFF`.
+- **WebSocket auth uses HTTP headers — NOT query string** (query string fails with Cloudflare proxy).
+- Auth `loading` initializes as `false` so PIN keypad renders immediately on mount.
+
+### 4.5 Redis / External Services
+- Always use conditional initialization — never assume a service exists:
+  ```typescript
+  if (process.env.REDIS_URL) {
+    // use RedisStore / Redis client
+  } else {
+    // fall back to memorystore / in-memory
+  }
+  ```
+
+### 4.6 Security
+- Passwords: bcrypt only.
+- **NEVER hardcode secrets or API keys in source code.**
+- QBO OAuth tokens: AES-256 encrypted in DB via `QBO_ENCRYPT_KEY` env var.
+- `QBO_ENCRYPT_KEY` must match exactly between all environments.
+
+### 4.7 Email
+- ALL email goes through `server/services/email-service.ts`.
+- Provider: Resend, domain: `noreply@rmscore.app`.
+- NEVER send email from route handlers directly.
+
+---
+
+## 5. FRONTEND PATTERNS
+
+### 5.1 Data Fetching
+```typescript
+// Queries
+useQuery({ queryKey: ["/api/endpoint"], queryFn: () => apiRequest(...) })
+
+// Mutations
+const mutation = useMutation({
+  mutationFn: (data) => apiRequest("POST", "/api/endpoint", data),
+  onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/endpoint"] })
+})
+```
+
+### 5.2 Polling Intervals
+| Module | Interval |
+|---|---|
+| Tables list | 5s |
+| Table detail | 5s |
+| KDS active tickets | 5s |
+| POS tables | 5s |
+| HR my-punch | 30s |
+| Permissions | 60s staleTime (not refetchInterval) |
+| Dashboard, Admin, Inventory, Sales Cube | No polling |
+
+### 5.3 WebSocket Pattern
+```typescript
+useEffect(() => {
+  wsManager.connect();
+  const unsub = wsManager.on('event_name', (data) => {
+    queryClient.invalidateQueries({ queryKey: ["/api/relevant"] });
+  });
+  return () => unsub();
+}, []);
+```
+
+### 5.4 State Management
+- No Redux or Zustand. Use React Query (server state) + useState (local) + localStorage (persistence).
+- Auth state: React Context (`AuthProvider`).
+- Persistent localStorage keys: `tables_visible_columns`, `cart_table_${id}`.
+
+### 5.5 Routing
+- Router: wouter. Never use react-router.
+- `/qr/:tableCode` renders without authentication.
+- All other routes go through `AppContent` with `canAccessRouteByPermissions()`.
+- All pages except login screens are React lazy-loaded.
+
+### 5.6 Currency & Locale
+- Currency: Costa Rican Colón (₡).
+- Format: `₡${amount.toLocaleString("es-CR")}`
+- Locale: `es-CR` throughout.
+
+---
+
+## 6. BUSINESS LOGIC — NEVER CHANGE WITHOUT EXPLICIT INSTRUCTION
+
+### Order Flow
+- One active order context per table.
+- QR orders require waiter acceptance before reaching kitchen.
+- Split checks create subaccounts linked to the parent order.
+- Max 6 subaccounts per table.
+- Cart key = `${productId}:${sortedModifierOptionIds}` — same product with different modifiers are separate line items.
+- Round-based kitchen sending: items sent in batches (rondas), each round grouped and displayed separately.
+
+### Tax Snapshots
+- Taxes snapshotted at item creation — NEVER recalculate on existing items.
+- Historical totals must never change when tax config changes.
+
+### Void Logic
+- Soft-void (waiters): audit trail preserved.
+- Hard-delete (managers only): item fully removed.
+- Prefer audit-preserving reversal over destructive deletion.
+
+### Employee Charges (Cargo a Empleado)
+- **MANAGER-only visibility. Employees must never see their own deductions.**
+- Hard business rule — do not expose to non-manager roles under any circumstances.
+
+### Inventory WAC
+- Weighted Average Cost recalculates on each purchase order receipt.
+- Auto-consumption/reversal triggered by order actions.
+
+### Shortage Lifecycle
+- States flow: `OPEN → ACKNOWLEDGED → RESOLVED → CLOSED`. Never skip or merge states.
+
+### QR vs Dispatch Flows
+- These are **distinct flows** — do NOT merge them.
+- QR: `/qr/:tableCode` (public, guest self-ordering).
+- Dispatch: admin-controlled separate flow.
+
+### Sales Ledger
+- `origin = 'LOYVERSE'`: historical data (imported, never touched by QBO sync).
+- `origin = 'SYSTEM'`: RMS-generated (synced to QBO).
+- QBO sync only processes `origin = 'SYSTEM'`.
+
+---
+
+## 7. PERMISSIONS & MODULE ACCESS
+
+### RBAC Permission Keys
+**Module access:** `MODULE_TABLES_VIEW` | `MODULE_POS_VIEW` | `MODULE_KDS_VIEW` |
+`MODULE_DASHBOARD_VIEW` | `MODULE_ADMIN_VIEW` | `MODULE_HR_VIEW` |
+`MODULE_INV_VIEW` | `MODULE_PRODUCTS_VIEW` | `SHORTAGES_VIEW`
+
+**POS operations:** `POS_PAY` | `POS_SPLIT` | `POS_PRINT` | `POS_EMAIL_TICKET` |
+`POS_EDIT_CUSTOMER_PREPAY` | `POS_EDIT_CUSTOMER_POSTPAY` | `POS_VOID` |
+`POS_VOID_ORDER` | `POS_REOPEN` | `POS_VIEW_CASH_REPORT`
+
+**Cash:** `CASH_CLOSE`
+
+### Module Keys (middleware)
+`CORE_TABLES` | `CORE_POS` | `CORE_QR` | `CORE_DASHBOARD` |
+`MOD_INVENTORY` | `MOD_HR` | `MOD_RESERVATIONS` | `MOD_LOYALTY` |
+`MOD_ANALYTICS` | `MOD_QBO` | `MOD_MULTI_LOCATION` | `MOD_API`
+
+---
+
+## 8. DESIGN SYSTEM
+
+### Linen System (general app)
+- Fonts: Outfit (headings), IBM Plex Sans (body), IBM Plex Mono (numbers/code/amounts)
+- `--color-coral: #E8714A` | `--color-sage: #6B8F71` | `--color-accent-blue: #4A90D9`
+- `--color-amber: #F5A623` | `--sidebar-bg: #1A1A2E`
+
+### POS Dialogs — Custom Dark Theme (NO shadcn/Tailwind inside these files)
+- Files: `client/src/components/pos/PayDialog.tsx`, `SplitDialog.tsx`, `pos-dialogs.css`
+- Background: `#0a0c0f` | Surfaces: `#111318` / `#181c22`
+- Payment method colors: CASH `#2ecc71` | CARD `#3498db` | SINPE `#f39c12`
+- Fonts: Barlow Condensed (titles 800) | Barlow (body 400/500) | JetBrains Mono (numbers)
+- **Do NOT refactor these to shadcn/Tailwind — they are intentionally standalone.**
+
+### Category System (2-level)
+- TOP categories: prefix `TOP-`, colored segmented controls.
+- Subcategories: child of TOP via `parentCategoryCode`, shown as pills.
+- Default TOPs: Comidas (emerald) | Bebidas (blue) | Postres (rose) | Alcohol (amber).
+- All interactive elements: min-height 48px.
+
+### Google OAuth
+- `ux_mode: "redirect"` — NEVER use popups (Safari/iOS blocks them).
+
+---
+
+## 9. PRINT BRIDGE
+
+- Node.js app on Surface Go 3: `C:\Printing\print-bridge\index.js`.
+- Connects via WSS: `wss://rms.restlaantigua.com/ws`.
+- Auth: HTTP header with `PRINT_BRIDGE_TOKEN`.
+- Printer: Hoin H806, `192.168.2.200:9100`, ESC/POS, 80mm.
+- **NOT updated by Railway deploys** — updates require manual file replacement on the Surface Go.
+- Surface Go has no Git installed.
+
+---
+
+## 10. QBO INTEGRATION
+
+- Async, fire-and-forget — never blocks the cashier flow.
+- Idempotent: unique constraint on `paymentId`.
+- Retry backoff: 5min → 15min → 1h → 4h → 24h (max 5 attempts).
+- Void: payment voided in RMS → void SalesReceipt in QBO.
+- Mapping: by category (8 categories → 8 QBO items), not by individual product.
+- Callback URL: `https://rms.restlaantigua.com/api/qbo/callback`.
+- Tables: `qbo_config`, `qbo_category_mapping`, `qbo_sync_log`.
+
+---
+
+## 11. ROUTE MAP
+
+| Route | Permission |
+|---|---|
+| `/tables` | `MODULE_TABLES_VIEW` |
+| `/tables/:id` | `MODULE_TABLES_VIEW` |
+| `/kds`, `/kds-bar` | `MODULE_KDS_VIEW` |
+| `/pos` | `MODULE_POS_VIEW` |
+| `/dashboard` | `MODULE_DASHBOARD_VIEW` |
+| `/reports/sales-cube` | `MODULE_DASHBOARD_VIEW` |
+| `/admin/*` | `MODULE_ADMIN_VIEW` |
+| `/admin/products` | `MODULE_PRODUCTS_VIEW` |
+| `/hr/*` | `MODULE_HR_VIEW` |
+| `/inventory/*` | `MODULE_INV_VIEW` |
+| `/shortages/*` | `SHORTAGES_VIEW` |
+| `/qr/:tableCode` | **None (public)** |
+| `/superadmin` | Superadmin auth (separate session) |
+
+---
+
+## 12. KEY WEBSOCKET EVENTS
+
+`order_updated` | `table_status_changed` | `qr_submission_created` |
+`qr_submission` | `kitchen_ticket_created` | `kitchen_item_status_changed` |
+`payment_completed` | `payment_voided` | `shortage_created` |
+`shortage_updated` | `product_availability_changed`
+
+---
+
+## 13. INFRASTRUCTURE REFERENCE
+
+| | Staging | Production |
+|---|---|---|
+| Branch | `develop` | `main` |
+| Railway project | (staging service) | ProduccionRMScore |
+| URL | (Railway staging URL) | `https://rms.restlaantigua.com` |
+
+| Resource | Detail |
+|---|---|
+| SaaS Admin | https://admin.rmscore.app |
+| Loyalty PWA | https://loyalty.rmscore.app |
+| Wildcard DNS | *.rmscore.app (Cloudflare) |
+| GitHub repo | marbonilla-cr/RMSCore |
+| Email | noreply@rmscore.app (Resend) |
+| Support | soporte@rmscore.app |
+| Tenant 1 slug | `rms` |
+| Tenant 1 schema | `tenant_la_antigua` |
+| Tenant 1 plan | ENTERPRISE (all modules active) |
+
+---
+
+## 14. CRITICAL ANTI-PATTERNS — NEVER DO THESE
+
+```
+❌  new Date() for business logic          → use timezone.ts utilities
+❌  Hardcoded schema name                  → use req.tenantSchema / req.db
+❌  DDL without migration file             → always /migrations/*.sql
+❌  Email outside email-service.ts         → always use the service
+❌  WebSocket auth via query string        → use HTTP headers
+❌  Assuming Redis exists                  → guard with process.env.REDIS_URL
+❌  react-router                           → use wouter
+❌  socket.io                              → use native ws library
+❌  Merging QR + Dispatch flows            → they are distinct
+❌  Employee deductions visible to staff   → MANAGER only
+❌  Recalculating taxes on existing items  → tax snapshots are immutable
+❌  getTimezoneOffset() without padStart   → produces non-ISO -6:00 vs -06:00
+❌  ON CONFLICT covering only one unique   → must cover ALL unique constraints
+❌  Push directly to main                  → always PR through develop first
+❌  shadcn/Tailwind inside POS dialogs     → those files use custom CSS only
+❌  Assuming code fix cleans old DB data   → write explicit SQL for retroactive fixes
+```
+
+---
+
+## 15. PENDING / IN-PROGRESS FEATURES (as of March 2026)
+
+- QBO OAuth: `client_id missing` error — unresolved
+- QBO Ledger page (`/reports/qbo-ledger`): designed, not fully deployed
+- PayDialog v3: mixed multi-method payment — in design
+- Reservations module: in design
+- Loyalty: Google Maps redirect for high-rated reviews — pending
+- HR punch corrections for dates after timezone bug fix
+- Google OAuth verification for Capacitor app
+- Superadmin audit: `syncAllTenantsAtStartup`, `applyMigration` logic,
+  hard-delete endpoint, "Eliminar permanentemente" UI
