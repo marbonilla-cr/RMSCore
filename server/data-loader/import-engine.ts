@@ -228,15 +228,14 @@ export async function importSession(sessionId: number): Promise<{ success: boole
 
         const active = prod.active !== undefined ? parseBool(prod.active) : true;
         await db.execute(sql`
-          INSERT INTO products (product_code, name, description, category_id, price, active, sort_order)
-          VALUES (${code}, ${prod.product_name}, ${""},  ${categoryId}, ${price}, ${active}, ${i})
+          INSERT INTO products (product_code, name, description, category_id, price, active)
+          VALUES (${code}, ${prod.product_name}, ${""},  ${categoryId}, ${price}, ${active})
           ON CONFLICT (product_code) DO UPDATE
           SET name = EXCLUDED.name,
               description = EXCLUDED.description,
               category_id = EXCLUDED.category_id,
               price = EXCLUDED.price,
-              active = EXCLUDED.active,
-              sort_order = EXCLUDED.sort_order
+              active = EXCLUDED.active
         `);
 
         if (taxCategoryId) {
