@@ -1,5 +1,4 @@
 import type { Express, Request, Response, NextFunction } from "express";
-import { db } from "./db";
 import { salesLedgerItems, users } from "@shared/schema";
 import { sql, and, eq, inArray, gte, lte, or, SQL } from "drizzle-orm";
 import * as storage from "./storage";
@@ -196,30 +195,30 @@ export function registerSalesCubeRoutes(app: Express) {
     res.json(PRESETS);
   });
 
-  app.get("/api/reports/sales-cube/filter-options", requirePermission("reports"), async (_req, res) => {
+  app.get("/api/reports/sales-cube/filter-options", requirePermission("reports"), async (req, res) => {
     try {
       const [categories, origins, products, waiters, dateRange] = await Promise.all([
-        db.select({ value: sql<string>`DISTINCT ${salesLedgerItems.categoryNameSnapshot}` })
+        req.db.select({ value: sql<string>`DISTINCT ${salesLedgerItems.categoryNameSnapshot}` })
           .from(salesLedgerItems)
           .where(and(eq(salesLedgerItems.status, "PAID"), sql`${salesLedgerItems.categoryNameSnapshot} IS NOT NULL`)),
-        db.select({ value: sql<string>`DISTINCT ${salesLedgerItems.origin}` })
+        req.db.select({ value: sql<string>`DISTINCT ${salesLedgerItems.origin}` })
           .from(salesLedgerItems)
           .where(eq(salesLedgerItems.status, "PAID")),
-        db.select({
+        req.db.select({
           id: sql<number>`${salesLedgerItems.productId}`,
           name: sql<string>`${salesLedgerItems.productNameSnapshot}`,
         }).from(salesLedgerItems)
           .where(eq(salesLedgerItems.status, "PAID"))
           .groupBy(salesLedgerItems.productId, salesLedgerItems.productNameSnapshot)
           .orderBy(salesLedgerItems.productNameSnapshot),
-        db.select({
+        req.db.select({
           id: sql<number>`${salesLedgerItems.responsibleWaiterId}`,
           name: sql<string>`COALESCE(${users.displayName}, ${users.username})`,
         }).from(salesLedgerItems)
           .leftJoin(users, eq(salesLedgerItems.responsibleWaiterId, users.id))
           .where(and(eq(salesLedgerItems.status, "PAID"), sql`${salesLedgerItems.responsibleWaiterId} IS NOT NULL`))
           .groupBy(salesLedgerItems.responsibleWaiterId, users.displayName, users.username),
-        db.select({
+        req.db.select({
           minDate: sql<string>`MIN(${salesLedgerItems.businessDate})`,
           maxDate: sql<string>`MAX(${salesLedgerItems.businessDate})`,
         }).from(salesLedgerItems)
@@ -313,7 +312,7 @@ export function registerSalesCubeRoutes(app: Express) {
         ${limitClause}
       `;
 
-      const rows = await db.execute(query);
+      const rows = await req.db.execute(query);
 
       const metaQuery = sql`
         SELECT
@@ -323,7 +322,7 @@ export function registerSalesCubeRoutes(app: Express) {
         FROM ${salesLedgerItems}
         WHERE ${whereClause}
       `;
-      const metaResult = await db.execute(metaQuery);
+      const metaResult = await req.db.execute(metaQuery);
       const meta = metaResult.rows[0] || { totalQty: 0, totalSubtotal: 0, totalOrders: 0 };
 
       let processedRows = rows.rows.map((row: any) => {
