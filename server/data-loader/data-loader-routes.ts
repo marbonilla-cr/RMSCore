@@ -14,6 +14,7 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.post("/upload", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const { fileData, fileName } = req.body;
 
       if (!fileData || !fileName) {
@@ -97,6 +98,7 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.delete("/sessions/:id", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const sessionId = Number(req.params.id);
       const [session] = (await db.execute(sql`
         SELECT id, status FROM data_loader_sessions WHERE id = ${sessionId}
@@ -117,8 +119,9 @@ export function registerDataLoaderRoutes(app: any) {
     }
   });
 
-  router.get("/sessions", async (_req: Request, res: Response) => {
+  router.get("/sessions", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const result = await db.execute(sql`
         SELECT id, status, file_name, sheets_found, error_message, created_by, created_at, updated_at
         FROM data_loader_sessions
@@ -132,6 +135,7 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.get("/sessions/:id", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const sessionId = Number(req.params.id);
 
       const [session] = (await db.execute(sql`
@@ -165,6 +169,7 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.patch("/staging/:rowId", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const rowId = Number(req.params.rowId);
       const { dataJson } = req.body;
 
@@ -199,6 +204,7 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.delete("/staging/:rowId", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const rowId = Number(req.params.rowId);
       await db.execute(sql`DELETE FROM data_loader_staging WHERE id = ${rowId}`);
       res.json({ success: true });
@@ -209,6 +215,7 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.post("/sessions/:id/add-row", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const sessionId = Number(req.params.id);
       const { sheetName, dataJson } = req.body;
 
@@ -243,8 +250,9 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.post("/sessions/:id/validate", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const sessionId = Number(req.params.id);
-      const result = await validateSession(sessionId);
+      const result = await validateSession(sessionId, db);
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -253,14 +261,15 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.post("/sessions/:id/import", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const sessionId = Number(req.params.id);
-      const result = await importSession(sessionId);
+      const result = await importSession(sessionId, db);
 
       if (!result.success) {
         return res.status(400).json(result);
       }
 
-      const systemCheck = await runTenantBootstrapCheck();
+      const systemCheck = await runTenantBootstrapCheck(db);
 
       res.json({
         import: result,
@@ -273,6 +282,7 @@ export function registerDataLoaderRoutes(app: any) {
 
   router.get("/sessions/:id/ledger", async (req: Request, res: Response) => {
     try {
+      const db = req.db;
       const sessionId = Number(req.params.id);
 
       const [session] = (await db.execute(sql`
@@ -367,9 +377,10 @@ export function registerDataLoaderRoutes(app: any) {
     }
   });
 
-  router.get("/system-check", async (_req: Request, res: Response) => {
+  router.get("/system-check", async (req: Request, res: Response) => {
     try {
-      const result = await runTenantBootstrapCheck();
+      const db = req.db;
+      const result = await runTenantBootstrapCheck(db);
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

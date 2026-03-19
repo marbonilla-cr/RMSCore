@@ -149,7 +149,13 @@ const SHEET_VALIDATORS: Record<string, (data: Record<string, any>, lookups: Reco
   },
 };
 
-export async function validateSession(sessionId: number): Promise<ValidationResult> {
+export async function validateSession(
+  sessionId: number,
+  tenantDb: any,
+): Promise<ValidationResult> {
+  // Tenant-aware: operaciones contra el schema del tenant actual.
+  const db = tenantDb;
+
   const allRows = await db.execute(sql`
     SELECT id, sheet_name, row_index, data_json 
     FROM data_loader_staging 

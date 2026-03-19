@@ -12,7 +12,9 @@ interface SystemCheckResult {
   checks: CheckResult[];
 }
 
-export async function runTenantBootstrapCheck(): Promise<SystemCheckResult> {
+export async function runTenantBootstrapCheck(tenantDb: any): Promise<SystemCheckResult> {
+  // Tenant-aware: operaciones contra el schema del tenant actual.
+  const db = tenantDb;
   const checks: CheckResult[] = [];
 
   const businessResult = await db.execute(sql`SELECT COUNT(*) as cnt FROM business_config`);

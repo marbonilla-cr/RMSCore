@@ -22,7 +22,13 @@ function parseBool(val: any): boolean {
   return str === "true" || str === "1" || str === "si" || str === "sí" || str === "yes";
 }
 
-export async function importSession(sessionId: number): Promise<{ success: boolean; message: string; details?: any }> {
+export async function importSession(
+  sessionId: number,
+  tenantDb: any,
+): Promise<{ success: boolean; message: string; details?: any }> {
+  // Importación debe ser tenant-aware: operaciones contra el schema del tenant actual.
+  const db = tenantDb;
+
   const [session] = (await db.execute(sql`
     SELECT id, status FROM data_loader_sessions WHERE id = ${sessionId}
   `)).rows;
