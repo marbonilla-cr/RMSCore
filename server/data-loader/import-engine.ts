@@ -75,21 +75,58 @@ export async function importSession(sessionId: number): Promise<{ success: boole
         await db.execute(sql`
           INSERT INTO business_config (business_name, address, timezone)
           VALUES (${biz.name || ""}, ${biz.address || ""}, ${biz.timezone || "America/Costa_Rica"})
+          ON CONFLICT DO NOTHING
         `);
       }
     }
 
     const taxNameToId = new Map<string, number>();
     if (rowsBySheet.taxes) {
-      for (const tax of rowsBySheet.taxes) {
+      for (let i = 0; i < rowsBySheet.taxes.length; i++) {
+        const tax = rowsBySheet.taxes[i];
         const rate = Number(tax.percentage) || 0;
         const inclusive = parseBool(tax.inclusive);
-        const result = await db.execute(sql`
-          INSERT INTO tax_categories (name, rate, inclusive, active)
-          VALUES (${tax.tax_name}, ${String(rate)}, ${inclusive}, true)
-          RETURNING id
+        const normalizedName = String(tax.tax_name).toLowerCase();
+        const existing = await db.execute(sql`
+          SELECT id
+          FROM tax_categories
+          WHERE LOWER(name) = ${normalizedName}
+          LIMIT 1
         `);
-        taxNameToId.set(String(tax.tax_name).toLowerCase(), result.rows[0].id as number);
+        if (existing.rows.length > 0) {
+          await db.execute(sql`
+            UPDATE tax_categories
+            SET rate = ${String(rate)},
+                inclusive = ${inclusive},
+                active = true,
+                sort_order = ${i}
+            WHERE id = ${existing.rows[0].id}
+          `);
+          taxNameToId.set(normalizedName, existing.rows[0].id as number);
+        } else {
+          const inserted = await db.execute(sql`
+            INSERT INTO tax_categories (name, rate, inclusive, active, sort_order)
+            VALUES (${tax.tax_name}, ${String(rate)}, ${inclusive}, true, ${i})
+            ON CONFLICT DO NOTHING
+            RETURNING id
+          `);
+          const insertedId = inserted.rows[0]?.id as number | undefined;
+          if (!insertedId) {
+            // En caso de que el INSERT no devuelva id (por conflictos inesperados),
+            // intentamos resolverlo con una búsqueda.
+            const fallback = await db.execute(sql`
+              SELECT id
+              FROM tax_categories
+              WHERE LOWER(name) = ${normalizedName}
+              LIMIT 1
+            `);
+            const fallbackId = fallback.rows[0]?.id as number | undefined;
+            if (!fallbackId) throw new Error(`No se pudo resolver tax_category: ${tax.tax_name}`);
+            taxNameToId.set(normalizedName, fallbackId);
+          } else {
+            taxNameToId.set(normalizedName, insertedId);
+          }
+        }
       }
     }
 
@@ -101,6 +138,10 @@ export async function importSession(sessionId: number): Promise<{ success: boole
         await db.execute(sql`
           INSERT INTO payment_methods (payment_code, payment_name, active, sort_order)
           VALUES (${code}, ${pm.payment_name}, ${active}, ${i})
+          ON CONFLICT (payment_code) DO UPDATE
+          SET payment_name = EXCLUDED.payment_name,
+              active = EXCLUDED.active,
+              sort_order = EXCLUDED.sort_order
         `);
       }
     }
@@ -140,6 +181,11 @@ export async function importSession(sessionId: number): Promise<{ success: boole
         const result = await db.execute(sql`
           INSERT INTO categories (category_code, name, active, sort_order)
           VALUES (${code}, ${cat.category_name}, true, ${i})
+          ON CONFLICT (category_code) DO UPDATE
+          SET name = EXCLUDED.name,
+              parent_category_code = EXCLUDED.parent_category_code,
+              active = EXCLUDED.active,
+              sort_order = EXCLUDED.sort_order
           RETURNING id
         `);
         categoryNameToId.set(String(cat.category_name).toLowerCase(), result.rows[0].id as number);
@@ -156,6 +202,11 @@ export async function importSession(sessionId: number): Promise<{ success: boole
         const result = await db.execute(sql`
           INSERT INTO categories (category_code, name, parent_category_code, active, sort_order)
           VALUES (${code}, ${cat.category_name}, ${parentCode}, true, ${withoutParent.length + i})
+          ON CONFLICT (category_code) DO UPDATE
+          SET name = EXCLUDED.name,
+              parent_category_code = EXCLUDED.parent_category_code,
+              active = EXCLUDED.active,
+              sort_order = EXCLUDED.sort_order
           RETURNING id
         `);
         categoryNameToId.set(String(cat.category_name).toLowerCase(), result.rows[0].id as number);
@@ -179,6 +230,13 @@ export async function importSession(sessionId: number): Promise<{ success: boole
         await db.execute(sql`
           INSERT INTO products (product_code, name, description, category_id, price, active, sort_order)
           VALUES (${code}, ${prod.product_name}, ${""},  ${categoryId}, ${price}, ${active}, ${i})
+          ON CONFLICT (product_code) DO UPDATE
+          SET name = EXCLUDED.name,
+              description = EXCLUDED.description,
+              category_id = EXCLUDED.category_id,
+              price = EXCLUDED.price,
+              active = EXCLUDED.active,
+              sort_order = EXCLUDED.sort_order
         `);
 
         if (taxCategoryId) {
@@ -186,11 +244,20 @@ export async function importSession(sessionId: number): Promise<{ success: boole
             SELECT id FROM products WHERE product_code = ${code} LIMIT 1
           `);
           if (prodResult.rows.length > 0) {
-            await db.execute(sql`
-              INSERT INTO product_tax_categories (product_id, tax_category_id)
-              VALUES (${prodResult.rows[0].id}, ${taxCategoryId})
-              ON CONFLICT DO NOTHING
+            const existing = await db.execute(sql`
+              SELECT id
+              FROM product_tax_categories
+              WHERE product_id = ${prodResult.rows[0].id}
+                AND tax_category_id = ${taxCategoryId}
+              LIMIT 1
             `);
+            if (existing.rows.length === 0) {
+              await db.execute(sql`
+                INSERT INTO product_tax_categories (product_id, tax_category_id)
+                VALUES (${prodResult.rows[0].id}, ${taxCategoryId})
+                ON CONFLICT DO NOTHING
+              `);
+            }
           }
         }
       }
@@ -206,6 +273,13 @@ export async function importSession(sessionId: number): Promise<{ success: boole
         const result = await db.execute(sql`
           INSERT INTO modifier_groups (name, required, multi_select, min_selections, max_selections, active, sort_order)
           VALUES (${mg.group_name}, ${required}, ${multiSelect}, ${required ? 1 : 0}, ${maxSelect}, true, ${i})
+          ON CONFLICT (name) DO UPDATE
+          SET required = EXCLUDED.required,
+              multi_select = EXCLUDED.multi_select,
+              min_selections = EXCLUDED.min_selections,
+              max_selections = EXCLUDED.max_selections,
+              active = EXCLUDED.active,
+              sort_order = EXCLUDED.sort_order
           RETURNING id
         `);
         groupNameToId.set(String(mg.group_name).toLowerCase(), result.rows[0].id as number);
@@ -218,10 +292,28 @@ export async function importSession(sessionId: number): Promise<{ success: boole
         const groupId = groupNameToId.get(String(mod.group_name).toLowerCase());
         if (!groupId) continue;
         const priceDelta = String(Number(mod.price) || 0);
-        await db.execute(sql`
-          INSERT INTO modifier_options (group_id, name, price_delta, active, sort_order)
-          VALUES (${groupId}, ${mod.modifier_name}, ${priceDelta}, true, ${i})
+        const existing = await db.execute(sql`
+          SELECT id
+          FROM modifier_options
+          WHERE group_id = ${groupId}
+            AND name = ${mod.modifier_name}
+          LIMIT 1
         `);
+        if (existing.rows.length > 0) {
+          await db.execute(sql`
+            UPDATE modifier_options
+            SET price_delta = ${priceDelta},
+                active = true,
+                sort_order = ${i}
+            WHERE id = ${existing.rows[0].id}
+          `);
+        } else {
+          await db.execute(sql`
+            INSERT INTO modifier_options (group_id, name, price_delta, active, sort_order)
+            VALUES (${groupId}, ${mod.modifier_name}, ${priceDelta}, true, ${i})
+            ON CONFLICT DO NOTHING
+          `);
+        }
       }
     }
 
@@ -236,11 +328,20 @@ export async function importSession(sessionId: number): Promise<{ success: boole
         const groupId = groupNameToId.get(groupName);
 
         if (prodResult.rows.length > 0 && groupId) {
-          await db.execute(sql`
-            INSERT INTO item_modifier_groups (product_id, modifier_group_id)
-            VALUES (${prodResult.rows[0].id}, ${groupId})
-            ON CONFLICT DO NOTHING
+          const existing = await db.execute(sql`
+            SELECT id
+            FROM item_modifier_groups
+            WHERE product_id = ${prodResult.rows[0].id}
+              AND modifier_group_id = ${groupId}
+            LIMIT 1
           `);
+          if (existing.rows.length === 0) {
+            await db.execute(sql`
+              INSERT INTO item_modifier_groups (product_id, modifier_group_id)
+              VALUES (${prodResult.rows[0].id}, ${groupId})
+              ON CONFLICT DO NOTHING
+            `);
+          }
         }
       }
     }
