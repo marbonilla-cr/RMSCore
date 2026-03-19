@@ -345,6 +345,12 @@ function AppRouter() {
 function useWakeLock() {
   useEffect(() => {
     let wakeLock: WakeLockSentinel | null = null;
+    const isCapacitorNativeAndroid = (() => {
+      if (typeof navigator === "undefined") return false;
+      const ua = navigator.userAgent || "";
+      // Capacitor injects "Capacitor" in UA in most builds, and native Android includes "Android".
+      return /Capacitor/i.test(ua) && /Android/i.test(ua);
+    })();
 
     async function requestWakeLock() {
       try {
@@ -357,14 +363,20 @@ function useWakeLock() {
     requestWakeLock();
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        requestWakeLock();
-      }
+      // On Android tablets we want to keep printing working even if the screen locks.
+      // Browsers may release wake locks when visibility changes, so we re-request on native.
+      if (document.visibilityState === "visible" || isCapacitorNativeAndroid) requestWakeLock();
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
+    const keepAliveInterval = isCapacitorNativeAndroid ? setInterval(() => {
+      // Re-request occasionally to avoid wakeLock getting released by the OS/browser.
+      requestWakeLock();
+    }, 30_000) : null;
+
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (keepAliveInterval) clearInterval(keepAliveInterval);
       wakeLock?.release();
     };
   }, []);
