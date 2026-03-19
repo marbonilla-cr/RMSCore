@@ -1,0 +1,69 @@
+Necesito un proyecto NUEVO llamado rms-mobile-wrapper usando Capacitor (TypeScript) para Android/iOS.
+
+Objetivo
+- Crear un wrapper que cargue mi RMS existente desde una URL (PWA/web).
+- NO reescribir pantallas.
+- Preparar el proyecto para que yo compile el APK/AAB localmente (Android Studio) y lo distribuya por link/WhatsApp.
+
+Requisitos
+1) Capacitor base
+- Inicializar Capacitor con package id: com.rms.app (editable)
+- App name: RMS (editable)
+- Configurar WebView para cargar una URL externa.
+
+2) Ambientes
+- Implementar selección de URL por build usando variables:
+  - BASE_URL_DEV
+  - BASE_URL_PROD
+- Crear .env.example y scripts:
+  - npm run cap:android:dev
+  - npm run cap:android:prod
+  - npm run cap:ios:dev
+  - npm run cap:ios:prod
+Cada script debe generar capacitor.config con server.url correcto.
+
+3) UX
+- Fullscreen
+- Splash screen e íconos (placeholders + carpeta assets + instrucciones para reemplazar)
+- Evitar zoom raro y problemas de teclado lo más posible.
+
+4) Android Back Button
+- Si hay historial web: navegar atrás
+- Si no hay historial: confirmar “¿Salir?” y cerrar app
+
+5) Conectividad
+- Detectar online/offline y si está offline mostrar una pantalla simple nativa/overlay:
+  “Sin conexión. Reintentando…”
+- Al volver online, recargar la WebView.
+
+6) Diagnóstico (solo DEV)
+- Agregar un “panel debug” oculto (ej: triple tap en esquina) que muestre:
+  - URL actual
+  - estado online/offline
+  - versión del wrapper
+
+7) Seguridad mínima
+- En PROD exigir https (si BASE_URL_PROD no es https, bloquear con error claro).
+- Permitir http solo en DEV y documentarlo.
+
+8) Entrega y documentación
+- README con pasos exactos:
+  A) Requisitos (Node, Java, Android Studio)
+  B) Clonar repo e instalar deps
+  C) Generar proyecto Android: npx cap add android (o ya incluido)
+  D) Abrir en Android Studio y compilar:
+     - APK debug para pruebas
+     - APK/AAB release firmado (keystore)
+  E) Cómo firmar y generar un APK “release” instalable por usuarios
+  F) Cómo subir el APK a un link y compartir por WhatsApp
+- Incluir checklist de “si no instala” (Unknown sources, permisos, etc.)
+- No intentes compilar en Replit. Solo dejar todo listo para build local.
+
+Notas
+- El RMS usa sesiones por cookies y WebSockets; el wrapper debe funcionar con eso sin cambios.
+- No implementar push ni impresión aquí.
+
+Salida esperada
+- Proyecto compila localmente (según README).
+- Scripts y envs funcionando.
+- Android back + offline overlay funcionando.

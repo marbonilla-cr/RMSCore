@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="msapplication-tap-highlight" content="no">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>RMS</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="offline-overlay" class="overlay hidden">
+    <div class="overlay-content">
+      <div class="offline-icon">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#e94560" stroke-width="2">
+          <line x1="1" y1="1" x2="23" y2="23"></line>
+          <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+          <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+          <path d="M10.71 5.05A16 16 0 0 1 22.56 9"></path>
+          <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+          <line x1="12" y1="20" x2="12.01" y2="20"></line>
+        </svg>
+      </div>
+      <h2>Sin conexión</h2>
+      <p>Reintentando<span id="retry-dots">...</span></p>
+      <p class="retry-info" id="retry-info"></p>
+    </div>
+  </div>
+
+  <div id="error-overlay" class="overlay hidden">
+    <div class="overlay-content">
+      <div class="error-icon">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#e94560" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="15" y1="9" x2="9" y2="15"></line>
+          <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>
+      </div>
+      <h2>Error de Configuración</h2>
+      <p id="error-message"></p>
+    </div>
+  </div>
+
+  <div id="debug-panel" class="debug-panel hidden">
+    <div class="debug-header">
+      <span>Debug Panel</span>
+      <button id="debug-close" class="debug-close">&times;</button>
+    </div>
+    <div class="debug-body">
+      <div class="debug-row">
+        <span class="debug-label">Versión:</span>
+        <span id="debug-version" class="debug-value">--</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">Entorno:</span>
+        <span id="debug-env" class="debug-value">--</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">URL:</span>
+        <span id="debug-url" class="debug-value">--</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">Estado:</span>
+        <span id="debug-status" class="debug-value">--</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">Cookies:</span>
+        <span id="debug-cookies" class="debug-value">--</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="debug-tap-area" class="debug-tap-area"></div>
+
+  <div id="loading-screen" class="loading-screen">
+    <div class="loading-content">
+      <h1>RMS</h1>
+      <div class="spinner"></div>
+      <p>Cargando...</p>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

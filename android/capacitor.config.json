@@ -1,0 +1,6 @@
+{
+  "appId": "com.rms.app",
+  "appName": "RMS",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}
