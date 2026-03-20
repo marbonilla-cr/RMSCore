@@ -6756,6 +6756,8 @@ export async function registerRoutes(
           .where(and(gte(employeeCharges.businessDate, dateFrom), lte(employeeCharges.businessDate, dateTo))),
       ]);
 
+      console.log("[DEBUG payroll] serviceLedger count:", serviceLedger.length, "serviceFrom:", serviceFrom, "serviceTo:", serviceTo, "tenantSchema:", req.tenantSchema);
+
       const operationalWaiterIds = new Set<number>();
       for (const row of waiterIdsFromSalesRows.rows as any[]) {
         const id = Number(row.id);
