@@ -2653,9 +2653,10 @@ export async function registerRoutes(
   // ==================== WAITER: DISPATCH ORDER FROM TABLES ====================
   app.post("/api/waiter/dispatch-orders", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
-      const { customerName } = req.body || {};
+      const { customerName, beeperNumber } = req.body || {};
       const businessDate = await getBusinessDate(req.tenantSchema);
       const trimmedName = customerName?.trim() || "Cliente Despacho";
+      const trimmedBeeper = beeperNumber?.toString().trim() || null;
 
       let order = await storage.createOrder({
         tableId: null as any,
@@ -2663,6 +2664,7 @@ export async function registerRoutes(
         orderMode: "DISPATCH",
         dispatchStatus: "PENDING_PAYMENT",
         quickSaleName: trimmedName,
+        beeperNumber: trimmedBeeper,
         isQuickSale: true,
         responsibleWaiterId: req.session?.userId ?? null,
         businessDate,
@@ -3594,6 +3596,15 @@ export async function registerRoutes(
 
     const allOrderItemIds = allTicketItems.map(i => i.orderItemId);
     const allMods = allOrderItemIds.length > 0 ? await storage.getOrderItemModifiersByItemIds(allOrderItemIds, req.db) : [];
+    const orderIds = Array.from(new Set(tickets.map(t => t.orderId)));
+    const orderRows = orderIds.length > 0
+      ? await req.db.select({
+          id: orders.id,
+          transactionCode: (orders as any).transactionCode,
+          beeperNumber: (orders as any).beeperNumber,
+        }).from(orders).where(inArray(orders.id, orderIds))
+      : [];
+    const orderById = new Map(orderRows.map(o => [o.id, o]));
     const modsByItem = new Map<number, typeof allMods>();
     for (const m of allMods) {
       if (!modsByItem.has(m.orderItemId)) modsByItem.set(m.orderItemId, []);
@@ -3621,6 +3632,8 @@ export async function registerRoutes(
       }));
       result.push({
         ...t,
+        transactionCode: orderById.get(t.orderId)?.transactionCode || null,
+        beeperNumber: orderById.get(t.orderId)?.beeperNumber || null,
         createdAt: t.createdAt?.toISOString() || new Date().toISOString(),
         items: itemsWithMods,
       });
