@@ -47,14 +47,43 @@ function fmtHrsOrDash(min: number): string {
   return min > 0 ? formatMinutes(min) : "—";
 }
 
+const BUSINESS_TZ = "America/Costa_Rica";
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function parseYmd(dateStr: string): { y: number; m: number; d: number } {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return { y, m, d };
+}
+
+function addDaysYmd(dateStr: string, days: number): string {
+  const { y, m, d } = parseYmd(dateStr);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+
+function todayInBusinessTzStr(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const y = parts.find((p) => p.type === "year")?.value ?? "1970";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const d = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${y}-${m}-${d}`;
+}
+
 function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayInBusinessTzStr();
 }
 
 function weekAgoStr(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 7);
-  return d.toISOString().slice(0, 10);
+  return addDaysYmd(todayStr(), -7);
 }
 
 interface OvertimeRow {
@@ -100,17 +129,27 @@ export default function HrReportsPage() {
 }
 
 function getMondayStr(): string {
-  const d = new Date();
-  const day = d.getDay();
+  const now = new Date();
+  const wd = new Intl.DateTimeFormat("en-US", {
+    timeZone: BUSINESS_TZ,
+    weekday: "short",
+  }).format(now);
+  const weekdayMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  const day = weekdayMap[wd] ?? 1;
   const diff = day === 0 ? 6 : day - 1;
-  d.setDate(d.getDate() - diff);
-  return d.toISOString().slice(0, 10);
+  return addDaysYmd(todayStr(), -diff);
 }
 
 function getSundayStr(mondayStr: string): string {
-  const d = new Date(mondayStr + "T12:00:00");
-  d.setDate(d.getDate() + 6);
-  return d.toISOString().slice(0, 10);
+  return addDaysYmd(mondayStr, 6);
 }
 
 function formatColones(n: number | null | undefined): string {
@@ -201,9 +240,7 @@ interface ExtraType {
 }
 
 function addDaysStr(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T12:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return addDaysYmd(dateStr, days);
 }
 
 function PayrollTab() {
