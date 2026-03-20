@@ -34,17 +34,21 @@ if (isDev && baseUrl.startsWith('http://')) {
   console.warn('  NUNCA uses HTTP en producción.\n');
 }
 
+const serverConfig = isDev
+  ? `
+  server: {
+    url: '${baseUrl}',
+    cleartext: true,
+    androidScheme: 'http',
+  },`
+  : '';
+
 const config = `import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.rms.app',
   appName: 'RMS',
-  webDir: 'www',
-  server: {
-    url: '${baseUrl}',
-    cleartext: ${isDev ? 'true' : 'false'},
-    androidScheme: 'https',
-  },
+  webDir: 'www',${serverConfig}
   plugins: {
     SplashScreen: {
       launchShowDuration: 2000,
@@ -63,14 +67,9 @@ const config: CapacitorConfig = {
     },
   },
   android: {
-    allowMixedContent: ${isDev ? 'true' : 'false'},
+    allowMixedContent: false,
     captureInput: true,
-    webContentsDebuggingEnabled: ${isDev ? 'true' : 'false'},
-  },
-  ios: {
-    contentInset: 'always',
-    scrollEnabled: false,
-    allowsLinkPreview: false,
+    webContentsDebuggingEnabled: false,
   },
 };
 
@@ -81,7 +80,8 @@ const outputPath = path.resolve(__dirname, '..', 'capacitor.config.ts');
 fs.writeFileSync(outputPath, config, 'utf-8');
 
 console.log(`✓ capacitor.config.ts generado para: ${env.toUpperCase()}`);
-console.log(`  URL: ${baseUrl}`);
+console.log(`  URL base: ${baseUrl}`);
+console.log(`  server.url: ${isDev ? 'Habilitado (solo desarrollo)' : 'Deshabilitado (producción local www)'}`);
 console.log(`  HTTPS requerido: ${isProd ? 'Sí' : 'No (solo dev)'}`);
-console.log(`  Mixed content: ${isDev ? 'Permitido' : 'Bloqueado'}`);
-console.log(`  WebView debug: ${isDev ? 'Habilitado' : 'Deshabilitado'}\n`);
+console.log(`  Mixed content: Bloqueado`);
+console.log(`  WebView debug: Deshabilitado\n`);
