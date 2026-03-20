@@ -877,7 +877,13 @@ export default function TablesPage() {
           style={{ marginRight: 6 }}
           title="Despacho"
         >
-          <Zap size={16} />
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 20h20"/>
+            <path d="M12 14v6"/>
+            <path d="M4 14h16"/>
+            <circle cx="12" cy="8" r="3"/>
+            <path d="M6 14v-1a6 6 0 0 1 12 0v1"/>
+          </svg>
         </button>
         <button
           className="header-action"

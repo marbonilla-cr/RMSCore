@@ -265,6 +265,9 @@ export default function TableDetailPage() {
       setViewMode("order");
       setRondaSheetOpen(false);
       toast({ title: isDispatch ? "Orden guardada para cobro" : "Ronda enviada a cocina" });
+      if (isDispatch && quickSaleOrderId) {
+        navigate("/pos");
+      }
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -625,14 +628,17 @@ export default function TableDetailPage() {
   const activeOrder = currentView?.activeOrder;
   const tableData = currentView?.table;
   const voidedItemsList = currentView?.voidedItems || [];
+  const dispatchBeeperCode = activeOrder?.beeperNumber || activeOrder?.beeper_number || null;
+  const dispatchTransactionCode = activeOrder?.transactionCode || activeOrder?.transaction_code || null;
+  const dispatchIdentifier = dispatchBeeperCode || dispatchTransactionCode;
 
   useEffect(() => {
-    if (activeOrder?.beeperNumber) {
-      setBeeperNumber(String(activeOrder.beeperNumber));
+    if (dispatchBeeperCode) {
+      setBeeperNumber(String(dispatchBeeperCode));
     } else {
       setBeeperNumber("");
     }
-  }, [activeOrder?.id, activeOrder?.beeperNumber]);
+  }, [activeOrder?.id, dispatchBeeperCode]);
 
   const { data: orderBySubaccount } = useQuery<any>({
     queryKey: ["/api/waiter/orders", activeOrder?.id, "by-subaccount"],
@@ -895,9 +901,9 @@ export default function TableDetailPage() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1 className="header-title" data-testid="text-table-name">
             {tableData?.tableName || `Mesa ${tableId}`}
-            {activeOrder?.orderMode === "DISPATCH" && (activeOrder?.beeperNumber || activeOrder?.transactionCode) && (
+            {activeOrder?.orderMode === "DISPATCH" && dispatchIdentifier && (
               <span style={{ fontFamily: "var(--f-mono, monospace)", fontSize: 22, fontWeight: 800, color: "#f59e0b", letterSpacing: "0.08em", marginLeft: 8 }} data-testid="text-dispatch-code">
-                [{activeOrder.beeperNumber || activeOrder.transactionCode}]
+                [{dispatchIdentifier}]
               </span>
             )}
           </h1>
