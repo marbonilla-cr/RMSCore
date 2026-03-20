@@ -475,6 +475,27 @@ export async function registerRoutes(
     });
   });
 
+  /** Evita usar el API con sesión activa hasta cambiar contraseña (login con PIN incluido). */
+  app.use(async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.path.startsWith("/api/")) return next();
+      if (!req.session.userId) return next();
+      if (req.method === "GET" && req.path === "/api/auth/me") return next();
+      if (req.method === "POST" && req.path === "/api/auth/logout") return next();
+      if (req.method === "POST" && req.path === "/api/auth/forced-password-change") return next();
+      const user = await storage.getUser(req.session.userId, req.db);
+      if (user?.forcePasswordChange) {
+        return res.status(403).json({
+          code: "FORCE_PASSWORD_CHANGE",
+          message: "Debe cambiar su contraseña antes de continuar",
+        });
+      }
+      next();
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // ==================== AUTH ====================
   /** Login central (APK): email + password; resuelve tenant automáticamente. */
   app.post("/api/auth/central-login", async (req, res) => {
@@ -488,10 +509,12 @@ export async function registerRoutes(
     if (!checkLoginRateLimit(req, res)) return;
     try {
       const parsed = loginSchema.parse(req.body);
-      const username = parsed.username.trim().toLowerCase();
+      const rawLogin = parsed.username.trim();
       const password = parsed.password;
       const tdb = req.db;
-      const user = await storage.getUserByUsername(username, tdb);
+      const user = rawLogin.includes("@")
+        ? await storage.getUserByEmailNormalized(rawLogin.toLowerCase(), tdb)
+        : await storage.getUserByUsername(rawLogin.toLowerCase(), tdb);
       if (!user || !user.active) {
         return res.status(401).json({ message: "Usuario o contraseña incorrectos" });
       }
@@ -602,6 +625,31 @@ export async function registerRoutes(
     const { password: _, pin: _p, ...safeUser } = user;
     const perms = await storage.getPermissionKeysForRole(user.role, tdb);
     res.json({ ...safeUser, hasPin: !!user.pin, permissions: perms });
+  });
+
+  app.post("/api/auth/forced-password-change", requireAuth, async (req, res) => {
+    try {
+      const newPassword = (req.body as { newPassword?: string })?.newPassword;
+      if (!newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
+        return res.status(400).json({ message: "La contraseña debe tener al menos 6 caracteres" });
+      }
+      await storage.updateUser(req.session.userId!, { password: newPassword, forcePasswordChange: false }, req.db);
+      await storage.createAuditEvent(
+        {
+          actorType: "USER",
+          actorUserId: req.session.userId!,
+          action: "PASSWORD_CHANGE_FORCED",
+          entityType: "USER",
+          entityId: req.session.userId!,
+          metadata: {},
+        },
+        req.db
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[auth] forced-password-change:", err?.message || err);
+      res.status(500).json({ message: "Error interno" });
+    }
   });
 
   // PIN Login
@@ -942,7 +990,19 @@ export async function registerRoutes(
       await assertEmployeeEmailUniqueAcrossTenants(email, req.tenantSchema);
       const existing = await storage.getUserByUsername(username, req.db);
       if (existing) return res.status(400).json({ message: "Username ya existe" });
-      const user = await storage.createUser({ username, password, displayName, role, active: active !== false, email: email || null, dailyRate: dailyRate || null }, req.db);
+      const user = await storage.createUser(
+        {
+          username,
+          password,
+          displayName,
+          role,
+          active: active !== false,
+          email: email || null,
+          dailyRate: dailyRate || null,
+          forcePasswordChange: true,
+        },
+        req.db
+      );
       const { password: _, pin: _p, ...safeUser } = user;
       res.json({ ...safeUser, hasPin: !!user.pin });
     } catch (err: any) {
@@ -985,7 +1045,7 @@ export async function registerRoutes(
       const id = parseInt(req.params.id as string);
       const { password } = req.body;
       if (!password) return res.status(400).json({ message: "Password requerido" });
-      await storage.updateUser(id, { password }, req.db);
+      await storage.updateUser(id, { password, forcePasswordChange: true }, req.db);
       const actor = (req as any).user;
       await storage.createAuditEvent({ actorType: "USER", actorUserId: actor.id, action: "PASSWORD_RESET", entityType: "USER", entityId: id, metadata: {} }, req.db);
       res.json({ ok: true });

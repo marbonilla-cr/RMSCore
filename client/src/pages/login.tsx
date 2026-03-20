@@ -43,13 +43,13 @@ export default function LoginPage() {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="username">Usuario</Label>
+                <Label htmlFor="username">Usuario o correo</Label>
                 <Input
                   id="username"
                   data-testid="input-username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Ingrese su usuario"
+                  placeholder="Ej: juan o juan@correo.com"
                   autoComplete="username"
                 />
               </div>

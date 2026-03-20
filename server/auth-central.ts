@@ -157,6 +157,7 @@ export async function handleCentralLogin(
           username: safeUser.username,
           displayName: safeUser.displayName,
           role: safeUser.role,
+          forcePasswordChange: safeUser.forcePasswordChange,
         },
         sessionToken: req.sessionID,
       });

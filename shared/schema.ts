@@ -31,6 +31,7 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").defaultNow(),
   resetToken: text("reset_token"),
   resetTokenExpires: timestamp("reset_token_expires"),
+  forcePasswordChange: boolean("force_password_change").notNull().default(false),
 });
 
 export const tables = pgTable("tables", {

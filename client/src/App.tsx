@@ -16,6 +16,7 @@ import { startPrintBridgeClient, stopPrintBridgeClient, isPrintBridgeAvailable }
 import PinLoginPage from "@/pages/pin-login";
 import LoginPage from "@/pages/login";
 import AuthPage from "@/pages/auth-page";
+import ForcePasswordChangePage from "@/pages/force-password-change";
 import NotFound from "@/pages/not-found";
 
 const ResetPasswordPage    = React.lazy(() => import("@/pages/reset-password"));
@@ -323,6 +324,10 @@ function AppContent() {
 
   if (!user) {
     return <AuthPage />;
+  }
+
+  if (user.forcePasswordChange) {
+    return <ForcePasswordChangePage />;
   }
 
   return <AuthenticatedLayout />;

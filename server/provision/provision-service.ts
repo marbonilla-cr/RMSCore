@@ -303,8 +303,8 @@ async function createAdminUser(schemaName: string, data: { email: string; passwo
   const username = data.email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
   const pinHash = data.pin ? await bcrypt.hash(data.pin, 10) : null;
   await publicPool.query(
-    `INSERT INTO "${schemaName}".users (username,password,display_name,role,active,email,pin)
-     VALUES ($1,$2,$3,'MANAGER',true,$4,$5)
+    `INSERT INTO "${schemaName}".users (username,password,display_name,role,active,email,pin,force_password_change)
+     VALUES ($1,$2,$3,'MANAGER',true,$4,$5,true)
      ON CONFLICT (username) DO UPDATE SET password=$2, display_name=$3, email=$4, pin=$5, active=true`,
     [username, hash, data.displayName, data.email, pinHash]
   );
@@ -336,7 +336,7 @@ export async function sendTenantPasswordReset(tenantId: number, email: string, r
   const resetToken = crypto.randomBytes(32).toString("hex");
   const expires = new Date(Date.now() + 60 * 60 * 1000);
   await publicPool.query(
-    `UPDATE "${schemaName}".users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3`,
+    `UPDATE "${schemaName}".users SET reset_token = $1, reset_token_expires = $2, force_password_change = true WHERE id = $3`,
     [resetToken, expires, adminUser.id]
   );
 

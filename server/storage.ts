@@ -73,6 +73,19 @@ export async function getUserByUsername(username: string, dbInstance?: typeof db
   return user;
 }
 
+/** Activo; email normalizado (trim + lower). */
+export async function getUserByEmailNormalized(emailNormalized: string, dbInstance?: typeof db) {
+  const d = dbInstance || db;
+  const rows = await d
+    .select()
+    .from(users)
+    .where(
+      and(eq(users.active, true), sql`${users.email} IS NOT NULL AND LOWER(TRIM(${users.email})) = ${emailNormalized}`)
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function getAllUsers(dbInstance?: typeof db) {
   const d = dbInstance || db;
   return d.select().from(users).orderBy(asc(users.displayName));
@@ -142,7 +155,10 @@ export async function getUserByResetToken(token: string, dbInstance?: typeof db)
 
 export async function resetPassword(userId: number, hashedPassword: string, dbInstance?: typeof db) {
   const d = dbInstance || db;
-  await d.update(users).set({ password: hashedPassword, resetToken: null, resetTokenExpires: null }).where(eq(users.id, userId));
+  await d
+    .update(users)
+    .set({ password: hashedPassword, resetToken: null, resetTokenExpires: null, forcePasswordChange: false })
+    .where(eq(users.id, userId));
 }
 
 export async function getAllUsersWithPin(dbInstance?: typeof db) {

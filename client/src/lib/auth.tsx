@@ -12,6 +12,8 @@ interface AuthUser {
   email: string | null;
   hasPin: boolean;
   createdAt: string;
+  /** Debe cambiar contraseña antes de usar el sistema (sesión password o PIN). */
+  forcePasswordChange?: boolean;
 }
 
 interface AuthContextType {
