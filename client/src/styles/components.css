@@ -189,7 +189,7 @@
   padding: 12px 18px;
   display: flex; align-items: center; gap: 10px;
   flex-shrink: 0;
-  position: sticky; top: 0; z-index: 20;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
 }
 .screen-header .back-btn {
   width: 34px; height: 34px;

@@ -260,11 +260,16 @@ function AuthenticatedLayout() {
           align-items: center;
           justify-content: space-between;
           gap: 4px;
-          padding: 6px 12px;
+          /* Reserve space for iOS/Android safe-area so it doesn't overlay the page header content. */
+          padding-top: calc(6px + max(var(--sat), 0px));
+          padding-right: 12px;
+          padding-bottom: 6px;
+          padding-left: 12px;
           background: var(--s0);
           border-bottom: 1px solid var(--border);
           flex-shrink: 0;
           z-index: 9;
+          box-sizing: border-box;
         }
         .app-header-left,
         .app-header-right {
