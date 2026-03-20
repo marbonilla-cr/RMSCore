@@ -6845,6 +6845,12 @@ export async function registerRoutes(
       const serviceModeParam = (req.query.serviceMode as string || "").toUpperCase();
       const serviceMode: "BOLSA" | "VENTA_MESERO" = serviceModeParam === "VENTA_MESERO" ? "VENTA_MESERO" : "BOLSA";
 
+      console.log("[DEBUG dates] serviceFrom:", serviceFrom, "serviceTo:", serviceTo);
+      console.log("[DEBUG dates] ledger dates:", Object.keys(serviceLedgerByEmployee));
+      console.log("[DEBUG dates] getDateRange result sample:", JSON.stringify(
+        [serviceFrom, serviceTo].map(d => new Date(d + "T12:00:00").toISOString().slice(0, 10))
+      ));
+
       const { result: serviceByEmployee, serviceUnassignedTotal, allocationModeByDate } = computeServiceForRange({
         hrConfig,
         serviceFrom,
