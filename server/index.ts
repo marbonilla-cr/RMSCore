@@ -14,7 +14,7 @@ import { runTenantLifecycleCheck } from "./provision/provision-service";
 import { ensurePublicTables } from "./provision/seed-own-tenant";
 import { syncAllTenantsAtStartup } from "./provision/migrate-tenants";
 import { setTimezonePool } from "./utils/timezone";
-import { pool } from "./db";
+import { ensurePerfIndexes, pool } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -191,12 +191,36 @@ app.use((req, res, next) => {
   await ensureSystemPermissions();
   await seedDefaultRolePermissions();
   await seedExtraTypes();
-  ensurePublicTables().catch(err => {
+
+  try {
+    await ensurePublicTables();
+  } catch (err: any) {
     console.error("[startup] Error en tenant seed:", err.message);
-  });
-  syncAllTenantsAtStartup().catch(err => {
+  }
+
+  try {
+    await syncAllTenantsAtStartup();
+  } catch (err: any) {
     console.error("[startup] Error en migración de tenants:", err.message);
-  });
+  }
+
+  // Performance indexes dependen de que las tablas existan en el schema del tenant.
+  // Por eso se ejecutan después de syncAllTenantsAtStartup() y se parametrizan por schema.
+  try {
+    const { rows } = await pool.query(`
+      SELECT schema_name
+      FROM public.tenants
+      WHERE is_active = true
+        AND schema_name != 'public'
+    `);
+
+    for (const row of rows) {
+      await ensurePerfIndexes(row.schema_name as string);
+    }
+  } catch (err: any) {
+    console.error("[startup] Error ensuring performance indexes:", err.message);
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
