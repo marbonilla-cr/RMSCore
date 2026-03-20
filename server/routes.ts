@@ -6766,7 +6766,13 @@ export async function registerRoutes(
         storage.getServiceChargeLedgerByDates(serviceFrom, serviceTo, req.db),
         storage.getExtraTypes(req.db),
         req.db.execute(sql`SELECT DISTINCT responsible_waiter_id AS id FROM sales_ledger_items WHERE business_date >= ${dateFrom} AND business_date <= ${dateTo} AND responsible_waiter_id IS NOT NULL`),
-        req.db.execute(sql`SELECT DISTINCT responsible_waiter_employee_id AS id FROM service_charge_ledger WHERE business_date >= ${serviceFrom} AND business_date <= ${serviceTo} AND responsible_waiter_employee_id IS NOT NULL`),
+        req.db.execute(sql`
+          SELECT DISTINCT responsible_waiter_employee_id AS id
+          FROM service_charge_ledger
+          WHERE substring(business_date from 1 for 10) >= ${serviceFrom}
+            AND substring(business_date from 1 for 10) <= ${serviceTo}
+            AND responsible_waiter_employee_id IS NOT NULL
+        `),
         req.db.select({ employeeId: employeeCharges.employeeId, amount: employeeCharges.amount, businessDate: employeeCharges.businessDate })
           .from(employeeCharges)
           .where(and(gte(employeeCharges.businessDate, dateFrom), lte(employeeCharges.businessDate, dateTo))),
@@ -6855,7 +6861,8 @@ export async function registerRoutes(
       }
 
       for (const entry of serviceLedger) {
-        const d = entry.businessDate;
+        const d = String(entry.businessDate || "").slice(0, 10);
+        if (!d) continue;
         const empId = entry.responsibleWaiterEmployeeId || 0;
         if (!serviceLedgerByEmployee[d]) serviceLedgerByEmployee[d] = {};
         serviceLedgerByEmployee[d][empId] = (serviceLedgerByEmployee[d][empId] || 0) + Number(entry.serviceAmount);

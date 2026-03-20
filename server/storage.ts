@@ -2506,10 +2506,10 @@ export async function getPayrollExtraById(id: number, dbInstance?: typeof db) {
 export async function getServiceChargeLedgerByDates(dateFrom: string, dateTo: string, dbInstance?: typeof db) {
   const d = dbInstance || db;
   return d.select().from(serviceChargeLedger)
-    .where(and(
-      gte(serviceChargeLedger.businessDate, dateFrom),
-      lte(serviceChargeLedger.businessDate, dateTo),
-    ));
+    .where(sql`
+      substring(${serviceChargeLedger.businessDate} from 1 for 10) >= ${dateFrom}
+      and substring(${serviceChargeLedger.businessDate} from 1 for 10) <= ${dateTo}
+    `);
 }
 
 export async function getAllSchedulesForDateRange(dateFrom: string, dateTo: string, dbInstance?: typeof db) {
