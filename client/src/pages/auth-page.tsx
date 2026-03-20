@@ -237,7 +237,7 @@ export default function AuthPage() {
                 className="auth-input"
                 value={username}
                 onChange={e => { setUsername(e.target.value); setError(""); }}
-                placeholder="Usuario"
+                placeholder="Usuario o correo"
                 autoFocus
                 autoComplete="username"
                 data-testid="input-username"

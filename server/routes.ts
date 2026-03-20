@@ -543,9 +543,11 @@ export async function registerRoutes(
 
   app.get("/api/auth/user-info", async (req, res) => {
     try {
-      const username = (req.query.username as string || "").trim().toLowerCase();
-      if (!username) return res.json({ exists: false, hasPin: false, displayName: "" });
-      const user = await storage.getUserByUsername(username, req.db);
+      const raw = (req.query.username as string || "").trim();
+      if (!raw) return res.json({ exists: false, hasPin: false, displayName: "" });
+      const user = raw.includes("@")
+        ? await storage.getUserByEmailNormalized(raw.toLowerCase(), req.db)
+        : await storage.getUserByUsername(raw.toLowerCase(), req.db);
       if (!user || !user.active) return res.json({ exists: false, hasPin: false, displayName: "" });
       res.json({ exists: true, hasPin: !!user.pin, displayName: user.displayName });
     } catch { res.json({ exists: false, hasPin: false, displayName: "" }); }
