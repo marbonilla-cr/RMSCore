@@ -265,7 +265,7 @@ export default function TableDetailPage() {
       setViewMode("order");
       setRondaSheetOpen(false);
       toast({ title: isDispatch ? "Orden guardada para cobro" : "Ronda enviada a cocina" });
-      if (isDispatch && quickSaleOrderId) {
+      if (isDispatch) {
         navigate("/pos");
       }
     },
