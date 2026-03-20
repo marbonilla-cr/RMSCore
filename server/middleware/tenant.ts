@@ -57,7 +57,12 @@ export async function tenantMiddleware(req: Request, res: Response, next: NextFu
       return next();
     }
 
-    if (parts.length < 3 || parts[0] === "admin" || parts[0] === "www") {
+    if (
+      parts.length < 3 ||
+      parts[0] === "admin" ||
+      parts[0] === "www" ||
+      parts[0] === "login"
+    ) {
       req.tenantSchema = "public";
       req.tenantId = null;
       req.db = getTenantDb("public");
@@ -88,6 +93,20 @@ export async function tenantMiddleware(req: Request, res: Response, next: NextFu
     req.tenantSchema = tenant.schema_name;
     req.tenantId = tenant.id;
     req.db = getTenantDb(tenant.schema_name);
+
+    const sessSchema = (req.session as any)?.tenantSchema as string | undefined;
+    if (
+      req.session?.userId &&
+      sessSchema &&
+      sessSchema !== req.tenantSchema
+    ) {
+      return res.status(403).json({
+        code: "TENANT_SESSION_MISMATCH",
+        message:
+          "La sesión pertenece a otro restaurante. Cerrá sesión e iniciá de nuevo.",
+      });
+    }
+
     next();
   } catch (err: any) {
     console.error("[tenant-middleware] Error:", err.message, "host:", req.hostname);

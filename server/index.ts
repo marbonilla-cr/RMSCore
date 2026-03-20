@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import compression from "compression";
 import helmet from "helmet";
 import path from "path";
@@ -76,6 +77,33 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+
+function corsAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  try {
+    const u = new URL(origin);
+    const h = u.hostname;
+    if (h === "localhost" || h.endsWith(".localhost")) return true;
+    if (h === "rmscore.app" || h.endsWith(".rmscore.app")) return true;
+    if (u.protocol === "capacitor:" || u.protocol === "ionic:") return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (corsAllowedOrigin(origin)) {
+        callback(null, origin ?? true);
+      } else {
+        callback(null, false);
+      }
+    },
+    credentials: true,
+  })
+);
 
 function stripHtmlTags(value: string): string {
   return value.replace(/<[^>]*>/g, '');

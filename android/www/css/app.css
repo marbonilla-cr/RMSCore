@@ -491,5 +491,43 @@ input, textarea, select {
 .tenant-version {
   color: #333;
   font-size: 0.75rem;
-  margin-top: 2rem;
+  margin-top: 8rem;
+}
+
+.central-login-form {
+  text-align: left;
+  width: 100%;
+  max-width: 360px;
+}
+
+.tenant-input-full {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+}
+
+.central-login-form .tenant-input-group {
+  margin-bottom: 0.9rem;
+}
+
+.central-switch-hint {
+  margin-top: 1.25rem;
+  text-align: center;
+}
+
+.link-like {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link-like:active {
+  color: #e94560;
 }

@@ -2,5 +2,12 @@
   "appId": "com.rms.app",
   "appName": "RMS",
   "webDir": "www",
-  "bundledWebRuntime": false
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": [
+      "https://*.rmscore.app",
+      "https://rmscore.app/*"
+    ]
+  }
 }

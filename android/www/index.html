@@ -14,7 +14,6 @@
 </head>
 <body>
 
-  <!-- Overlay sin conexión (existente) -->
   <div id="offline-overlay" class="overlay hidden">
     <div class="overlay-content">
       <div class="offline-icon">
@@ -35,7 +34,6 @@
     </div>
   </div>
 
-  <!-- Overlay error (existente) -->
   <div id="error-overlay" class="overlay hidden">
     <div class="overlay-content">
       <div class="error-icon">
@@ -51,7 +49,6 @@
     </div>
   </div>
 
-  <!-- Debug panel (existente) -->
   <div id="debug-panel" class="debug-panel hidden">
     <div class="debug-header">
       <span>Debug Panel</span>
@@ -87,7 +84,6 @@
 
   <div id="debug-tap-area" class="debug-tap-area"></div>
 
-  <!-- Pantalla de carga inicial (existente) -->
   <div id="loading-screen" class="loading-screen hidden">
     <div class="loading-content">
       <h1>RMSCore</h1>
@@ -96,7 +92,6 @@
     </div>
   </div>
 
-  <!-- NUEVO: Pantalla de selección de tenant -->
   <div id="tenant-screen" class="tenant-screen">
     <div class="tenant-content">
 
@@ -109,38 +104,45 @@
       </div>
 
       <h1 class="tenant-title">RMSCore</h1>
-      <p class="tenant-subtitle">Seleccioná tu restaurante</p>
+      <p class="tenant-subtitle">Ingresá con tu correo y contraseña</p>
 
-      <!-- Lista de tenants guardados -->
       <div id="tenant-list" class="tenant-list"></div>
 
-      <!-- Formulario para agregar tenant -->
-      <div id="tenant-form" class="tenant-form">
+      <div id="central-login-form" class="central-login-form">
         <div class="tenant-input-group">
-          <label class="tenant-label">Subdominio del restaurante</label>
-          <div class="tenant-input-row">
-            <input
-              id="tenant-slug-input"
-              type="text"
-              class="tenant-input"
-              placeholder="rest-entresantos"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="none"
-              spellcheck="false"
-            />
-            <span class="tenant-domain">.rmscore.app</span>
-          </div>
-          <p id="tenant-input-error" class="tenant-input-error hidden">
-            Subdominio inválido
-          </p>
+          <label class="tenant-label" for="central-email-input">Correo</label>
+          <input
+            id="central-email-input"
+            type="email"
+            class="tenant-input tenant-input-full"
+            placeholder="tu@correo.com"
+            autocomplete="username"
+            autocapitalize="none"
+          />
         </div>
-        <button id="tenant-connect-btn" class="tenant-btn-primary">
-          Conectar
+        <div class="tenant-input-group">
+          <label class="tenant-label" for="central-password-input">Contraseña</label>
+          <input
+            id="central-password-input"
+            type="password"
+            class="tenant-input tenant-input-full"
+            placeholder="Contraseña"
+            autocomplete="current-password"
+          />
+        </div>
+        <p id="central-login-error" class="tenant-input-error hidden"></p>
+        <button type="button" id="central-login-btn" class="tenant-btn-primary">
+          Entrar
         </button>
       </div>
 
-      <p class="tenant-version">v1.1.0</p>
+      <p class="central-switch-hint">
+        <button type="button" id="clear-tenant-btn" class="link-like">
+          Cambiar de restaurante (cerrar vínculo)
+        </button>
+      </p>
+
+      <p class="tenant-version">v1.2.0</p>
     </div>
   </div>
 

@@ -18,6 +18,10 @@ import { generateTransactionCode } from "./utils/transaction-code";
 import { onOrderItemsConfirmedSent, onOrderItemsVoided } from "./inventory-deduction";
 import * as qbo from "./quickbooks";
 import { tenantMiddleware } from "./middleware/tenant";
+import {
+  handleCentralLogin,
+  assertEmployeeEmailUniqueAcrossTenants,
+} from "./auth-central";
 import { registerDispatchRoutes, registerDispatchSession, notifyDispatchReady } from "./dispatch-routes";
 import { initDispatchJobs } from "./dispatch-jobs";
 import { registerLoyaltyRoutes } from "./loyalty-routes";
@@ -439,6 +443,8 @@ export async function registerRoutes(
     pruneSessionInterval: 60 * 15,
   });
 
+  const sessionCookieDomain = process.env.SESSION_COOKIE_DOMAIN?.trim() || undefined;
+
   const sessionMiddleware = session({
     secret: sessionSecret,
     resave: false,
@@ -450,6 +456,7 @@ export async function registerRoutes(
       secure: isProduction,
       sameSite: isProduction ? "none" as const : false as any,
       maxAge: 24 * 60 * 60 * 1000,
+      ...(sessionCookieDomain ? { domain: sessionCookieDomain } : {}),
     },
   });
   app.use(sessionMiddleware);
@@ -469,10 +476,20 @@ export async function registerRoutes(
   });
 
   // ==================== AUTH ====================
+  /** Login central (APK): email + password; resuelve tenant automáticamente. */
+  app.post("/api/auth/central-login", async (req, res) => {
+    if (!checkLoginRateLimit(req, res)) return;
+    await handleCentralLogin(req, res, {
+      onSuccessClearRateLimit: () => clearLoginRateLimit(req),
+    });
+  });
+
   app.post("/api/auth/login", async (req, res) => {
     if (!checkLoginRateLimit(req, res)) return;
     try {
-      const { username, password } = loginSchema.parse(req.body);
+      const parsed = loginSchema.parse(req.body);
+      const username = parsed.username.trim().toLowerCase();
+      const password = parsed.password;
       const tdb = req.db;
       const user = await storage.getUserByUsername(username, tdb);
       if (!user || !user.active) {
@@ -485,6 +502,7 @@ export async function registerRoutes(
       clearLoginRateLimit(req);
       req.session.userId = user.id;
       (req.session as any).tenantSchema = req.tenantSchema;
+      (req.session as any).tenantId = req.tenantId;
       await storage.createAuditEvent({ actorType: "USER", actorUserId: user.id, action: "LOGIN_PASSWORD", entityType: "USER", entityId: user.id, metadata: {} }, tdb);
       const { password: _, pin: _p, ...safeUser } = user;
       req.session.save(async (err) => {
@@ -540,7 +558,11 @@ export async function registerRoutes(
       }
       res.json({ message: "ok" });
     } catch (err: any) {
-      console.error("[auth] forgot-password error:", err.message);
+      // Siempre respondemos "ok" al cliente (no filtrar si el correo existe).
+      // Revisar logs del servidor: fallos de Resend / RESEND_API_KEY aparecen aquí.
+      console.error("[auth] forgot-password error:", err?.message || err, {
+        tenantSchema: req.tenantSchema,
+      });
       res.json({ message: "ok" });
     }
   });
@@ -601,6 +623,7 @@ export async function registerRoutes(
           clearLoginRateLimit(req);
           req.session.userId = u.id;
           (req.session as any).tenantSchema = req.tenantSchema;
+          (req.session as any).tenantId = req.tenantId;
           await storage.createAuditEvent({ actorType: "USER", actorUserId: u.id, action: "LOGIN_PIN", entityType: "USER", entityId: u.id, metadata: {} }, tdb);
           const fullUser = await storage.getUser(u.id, tdb);
           if (!fullUser) return res.status(500).json({ message: "Error interno" });
@@ -916,6 +939,7 @@ export async function registerRoutes(
       if (!username || !password || !displayName || !role) {
         return res.status(400).json({ message: "Campos requeridos: username, password, displayName, role" });
       }
+      await assertEmployeeEmailUniqueAcrossTenants(email, req.tenantSchema);
       const existing = await storage.getUserByUsername(username, req.db);
       if (existing) return res.status(400).json({ message: "Username ya existe" });
       const user = await storage.createUser({ username, password, displayName, role, active: active !== false, email: email || null, dailyRate: dailyRate || null }, req.db);
@@ -930,6 +954,9 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id as string);
       const { displayName, role, active, email, username } = req.body;
+      if (email !== undefined) {
+        await assertEmployeeEmailUniqueAcrossTenants(email, req.tenantSchema, id);
+      }
       const updates: any = {};
       if (displayName !== undefined) updates.displayName = displayName;
       if (role !== undefined) updates.role = role;

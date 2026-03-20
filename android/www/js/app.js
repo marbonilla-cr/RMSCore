@@ -1,12 +1,17 @@
 (function () {
   'use strict';
 
-  var WRAPPER_VERSION = '1.1.0';
+  var WRAPPER_VERSION = '1.2.0';
   var RELOAD_COOLDOWN_MS = 5000;
   var TAP_THRESHOLD_MS = 600;
   var TAP_COUNT_REQUIRED = 3;
   var STORAGE_KEY = 'rmscore_tenants';
   var ACTIVE_TENANT_KEY = 'rmscore_active_tenant';
+
+  var CENTRAL_LOGIN_ORIGIN =
+    typeof window.__RMS_CENTRAL_ORIGIN__ === 'string' && window.__RMS_CENTRAL_ORIGIN__
+      ? String(window.__RMS_CENTRAL_ORIGIN__).replace(/\/$/, '')
+      : 'https://login.rmscore.app';
 
   var isCapacitor = typeof window.Capacitor !== 'undefined' &&
     window.Capacitor.isNativePlatform &&
@@ -14,7 +19,6 @@
   var isDev = false;
   var currentUrl = '';
 
-  // DOM refs — existentes
   var offlineOverlay = document.getElementById('offline-overlay');
   var errorOverlay = document.getElementById('error-overlay');
   var errorMessage = document.getElementById('error-message');
@@ -24,20 +28,17 @@
   var retryInfo = document.getElementById('retry-info');
   var retryDots = document.getElementById('retry-dots');
 
-  // DOM refs — tenant selector
   var tenantScreen = document.getElementById('tenant-screen');
   var tenantList = document.getElementById('tenant-list');
-  var tenantSlugInput = document.getElementById('tenant-slug-input');
-  var tenantConnectBtn = document.getElementById('tenant-connect-btn');
-  var tenantInputError = document.getElementById('tenant-input-error');
+  var centralEmailInput = document.getElementById('central-email-input');
+  var centralPasswordInput = document.getElementById('central-password-input');
+  var centralLoginBtn = document.getElementById('central-login-btn');
+  var centralLoginError = document.getElementById('central-login-error');
+  var clearTenantBtn = document.getElementById('clear-tenant-btn');
 
   var lastReloadTime = 0;
   var isOffline = false;
   var dotInterval = null;
-
-  // ============================================
-  // TENANT STORAGE
-  // ============================================
 
   function getSavedTenants() {
     try {
@@ -62,7 +63,6 @@
       return t.slug !== slug;
     });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tenants));
-    // Si era el activo, limpiar
     if (localStorage.getItem(ACTIVE_TENANT_KEY) === slug) {
       localStorage.removeItem(ACTIVE_TENANT_KEY);
     }
@@ -80,10 +80,6 @@
     return 'https://' + slug + '.rmscore.app';
   }
 
-  // ============================================
-  // TENANT SELECTOR UI
-  // ============================================
-
   function renderTenantList() {
     var tenants = getSavedTenants();
     if (!tenantList) return;
@@ -92,10 +88,9 @@
 
     if (tenants.length === 0) return;
 
-    // Mostrar divisor "o agregar nuevo" solo si hay tenants
     var divider = document.createElement('div');
     divider.className = 'tenant-divider';
-    divider.textContent = 'o agregar nuevo';
+    divider.textContent = 'Acceso rápido';
 
     tenants.forEach(function (t) {
       var item = document.createElement('div');
@@ -106,7 +101,7 @@
           '<div class="tenant-item-url">' + t.slug + '.rmscore.app</div>' +
         '</div>' +
         '<div class="tenant-item-actions">' +
-          '<button class="tenant-item-connect" data-slug="' + t.slug + '">Entrar</button>' +
+          '<button class="tenant-item-connect" data-slug="' + t.slug + '">Abrir</button>' +
           '<button class="tenant-item-delete" data-slug="' + t.slug + '">✕</button>' +
         '</div>';
 
@@ -137,30 +132,21 @@
 
   function connectToTenant(slug) {
     slug = slug.trim().toLowerCase();
-
     if (!validateSlug(slug)) {
-      if (tenantInputError) {
-        tenantInputError.textContent = 'Subdominio inválido. Solo letras, números y guiones.';
-        tenantInputError.classList.remove('hidden');
+      if (centralLoginError) {
+        centralLoginError.textContent = 'Subdominio inválido.';
+        centralLoginError.classList.remove('hidden');
       }
       return;
     }
-
-    if (tenantInputError) tenantInputError.classList.add('hidden');
-
+    if (centralLoginError) centralLoginError.classList.add('hidden');
     saveTenant(slug);
     setActiveTenant(slug);
-
-    // Mostrar loading
     if (tenantScreen) tenantScreen.classList.add('hidden');
     if (loadingScreen) loadingScreen.classList.remove('hidden');
-
-    // Navegar al tenant
-    var url = getTenantUrl(slug);
-    currentUrl = url;
-
+    currentUrl = getTenantUrl(slug);
     setTimeout(function () {
-      window.location.href = url;
+      window.location.href = getTenantUrl(slug);
     }, 300);
   }
 
@@ -170,51 +156,117 @@
     renderTenantList();
   }
 
-  function setupTenantForm() {
-    if (!tenantConnectBtn || !tenantSlugInput) return;
-
-    tenantConnectBtn.addEventListener('click', function () {
-      connectToTenant(tenantSlugInput.value);
-    });
-
-    tenantSlugInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        connectToTenant(tenantSlugInput.value);
-      }
-    });
-
-    tenantSlugInput.addEventListener('input', function () {
-      if (tenantInputError) tenantInputError.classList.add('hidden');
-    });
+  function hideCentralError() {
+    if (centralLoginError) centralLoginError.classList.add('hidden');
   }
 
-  // ============================================
-  // INIT — decide si mostrar selector o ir directo
-  // ============================================
+  function submitCentralLogin() {
+    if (!centralEmailInput || !centralPasswordInput) return;
+
+    hideCentralError();
+    var email = centralEmailInput.value.trim();
+    var password = centralPasswordInput.value;
+
+    if (!email || !password) {
+      if (centralLoginError) {
+        centralLoginError.textContent = 'Ingresá correo y contraseña.';
+        centralLoginError.classList.remove('hidden');
+      }
+      return;
+    }
+
+    if (centralLoginBtn) {
+      centralLoginBtn.disabled = true;
+      centralLoginBtn.textContent = 'Entrando...';
+    }
+
+    var url = CENTRAL_LOGIN_ORIGIN + '/api/auth/central-login';
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email: email, password: password })
+    })
+      .then(function (res) {
+        return res.json().then(function (body) {
+          return { ok: res.ok, status: res.status, body: body };
+        });
+      })
+      .then(function (r) {
+        if (!r.ok) {
+          if (centralLoginError) {
+            centralLoginError.textContent = r.body && r.body.message
+              ? r.body.message
+              : 'Credenciales incorrectas';
+            centralLoginError.classList.remove('hidden');
+          }
+          return;
+        }
+        var data = r.body;
+        if (!data.slug || !data.tenantUrl) {
+          if (centralLoginError) {
+            centralLoginError.textContent = 'Respuesta inválida del servidor';
+            centralLoginError.classList.remove('hidden');
+          }
+          return;
+        }
+        saveTenant(data.slug);
+        setActiveTenant(data.slug);
+        if (tenantScreen) tenantScreen.classList.add('hidden');
+        if (loadingScreen) loadingScreen.classList.remove('hidden');
+        currentUrl = data.tenantUrl;
+        window.location.href = data.tenantUrl;
+      })
+      .catch(function () {
+        if (centralLoginError) {
+          centralLoginError.textContent = 'Sin conexión o error de red';
+          centralLoginError.classList.remove('hidden');
+        }
+      })
+      .finally(function () {
+        if (centralLoginBtn) {
+          centralLoginBtn.disabled = false;
+          centralLoginBtn.textContent = 'Entrar';
+        }
+      });
+  }
+
+  function setupCentralLogin() {
+    if (centralLoginBtn) {
+      centralLoginBtn.addEventListener('click', submitCentralLogin);
+    }
+    if (centralPasswordInput) {
+      centralPasswordInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') submitCentralLogin();
+      });
+    }
+    if (centralEmailInput) {
+      centralEmailInput.addEventListener('input', hideCentralError);
+    }
+    if (clearTenantBtn) {
+      clearTenantBtn.addEventListener('click', function () {
+        localStorage.removeItem(ACTIVE_TENANT_KEY);
+        localStorage.removeItem(STORAGE_KEY);
+        window.location.reload();
+      });
+    }
+  }
 
   function initTenantFlow() {
     var activeTenant = getActiveTenant();
 
     if (activeTenant) {
-      // Hay tenant guardado — ir directo
       var url = getTenantUrl(activeTenant);
       currentUrl = url;
-
       if (loadingScreen) loadingScreen.classList.remove('hidden');
       if (tenantScreen) tenantScreen.classList.add('hidden');
-
       setTimeout(function () {
         window.location.href = url;
       }, 500);
     } else {
-      // No hay tenant — mostrar selector
       showTenantSelector();
     }
   }
-
-  // ============================================
-  // LÓGICA EXISTENTE (sin cambios)
-  // ============================================
 
   function detectEnvironment() {
     if (isCapacitor) {
@@ -325,7 +377,6 @@
       var App = window.Capacitor.Plugins.App;
       if (App) {
         App.addListener('backButton', function (data) {
-          // Si estamos en el selector de tenant, no hacer nada
           if (tenantScreen && !tenantScreen.classList.contains('hidden')) {
             return;
           }
@@ -434,22 +485,17 @@
     }, false);
   }
 
-  // ============================================
-  // CAMBIAR TENANT — función global para usar
-  // desde el botón de cambio en el login del tenant
-  // ============================================
   window.RMSCore = {
     changeTenant: function () {
       localStorage.removeItem(ACTIVE_TENANT_KEY);
+      localStorage.removeItem(STORAGE_KEY);
       window.location.reload();
     },
     getActiveTenant: getActiveTenant,
+    getCentralLoginOrigin: function () { return CENTRAL_LOGIN_ORIGIN; },
     version: WRAPPER_VERSION
   };
 
-  // ============================================
-  // MAIN INIT
-  // ============================================
   function init() {
     detectEnvironment();
     setupNetworkDetection();
@@ -457,11 +503,12 @@
     setupStatusBar();
     setupSplashScreen();
     setupDebugPanel();
-    setupTenantForm();
+    setupCentralLogin();
     preventUnwantedZoom();
     initTenantFlow();
 
     console.log('[RMSCore Wrapper] v' + WRAPPER_VERSION + ' initialized');
+    console.log('[RMSCore Wrapper] central login:', CENTRAL_LOGIN_ORIGIN);
     console.log('[RMSCore Wrapper] Active tenant: ' + (getActiveTenant() || 'none'));
   }
 
@@ -470,5 +517,4 @@
   } else {
     init();
   }
-
 })();
