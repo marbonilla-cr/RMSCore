@@ -83,6 +83,11 @@ interface POSTableSnapshot {
   subaccountNames?: string[];
   transactionCode?: string | null;
   isQuickSale?: boolean;
+  // Para órdenes de despacho (se completa desde /api/pos/table-detail)
+  orderMode?: string;
+  dispatchStatus?: string | null;
+  beeperNumber?: string | null;
+  isDispatch?: boolean;
 }
 
 interface POSTable extends POSTableSnapshot {
@@ -106,6 +111,7 @@ export default function POSPage() {
   const isManager = user?.role === "MANAGER";
 
   const canPay = hasPermission("POS_PAY");
+  const canViewPos = hasPermission("POS_VIEW");
   const canSplit = hasPermission("POS_SPLIT");
   const canPrint = hasPermission("POS_PRINT");
   const canEmailTicket = hasPermission("POS_EMAIL_TICKET");
@@ -119,6 +125,22 @@ export default function POSPage() {
   const [tab, setTab] = useState("tables");
   const [selectedTable, setSelectedTable] = useState<POSTable | null>(null);
   const [detailView, setDetailView] = useState(false);
+
+  // Evita que el efecto que limpia selección borre una orden recién creada
+  // (porque /api/pos/tables puede tardar un poco en incluirla).
+  const [recentlyCreatedDispatchOrderId, setRecentlyCreatedDispatchOrderId] = useState<number | null>(null);
+  const [keepDispatchOrderId, setKeepDispatchOrderId] = useState<number | null>(null);
+  const [creatingDispatchOrder, setCreatingDispatchOrder] = useState(false);
+
+  // ── Despacho: paso previo para capturar cliente ──
+  const [dispatchClientDialogOpen, setDispatchClientDialogOpen] = useState(false);
+  const [dispatchClientNameDraft, setDispatchClientNameDraft] = useState("");
+  const [dispatchClientNameForOrder, setDispatchClientNameForOrder] = useState("");
+  const [dispatchBeeperDraft, setDispatchBeeperDraft] = useState("");
+  const [dispatchReviewDialogOpen, setDispatchReviewDialogOpen] = useState(false);
+  const [confirmingDispatchOrder, setConfirmingDispatchOrder] = useState(false);
+  const [openAddItemsAfterDispatchInit, setOpenAddItemsAfterDispatchInit] = useState(false);
+  const [dispatchFlowLockMenu, setDispatchFlowLockMenu] = useState(false);
 
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentMethodId, setPaymentMethodId] = useState("");
@@ -208,9 +230,19 @@ export default function POSPage() {
       wsManager.on("kitchen_item_status_changed", () => { invalidateTables(); invalidateDetail(); }),
       wsManager.on("qr_submission_created", invalidateTables),
       wsManager.on("order_auto_closed", handleAutoClose),
+      wsManager.on("dispatch_order_ready", (p: any) => {
+        const orderId = p?.orderId;
+        if (!orderId) return;
+        if (orderId === selectedOrderId || orderId === recentlyCreatedDispatchOrderId) {
+          setTab("tables");
+          setSelectedOrderId(orderId);
+          setDetailView(true);
+          setKeepDispatchOrderId(orderId);
+        }
+      }),
     ];
     return () => unsubs.forEach(u => u());
-  }, [selectedOrderId]);
+  }, [selectedOrderId, recentlyCreatedDispatchOrderId]);
 
   const { data: posTableSnapshots = [], isLoading } = useQuery<POSTableSnapshot[]>({
     queryKey: ["/api/pos/tables"],
@@ -226,19 +258,97 @@ export default function POSPage() {
   useEffect(() => {
     if (tableDetail && selectedOrderId) {
       setSelectedTable(tableDetail);
+      if (openAddItemsAfterDispatchInit) {
+        // Abrimos el menú de productos solo cuando ya existe el detalle de la orden.
+        setPosCart([]);
+        setAddItemsOpen(true);
+        setOpenAddItemsAfterDispatchInit(false);
+      }
     }
-  }, [tableDetail, selectedOrderId]);
+  }, [tableDetail, selectedOrderId, openAddItemsAfterDispatchInit]);
 
   useEffect(() => {
+    if (creatingDispatchOrder) return;
     if (selectedTable && selectedOrderId) {
       const stillExists = posTableSnapshots.some(t => t.orderId === selectedOrderId);
-      if (!stillExists) {
+      if (!stillExists && selectedOrderId !== recentlyCreatedDispatchOrderId && selectedOrderId !== keepDispatchOrderId) {
         setSelectedTable(null);
         setSelectedOrderId(null);
         setDetailView(false);
       }
     }
-  }, [posTableSnapshots]);
+  }, [posTableSnapshots, creatingDispatchOrder, recentlyCreatedDispatchOrderId, keepDispatchOrderId]);
+
+  useEffect(() => {
+    if (!recentlyCreatedDispatchOrderId) return;
+    const existsNow = posTableSnapshots.some(t => t.orderId === recentlyCreatedDispatchOrderId);
+    if (existsNow) setRecentlyCreatedDispatchOrderId(null);
+  }, [posTableSnapshots, recentlyCreatedDispatchOrderId]);
+
+  useEffect(() => {
+    // Si el usuario sale del detalle o no hay orden seleccionada, no necesitamos mantenerla “retenida”.
+    if (!selectedOrderId) setKeepDispatchOrderId(null);
+  }, [selectedOrderId]);
+
+  useEffect(() => {
+    if (tab !== "tables") setKeepDispatchOrderId(null);
+  }, [tab]);
+
+  const createDispatchOrderFromCounter = async () => {
+    if (creatingDispatchOrder || !canPay || !canViewPos) return;
+    setDispatchClientNameDraft("Cliente despacho");
+    setDispatchClientDialogOpen(true);
+  };
+
+  const confirmDispatchClientNameAndCreateOrder = async () => {
+    if (creatingDispatchOrder || !canPay || !canViewPos) return;
+    const name = dispatchClientNameDraft.trim();
+    if (!name) {
+      toast({ title: "Nombre requerido", description: "Ingrese el nombre del cliente", variant: "destructive" });
+      return;
+    }
+
+    // UX requerido: al continuar, avanzar inmediatamente al menú de productos.
+    setDispatchClientDialogOpen(false);
+    setPosCart([]);
+    setDispatchFlowLockMenu(true);
+    // Evita que el mismo click que cierra el modal anterior cierre este overlay.
+    setTimeout(() => setAddItemsOpen(true), 120);
+    setCreatingDispatchOrder(true);
+    try {
+      const requestTimeoutMs = 12000;
+      const r = await Promise.race([
+        apiRequest("POST", "/api/pos/dispatch/orders/create", {}),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Tiempo de espera agotado al crear despacho")), requestTimeoutMs)
+        ),
+      ]);
+      const data = await Promise.race([
+        r.json(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Respuesta inválida al crear despacho")), 5000)
+        ),
+      ]);
+      if (!data?.orderId) throw new Error(data?.message || "No se pudo crear la orden");
+
+      setDispatchClientNameForOrder(name);
+      setRecentlyCreatedDispatchOrderId(data.orderId);
+      setSelectedOrderId(data.orderId);
+      setDetailView(true);
+      setTab("tables");
+      setOpenAddItemsAfterDispatchInit(false);
+
+      queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      toast({ title: "Despacho creado", description: data.transactionCode ? `Código: ${data.transactionCode}` : undefined });
+    } catch (err: any) {
+      setAddItemsOpen(false);
+      setDispatchFlowLockMenu(false);
+      setDispatchClientDialogOpen(true);
+      toast({ title: "Error", description: err?.message || "No se pudo crear el despacho", variant: "destructive" });
+    } finally {
+      setCreatingDispatchOrder(false);
+    }
+  };
 
   const { data: paymentMethods = [] } = useQuery<PaymentMethod[]>({
     queryKey: ["/api/pos/payment-methods"],
@@ -309,7 +419,18 @@ export default function POSPage() {
     queryKey: ["/api/pos/discounts"],
   });
 
-  const triggerReceiptPrint = (items: { name: string; qty: number; price: number; total: number }[], total: number, pmName: string, tblName: string, ordNum: string, clName?: string, discounts?: number, taxes?: number, taxBk?: TaxBreakdownEntry[]) => {
+  const triggerReceiptPrint = (
+    items: { name: string; qty: number; price: number; total: number }[],
+    total: number,
+    pmName: string,
+    tblName: string,
+    ordNum: string,
+    clName?: string,
+    discounts?: number,
+    taxes?: number,
+    taxBk?: TaxBreakdownEntry[],
+    txCode?: string | null
+  ) => {
     const cfg = businessCfg || {};
     printReceipt({
       businessName: cfg.businessName || "",
@@ -330,6 +451,7 @@ export default function POSPage() {
       clientName: clName || undefined,
       cashierName: user?.displayName || undefined,
       date: new Date().toLocaleString("es-CR"),
+      transactionCode: txCode || null,
     });
   };
 
@@ -885,6 +1007,9 @@ export default function POSPage() {
 
   const addItemsMutation = useMutation({
     mutationFn: async (sendToKds: boolean) => {
+      if (!selectedTable?.orderId) {
+        throw new Error("Espere un momento: preparando orden de despacho...");
+      }
       return apiRequest("POST", `/api/pos/orders/${selectedTable!.orderId}/add-items`, {
         items: posCart.map(c => ({ productId: c.productId, qty: c.qty, notes: c.notes || null, modifiers: c.modifiers })),
         sendToKds,
@@ -895,7 +1020,14 @@ export default function POSPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       setPosCart([]);
       setAddItemsOpen(false);
-      toast({ title: "Items agregados" });
+      if (selectedTable?.orderMode === "DISPATCH") {
+        setDispatchBeeperDraft(selectedTable.beeperNumber || "");
+        setDispatchReviewDialogOpen(true);
+        toast({ title: "Orden de despacho lista", description: "Confirme para pasar a Caja y cobrar." });
+      } else {
+        setDispatchFlowLockMenu(false);
+        toast({ title: "Items agregados" });
+      }
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -968,6 +1100,36 @@ export default function POSPage() {
     setPayDialogOpen(true);
   };
 
+  const confirmDispatchOrderAndGoToCash = async () => {
+    if (!selectedTable?.orderId || confirmingDispatchOrder) return;
+    const useBeeper = !!businessCfg?.useBeeperSystem;
+    const beeper = dispatchBeeperDraft.trim();
+
+    if (useBeeper && !beeper) {
+      toast({ title: "Beeper requerido", description: "Ingrese el numero de beeper para continuar", variant: "destructive" });
+      return;
+    }
+
+    setConfirmingDispatchOrder(true);
+    try {
+      await apiRequest("POST", `/api/pos/dispatch/orders/${selectedTable.orderId}/set-beeper`, {
+        beeper: useBeeper ? beeper : null,
+      });
+
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/tables"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/pos/table-detail", selectedTable.orderId] });
+
+      setDispatchReviewDialogOpen(false);
+      setDispatchFlowLockMenu(false);
+      setTab("cash");
+      openNewPayDialog(selectedTable);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message || "No se pudo confirmar despacho", variant: "destructive" });
+    } finally {
+      setConfirmingDispatchOrder(false);
+    }
+  };
+
   const handlePayDialogSuccess = (pmId: string, clName: string, clEmail: string, wasCash: boolean, cashReceived?: number, changeAmount?: number, paymentId?: number, paidItemIds?: number[]) => {
     if (!selectedTable) return;
     const tbl = selectedTable;
@@ -1003,6 +1165,9 @@ export default function POSPage() {
       }, 200);
     }
     toast({ title: payDialogSplitId ? "Subcuenta pagada" : "Pago procesado" });
+    if (tbl.orderMode === "DISPATCH") {
+      setDispatchClientNameForOrder("");
+    }
     setPrintConfirmOrderId(tbl.orderId);
   };
 
@@ -1900,6 +2065,20 @@ export default function POSPage() {
             <button className={`pos-tab ${tab === "tables" ? "active" : ""}`} onClick={() => setTab("tables")} data-testid="tab-pos-tables">Mesas</button>
             <button className={`pos-tab ${tab === "cash" ? "active" : ""}`} onClick={() => setTab("cash")} data-testid="tab-cash">Caja</button>
             <button className={`pos-tab ${tab === "paid" ? "active" : ""}`} onClick={() => setTab("paid")} data-testid="tab-paid-tickets">Pagados</button>
+            {canPay && canViewPos && (
+              <button
+                type="button"
+                className="pos-tab"
+                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                onClick={createDispatchOrderFromCounter}
+                disabled={creatingDispatchOrder || dispatchClientDialogOpen}
+                title="Nuevo Despacho"
+                data-testid="button-new-dispatch-header"
+              >
+                {creatingDispatchOrder ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                Nuevo Despacho
+              </button>
+            )}
           </div>
 
           <div className="pos-content">
@@ -2146,6 +2325,122 @@ export default function POSPage() {
         </>
       )}
 
+      {dispatchClientDialogOpen && (
+        <div
+          className="ds-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setDispatchClientDialogOpen(false);
+          }}
+        >
+          <div className="ds-dialog" style={{ maxWidth: 420 }}>
+            <div className="ds-dlg-header">
+              <div className="ds-dlg-title">Despacho: Nombre del cliente</div>
+            </div>
+            <div className="ds-dlg-body">
+              <div className="field" style={{ marginBottom: 16 }}>
+                <label className="field-lbl">Cliente</label>
+                <input
+                  className="field-input"
+                  data-testid="input-dispatch-client-name"
+                  type="text"
+                  value={dispatchClientNameDraft}
+                  onChange={(e) => setDispatchClientNameDraft(e.target.value)}
+                  placeholder="Ej: Juan Pérez"
+                  autoFocus
+                />
+              </div>
+              <div className="ds-dlg-actions">
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
+                    setDispatchClientDialogOpen(false);
+                    setDispatchClientNameDraft("");
+                  }}
+                  type="button"
+                  disabled={creatingDispatchOrder}
+                  data-testid="button-cancel-dispatch-client"
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="btn-primary"
+                  style={{ minWidth: 140 }}
+                  onClick={() => confirmDispatchClientNameAndCreateOrder()}
+                  type="button"
+                  disabled={creatingDispatchOrder || !dispatchClientNameDraft.trim()}
+                  data-testid="button-confirm-dispatch-client"
+                >
+                  {creatingDispatchOrder ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  Continuar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dispatchReviewDialogOpen && (
+        <div
+          className="ds-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !confirmingDispatchOrder) {
+              setDispatchReviewDialogOpen(false);
+            }
+          }}
+        >
+          <div className="ds-dialog" style={{ maxWidth: 440 }}>
+            <div className="ds-dlg-header">
+              <div className="ds-dlg-title">Confirmar Orden de Despacho</div>
+            </div>
+            <div className="ds-dlg-body">
+              <p className="ds-dlg-sub">
+                Revise la orden y confirme para pasar a Caja y cobrar.
+              </p>
+              {!!businessCfg?.useBeeperSystem && (
+                <div className="field" style={{ marginBottom: 12 }}>
+                  <label className="field-lbl">Numero de Beeper</label>
+                  <input
+                    className="field-input"
+                    data-testid="input-dispatch-beeper"
+                    type="text"
+                    value={dispatchBeeperDraft}
+                    onChange={(e) => setDispatchBeeperDraft(e.target.value)}
+                    placeholder="Ej: 17"
+                    autoFocus
+                  />
+                </div>
+              )}
+              {!businessCfg?.useBeeperSystem && (
+                <p style={{ fontSize: 12, color: "var(--text3)", marginBottom: 10 }}>
+                  Beeper desactivado en configuracion de negocio. KDS usara codigo TX.
+                </p>
+              )}
+              <div className="ds-dlg-actions">
+                <button
+                  className="btn-secondary"
+                  onClick={() => setDispatchReviewDialogOpen(false)}
+                  disabled={confirmingDispatchOrder}
+                  type="button"
+                  data-testid="button-cancel-dispatch-review"
+                >
+                  Volver
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={() => confirmDispatchOrderAndGoToCash()}
+                  disabled={confirmingDispatchOrder || (!!businessCfg?.useBeeperSystem && !dispatchBeeperDraft.trim())}
+                  type="button"
+                  data-testid="button-confirm-dispatch-review"
+                >
+                  {confirmingDispatchOrder ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
+                  Confirmar e Ir a Caja
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <PayDialog
         open={payDialogOpen}
         onClose={() => setPayDialogOpen(false)}
@@ -2157,6 +2452,7 @@ export default function POSPage() {
         canEditCustomer={canEditCustomerPrepay}
         canEmailTicket={canEmailTicket}
         canPrint={canPrint}
+        initialClientName={selectedTable?.orderMode === "DISPATCH" ? dispatchClientNameForOrder : undefined}
         onSuccess={handlePayDialogSuccess}
       />
 
@@ -2340,10 +2636,25 @@ export default function POSPage() {
       )}
 
       {addItemsOpen && (
-        <div className="pos-add-items-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setAddItemsOpen(false); setPosCart([]); } }}>
+        <div
+          className="pos-add-items-overlay"
+          onClick={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (dispatchFlowLockMenu) return;
+            setAddItemsOpen(false);
+            setPosCart([]);
+          }}
+        >
           <div className="pos-add-items-dialog">
             <div className="pos-aid-header">
-              <div className="pos-aid-title">Agregar Productos</div>
+              <div className="pos-aid-title">
+                Agregar Productos
+                {creatingDispatchOrder && (
+                  <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text3)" }}>
+                    (creando despacho...)
+                  </span>
+                )}
+              </div>
             </div>
             <div className="pos-aid-body">
               <Accordion type="multiple" className="w-full">
@@ -2397,7 +2708,7 @@ export default function POSPage() {
                   <button
                     className="btn-icon"
                     onClick={() => addItemsMutation.mutate(false)}
-                    disabled={addItemsMutation.isPending}
+                    disabled={addItemsMutation.isPending || !selectedTable?.orderId || creatingDispatchOrder}
                     title="Solo Guardar"
                     data-testid="button-save-only"
                   >
@@ -2407,8 +2718,8 @@ export default function POSPage() {
                     className="btn-icon"
                     style={{ background: 'var(--green)', color: '#050f08', border: 'none' }}
                     onClick={() => addItemsMutation.mutate(true)}
-                    disabled={addItemsMutation.isPending}
-                    title="Guardar y Enviar a KDS"
+                    disabled={addItemsMutation.isPending || selectedTable?.orderMode === "DISPATCH" || !selectedTable?.orderId || creatingDispatchOrder}
+                    title={selectedTable?.orderMode === "DISPATCH" ? "Despacho se envía a KDS al pagar" : "Guardar y Enviar a KDS"}
                     data-testid="button-save-and-kds"
                   >
                     {addItemsMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <SendHorizontal size={16} />}
@@ -2578,7 +2889,8 @@ export default function POSPage() {
                                 data.clientName,
                                 data.totalDiscounts,
                                 data.totalTaxes,
-                                data.taxBreakdown
+                                data.taxBreakdown,
+                                data.transactionCode
                               );
                             } else {
                               toast({ title: "Error", description: "No se pudo obtener datos del tiquete", variant: "destructive" });

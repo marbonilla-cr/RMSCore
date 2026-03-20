@@ -123,6 +123,9 @@ export default function TablesPage() {
   const [quickSaleDialogOpen, setQuickSaleDialogOpen] = useState(false);
   const [quickSaleName, setQuickSaleName] = useState("");
   const [quickSaleLoading, setQuickSaleLoading] = useState(false);
+  const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
+  const [dispatchCustomerName, setDispatchCustomerName] = useState("Cliente Despacho");
+  const [dispatchLoading, setDispatchLoading] = useState(false);
   const prevQrCountsRef = useRef<Map<number, number>>(new Map());
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     try {
@@ -293,6 +296,22 @@ export default function TablesPage() {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
       setQuickSaleLoading(false);
+    }
+  };
+
+  const handleCreateDispatchOrder = async () => {
+    setDispatchLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/waiter/dispatch-orders", { customerName: dispatchCustomerName.trim() || "Cliente Despacho" });
+      const data = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
+      setDispatchDialogOpen(false);
+      setDispatchCustomerName("Cliente Despacho");
+      navigate(`/tables/dispatch/${data.id}`);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setDispatchLoading(false);
     }
   };
 
@@ -847,6 +866,15 @@ export default function TablesPage() {
         </button>
         <button
           className="header-action"
+          onClick={() => { setDispatchDialogOpen(true); setDispatchCustomerName("Cliente Despacho"); }}
+          data-testid="button-dispatch-sale"
+          style={{ marginRight: 6 }}
+          title="Despacho"
+        >
+          <Zap size={16} />
+        </button>
+        <button
+          className="header-action"
           onClick={() => { setMoveDialogOpen(true); setMoveSource(null); setMoveDest(null); setMoveMode("table"); setSelectedSubaccount(null); setSubaccounts([]); }}
           data-testid="button-move-table"
           style={{ marginRight: 6 }}
@@ -905,6 +933,45 @@ export default function TablesPage() {
               >
                 {quickSaleLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                 Crear venta
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {dispatchDialogOpen && (
+        <>
+          <div className="move-overlay" onClick={() => setDispatchDialogOpen(false)} />
+          <div className="move-dialog" data-testid="dialog-dispatch-order" style={{ maxWidth: 360 }}>
+            <div className="move-dialog-header">
+              <Zap size={18} />
+              <span>Despacho</span>
+              <button onClick={() => setDispatchDialogOpen(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--text3)", cursor: "pointer", fontSize: 18 }}>&times;</button>
+            </div>
+            <div style={{ padding: "16px 18px" }}>
+              <div style={{ fontFamily: "var(--f-mono)", fontSize: 12, color: "var(--text3)", marginBottom: 8 }}>
+                Nombre del cliente
+              </div>
+              <input
+                autoFocus
+                data-testid="input-dispatch-customer-name"
+                value={dispatchCustomerName}
+                onChange={e => setDispatchCustomerName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleCreateDispatchOrder(); }}
+                placeholder="Cliente Despacho"
+                style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--r-sm)", border: "1.5px solid var(--border-ds)", background: "var(--s2)", color: "var(--text)", fontFamily: "var(--f-body)", fontSize: 14 }}
+              />
+            </div>
+            <div className="move-dialog-footer">
+              <button className="move-cancel" onClick={() => setDispatchDialogOpen(false)}>Cancelar</button>
+              <button
+                className="move-confirm"
+                data-testid="button-confirm-dispatch-order"
+                onClick={handleCreateDispatchOrder}
+                disabled={dispatchLoading}
+              >
+                {dispatchLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                Continuar
               </button>
             </div>
           </div>

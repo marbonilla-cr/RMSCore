@@ -76,6 +76,7 @@ interface SplitAccount {
 export default function TableDetailPage() {
   const [, params] = useRoute("/tables/:id");
   const [, quickParams] = useRoute("/tables/quick/:orderId");
+  const [, dispatchParams] = useRoute("/tables/dispatch/:orderId");
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -83,7 +84,9 @@ export default function TableDetailPage() {
   const canVoidAuthorize = hasPermission("VOID_AUTHORIZE");
 
   const isQuickSale = !!quickParams;
-  const quickSaleOrderId = quickParams?.orderId ? parseInt(quickParams.orderId) : null;
+  const isDispatch = !!dispatchParams;
+  const quickSaleOrderId = (quickParams?.orderId || dispatchParams?.orderId) ? parseInt((quickParams?.orderId || dispatchParams?.orderId) as string) : null;
+  const isQuickLike = isQuickSale || isDispatch;
   const tableId = params?.id ? parseInt(params.id) : 0;
 
   const [viewMode, setViewMode] = useState<ViewMode>("order");
@@ -127,12 +130,13 @@ export default function TableDetailPage() {
   const [rondaSheetOpen, setRondaSheetOpen] = useState(false);
   const [guestCountDialogOpen, setGuestCountDialogOpen] = useState(false);
   const [guestCountInput, setGuestCountInput] = useState("2");
+  const [beeperNumber, setBeeperNumber] = useState("");
   const guestCountCheckedRef = useRef(false);
 
-  const cartStorageKey = isQuickSale ? `cart_qs_${quickSaleOrderId}` : `cart_table_${tableId}`;
+  const cartStorageKey = isQuickLike ? `cart_qs_${quickSaleOrderId}` : `cart_table_${tableId}`;
 
   useEffect(() => {
-    if (isQuickSale ? !quickSaleOrderId : !tableId) return;
+    if (isQuickLike ? !quickSaleOrderId : !tableId) return;
     try {
       const saved = localStorage.getItem(cartStorageKey);
       if (saved) {
@@ -142,24 +146,24 @@ export default function TableDetailPage() {
         }
       }
     } catch {}
-  }, [tableId, quickSaleOrderId]);
+  }, [tableId, quickSaleOrderId, isQuickLike]);
 
   useEffect(() => {
-    if (isQuickSale ? !quickSaleOrderId : !tableId) return;
+    if (isQuickLike ? !quickSaleOrderId : !tableId) return;
     if (cart.length > 0) {
       localStorage.setItem(cartStorageKey, JSON.stringify(cart));
     } else {
       localStorage.removeItem(cartStorageKey);
     }
-  }, [cart, tableId, quickSaleOrderId]);
+  }, [cart, tableId, quickSaleOrderId, isQuickLike]);
 
   const wsUp = useWsConnected();
-  const currentQueryKey = isQuickSale
+  const currentQueryKey = isQuickLike
     ? ["/api/tables/quick", quickSaleOrderId, "current"]
     : ["/api/tables", tableId, "current"];
   const { data: currentView, isLoading: isLoadingCurrent } = useQuery<TableCurrentView>({
     queryKey: currentQueryKey,
-    enabled: isQuickSale ? !!quickSaleOrderId : !!tableId,
+    enabled: isQuickLike ? !!quickSaleOrderId : !!tableId,
     staleTime: 0,
     refetchInterval: wsUp ? 10000 : 5000,
   });
@@ -177,10 +181,10 @@ export default function TableDetailPage() {
     }
     if (guestCountCheckedRef.current) return;
     guestCountCheckedRef.current = true;
-    if (!isQuickSale && currentView.activeOrder.guestCount == null) {
+    if (!isQuickLike && currentView.activeOrder.guestCount == null) {
       setGuestCountDialogOpen(true);
     }
-  }, [currentView, isQuickSale]);
+  }, [currentView, isQuickLike]);
 
   const { data: products = [] } = useQuery<Product[]>({
     queryKey: ["/api/waiter/menu"],
@@ -201,14 +205,14 @@ export default function TableDetailPage() {
     };
     const unsubs = [
       wsManager.on("order_updated", (p: any) => {
-        if (isQuickSale) {
+        if (isQuickLike) {
           if (!p.tableId && (!p.orderId || p.orderId === quickSaleOrderId)) invalidate();
         } else {
           if (!p.tableId || p.tableId === tableId) invalidate();
         }
       }),
       wsManager.on("qr_submission_created", (p: any) => {
-        if (!isQuickSale && p.tableId === tableId) {
+        if (!isQuickLike && p.tableId === tableId) {
           invalidate();
           toast({ title: "Nuevo pedido QR", description: p.tableName ? `Pedido recibido en ${p.tableName}` : "Un cliente ha enviado un pedido desde QR" });
         }
@@ -221,10 +225,10 @@ export default function TableDetailPage() {
         invalidate();
       }),
       wsManager.on("table_status_changed", (p: any) => {
-        if (!isQuickSale && (!p.tableId || p.tableId === tableId)) invalidate();
+        if (!isQuickLike && (!p.tableId || p.tableId === tableId)) invalidate();
       }),
       wsManager.on("qr_submission", (p: any) => {
-        if (!isQuickSale && p.tableId === tableId) {
+        if (!isQuickLike && p.tableId === tableId) {
           invalidate();
           try { new Audio("/notification.mp3").play().catch(() => {}); } catch {}
           toast({ title: "Nueva orden QR", description: `Mesa ${currentView?.table?.tableName || tableId}` });
@@ -232,7 +236,7 @@ export default function TableDetailPage() {
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [tableId, quickSaleOrderId, isQuickSale, toast]);
+  }, [tableId, quickSaleOrderId, isQuickLike, toast]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 250);
@@ -241,7 +245,10 @@ export default function TableDetailPage() {
 
   const sendRoundMutation = useMutation({
     mutationFn: async () => {
-      if (isQuickSale && quickSaleOrderId) {
+      if (isDispatch && quickSaleOrderId) {
+        return apiRequest("POST", `/api/pos/orders/${quickSaleOrderId}/add-items`, { items: cart, sendToKds: false });
+      }
+      if (isQuickLike && quickSaleOrderId) {
         return apiRequest("POST", `/api/waiter/orders/${quickSaleOrderId}/send-round`, { items: cart });
       }
       return apiRequest("POST", `/api/waiter/tables/${tableId}/send-round`, { items: cart });
@@ -249,7 +256,7 @@ export default function TableDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: currentQueryKey });
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
-      if (isQuickSale) {
+      if (isQuickLike) {
         localStorage.removeItem(`cart_qs_${quickSaleOrderId}`);
       } else {
         localStorage.removeItem(`cart_table_${tableId}`);
@@ -257,12 +264,43 @@ export default function TableDetailPage() {
       setCart([]);
       setViewMode("order");
       setRondaSheetOpen(false);
-      toast({ title: "Ronda enviada a cocina" });
+      toast({ title: isDispatch ? "Orden guardada para cobro" : "Ronda enviada a cocina" });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  const saveBeeperMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeOrder?.id) throw new Error("Orden no encontrada");
+      return apiRequest("PATCH", `/api/waiter/orders/${activeOrder.id}/beeper`, { beeperNumber });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: currentQueryKey });
+      toast({ title: "Beeper guardado" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleDispatchGoToCash = async () => {
+    if (!activeOrder?.id) return;
+    if (businessCfg?.useBeeperSystem && !beeperNumber.trim()) {
+      toast({ title: "Beeper requerido", description: "Ingrese el numero de beeper antes de cobrar", variant: "destructive" });
+      return;
+    }
+    try {
+      if (businessCfg?.useBeeperSystem) {
+        await apiRequest("PATCH", `/api/waiter/orders/${activeOrder.id}/beeper`, { beeperNumber: beeperNumber.trim() });
+      }
+      toast({ title: "Orden lista para cobro", description: "Continuando a Caja..." });
+      navigate("/pos");
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  };
 
   const acceptSubmissionMutation = useMutation({
     mutationFn: async (submissionId: number) => {
@@ -588,6 +626,14 @@ export default function TableDetailPage() {
   const tableData = currentView?.table;
   const voidedItemsList = currentView?.voidedItems || [];
 
+  useEffect(() => {
+    if (activeOrder?.beeperNumber) {
+      setBeeperNumber(String(activeOrder.beeperNumber));
+    } else {
+      setBeeperNumber("");
+    }
+  }, [activeOrder?.id, activeOrder?.beeperNumber]);
+
   const { data: orderBySubaccount } = useQuery<any>({
     queryKey: ["/api/waiter/orders", activeOrder?.id, "by-subaccount"],
     enabled: !!activeOrder?.id,
@@ -849,9 +895,9 @@ export default function TableDetailPage() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1 className="header-title" data-testid="text-table-name">
             {tableData?.tableName || `Mesa ${tableId}`}
-            {activeOrder?.orderMode === "DISPATCH" && activeOrder?.transactionCode && (
+            {activeOrder?.orderMode === "DISPATCH" && (activeOrder?.beeperNumber || activeOrder?.transactionCode) && (
               <span style={{ fontFamily: "var(--f-mono, monospace)", fontSize: 22, fontWeight: 800, color: "#f59e0b", letterSpacing: "0.08em", marginLeft: 8 }} data-testid="text-dispatch-code">
-                [{activeOrder.transactionCode}]
+                [{activeOrder.beeperNumber || activeOrder.transactionCode}]
               </span>
             )}
           </h1>
@@ -885,7 +931,7 @@ export default function TableDetailPage() {
           <Plus size={15} />
           Menu
         </button>
-        {!isQuickSale && activeOrder && activeItems.length > 0 && (
+        {!isQuickLike && activeOrder && activeItems.length > 0 && (
           <button
             className={`view-tab ${viewMode === "split" ? "active-order" : ""}`}
             onClick={enterSplitMode}
@@ -1437,12 +1483,46 @@ export default function TableDetailPage() {
                     >
                       <Receipt size={16} /> Pre-cuenta
                     </button>
+                    {isDispatch && businessCfg?.useBeeperSystem && (
+                      <div style={{ marginTop: 10, padding: 10, border: "1px dashed var(--border-ds)", borderRadius: "var(--r-sm)" }}>
+                        <div style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--text3)", marginBottom: 6 }}>
+                          Numero de Beeper
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Input
+                            value={beeperNumber}
+                            onChange={(e) => setBeeperNumber(e.target.value)}
+                            placeholder="Ej: 42"
+                            data-testid="input-dispatch-beeper-number"
+                          />
+                          <button
+                            className="btn-secondary"
+                            onClick={() => saveBeeperMutation.mutate()}
+                            disabled={saveBeeperMutation.isPending || !beeperNumber.trim()}
+                            data-testid="button-save-dispatch-beeper"
+                          >
+                            {saveBeeperMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                            Guardar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {isDispatch && (
+                      <button
+                        className="btn-primary"
+                        style={{ width: "100%", marginTop: 10 }}
+                        onClick={handleDispatchGoToCash}
+                        data-testid="button-dispatch-go-cash"
+                      >
+                        <Receipt size={16} /> Cobrar en Caja
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
             )}
 
-            {orderBySubaccount && orderBySubaccount.groups && orderBySubaccount.groups.length > 0 && (
+            {!isDispatch && orderBySubaccount && orderBySubaccount.groups && orderBySubaccount.groups.length > 0 && (
               <div className="card-ds" style={{ marginBottom: 12 }}>
                 <div className="card-ds-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span className="td-section-title" style={{ margin: 0 }}>
@@ -1802,6 +1882,7 @@ export default function TableDetailPage() {
             onClick={() => sendRoundMutation.mutate()}
             disabled={sendRoundMutation.isPending}
             data-testid="button-send-round"
+            title={isDispatch ? "Confirmar orden para cobro" : "Enviar a cocina"}
           >
             {sendRoundMutation.isPending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
           </button>
@@ -1857,7 +1938,7 @@ export default function TableDetailPage() {
               </button>
               <button className="btn-primary" style={{ flex: 1 }} onClick={() => { sendRoundMutation.mutate(); setRondaSheetOpen(false); }} disabled={sendRoundMutation.isPending} data-testid="button-send-round-sheet">
                 {sendRoundMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                Enviar a Cocina
+                {isDispatch ? "Confirmar orden" : "Enviar a Cocina"}
               </button>
             </div>
           </div>

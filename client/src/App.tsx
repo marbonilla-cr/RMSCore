@@ -161,6 +161,7 @@ function AuthenticatedRouter() {
         <Route path="/" component={TablesPage} />
         <Route path="/tables" component={TablesPage} />
         <Route path="/tables/quick/:orderId" component={TableDetailPage} />
+        <Route path="/tables/dispatch/:orderId" component={TableDetailPage} />
         <Route path="/tables/:id" component={TableDetailPage} />
         <Route path="/kds" component={KDSPage} />
         <Route path="/kds-bar" component={KDSBarPage} />

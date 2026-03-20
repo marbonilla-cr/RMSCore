@@ -58,6 +58,8 @@ interface PayDialogProps {
   canEditCustomer: boolean;
   canEmailTicket: boolean;
   canPrint: boolean;
+  initialClientName?: string;
+  initialClientEmail?: string;
   onSuccess: (paymentMethodId: string, clientName: string, clientEmail: string, wasCash: boolean, cashReceived?: number, changeAmount?: number, paymentId?: number, paidItemIds?: number[]) => void;
 }
 
@@ -84,7 +86,10 @@ function getSuggestedDenominations(total: number): number[] {
 
 export function PayDialog({
   open, onClose, table, paymentMethods, splitId, splitLabel, splitTotal,
-  canEditCustomer, canEmailTicket, canPrint, onSuccess
+  canEditCustomer, canEmailTicket, canPrint,
+  initialClientName,
+  initialClientEmail,
+  onSuccess
 }: PayDialogProps) {
   const { toast } = useToast();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -145,8 +150,8 @@ export function PayDialog({
       setMethodId("");
       setReceived(0);
       setCustomInput("");
-      setClientName("");
-      setClientEmail("");
+      setClientName(initialClientName || "");
+      setClientEmail(initialClientEmail || "");
       setProcessing(false);
       setActiveDenom(null);
       setSelectedEmployeeId("");

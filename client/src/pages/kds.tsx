@@ -28,6 +28,7 @@ interface KDSTicket {
   createdAt: string;
   items: KDSTicketItem[];
   transactionCode?: string | null;
+  beeperNumber?: string | null;
   orderMode?: string | null;
   dispatchStatus?: string | null;
 }
@@ -40,6 +41,7 @@ interface GroupedTicket {
   items: KDSTicketItem[];
   allReady: boolean;
   transactionCode?: string | null;
+  beeperNumber?: string | null;
   orderMode?: string | null;
   dispatchStatus?: string | null;
 }
@@ -112,6 +114,7 @@ function groupTicketsByOrder(tickets: KDSTicket[]): GroupedTicket[] {
         items: [...t.items],
         allReady: false,
         transactionCode: t.transactionCode,
+        beeperNumber: t.beeperNumber,
         orderMode: t.orderMode,
         dispatchStatus: t.dispatchStatus,
       });
@@ -814,7 +817,11 @@ export function KDSDisplay({ destination, title, icon: Icon }: { destination: st
                       {group.orderMode === "DISPATCH" ? (
                         <div className="kds-dispatch-badge" data-testid={`badge-dispatch-${group.orderId}`}>
                           <span>&#9889; DESPACHO</span>
-                          {group.transactionCode && <span>[{group.transactionCode}]</span>}
+                          {group.beeperNumber ? (
+                            <span>[BEEPER {group.beeperNumber}]</span>
+                          ) : (
+                            group.transactionCode && <span>[{group.transactionCode}]</span>
+                          )}
                         </div>
                       ) : (
                         <div className="kds-table-name">{group.tableNameSnapshot}</div>

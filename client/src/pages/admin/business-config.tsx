@@ -36,6 +36,7 @@ interface BusinessConfigData {
   operationModeQr?: boolean;
   operationModeDispatch?: boolean;
   dispatchOrderTimeoutMinutes?: number;
+  useBeeperSystem?: boolean;
   reviewPoints?: number;
   reviewEmail?: string;
   googlePlaceId?: string;
@@ -76,6 +77,7 @@ export default function AdminBusinessConfigPage() {
     operationModeQr: true,
     operationModeDispatch: false,
     dispatchOrderTimeoutMinutes: 15,
+    useBeeperSystem: false,
     reviewPoints: 0,
     reviewEmail: "",
     googlePlaceId: "",
@@ -106,6 +108,7 @@ export default function AdminBusinessConfigPage() {
         operationModeQr: config.operationModeQr !== undefined ? config.operationModeQr : true,
         operationModeDispatch: config.operationModeDispatch !== undefined ? config.operationModeDispatch : false,
         dispatchOrderTimeoutMinutes: config.dispatchOrderTimeoutMinutes ?? 15,
+        useBeeperSystem: config.useBeeperSystem !== undefined ? config.useBeeperSystem : false,
         reviewPoints: config.reviewPoints ?? 0,
         reviewEmail: config.reviewEmail || "",
         googlePlaceId: config.googlePlaceId || "",
@@ -362,6 +365,17 @@ export default function AdminBusinessConfigPage() {
                       />
                     </div>
                     <div className="pl-4 pt-3 border-t space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium">Usar sistema de beeper</p>
+                          <p className="text-xs text-muted-foreground">Si esta activo, KDS mostrara el numero de beeper en lugar del codigo TX</p>
+                        </div>
+                        <Switch
+                          data-testid="switch-dispatch-use-beeper"
+                          checked={form.useBeeperSystem ?? false}
+                          onCheckedChange={(v) => setForm({ ...form, useBeeperSystem: v })}
+                        />
+                      </div>
                       <div className="flex items-center gap-2">
                         <QrCode size={16} className="text-muted-foreground" />
                         <p className="text-sm font-medium">QR de Despacho</p>
