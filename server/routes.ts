@@ -6832,6 +6832,12 @@ export async function registerRoutes(
       });
 
       const serviceLedgerByEmployee: Record<string, Record<number, number>> = {};
+      if (serviceLedger.length > 0 && serviceLedger[0]) {
+        console.log("[DEBUG entry] first entry raw:", JSON.stringify(serviceLedger[0]));
+        console.log("[DEBUG entry] businessDate type:", typeof serviceLedger[0].businessDate);
+        console.log("[DEBUG entry] businessDate value repr:", JSON.stringify(serviceLedger[0].businessDate));
+      }
+
       for (const entry of serviceLedger) {
         const d = entry.businessDate;
         const empId = entry.responsibleWaiterEmployeeId || 0;
