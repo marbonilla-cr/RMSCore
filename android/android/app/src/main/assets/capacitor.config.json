@@ -1,0 +1,23 @@
+{
+  "appId": "com.rms.app",
+  "appName": "RMS",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://login.rmscore.app",
+    "androidScheme": "https",
+    "allowNavigation": ["*.rmscore.app"]
+  },
+  "plugins": {
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#f5f0eb",
+      "overlaysWebView": false
+    }
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}
