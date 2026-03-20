@@ -348,12 +348,14 @@ function PayrollTab() {
 
   async function handleBulkApprove(employeeId: number, days: { businessDate: string; overtimeMinutes: number }[]) {
     try {
-      await apiRequest("POST", "/api/hr/overtime-approvals/bulk", {
-        employeeId,
-        dateFrom: actualFrom, dateTo: actualTo,
-        status: "APPROVED",
-        days,
-      });
+      for (const day of days) {
+        await apiRequest("POST", "/api/hr/overtime-approvals", {
+          employeeId,
+          businessDate: day.businessDate,
+          status: "APPROVED",
+          overtimeMinutes: day.overtimeMinutes,
+        });
+      }
       await refetchApprovals();
       await refetch();
       toast({ title: `${days.length} días de extras aprobados` });
