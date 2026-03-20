@@ -97,14 +97,16 @@ function aggregateTaxBreakdown(taxes: { taxNameSnapshot: string; taxRateSnapshot
   return Array.from(map.values()).map(v => ({ taxName: v.taxName, taxRate: v.taxRate, inclusive: v.inclusive, totalAmount: Number(v.totalAmount.toFixed(2)) }));
 }
 
-// WebSocket broadcast
-const wsClients = new Set<WebSocket>();
+// WebSocket broadcast (tenant-aware)
+const wsClients = new Map<WebSocket, { tenantId: number }>();
 
-function broadcast(type: string, payload: any) {
-  const msg = JSON.stringify({ type, payload });
-  wsClients.forEach((ws) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
-  });
+function broadcast(tenantId: number, event: string, data: unknown): void {
+  const msg = JSON.stringify({ type: event, payload: data });
+  for (const [client, meta] of wsClients) {
+    if (meta.tenantId === tenantId && client.readyState === WebSocket.OPEN) {
+      client.send(msg);
+    }
+  }
 }
 
 initDispatchJobs(broadcast);
@@ -318,7 +320,7 @@ function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcast, dbInstance?: typeof db): Promise<{ closed: boolean; newStatus?: string } | null> {
+async function maybeAutoCloseOrder(orderId: number, tenantId: number, broadcastFn: typeof broadcast, dbInstance?: typeof db): Promise<{ closed: boolean; newStatus?: string } | null> {
   try {
     const order = await storage.getOrder(orderId, dbInstance);
     if (!order) return null;
@@ -334,16 +336,16 @@ async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcas
         const allChildrenDone = childOrders.every(c => c.status === "PAID" || c.status === "VOIDED");
         if (allChildrenDone) {
           await storage.updateOrder(orderId, { status: "PAID", closedAt: new Date() }, dbInstance);
-          broadcastFn("order_updated", { tableId: order.tableId, orderId });
-          broadcastFn("table_status_changed", { tableId: order.tableId });
-          broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "all_children_done" });
+          broadcastFn(tenantId, "order_updated", { tableId: order.tableId, orderId });
+          broadcastFn(tenantId, "table_status_changed", { tableId: order.tableId });
+          broadcastFn(tenantId, "order_auto_closed", { orderId, tableId: order.tableId, reason: "all_children_done" });
           return { closed: true, newStatus: "PAID" };
         }
       } else {
         await storage.updateOrder(orderId, { status: "VOIDED", closedAt: new Date() }, dbInstance);
-        broadcastFn("order_updated", { tableId: order.tableId, orderId });
-        broadcastFn("table_status_changed", { tableId: order.tableId });
-        broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "no_active_items" });
+        broadcastFn(tenantId, "order_updated", { tableId: order.tableId, orderId });
+        broadcastFn(tenantId, "table_status_changed", { tableId: order.tableId });
+        broadcastFn(tenantId, "order_auto_closed", { orderId, tableId: order.tableId, reason: "no_active_items" });
         return { closed: true, newStatus: "VOIDED" };
       }
     }
@@ -368,9 +370,9 @@ async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcas
           balanceDue: "0.00",
           totalAmount: Math.max(0, totalAmount).toFixed(2),
         }, dbInstance);
-        broadcastFn("order_updated", { tableId: order.tableId, orderId });
-        broadcastFn("table_status_changed", { tableId: order.tableId });
-        broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "zero_balance" });
+        broadcastFn(tenantId, "order_updated", { tableId: order.tableId, orderId });
+        broadcastFn(tenantId, "table_status_changed", { tableId: order.tableId });
+        broadcastFn(tenantId, "order_auto_closed", { orderId, tableId: order.tableId, reason: "zero_balance" });
         return { closed: true, newStatus: "PAID" };
       }
     }
@@ -391,9 +393,9 @@ async function maybeAutoCloseOrder(orderId: number, broadcastFn: typeof broadcas
             closedAt: new Date(),
             balanceDue: "0.00",
           }, dbInstance);
-          broadcastFn("order_updated", { tableId: order.tableId, orderId });
-          broadcastFn("table_status_changed", { tableId: order.tableId });
-          broadcastFn("order_auto_closed", { orderId, tableId: order.tableId, reason: "children_paid_balance_zero" });
+          broadcastFn(tenantId, "order_updated", { tableId: order.tableId, orderId });
+          broadcastFn(tenantId, "table_status_changed", { tableId: order.tableId });
+          broadcastFn(tenantId, "order_auto_closed", { orderId, tableId: order.tableId, reason: "children_paid_balance_zero" });
           return { closed: true, newStatus: "PAID" };
         }
       }
@@ -891,7 +893,7 @@ export async function registerRoutes(
           metadata: { lateMinutes, geoVerified, viaPin: true, hasScheduleToday },
         });
 
-        broadcast("hr_punch_update", { employeeId, type: "clock_in" });
+        broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId, type: "clock_in" });
         const user = await storage.getUser(employeeId);
         return res.json({ punch, displayName: user?.displayName || "Empleado", action: "clock_in" });
       }
@@ -945,7 +947,7 @@ export async function registerRoutes(
           metadata: { workedMinutes, overtimeMinutesDaily, geoVerified, viaPin: true },
         });
 
-        broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+        broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId, type: "clock_out" });
         return res.json({ punch: updatedPunch, displayName: user?.displayName || "Empleado", action: "clock_out", workedMinutes });
       }
     } catch (err: any) {
@@ -1632,7 +1634,7 @@ export async function registerRoutes(
       }
 
       await storage.recalcOrderTotal(orderId, req.db);
-      broadcast("order_updated", { orderId });
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId });
 
       res.json({ ok: true, itemsAffected: activeItems.length });
     } catch (err: any) {
@@ -1674,7 +1676,7 @@ export async function registerRoutes(
       }, req.db);
 
       await storage.recalcOrderTotal(orderItem.orderId, req.db);
-      broadcast("order_updated", { orderId: orderItem.orderId });
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId: orderItem.orderId });
 
       res.json(discount);
     } catch (err: any) {
@@ -1690,7 +1692,7 @@ export async function registerRoutes(
 
       await storage.deleteOrderItemDiscountsByItem(orderItemId, req.db);
       await storage.recalcOrderTotal(orderItem.orderId, req.db);
-      broadcast("order_updated", { orderId: orderItem.orderId });
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId: orderItem.orderId });
 
       res.json({ ok: true });
     } catch (err: any) {
@@ -1884,10 +1886,10 @@ export async function registerRoutes(
       await storage.recalcOrderTotal(order.id, req.db);
 
       if (createdTicketIds.length > 0) {
-        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId, tableName });
+        broadcast(req.tenantId ?? 0, "kitchen_ticket_created", { ticketIds: createdTicketIds, tableId, tableName });
       }
-      broadcast("order_updated", { tableId, orderId: order.id });
-      broadcast("table_status_changed", { tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId, orderId: order.id });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId });
 
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/orders/${orderId}/add-items ${Date.now() - t0}ms (${items.length} items)`);
       res.json({ ok: true, ticketIds: createdTicketIds });
@@ -2231,10 +2233,10 @@ export async function registerRoutes(
         await tx.update(kitchenTickets).set({ tableId: dstId, tableNameSnapshot: destTable.tableName }).where(and(eq(kitchenTickets.orderId, sourceOrder.id), eq(kitchenTickets.tableId, srcId)));
       });
 
-      broadcast("table_status_changed", { tableId: srcId });
-      broadcast("table_status_changed", { tableId: dstId });
-      broadcast("order_updated", { tableId: dstId, orderId: sourceOrder.id });
-      broadcast("kds_refresh", {});
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: srcId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: dstId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: dstId, orderId: sourceOrder.id });
+      broadcast(req.tenantId ?? 0, "kds_refresh", {});
 
       res.json({ ok: true, message: `Mesa ${sourceTable.tableName} movida a ${destTable.tableName}` });
     } catch (err: any) {
@@ -2341,11 +2343,11 @@ export async function registerRoutes(
       await storage.recalcOrderTotal(sourceOrder.id, req.db);
       await storage.recalcOrderTotal(destOrder!.id, req.db);
 
-      broadcast("table_status_changed", { tableId: sourceOrder.tableId });
-      broadcast("table_status_changed", { tableId: destTableId });
-      broadcast("order_updated", { tableId: sourceOrder.tableId, orderId: sourceOrder.id });
-      broadcast("order_updated", { tableId: destTableId, orderId: destOrder!.id });
-      broadcast("kds_refresh", {});
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: sourceOrder.tableId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: destTableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: sourceOrder.tableId, orderId: sourceOrder.id });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: destTableId, orderId: destOrder!.id });
+      broadcast(req.tenantId ?? 0, "kds_refresh", {});
 
       res.json({ ok: true, message: `Subcuenta "${subaccount.label}" movida de ${sourceTable?.tableName} a ${destTable.tableName}` });
     } catch (err: any) {
@@ -2594,10 +2596,10 @@ export async function registerRoutes(
       await storage.recalcOrderTotal(order.id, req.db);
 
       if (createdTicketIds.length > 0) {
-        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId, tableName: table.tableName });
+        broadcast(req.tenantId ?? 0, "kitchen_ticket_created", { ticketIds: createdTicketIds, tableId, tableName: table.tableName });
       }
-      broadcast("order_updated", { tableId, orderId: order.id });
-      broadcast("table_status_changed", { tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId, orderId: order.id });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId });
 
       res.json({ ok: true, ticketIds: createdTicketIds });
     } catch (err: any) {
@@ -2839,9 +2841,9 @@ export async function registerRoutes(
       await storage.recalcOrderTotal(orderId, req.db);
 
       if (createdTicketIds.length > 0) {
-        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: null, tableName: displayName });
+        broadcast(req.tenantId ?? 0, "kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: null, tableName: displayName });
       }
-      broadcast("order_updated", { tableId: null, orderId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: null, orderId });
 
       res.json({ ok: true, ticketIds: createdTicketIds });
     } catch (err: any) {
@@ -2964,10 +2966,10 @@ export async function registerRoutes(
       });
 
       if (createdTicketIds.length > 0) {
-        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: sub.tableId, tableName: table.tableName });
+        broadcast(req.tenantId ?? 0, "kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: sub.tableId, tableName: table.tableName });
       }
-      broadcast("order_updated", { tableId: sub.tableId, orderId: order.id });
-      broadcast("table_status_changed", { tableId: sub.tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: sub.tableId, orderId: order.id });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: sub.tableId });
 
       // Return full current view payload for immediate UI refresh
       const updatedOrder = await storage.getOpenOrderForTable(sub.tableId, req.db);
@@ -3209,13 +3211,13 @@ export async function registerRoutes(
         });
       }
 
-      broadcast("order_updated", { tableId: order.tableId, orderId });
-      broadcast("table_status_changed", { tableId: order.tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: order.tableId, orderId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: order.tableId });
       if (item.sentToKitchenAt) {
-        broadcast("kitchen_item_status_changed", { orderItemId: itemId, status: "VOIDED" });
+        broadcast(req.tenantId ?? 0, "kitchen_item_status_changed", { orderItemId: itemId, status: "VOIDED" });
       }
 
-      const autoCloseResult = await maybeAutoCloseOrder(orderId, broadcast, req.db);
+      const autoCloseResult = await maybeAutoCloseOrder(orderId, req.tenantId ?? 0, broadcast, req.db);
 
       res.json({ ok: true, autoClosed: autoCloseResult?.closed || false });
     } catch (err: any) {
@@ -3265,10 +3267,10 @@ export async function registerRoutes(
         },
       });
 
-      broadcast("order_updated", { tableId: order.tableId, orderId });
-      broadcast("table_status_changed", { tableId: order.tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: order.tableId, orderId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: order.tableId });
 
-      const autoCloseResult = await maybeAutoCloseOrder(orderId, broadcast, req.db);
+      const autoCloseResult = await maybeAutoCloseOrder(orderId, req.tenantId ?? 0, broadcast, req.db);
 
       res.json({ ok: true, autoClosed: autoCloseResult?.closed || false });
     } catch (err: any) {
@@ -3550,8 +3552,8 @@ export async function registerRoutes(
         metadata: { itemCount: items.length },
       });
 
-      broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id, itemsCount: items.length });
-      broadcast("order_updated", { tableId: table.id, orderId: order.id });
+      broadcast(req.tenantId ?? 0, "qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id, itemsCount: items.length });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: table.id, orderId: order.id });
 
       await storage.upsertQrRateLimit(tableCode, req.db);
 
@@ -3624,7 +3626,7 @@ export async function registerRoutes(
     "SPLIT": 7,
   };
 
-  async function recalcOrderStatusFromItems(orderId: number, dbInstance?: typeof db) {
+  async function recalcOrderStatusFromItems(orderId: number, tenantId: number, dbInstance?: typeof db) {
     const items = await storage.getOrderItems(orderId, dbInstance);
     const activeItems = items.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
     if (activeItems.length === 0) return;
@@ -3649,8 +3651,8 @@ export async function registerRoutes(
     if (newRank <= currentRank && order.status !== "OPEN") return;
 
     await storage.updateOrder(orderId, { status: newStatus }, dbInstance);
-    broadcast("order_updated", { orderId });
-    broadcast("table_status_changed", {});
+    broadcast(tenantId, "order_updated", { orderId });
+    broadcast(tenantId, "table_status_changed", {});
   }
 
   app.patch("/api/kds/items/:id", requireRole("KITCHEN", "MANAGER"), async (req, res) => {
@@ -3684,11 +3686,11 @@ export async function registerRoutes(
 
         const ticket = await storage.getKitchenTicketByItemId(item.id, req.db);
         if (ticket) {
-          await recalcOrderStatusFromItems(ticket.orderId, req.db);
+          await recalcOrderStatusFromItems(ticket.orderId, req.tenantId ?? 0, req.db);
         }
       }
 
-      broadcast("kitchen_item_status_changed", { itemId, status });
+      broadcast(req.tenantId ?? 0, "kitchen_item_status_changed", { itemId, status });
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -3711,7 +3713,7 @@ export async function registerRoutes(
       }
 
       if (ticket) {
-        await recalcOrderStatusFromItems(ticket.orderId, req.db);
+        await recalcOrderStatusFromItems(ticket.orderId, req.tenantId ?? 0, req.db);
 
         try {
           const [ord] = await req.db.select().from(orders).where(eq(orders.id, ticket.orderId));
@@ -3729,7 +3731,7 @@ export async function registerRoutes(
                     ne(orders.dispatchStatus, "CANCELLED"),
                     ne(orders.dispatchStatus, "DELIVERED")
                   ));
-              broadcast("dispatch_order_ready", { orderId: ord.id, transactionCode: (ord as any).transactionCode });
+              broadcast(req.tenantId ?? 0, "dispatch_order_ready", { orderId: ord.id, transactionCode: (ord as any).transactionCode });
                 const customerName = ordItems.find((i: any) => i.status !== "VOIDED" && i.customerNameSnapshot)?.customerNameSnapshot || "Cliente";
                 notifyDispatchReady(ord.id, {
                   orderId: ord.id,
@@ -3753,7 +3755,7 @@ export async function registerRoutes(
           }).from(orders).where(eq(orders.id, ticket.orderId));
           if (reviewOrder) {
             const [cfg] = await req.db.select().from(businessConfig).limit(1);
-            broadcast("order_review_ready", {
+            broadcast(req.tenantId ?? 0, "order_review_ready", {
               orderId: reviewOrder.id,
               transactionCode: reviewOrder.transactionCode || null,
               orderMode: reviewOrder.orderMode || "TABLE",
@@ -3767,7 +3769,7 @@ export async function registerRoutes(
         }
       }
 
-      broadcast("kitchen_item_status_changed", { ticketId, status: "READY" });
+      broadcast(req.tenantId ?? 0, "kitchen_item_status_changed", { ticketId, status: "READY" });
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -3782,8 +3784,8 @@ export async function registerRoutes(
       if ((ord as any).orderMode !== "DISPATCH") return res.status(400).json({ message: "Solo aplica a órdenes de despacho" });
       if ((ord as any).dispatchStatus === "DELIVERED") return res.status(409).json({ message: "Ya marcada como entregada" });
       await req.db.update(orders).set({ dispatchStatus: "DELIVERED" } as any).where(eq(orders.id, orderId));
-      broadcast("dispatch_order_delivered", { orderId, transactionCode: (ord as any).transactionCode });
-      broadcast("kitchen_item_status_changed", { orderId, status: "DELIVERED" });
+      broadcast(req.tenantId ?? 0, "dispatch_order_delivered", { orderId, transactionCode: (ord as any).transactionCode });
+      broadcast(req.tenantId ?? 0, "kitchen_item_status_changed", { orderId, status: "DELIVERED" });
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -3839,7 +3841,7 @@ export async function registerRoutes(
         }
       }
 
-      broadcast("feedback_received", { rating, orderId, isLow: rating <= 3 });
+      broadcast(req.tenantId ?? 0, "feedback_received", { rating, orderId, isLow: rating <= 3 });
 
       res.json({
         success: true,
@@ -4020,7 +4022,7 @@ export async function registerRoutes(
     }
   }
 
-  async function createDispatchKitchenTickets(orderId: number, order: any, dbInstance: typeof db, now: Date) {
+  async function createDispatchKitchenTickets(orderId: number, tenantId: number, order: any, dbInstance: typeof db, now: Date) {
     const allItems = await storage.getOrderItems(orderId, dbInstance);
     const pendingItems = allItems.filter(i => i.status !== "VOIDED");
     if (pendingItems.length === 0) return;
@@ -4094,7 +4096,7 @@ export async function registerRoutes(
     await dbInstance.update(orders).set({ dispatchStatus: "PAID" }).where(eq(orders.id, orderId));
 
     if (createdTicketIds.length > 0) {
-      broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: order.tableId });
+      broadcast(tenantId, "kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: order.tableId });
     }
   }
 
@@ -4433,8 +4435,8 @@ export async function registerRoutes(
                 .set({ customerNameSnapshot: clientName.trim() })
                 .where(and(eq(orderItems.orderId, orderId), ne(orderItems.status, "VOIDED")));
             }
-            await createDispatchKitchenTickets(orderId, order, req.db, now);
-            broadcast("dispatch_order_paid", { orderId, transactionCode: (order as any).transactionCode });
+            await createDispatchKitchenTickets(orderId, req.tenantId ?? 0, order, req.db, now);
+            broadcast(req.tenantId ?? 0, "dispatch_order_paid", { orderId, transactionCode: (order as any).transactionCode });
           } catch (dispatchErr: any) {
             console.error("[Dispatch] Kitchen ticket creation error:", dispatchErr.message);
           }
@@ -4460,8 +4462,8 @@ export async function registerRoutes(
         await maybeAutoCloseParentOrder(orderId, req.db);
       }
 
-      broadcast("payment_completed", { orderId });
-      broadcast("table_status_changed", {});
+      broadcast(req.tenantId ?? 0, "payment_completed", { orderId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", {});
 
       qbo.enqueueSyncForPayment(payment.id, orderId, req.db).catch(() => {});
 
@@ -4571,8 +4573,8 @@ export async function registerRoutes(
                 .set({ customerNameSnapshot: clientName.trim() })
                 .where(and(eq(orderItems.orderId, orderId), ne(orderItems.status, "VOIDED")));
             }
-            await createDispatchKitchenTickets(orderId, order, req.db, now);
-            broadcast("dispatch_order_paid", { orderId, transactionCode: (order as any).transactionCode });
+            await createDispatchKitchenTickets(orderId, req.tenantId ?? 0, order, req.db, now);
+            broadcast(req.tenantId ?? 0, "dispatch_order_paid", { orderId, transactionCode: (order as any).transactionCode });
           } catch (dispatchErr: any) {
             console.error("[Dispatch] Kitchen ticket creation error (multi-pay):", dispatchErr.message);
           }
@@ -4588,8 +4590,8 @@ export async function registerRoutes(
         await storage.updateCashSession(cashSession.id, { expectedCash: newExpected.toFixed(2) }, req.db);
       }
 
-      broadcast("payment_completed", { orderId });
-      broadcast("table_status_changed", {});
+      broadcast(req.tenantId ?? 0, "payment_completed", { orderId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", {});
 
       const hasCash = legs.some((l: any) => {
         const pm = pmMap.get(l.paymentMethodId);
@@ -4717,9 +4719,9 @@ export async function registerRoutes(
       await req.db.update(orders).set({ dispatchStatus: "CANCELLED", status: "CANCELLED" } as any).where(eq(orders.id, orderId));
       await storage.recalcOrderTotal(orderId, req.db);
 
-      broadcast("dispatch_order_cancelled", { orderId, transactionCode: (order as any).transactionCode });
-      broadcast("table_status_changed", { tableId: order.tableId });
-      broadcast("order_updated", { orderId });
+      broadcast(req.tenantId ?? 0, "dispatch_order_cancelled", { orderId, transactionCode: (order as any).transactionCode });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: order.tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId });
 
       res.json({ success: true, message: "Orden de despacho cancelada" });
     } catch (err: any) {
@@ -4735,7 +4737,7 @@ export async function registerRoutes(
       const result = await storage.normalizeOrderItemsForSplit(orderId, req.db);
       if (result.normalized) {
         await storage.recalcOrderTotal(orderId, req.db);
-        broadcast("order_updated", { orderId });
+        broadcast(req.tenantId ?? 0, "order_updated", { orderId });
       }
       res.json(result);
     } catch (err: any) {
@@ -4785,7 +4787,7 @@ export async function registerRoutes(
       }
 
       const items = await storage.getSplitItemsForSplit(split.id, req.db);
-      broadcast("order_updated", { orderId });
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId });
       res.json({ ...split, items });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4796,7 +4798,7 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id as string);
       await storage.deleteSplitAccount(id, req.db);
-      broadcast("order_updated", {});
+      broadcast(req.tenantId ?? 0, "order_updated", {});
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4816,7 +4818,7 @@ export async function registerRoutes(
         await storage.createSplitItem({ splitId: toSplitId, orderItemId }, req.db);
       }
 
-      broadcast("order_updated", {});
+      broadcast(req.tenantId ?? 0, "order_updated", {});
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4832,7 +4834,7 @@ export async function registerRoutes(
 
       await storage.bulkMoveSplitItems(orderItemIds, fromSplitId || null, toSplitId || null, req.db);
 
-      broadcast("order_updated", {});
+      broadcast(req.tenantId ?? 0, "order_updated", {});
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -4907,8 +4909,8 @@ export async function registerRoutes(
         await storage.updateOrder(orderId, { status: "SPLIT", closedAt: new Date() }, req.db);
       }
 
-      broadcast("order_updated", { orderId });
-      broadcast("table_status_changed", {});
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", {});
 
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/split-order ${Date.now() - t0}ms (${createdOrderIds.length} splits)`);
       res.json({ ok: true, parentOrderId: orderId, childOrderIds: createdOrderIds });
@@ -5017,8 +5019,8 @@ export async function registerRoutes(
         await cleanupSubaccountsForOrder(orderId, req.db);
       }
 
-      broadcast("payment_completed", { orderId });
-      broadcast("table_status_changed", {});
+      broadcast(req.tenantId ?? 0, "payment_completed", { orderId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", {});
 
       qbo.enqueueSyncForPayment(payment.id, orderId, req.db).catch(() => {});
 
@@ -5551,8 +5553,8 @@ export async function registerRoutes(
         },
       });
 
-      broadcast("order_updated", { tableId: order.tableId, orderId });
-      broadcast("table_status_changed", { tableId: order.tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: order.tableId, orderId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: order.tableId });
 
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/void-order/${orderId} ${Date.now() - t0}ms`);
       res.json({ ok: true });
@@ -5600,9 +5602,9 @@ export async function registerRoutes(
         metadata: { orderId: payment.orderId, amount: payment.amount, voidReason: req.body.voidReason },
       });
 
-      broadcast("payment_voided", { orderId: payment.orderId, paymentId });
-      broadcast("table_status_changed", {});
-      broadcast("order_updated", { orderId: payment.orderId });
+      broadcast(req.tenantId ?? 0, "payment_voided", { orderId: payment.orderId, paymentId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", {});
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId: payment.orderId });
 
       qbo.voidSalesReceipt(paymentId, req.db).catch(() => {});
 
@@ -5807,8 +5809,8 @@ export async function registerRoutes(
         metadata: { voidedPaymentCount: paidPayments.length },
       });
 
-      broadcast("order_updated", { orderId, tableId: order.tableId });
-      broadcast("table_status_changed", { tableId: order.tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId, tableId: order.tableId });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: order.tableId });
 
       res.json({ ok: true });
     } catch (err: any) {
@@ -5926,7 +5928,7 @@ export async function registerRoutes(
         entityType: "HR_SETTINGS",
         metadata: req.body,
       });
-      broadcast("hr_settings_updated", settings);
+      broadcast(req.tenantId ?? 0, "hr_settings_updated", settings);
       res.json(settings);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -5976,7 +5978,7 @@ export async function registerRoutes(
         entityId: schedule.id,
         metadata: { employeeId, weekStartDate },
       });
-      broadcast("schedule_updated", { employeeId, weekStartDate });
+      broadcast(req.tenantId ?? 0, "schedule_updated", { employeeId, weekStartDate });
       res.json({ ...schedule, days: savedDays });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -6000,7 +6002,7 @@ export async function registerRoutes(
         entityId: id,
         metadata: { days },
       });
-      broadcast("schedule_updated", { employeeId: schedule.employeeId, weekStartDate: schedule.weekStartDate });
+      broadcast(req.tenantId ?? 0, "schedule_updated", { employeeId: schedule.employeeId, weekStartDate: schedule.weekStartDate });
       res.json({ ...schedule, days: savedDays });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -6110,7 +6112,7 @@ export async function registerRoutes(
         );
       }
       
-      broadcast("hr_punch_update", { employeeId, type: "clock_in" });
+      broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId, type: "clock_in" });
       res.json(punch);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -6168,7 +6170,7 @@ export async function registerRoutes(
         metadata: { workedMinutes, overtimeMinutesDaily, geoVerified: false },
       });
       
-      broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+      broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId, type: "clock_out" });
       res.json(updatedPunch);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -6206,7 +6208,7 @@ export async function registerRoutes(
           metadata: { targetEmployeeId: employeeId, reason },
         });
         
-        broadcast("hr_punch_update", { employeeId, type: "clock_in" });
+        broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId, type: "clock_in" });
         return res.json(punch);
       }
       
@@ -6242,7 +6244,7 @@ export async function registerRoutes(
           metadata: { targetEmployeeId: employeeId, reason, workedMinutes },
         });
         
-        broadcast("hr_punch_update", { employeeId, type: "clock_out" });
+        broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId, type: "clock_out" });
         return res.json(updatedPunch);
       }
       
@@ -6302,7 +6304,7 @@ export async function registerRoutes(
         metadata: { targetEmployeeId: employeeId, date, clockInTime, clockOutTime, reason, notes },
       });
 
-      broadcast("hr_punch_update", { employeeId, type: "manual" });
+      broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId, type: "manual" });
       res.json(punch);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -6392,7 +6394,7 @@ export async function registerRoutes(
         },
       });
       
-      broadcast("hr_punch_update", { employeeId: existing.employeeId, type: "edited" });
+      broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId: existing.employeeId, type: "edited" });
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -6425,7 +6427,7 @@ export async function registerRoutes(
         },
       });
 
-      broadcast("hr_punch_update", { employeeId: existing.employeeId, type: "deleted" });
+      broadcast(req.tenantId ?? 0, "hr_punch_update", { employeeId: existing.employeeId, type: "deleted" });
       res.json({ message: "Marca eliminada." });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -7245,6 +7247,31 @@ export async function registerRoutes(
   });
 
   wss.on("connection", async (ws, _request, clientType?: string) => {
+    const hostHeader = _request?.headers?.host as string | undefined;
+    const slug = String(hostHeader ?? "").split(".")[0];
+
+    let resolvedTenantId: number;
+    try {
+      const { rows } = await pool.query(
+        `SELECT id FROM public.tenants WHERE slug = $1 LIMIT 1`,
+        [slug]
+      );
+
+      if (rows.length) {
+        resolvedTenantId = rows[0].id;
+      } else if (slug === "loyalty" || slug === "admin") {
+        resolvedTenantId = 0;
+      } else {
+        ws.close(1008, "Tenant no resuelto");
+        return;
+      }
+    } catch (err: any) {
+      ws.close(1008, "Error resolviendo tenant");
+      return;
+    }
+
+    wsClients.set(ws, { tenantId: resolvedTenantId });
+
     if (clientType === "bridge_header") {
       const headerToken = _request.headers['x-bridge-token'] as string
         || new URLSearchParams((_request.url || "").split("?")[1] || "").get("bridge_token")
@@ -7265,10 +7292,12 @@ export async function registerRoutes(
             ws.on('close', () => {
               unregisterBridge(bridgeId, tenantSchema);
               printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
+              wsClients.delete(ws);
             });
             ws.on('error', () => {
               unregisterBridge(bridgeId, tenantSchema);
               printBridges.forEach((v, k) => { if (v === ws) printBridges.delete(k); });
+              wsClients.delete(ws);
             });
             ws.on('message', (data) => {
               try {
@@ -7292,15 +7321,14 @@ export async function registerRoutes(
             break;
           }
         }
-        if (!ok) { ws.close(1008, 'Token inválido'); return; }
+        if (!ok) { wsClients.delete(ws); ws.close(1008, 'Token inválido'); return; }
       } catch (err: any) {
         console.error('[ws] Error auth bridge header:', err.message);
+        wsClients.delete(ws);
         ws.close(1011, 'Error interno');
       }
       return;
     }
-
-    wsClients.add(ws);
 
     let bridgeAuthResolved = false;
     const authTimeout = setTimeout(() => {
@@ -7793,7 +7821,7 @@ export async function registerRoutes(
         createdBy: req.session.userId || null,
       }).returning();
 
-      broadcast("reservation_updated", { reservationId: created.id, tableIds: getReservationTableIds(created), status: created.status });
+      broadcast(req.tenantId ?? 0, "reservation_updated", { reservationId: created.id, tableIds: getReservationTableIds(created), status: created.status });
       res.status(201).json(created);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7844,7 +7872,7 @@ export async function registerRoutes(
       if (durationMinutes !== undefined) updates.durationMinutes = durationMinutes;
 
       const [updated] = await req.db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
-      broadcast("reservation_updated", { reservationId: updated.id, tableIds: getReservationTableIds(updated), status: updated.status });
+      broadcast(req.tenantId ?? 0, "reservation_updated", { reservationId: updated.id, tableIds: getReservationTableIds(updated), status: updated.status });
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -7878,7 +7906,7 @@ export async function registerRoutes(
       }
 
       const [updated] = await req.db.update(reservations).set(updates).where(eq(reservations.id, id)).returning();
-      broadcast("reservation_updated", { reservationId: updated.id, tableIds: getReservationTableIds(updated), status: updated.status });
+      broadcast(req.tenantId ?? 0, "reservation_updated", { reservationId: updated.id, tableIds: getReservationTableIds(updated), status: updated.status });
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -8188,7 +8216,7 @@ export async function registerRoutes(
         createdBy: null,
       }).returning();
 
-      broadcast("reservation_updated", { reservationId: created.id, tableIds: assignedTableIds, status: created.status });
+      broadcast(req.tenantId ?? 0, "reservation_updated", { reservationId: created.id, tableIds: assignedTableIds, status: created.status });
 
       if (guestEmail) {
         sendReservationEmail(guestEmail, {
@@ -8627,7 +8655,7 @@ export async function registerRoutes(
             metadata: { productName: product.name, previousReorderPoint: product.reorderPoint, newReorderPoint: rp },
           });
           const reorderAlert = product.availablePortions !== null && rp !== null && product.availablePortions <= rp;
-          broadcast("product_availability_changed", { productId, reorderPoint: rp, reorderAlert });
+          broadcast(req.tenantId ?? 0, "product_availability_changed", { productId, reorderPoint: rp, reorderAlert });
           return res.json({ ok: true, reorderPoint: rp, reorderAlert });
         }
         default:
@@ -8655,7 +8683,7 @@ export async function registerRoutes(
         },
       });
 
-      broadcast("product_availability_changed", {
+      broadcast(req.tenantId ?? 0, "product_availability_changed", {
         productId,
         active: newActive,
         availablePortions: newPortions,

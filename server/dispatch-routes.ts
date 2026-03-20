@@ -89,9 +89,9 @@ export function registerDispatchRoutes(app: Express, broadcast: Function) {
         });
       }
 
-      broadcast("kitchen_ticket_created", { ticketId: ticket.id, orderId: order.id, tableNameSnapshot: table.tableName, destination: "cocina" });
-      broadcast("order_updated", { orderId: order.id, status: "IN_KITCHEN" });
-      broadcast("qr_submission_created", { tableId: table.id, tableCode, customerName: customerName.trim(), orderId: order.id, mode: "DISPATCH" });
+      broadcast(req.tenantId ?? 0, "kitchen_ticket_created", { ticketId: ticket.id, orderId: order.id, tableNameSnapshot: table.tableName, destination: "cocina" });
+      broadcast(req.tenantId ?? 0, "order_updated", { orderId: order.id, status: "IN_KITCHEN" });
+      broadcast(req.tenantId ?? 0, "qr_submission_created", { tableId: table.id, tableCode, customerName: customerName.trim(), orderId: order.id, mode: "DISPATCH" });
 
       res.json({ ok: true, orderId: order.id, tableCode, customerName: customerName.trim(), message: "Orden enviada a cocina. Mantén esta pantalla abierta." });
 

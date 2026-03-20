@@ -78,7 +78,7 @@ async function handleDirectDispatchSubmit(
   res: Response,
   subaccountId: number | null,
   items: any[],
-  broadcastFn: (type: string, payload: any) => void
+  broadcastFn: (tenantId: number, event: string, data: any) => void
 ): Promise<void> {
   const businessDate = await getBusinessDate((req as any).tenantSchema);
   const txCode = await generateTransactionCode(req.db, businessDate);
@@ -201,8 +201,8 @@ async function handleDirectDispatchSubmit(
 
   await storage.recalcOrderTotal(order.id, req.db);
 
-  broadcastFn("order_updated", { orderId: order.id });
-  broadcastFn("table_status_changed", {});
+  broadcastFn(req.tenantId ?? 0, "order_updated", { orderId: order.id });
+  broadcastFn(req.tenantId ?? 0, "table_status_changed", {});
 
   res.json({
     dispatch: true,
@@ -235,7 +235,7 @@ function validateQrToken(utils: QrSecurityUtils) {
   };
 }
 
-export function registerQrSubaccountRoutes(app: Express, broadcast: (type: string, payload: any) => void, security?: QrSecurityUtils) {
+export function registerQrSubaccountRoutes(app: Express, broadcast: (tenantId: number, event: string, data: any) => void, security?: QrSecurityUtils) {
 
   const tokenCheck = security ? validateQrToken(security) : (_req: Request, _res: Response, next: NextFunction) => next();
 
@@ -410,8 +410,8 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           status: "SUBMITTED",
         }).returning();
         await req.db.update(qrSubmissions).set({ payloadSnapshot: { subaccountId, items } } as any).where(eq(qrSubmissions.id, sub.id));
-        broadcast("qr_submission_created", { tableId: virtualTable.id, tableName: virtualTable.tableName, submissionId: sub.id, itemsCount: items.length });
-        broadcast("qr_submission", { tableId: virtualTable.id, submissionId: sub.id });
+        broadcast(req.tenantId ?? 0, "qr_submission_created", { tableId: virtualTable.id, tableName: virtualTable.tableName, submissionId: sub.id, itemsCount: items.length });
+        broadcast(req.tenantId ?? 0, "qr_submission", { tableId: virtualTable.id, submissionId: sub.id });
         return res.json({ submissionId: sub.id, orderId: order.id, message: "Pedido enviado" });
       }
 
@@ -447,8 +447,8 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
           .where(eq(orderSubaccounts.id, subaccountId));
       }
 
-      broadcast("qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id, itemsCount: items.length });
-      broadcast("qr_submission", { tableId: table.id, submissionId: sub.id });
+      broadcast(req.tenantId ?? 0, "qr_submission_created", { tableId: table.id, tableName: table.tableName, submissionId: sub.id, itemsCount: items.length });
+      broadcast(req.tenantId ?? 0, "qr_submission", { tableId: table.id, submissionId: sub.id });
 
       res.json({ submissionId: sub.id, orderId: order.id, message: "Pedido enviado" });
     } catch (err: any) {
@@ -720,10 +720,10 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
       }).catch(() => {});
 
       if (createdTicketIds.length > 0) {
-        broadcast("kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: sub.tableId, tableName: table.tableName });
+        broadcast(req.tenantId ?? 0, "kitchen_ticket_created", { ticketIds: createdTicketIds, tableId: sub.tableId, tableName: table.tableName });
       }
-      broadcast("order_updated", { tableId: sub.tableId, orderId: order.id });
-      broadcast("table_status_changed", { tableId: sub.tableId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: sub.tableId, orderId: order.id });
+      broadcast(req.tenantId ?? 0, "table_status_changed", { tableId: sub.tableId });
 
       const updatedOrder = await storage.getOpenOrderForTable(sub.tableId, req.db);
       const updatedItems = updatedOrder ? await storage.getOrderItems(updatedOrder.id, req.db) : [];
@@ -768,7 +768,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         metadata: { submissionId: subId },
       });
 
-      broadcast("order_updated", { tableId: sub.tableId, orderId: sub.orderId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: sub.tableId, orderId: sub.orderId });
 
       res.json({ ok: true });
     } catch (err: any) {
@@ -802,7 +802,7 @@ export function registerQrSubaccountRoutes(app: Express, broadcast: (type: strin
         metadata: { submissionId: subId },
       });
 
-      broadcast("order_updated", { tableId: sub.tableId, orderId: sub.orderId });
+      broadcast(req.tenantId ?? 0, "order_updated", { tableId: sub.tableId, orderId: sub.orderId });
 
       res.json({ ok: true });
     } catch (err: any) {

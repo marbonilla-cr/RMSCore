@@ -25,7 +25,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-export function registerShortageRoutes(app: Express, broadcast: (type: string, payload: any) => void) {
+export function registerShortageRoutes(app: Express, broadcast: (tenantId: number, event: string, data: any) => void) {
 
   app.get("/api/shortages/inv-items", requirePermission("SHORTAGES_REPORT"), async (_req: Request, res: Response) => {
     try {
@@ -80,7 +80,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
         severityReport,
       });
       if (result.isNew) {
-        broadcast("shortage_created", { shortage: result.shortage });
+        broadcast(req.tenantId ?? 0, "shortage_created", { shortage: result.shortage });
       }
       res.json(result);
     } catch (e: any) {
@@ -142,7 +142,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
       const user = (req as any).user;
       const id = parseInt(req.params.id as string);
       const shortage = await shortageStorage.acknowledgeShortage(id, user.id, req.body?.message);
-      broadcast("shortage_updated", { shortage });
+      broadcast(req.tenantId ?? 0, "shortage_updated", { shortage });
       res.json(shortage);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -154,7 +154,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
       const user = (req as any).user;
       const id = parseInt(req.params.id as string);
       const shortage = await shortageStorage.resolveShortage(id, user.id, req.body?.message);
-      broadcast("shortage_updated", { shortage });
+      broadcast(req.tenantId ?? 0, "shortage_updated", { shortage });
       res.json(shortage);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -167,7 +167,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
       if (!req.body?.message) return res.status(400).json({ message: "Nota obligatoria al cerrar" });
       const id = parseInt(req.params.id as string);
       const shortage = await shortageStorage.closeShortage(id, user.id, req.body.message);
-      broadcast("shortage_updated", { shortage });
+      broadcast(req.tenantId ?? 0, "shortage_updated", { shortage });
       res.json(shortage);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -222,7 +222,7 @@ export function registerShortageRoutes(app: Express, broadcast: (type: string, p
         entityId: productId,
         metadata: { source: "shortages_module" },
       });
-      broadcast("product_availability_changed", { productId, active });
+      broadcast(req.tenantId ?? 0, "product_availability_changed", { productId, active });
       res.json(product);
     } catch (e: any) {
       res.status(500).json({ message: e.message });

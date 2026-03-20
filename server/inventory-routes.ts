@@ -38,13 +38,9 @@ function requirePermission(...permissionKeys: string[]) {
   };
 }
 
-function broadcast(wss: any, type: string, payload: any) {
-  const msg = JSON.stringify({ type, payload });
-  if (wss && wss.clients) {
-    wss.clients.forEach((ws: WebSocket) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(msg);
-    });
-  }
+function broadcast(tenantId: number, wss: any, type: string, payload: any) {
+  // `wss` en este módulo es el `broadcast` global (routes.ts), ya tenant-aware.
+  if (typeof wss === "function") wss(tenantId, type, payload);
 }
 
 export function registerInventoryRoutes(app: Express, wss: any) {
@@ -142,7 +138,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const parsed = insertInvItemSchema.parse(coerceNumericFields(req.body));
       const item = await invStorage.createInvItem(parsed);
-      broadcast(wss, "INV_ITEM_CREATED", item);
+      broadcast(req.tenantId ?? 0, wss, "INV_ITEM_CREATED", item);
       res.json(item);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -157,7 +153,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       }
       const item = await invStorage.updateInvItem(parseInt(req.params.id as string), coerced);
       if (!item) return res.status(404).json({ message: "Item no encontrado" });
-      broadcast(wss, "INV_ITEM_UPDATED", item);
+      broadcast(req.tenantId ?? 0, wss, "INV_ITEM_UPDATED", item);
       res.json(item);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -168,7 +164,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const result = await invStorage.smartDeleteInvItem(parseInt(req.params.id as string));
       if (!result.item) return res.status(404).json({ message: "Item no encontrado" });
-      broadcast(wss, "INV_ITEM_DELETED", result.item);
+      broadcast(req.tenantId ?? 0, wss, "INV_ITEM_DELETED", result.item);
       res.json({ item: result.item, hardDeleted: result.hardDeleted });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -271,7 +267,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         parLevelQtyBase: "0",
         isPerishable: false,
       });
-      broadcast(wss, "INV_ITEM_CREATED", item);
+      broadcast(req.tenantId ?? 0, wss, "INV_ITEM_CREATED", item);
       res.json(item);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -309,7 +305,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         avgCostPerBaseUom: "0",
         isPerishable: false,
       });
-      broadcast(wss, "INV_ITEM_CREATED", item);
+      broadcast(req.tenantId ?? 0, wss, "INV_ITEM_CREATED", item);
       res.json(item);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -328,7 +324,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const parsed = insertInvUomConversionSchema.parse({ ...req.body, invItemId: parseInt(req.params.id as string) });
       const conv = await invStorage.createUomConversion(parsed);
-      broadcast(wss, "INV_UOM_CONVERSION_CREATED", conv);
+      broadcast(req.tenantId ?? 0, wss, "INV_UOM_CONVERSION_CREATED", conv);
       res.json(conv);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -339,7 +335,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const conv = await invStorage.updateUomConversion(parseInt(req.params.id as string), req.body);
       if (!conv) return res.status(404).json({ message: "Conversión no encontrada" });
-      broadcast(wss, "INV_UOM_CONVERSION_UPDATED", conv);
+      broadcast(req.tenantId ?? 0, wss, "INV_UOM_CONVERSION_UPDATED", conv);
       res.json(conv);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -373,7 +369,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         createdByEmployeeId: user.id,
       });
       const movement = await invStorage.createInvMovement(parsed);
-      broadcast(wss, "INV_MOVEMENT_CREATED", movement);
+      broadcast(req.tenantId ?? 0, wss, "INV_MOVEMENT_CREATED", movement);
       res.json(movement);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -403,7 +399,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const parsed = insertInvSupplierSchema.parse(req.body);
       const supplier = await invStorage.createSupplier(parsed);
-      broadcast(wss, "INV_SUPPLIER_CREATED", supplier);
+      broadcast(req.tenantId ?? 0, wss, "INV_SUPPLIER_CREATED", supplier);
       res.json(supplier);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -414,7 +410,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const supplier = await invStorage.updateSupplier(parseInt(req.params.id as string), req.body);
       if (!supplier) return res.status(404).json({ message: "Proveedor no encontrado" });
-      broadcast(wss, "INV_SUPPLIER_UPDATED", supplier);
+      broadcast(req.tenantId ?? 0, wss, "INV_SUPPLIER_UPDATED", supplier);
       res.json(supplier);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -425,7 +421,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const supplier = await invStorage.deleteSupplier(parseInt(req.params.id as string));
       if (!supplier) return res.status(404).json({ message: "Proveedor no encontrado" });
-      broadcast(wss, "INV_SUPPLIER_DELETED", supplier);
+      broadcast(req.tenantId ?? 0, wss, "INV_SUPPLIER_DELETED", supplier);
       res.json(supplier);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -508,7 +504,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const parsed = insertInvSupplierItemSchema.parse(req.body);
       const item = await invStorage.createSupplierItem(parsed);
-      broadcast(wss, "INV_SUPPLIER_ITEM_CREATED", item);
+      broadcast(req.tenantId ?? 0, wss, "INV_SUPPLIER_ITEM_CREATED", item);
       res.json(item);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -519,7 +515,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const item = await invStorage.updateSupplierItem(parseInt(req.params.id as string), req.body);
       if (!item) return res.status(404).json({ message: "Ítem de proveedor no encontrado" });
-      broadcast(wss, "INV_SUPPLIER_ITEM_UPDATED", item);
+      broadcast(req.tenantId ?? 0, wss, "INV_SUPPLIER_ITEM_UPDATED", item);
       res.json(item);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -570,7 +566,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         createdByEmployeeId: user.id,
       });
       const po = await invStorage.createPurchaseOrder(parsed);
-      broadcast(wss, "INV_PO_CREATED", po);
+      broadcast(req.tenantId ?? 0, wss, "INV_PO_CREATED", po);
       res.json(po);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -581,7 +577,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const po = await invStorage.updatePurchaseOrder(parseInt(req.params.id as string), req.body);
       if (!po) return res.status(404).json({ message: "Orden de compra no encontrada" });
-      broadcast(wss, "INV_PO_UPDATED", po);
+      broadcast(req.tenantId ?? 0, wss, "INV_PO_UPDATED", po);
       res.json(po);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -592,7 +588,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const po = await invStorage.sendPurchaseOrder(parseInt(req.params.id as string));
       if (!po) return res.status(404).json({ message: "Orden de compra no encontrada" });
-      broadcast(wss, "INV_PO_SENT", po);
+      broadcast(req.tenantId ?? 0, wss, "INV_PO_SENT", po);
       res.json(po);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -612,7 +608,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         lines,
         note
       );
-      broadcast(wss, "INV_PO_RECEIVED", { purchaseOrderId: parseInt(req.params.id as string), receipt });
+      broadcast(req.tenantId ?? 0, wss, "INV_PO_RECEIVED", { purchaseOrderId: parseInt(req.params.id as string), receipt });
       res.json(receipt);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -673,7 +669,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         qtyBaseExpected,
       });
       const line = await invStorage.createPurchaseOrderLine(parsed);
-      broadcast(wss, "INV_PO_LINE_CREATED", line);
+      broadcast(req.tenantId ?? 0, wss, "INV_PO_LINE_CREATED", line);
       res.json(line);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -684,7 +680,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const line = await invStorage.updatePurchaseOrderLine(parseInt(req.params.id as string), req.body);
       if (!line) return res.status(404).json({ message: "Línea no encontrada" });
-      broadcast(wss, "INV_PO_LINE_UPDATED", line);
+      broadcast(req.tenantId ?? 0, wss, "INV_PO_LINE_UPDATED", line);
       res.json(line);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -760,7 +756,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         createdByEmployeeId: user.id,
       });
       const count = await invStorage.createPhysicalCount(parsed);
-      broadcast(wss, "INV_PHYSICAL_COUNT_CREATED", count);
+      broadcast(req.tenantId ?? 0, wss, "INV_PHYSICAL_COUNT_CREATED", count);
       res.json(count);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -785,7 +781,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const user = (req as any).user;
       const count = await invStorage.finalizePhysicalCount(parseInt(req.params.id as string), user.id);
-      broadcast(wss, "INV_PHYSICAL_COUNT_FINALIZED", count);
+      broadcast(req.tenantId ?? 0, wss, "INV_PHYSICAL_COUNT_FINALIZED", count);
       res.json(count);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -826,12 +822,12 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       if (lines && Array.isArray(lines) && lines.length > 0) {
         const parsed = insertInvRecipeSchema.parse(recipeData);
         const recipe = await invStorage.createRecipeWithLines(parsed, lines);
-        broadcast(wss, "INV_RECIPE_CREATED", recipe);
+        broadcast(req.tenantId ?? 0, wss, "INV_RECIPE_CREATED", recipe);
         res.json(recipe);
       } else {
         const parsed = insertInvRecipeSchema.parse(recipeData);
         const recipe = await invStorage.createRecipe(parsed);
-        broadcast(wss, "INV_RECIPE_CREATED", recipe);
+        broadcast(req.tenantId ?? 0, wss, "INV_RECIPE_CREATED", recipe);
         res.json(recipe);
       }
     } catch (err: any) {
@@ -843,7 +839,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const recipe = await invStorage.updateRecipe(parseInt(req.params.id as string), req.body);
       if (!recipe) return res.status(404).json({ message: "Receta no encontrada" });
-      broadcast(wss, "INV_RECIPE_UPDATED", recipe);
+      broadcast(req.tenantId ?? 0, wss, "INV_RECIPE_UPDATED", recipe);
       res.json(recipe);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -854,7 +850,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const recipe = await invStorage.deactivateRecipe(parseInt(req.params.id as string));
       if (!recipe) return res.status(404).json({ message: "Receta no encontrada" });
-      broadcast(wss, "INV_RECIPE_DEACTIVATED", recipe);
+      broadcast(req.tenantId ?? 0, wss, "INV_RECIPE_DEACTIVATED", recipe);
       res.json(recipe);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -873,7 +869,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const parsed = insertInvRecipeLineSchema.parse(req.body);
       const line = await invStorage.createRecipeLine(parsed);
-      broadcast(wss, "INV_RECIPE_LINE_CREATED", line);
+      broadcast(req.tenantId ?? 0, wss, "INV_RECIPE_LINE_CREATED", line);
       res.json(line);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -884,7 +880,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const line = await invStorage.updateRecipeLine(parseInt(req.params.id as string), req.body);
       if (!line) return res.status(404).json({ message: "Línea de receta no encontrada" });
-      broadcast(wss, "INV_RECIPE_LINE_UPDATED", line);
+      broadcast(req.tenantId ?? 0, wss, "INV_RECIPE_LINE_UPDATED", line);
       res.json(line);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -908,7 +904,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       }
       const product = await invStorage.toggleProductInventoryControl(parseInt(req.params.id as string), enabled);
       if (!product) return res.status(404).json({ message: "Producto no encontrado" });
-      broadcast(wss, "INV_PRODUCT_INVENTORY_TOGGLED", product);
+      broadcast(req.tenantId ?? 0, wss, "INV_PRODUCT_INVENTORY_TOGGLED", product);
       res.json(product);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1220,7 +1216,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         notes: notes || null,
         outputs,
       });
-      broadcast(wss, "INV_CONVERSION_CREATED", conv);
+      broadcast(req.tenantId ?? 0, wss, "INV_CONVERSION_CREATED", conv);
       res.json(conv);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1241,7 +1237,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
       }
       const conv = await invStorage.updateConversion(parseInt(req.params.id as string), { ...header, outputs });
       if (!conv) return res.status(404).json({ message: "Conversión no encontrada" });
-      broadcast(wss, "INV_CONVERSION_UPDATED", conv);
+      broadcast(req.tenantId ?? 0, wss, "INV_CONVERSION_UPDATED", conv);
       res.json(conv);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1252,7 +1248,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
     try {
       const result = await invStorage.smartDeleteConversion(parseInt(req.params.id as string));
       if (!result) return res.status(404).json({ message: "Conversión no encontrada" });
-      broadcast(wss, result.hardDeleted ? "INV_CONVERSION_DELETED" : "INV_CONVERSION_DEACTIVATED", result.conversion);
+      broadcast(req.tenantId ?? 0, wss, result.hardDeleted ? "INV_CONVERSION_DELETED" : "INV_CONVERSION_DEACTIVATED", result.conversion);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1430,7 +1426,7 @@ export function registerInventoryRoutes(app: Express, wss: any) {
         }
       }
 
-      broadcast(wss, "INV_ITEMS_BULK_IMPORTED", { count: results.created });
+      broadcast(_req.tenantId ?? 0, wss, "INV_ITEMS_BULK_IMPORTED", { count: results.created });
       res.json(results);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
