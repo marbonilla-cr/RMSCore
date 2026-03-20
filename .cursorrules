@@ -453,3 +453,16 @@ Si hay errores, repórtalos todos. No hagas deploy si hay errores TS.
 Nunca hagas deploy a Railway sin instrucción explícita que diga
 "haz deploy" o "deploy ahora". Completar un fix no implica autorización
 para hacer deploy.
+
+## REGLA 9: Servidor de desarrollo local
+Para arrancar el servidor de desarrollo local siempre usar:
+  export DATABASE_URL=$(grep STAGING_DATABASE_URL .env | cut -d= -f2-)
+  export TENANT_SCHEMA=tenant_la_antigua
+  export NODE_ENV=development
+  npm run dev
+El servidor corre en puerto 3000 (API) y Vite en puerto 5173.
+Para hacer requests de prueba usar curl contra localhost:3000.
+Para autenticación en curl, primero hacer POST a /api/auth/login
+y guardar la cookie de sesión.
+Cursor SIEMPRE usa terminales integradas del editor para servidores,
+nunca el runner de comandos.

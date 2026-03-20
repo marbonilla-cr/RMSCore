@@ -7,6 +7,7 @@ import path from "path";
 import { createServer } from "http";
 import { registerRoutes } from "./routes";
 import { ensureSystemPermissions, seedExtraTypes, seedDefaultRolePermissions } from "./storage";
+import { getTenantDb } from "./db-tenant";
 import { startHrBackgroundJobs } from "./hr-jobs";
 import { startDispatchBackgroundJobs } from "./dispatch-jobs";
 import { retryPendingSync } from "./quickbooks";
@@ -188,9 +189,33 @@ app.use((req, res, next) => {
 
 (async () => {
   setTimezonePool(pool);
-  await ensureSystemPermissions();
-  await seedDefaultRolePermissions();
-  await seedExtraTypes();
+
+  // Seed system permissions + HR defaults per tenant schema.
+  // Some tenants (after migrations) no longer have these tables in `public`.
+  try {
+    const tenantFromEnv = process.env.TENANT_SCHEMA;
+    const schemasOrdered: string[] = tenantFromEnv && tenantFromEnv !== "public"
+      ? [tenantFromEnv]
+      : (await pool.query(`
+          SELECT schema_name
+          FROM public.tenants
+          WHERE is_active = true
+            AND schema_name != 'public'
+        `)).rows.map((r: any) => r.schema_name);
+
+    for (const schemaName of schemasOrdered) {
+      try {
+        const tenantDb = getTenantDb(schemaName);
+        await ensureSystemPermissions(tenantDb);
+        await seedDefaultRolePermissions(tenantDb);
+        await seedExtraTypes(tenantDb);
+      } catch (err: any) {
+        console.error(`[startup] Error seeding system permissions for schema "${schemaName}":`, err.message);
+      }
+    }
+  } catch (err: any) {
+    console.error("[startup] Error seeding system permissions:", err.message);
+  }
 
   try {
     await ensurePublicTables();
@@ -207,15 +232,20 @@ app.use((req, res, next) => {
   // Performance indexes dependen de que las tablas existan en el schema del tenant.
   // Por eso se ejecutan después de syncAllTenantsAtStartup() y se parametrizan por schema.
   try {
-    const { rows } = await pool.query(`
-      SELECT schema_name
-      FROM public.tenants
-      WHERE is_active = true
-        AND schema_name != 'public'
-    `);
+    const tenantFromEnv = process.env.TENANT_SCHEMA;
+    if (tenantFromEnv && tenantFromEnv !== "public") {
+      await ensurePerfIndexes(tenantFromEnv);
+    } else {
+      const { rows } = await pool.query(`
+        SELECT schema_name
+        FROM public.tenants
+        WHERE is_active = true
+          AND schema_name != 'public'
+      `);
 
-    for (const row of rows) {
-      await ensurePerfIndexes(row.schema_name as string);
+      for (const row of rows) {
+        await ensurePerfIndexes(row.schema_name as string);
+      }
     }
   } catch (err: any) {
     console.error("[startup] Error ensuring performance indexes:", err.message);

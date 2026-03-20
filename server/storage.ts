@@ -267,8 +267,8 @@ const SYSTEM_PERMISSIONS: { key: string; description: string }[] = [
   { key: "EMPLOYEE_CHARGE", description: "Cobrar cargo a empleado desde POS" },
 ];
 
-export async function ensureSystemPermissions(dbInstance?: typeof db) {
-  const d = dbInstance || db;
+export async function ensureSystemPermissions(dbInstance: typeof db) {
+  const d = dbInstance;
   const existing = await d.select({ key: permissions.key }).from(permissions);
   const existingKeys = new Set(existing.map(p => p.key));
   const missing = SYSTEM_PERMISSIONS.filter(p => !existingKeys.has(p.key));
@@ -313,8 +313,8 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   ],
 };
 
-export async function seedDefaultRolePermissions(dbInstance?: typeof db) {
-  const d = dbInstance || db;
+export async function seedDefaultRolePermissions(dbInstance: typeof db) {
+  const d = dbInstance;
   let totalInserted = 0;
   for (const [role, keys] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
     const existing = await d.select({ key: rolePermissions.permissionKey })
@@ -2549,7 +2549,7 @@ export async function getPunchesForDateRange(dateFrom: string, dateTo: string, d
     ));
 }
 
-export async function seedExtraTypes() {
+export async function seedExtraTypes(dbInstance: typeof db) {
   const defaults = [
     { typeCode: "BONO", name: "Bono", kind: "EARNING" },
     { typeCode: "VIATICO", name: "Viático", kind: "EARNING" },
@@ -2558,8 +2558,8 @@ export async function seedExtraTypes() {
     { typeCode: "AJUSTE_POSITIVO", name: "Ajuste Positivo", kind: "EARNING" },
     { typeCode: "AJUSTE_NEGATIVO", name: "Ajuste Negativo", kind: "DEDUCTION" },
   ];
-  for (const d of defaults) {
-    await db.insert(hrExtraTypes).values(d).onConflictDoNothing();
+  for (const row of defaults) {
+    await dbInstance.insert(hrExtraTypes).values(row).onConflictDoNothing();
   }
 }
 
