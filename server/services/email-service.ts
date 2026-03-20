@@ -11,18 +11,21 @@ function getResend(): Resend | null {
 export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   const client = getResend();
   if (!client) {
-    console.log('[EMAIL] RESEND_API_KEY not configured. Email content:', { to, subject });
-    return;
+    console.error("[EMAIL] RESEND_API_KEY not configured — email not sent:", { to, subject });
+    throw new Error(
+      "Correo no configurado: falta RESEND_API_KEY en el servidor."
+    );
   }
-  try {
-    await client.emails.send({
-      from: process.env.EMAIL_FROM || 'soporte@rmscore.app',
-      to,
-      subject,
-      html,
-    });
-    console.log(`[EMAIL] Sent to ${to}: ${subject}`);
-  } catch (error) {
-    console.error('[EMAIL] Failed to send email:', error);
+  const from = process.env.EMAIL_FROM || "noreply@rmscore.app";
+  const { data, error } = await client.emails.send({
+    from,
+    to,
+    subject,
+    html,
+  });
+  if (error) {
+    console.error("[EMAIL] Resend API error:", error);
+    throw new Error(error.message || "Resend rechazó el envío del correo.");
   }
+  console.log(`[EMAIL] Sent to ${to}: ${subject}`, data?.id ? `(id ${data.id})` : "");
 }
