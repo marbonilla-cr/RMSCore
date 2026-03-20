@@ -4215,7 +4215,9 @@ export async function registerRoutes(
       });
     }
 
+    const relevantOrderIds = new Set(relevantOrders.map(o => o.id));
     for (const dOrder of dispatchOrders) {
+      if (relevantOrderIds.has(dOrder.id)) continue; // ya esta en relevantOrders
       const dCount = dispatchItemCounts.get(dOrder.id) || 0;
       if (dCount === 0) continue;
       const dTable = dOrder.tableId ? tableMap.get(dOrder.tableId) : null;
