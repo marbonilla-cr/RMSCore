@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, setSessionToken } from "@/lib/queryClient";
 import { Loader2, Delete, ArrowLeft, Eye, EyeOff } from "lucide-react";
-import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
 const LS_KEY = "rms_last_username";
 
@@ -248,7 +247,7 @@ export default function AuthPage() {
       `}</style>
 
       <div className="auth-card">
-        <img src={logoImg} alt="Logo" className="auth-logo" data-testid="img-auth-logo" />
+        <img src="/icon-192.png" alt="RMSCore" className="auth-logo" data-testid="img-auth-logo" />
         <div className="auth-time">{currentTime}</div>
         <div className="auth-date">{currentDate}</div>
 

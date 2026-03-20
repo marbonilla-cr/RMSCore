@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { Delete, Loader2, Clock, LogIn, LogOut, CheckCircle } from "lucide-react";
-import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 import { apiRequest } from "@/lib/queryClient";
 
 interface PinLoginPageProps {
@@ -373,7 +372,7 @@ export default function PinLoginPage({ onSwitchToPassword }: PinLoginPageProps) 
       `}</style>
 
       <div className="pin-brand">
-        <img src={logoImg} alt="Logo" className="pin-logo" data-testid="img-logo" />
+        <img src="/icon-192.png" alt="RMSCore" className="pin-logo" data-testid="img-logo" />
         <div className="brand-name" data-testid="text-app-title">La Antigua Lechería</div>
         <div className="brand-time">{currentTime}</div>
         <div className="brand-date">{currentDate}</div>

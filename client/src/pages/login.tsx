@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { LogIn, Loader2 } from "lucide-react";
-import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
 export default function LoginPage() {
   const isCentralLoginHost =
@@ -57,21 +56,12 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "var(--bg)" }}>
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
-          {isCentralLoginHost ? (
-            <img
-              src="/rmscoreicon192x192.png"
-              alt="RMSCore"
-              className="w-28 h-28 rounded-2xl object-cover mb-4"
-              data-testid="img-logo"
-            />
-          ) : (
-            <img
-              src={logoImg}
-              alt="La Antigua Lechería"
-              className="w-28 h-28 rounded-full object-cover mb-4"
-              data-testid="img-logo"
-            />
-          )}
+          <img
+            src="/icon-192.png"
+            alt="RMSCore"
+            className="w-28 h-28 rounded-2xl object-cover mb-4"
+            data-testid="img-logo"
+          />
           <h1 className="text-2xl font-bold" data-testid="text-app-title">
             {isCentralLoginHost ? "RMSCore" : "La Antigua Lechería"}
           </h1>
