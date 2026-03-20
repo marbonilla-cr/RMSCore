@@ -1245,10 +1245,10 @@ export default function POSPage() {
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 14px 18px;
+          padding: calc(14px + env(safe-area-inset-top, 0px)) 18px 14px;
           background: var(--s0);
           border-bottom: 1px solid var(--border-ds);
-          position: sticky; top: 0; z-index: 20;
+          position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
           flex-wrap: wrap;
         }
         .pos-header-title {
@@ -1278,7 +1278,7 @@ export default function POSPage() {
         .pos-tabs {
           display: flex;
           gap: 4px;
-          padding: 12px 18px 0;
+          padding: 16px 18px 0;
           border-bottom: 1px solid var(--border-ds);
         }
         .pos-tab {
