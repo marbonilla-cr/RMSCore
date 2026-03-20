@@ -340,7 +340,16 @@ export async function sendTenantPasswordReset(tenantId: number, email: string, r
     [resetToken, expires, adminUser.id]
   );
 
-  const resetUrl = `${reqProto}://${reqHost}/reset-password?token=${resetToken}`;
+  /**
+   * Reset must open on the tenant's subdomain so tenantMiddleware binds req.db to that schema.
+   * Links using admin.* or api host resolve to public and the token is never found.
+   */
+  const subdomainBase =
+    process.env.TENANT_SUBDOMAIN_BASE_HOST ||
+    (process.env.NODE_ENV === "production" ? "rmscore.app" : "");
+  const resetUrl = subdomainBase
+    ? `https://${tenant.slug}.${subdomainBase}/reset-password?token=${resetToken}`
+    : `${reqProto}://${reqHost}/reset-password?token=${resetToken}`;
   const html = `
     <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;background:#fff;border:1px solid #e5e5e5;border-radius:12px;">
       <div style="text-align:center;margin-bottom:24px;">
