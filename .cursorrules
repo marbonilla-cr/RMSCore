@@ -34,7 +34,7 @@ hotfix/*      →  local dev → PR into main + backmerge into develop
 ```
 
 ### Deploy Rules
-- **Never push directly to `main`.** All changes go through `develop` first.
+- **Push directly to `main` is allowed.** No PR required.
 - Staging must be validated before merging to `main`.
 - Production deploys are triggered by merging `develop` → `main` via Pull Request.
 - Railway build: `npm install` + `npm run build` → zero-downtime swap (60–120s).
