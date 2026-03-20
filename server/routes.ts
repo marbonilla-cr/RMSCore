@@ -2545,6 +2545,52 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== WAITER: DISPATCH ORDER FROM TABLES ====================
+  app.post("/api/waiter/dispatch-orders", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const { customerName } = req.body || {};
+      const businessDate = await getBusinessDate(req.tenantSchema);
+      const trimmedName = customerName?.trim() || "Cliente Despacho";
+
+      let order = await storage.createOrder({
+        tableId: null as any,
+        status: "OPEN",
+        orderMode: "DISPATCH",
+        dispatchStatus: "PENDING_PAYMENT",
+        quickSaleName: trimmedName,
+        isQuickSale: true,
+        responsibleWaiterId: req.session?.userId ?? null,
+        businessDate,
+      } as any, req.db);
+
+      try {
+        const txCode = await generateTransactionCode(req.db, businessDate);
+        order = await storage.updateOrder(order.id, { transactionCode: txCode } as any, req.db);
+      } catch (codeErr) {
+        console.warn("[txCode] dispatch waiter:", codeErr);
+      }
+
+      res.status(201).json(order);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/waiter/orders/:id/beeper", requireRole("WAITER", "MANAGER"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.id as string);
+      const beeperNumber = (req.body?.beeperNumber ?? "").toString().trim();
+      const [order] = await req.db.update(orders)
+        .set({ beeperNumber: beeperNumber || null } as any)
+        .where(eq(orders.id, orderId))
+        .returning();
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+      res.json(order);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/waiter/orders/:orderId/send-round", requireRole("WAITER", "MANAGER"), async (req, res) => {
     try {
       const orderId = parseInt(req.params.orderId as string);
@@ -3585,15 +3631,25 @@ export async function registerRoutes(
             const nonVoided = ordItems.filter((i: any) => i.status !== "VOIDED");
             const allItemsReady = nonVoided.length > 0 && nonVoided.every((i: any) => i.status === "READY");
             if (allItemsReady) {
-              await req.db.update(orders).set({ dispatchStatus: "READY" }).where(eq(orders.id, ord.id));
+              const curDispatchStatus = (ord as any).dispatchStatus;
+              if (curDispatchStatus !== "CANCELLED" && curDispatchStatus !== "DELIVERED") {
+                await req.db.update(orders)
+                  .set({ dispatchStatus: "READY" })
+                  .where(and(
+                    eq(orders.id, ord.id),
+                    ne(orders.dispatchStatus, "CANCELLED"),
+                    ne(orders.dispatchStatus, "DELIVERED")
+                  ));
               broadcast("dispatch_order_ready", { orderId: ord.id, transactionCode: (ord as any).transactionCode });
-              notifyDispatchReady(ord.id, {
-                orderId: ord.id,
-                customerName: ordItems[0]?.customerNameSnapshot || "Cliente",
-                tableCode: ticket.tableNameSnapshot || "",
-                items: ordItems.map((i: any) => ({ name: i.productNameSnapshot, qty: i.qty })),
-                readyAt: new Date().toISOString(),
-              });
+                const customerName = ordItems.find((i: any) => i.status !== "VOIDED" && i.customerNameSnapshot)?.customerNameSnapshot || "Cliente";
+                notifyDispatchReady(ord.id, {
+                  orderId: ord.id,
+                  customerName,
+                  tableCode: ticket.tableNameSnapshot || "",
+                  items: ordItems.map((i: any) => ({ name: i.productNameSnapshot, qty: i.qty })),
+                  readyAt: new Date().toISOString(),
+                });
+              }
             }
           }
         } catch (dispatchErr: any) {
@@ -3889,7 +3945,12 @@ export async function registerRoutes(
     ]);
 
     const productsMap = new Map(productsArr.map((p: any) => [p.id, p]));
-    const tableNameLabel = order.transactionCode ? `Despacho #${order.transactionCode}` : `Despacho #${order.dailyNumber || orderId}`;
+    const [cfg] = await dbInstance.select().from(businessConfig).limit(1);
+    const useBeeper = !!cfg?.useBeeperSystem;
+    const beeper = (order as any).beeperNumber ? String((order as any).beeperNumber).trim() : "";
+    const tableNameLabel = useBeeper && beeper
+      ? `Beeper #${beeper}`
+      : (order.transactionCode ? `Despacho #${order.transactionCode}` : `Despacho #${order.dailyNumber || orderId}`);
 
     const kdsTickets: Map<string, number> = new Map();
     const createdTicketIds: number[] = [];
@@ -4074,6 +4135,7 @@ export async function registerRoutes(
         isQuickSale: false,
         isDispatch: true,
         dispatchStatus: (dOrder as any).dispatchStatus,
+        beeperNumber: (dOrder as any).beeperNumber || null,
         transactionCode: (dOrder as any).transactionCode || null,
       });
     }
@@ -4163,11 +4225,64 @@ export async function registerRoutes(
       openedAt: order.openedAt,
       itemCount: activeItems.length,
       items: itemsWithModifiers,
+      orderMode: (order as any).orderMode || "TABLE",
+      isDispatch: isDispatchOrder,
+      dispatchStatus: (order as any).dispatchStatus || null,
+      beeperNumber: (order as any).beeperNumber || null,
       totalDiscounts: orderDiscountsList.reduce((s, d) => s + Number(d.amountApplied), 0).toFixed(2),
       totalTaxes: orderTaxesList.reduce((s, t) => s + Number(t.taxAmount), 0).toFixed(2),
       taxBreakdown: aggregateTaxBreakdown(orderTaxesList),
       subaccountNames: Array.from(names),
     });
+  });
+
+  // ==================== POS: CREATE DISPATCH ORDER (PENDING_PAYMENT) ====================
+  // Crea una orden de despacho vacía (sin kitchen tickets todavía) para que el cajero
+  // agregue items y luego al pagar se dispare el flujo existente hacia KDS.
+  app.post("/api/pos/dispatch/orders/create", requirePermission("POS_PAY"), async (req, res) => {
+    try {
+      const bd = await getBusinessDate(req.tenantSchema);
+      const txCode = await generateTransactionCode(req.db, bd);
+
+      const [order] = await req.db.insert(orders).values({
+        tableId: null,
+        status: "OPEN",
+        responsibleWaiterId: null,
+        businessDate: bd,
+        transactionCode: txCode,
+        orderMode: "DISPATCH",
+        dispatchStatus: "PENDING_PAYMENT",
+      } as any).returning();
+
+      res.json({ ok: true, orderId: order.id, transactionCode: txCode });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/pos/dispatch/orders/:orderId/set-beeper", requirePermission("POS_PAY"), async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId as string);
+      const beeperRaw = (req.body?.beeper ?? "").toString().trim();
+      const order = await storage.getOrder(orderId, req.db);
+      if (!order) return res.status(404).json({ message: "Orden no encontrada" });
+      if ((order as any).orderMode !== "DISPATCH") return res.status(400).json({ message: "No es una orden de despacho" });
+      if ((order as any).dispatchStatus !== "PENDING_PAYMENT") return res.status(400).json({ message: "La orden ya no está pendiente de pago" });
+
+      const cfg = await storage.getBusinessConfig(req.tenantSchema);
+      const useBeeper = !!cfg?.useBeeperSystem;
+      if (useBeeper && !beeperRaw) {
+        return res.status(400).json({ message: "Ingrese el número de beeper" });
+      }
+
+      await req.db.update(orders)
+        .set({ beeperNumber: useBeeper ? beeperRaw : null } as any)
+        .where(eq(orders.id, orderId));
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // ==================== POS: PAY ====================
@@ -4222,6 +4337,13 @@ export async function registerRoutes(
         await buildServiceChargeOps(orderId, order, activeItems, req.tenantSchema, req.db);
         if ((order as any).orderMode === "DISPATCH" && (order as any).dispatchStatus === "PENDING_PAYMENT") {
           try {
+            // Para despacho creado desde POS, el nombre del cliente viene desde el PayDialog.
+            // Lo guardamos en order_items para que KDS pueda mostrarlo y para notifyDispatchReady.
+            if (clientName && clientName.trim()) {
+              await req.db.update(orderItems)
+                .set({ customerNameSnapshot: clientName.trim() })
+                .where(and(eq(orderItems.orderId, orderId), ne(orderItems.status, "VOIDED")));
+            }
             await createDispatchKitchenTickets(orderId, order, req.db, now);
             broadcast("dispatch_order_paid", { orderId, transactionCode: (order as any).transactionCode });
           } catch (dispatchErr: any) {
@@ -4355,6 +4477,11 @@ export async function registerRoutes(
         await maybeAutoCloseParentOrder(orderId, req.db);
         if ((order as any).orderMode === "DISPATCH" && (order as any).dispatchStatus === "PENDING_PAYMENT") {
           try {
+            if (clientName && clientName.trim()) {
+              await req.db.update(orderItems)
+                .set({ customerNameSnapshot: clientName.trim() })
+                .where(and(eq(orderItems.orderId, orderId), ne(orderItems.status, "VOIDED")));
+            }
             await createDispatchKitchenTickets(orderId, order, req.db, now);
             broadcast("dispatch_order_paid", { orderId, transactionCode: (order as any).transactionCode });
           } catch (dispatchErr: any) {
@@ -4494,8 +4621,8 @@ export async function registerRoutes(
       if ((order as any).dispatchStatus !== "PENDING_PAYMENT") return res.status(400).json({ message: "La orden ya fue pagada o cancelada" });
 
       const allItems = await storage.getOrderItems(orderId, req.db);
-      const pendingItems = allItems.filter(i => i.status === "PENDING");
-      for (const item of pendingItems) {
+      const itemsToVoid = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
+      for (const item of itemsToVoid) {
         await storage.updateOrderItem(item.id, { status: "VOIDED" }, req.db);
       }
       await req.db.update(orders).set({ dispatchStatus: "CANCELLED", status: "CANCELLED" } as any).where(eq(orders.id, orderId));
@@ -4917,6 +5044,7 @@ export async function registerRoutes(
         legalNote: config?.legalNote || "",
         orderNumber: receiptOrderNum,
         tableName: table?.tableName || "",
+        transactionCode: (order as any).transactionCode || null,
         items: receiptItems,
         totalAmount: receiptTotal,
         totalDiscounts: totalDiscounts > 0 ? totalDiscounts : undefined,
@@ -5457,6 +5585,7 @@ export async function registerRoutes(
         tableName: table?.tableName || `Mesa ${order.tableId}`,
         orderNumber,
         clientName: paidPayments[0]?.clientNameSnapshot || undefined,
+        transactionCode: (order as any).transactionCode || null,
         totalDiscounts,
         totalTaxes,
         taxBreakdown,

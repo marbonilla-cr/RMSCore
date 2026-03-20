@@ -45,7 +45,6 @@ async function autoExpireDispatchOrders(schema: string) {
 
   const expiredOrders = await tenantDb.select().from(orders)
     .where(and(
-      sql`${orders.status} = 'OPEN'`,
       sql`${(orders as any).orderMode} = 'DISPATCH'`,
       sql`${(orders as any).dispatchStatus} = 'PENDING_PAYMENT'`,
       sql`${orders.openedAt} < NOW() - INTERVAL '${sql.raw(String(timeoutMinutes))} minutes'`
@@ -54,8 +53,9 @@ async function autoExpireDispatchOrders(schema: string) {
   for (const order of expiredOrders) {
     try {
       const allItems = await storage.getOrderItems(order.id, tenantDb);
-      const pendingItems = allItems.filter(i => i.status === "PENDING");
-      for (const item of pendingItems) {
+      // Cancelar de forma robusta: cualquier ítem no-voided / no-paid debe quedar VOIDED.
+      const itemsToVoid = allItems.filter(i => i.status !== "VOIDED" && i.status !== "PAID");
+      for (const item of itemsToVoid) {
         await storage.updateOrderItem(item.id, { status: "VOIDED" }, tenantDb);
       }
       await tenantDb.update(orders)

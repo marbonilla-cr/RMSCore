@@ -130,7 +130,9 @@ async function handleDirectDispatchSubmit(
       origin: "QR",
       createdByUserId: null,
       responsibleWaiterId: null,
-      status: "OPEN",
+      // Para despacho directo, este item debe ser tratable como "pendiente" (no como abierto),
+      // ya que la cancelación/auto-expire y el flujo de despacho dependen de ese estado.
+      status: "PENDING",
       roundNumber,
       qrSubmissionId: null,
     }, req.db);
@@ -192,7 +194,7 @@ async function handleDirectDispatchSubmit(
       origin: "QR",
       createdByUserId: null,
       responsibleWaiterId: null,
-      status: "OPEN",
+      status: "PENDING",
     }, req.db);
 
   }

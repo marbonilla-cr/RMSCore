@@ -829,6 +829,21 @@ export async function getActiveKitchenTickets(destination?: string, dbInstance?:
   const d = dbInstance || db;
   const destConditions: any[] = [isNull(kitchenTickets.clearedAt)];
   if (destination) destConditions.push(eq(kitchenTickets.kdsDestination, destination));
+
+  // Visibilidad robusta para despacho:
+  // - Si el order es DISPATCH, ocultar tickets cuando dispatchStatus = CANCELLED o DELIVERED.
+  // - Si dispatchStatus es NULL (caso raro/legacy), lo dejamos visible.
+  const dispatchVisibility = or(
+    ne(orders.orderMode, "DISPATCH"),
+    or(
+      isNull(orders.dispatchStatus),
+      and(
+        ne(orders.dispatchStatus, "CANCELLED"),
+        ne(orders.dispatchStatus, "DELIVERED")
+      )
+    )
+  );
+
   const statusCondition = or(
     ne(kitchenTickets.status, "READY"),
     and(
@@ -847,11 +862,12 @@ export async function getActiveKitchenTickets(destination?: string, dbInstance?:
     createdAt: kitchenTickets.createdAt,
     clearedAt: kitchenTickets.clearedAt,
     transactionCode: orders.transactionCode,
+    beeperNumber: (orders as any).beeperNumber,
     orderMode: orders.orderMode,
     dispatchStatus: orders.dispatchStatus,
   }).from(kitchenTickets)
     .leftJoin(orders, eq(kitchenTickets.orderId, orders.id))
-    .where(and(...destConditions, statusCondition))
+    .where(and(...destConditions, dispatchVisibility, statusCondition))
     .orderBy(asc(kitchenTickets.createdAt));
   return rows;
 }

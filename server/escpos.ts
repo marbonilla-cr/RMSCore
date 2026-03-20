@@ -128,6 +128,7 @@ interface ReceiptData {
   cashierName?: string;
   date: string;
   openDrawer?: boolean;
+  transactionCode?: string | null;
 }
 
 export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): Buffer {
@@ -168,6 +169,9 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
     parts.push(line(orderLine));
     parts.push(line(tableStr));
     parts.push(CMD.BOLD_OFF);
+  }
+  if (data.transactionCode) {
+    parts.push(line(`Código TX: ${data.transactionCode}`));
   }
   parts.push(line(data.date));
   if (data.cashierName) parts.push(line(`Cajero: ${data.cashierName}`));
