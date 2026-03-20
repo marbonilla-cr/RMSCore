@@ -6839,6 +6839,9 @@ export async function registerRoutes(
         serviceLedgerByEmployee[d][empId] = (serviceLedgerByEmployee[d][empId] || 0) + Number(entry.serviceAmount);
       }
 
+      console.log("[DEBUG payroll] serviceLedgerByEmployee keys:", Object.keys(serviceLedgerByEmployee).length);
+      console.log("[DEBUG payroll] sample entry:", JSON.stringify(Object.entries(serviceLedgerByEmployee).slice(0, 2)));
+
       const serviceModeParam = (req.query.serviceMode as string || "").toUpperCase();
       const serviceMode: "BOLSA" | "VENTA_MESERO" = serviceModeParam === "VENTA_MESERO" ? "VENTA_MESERO" : "BOLSA";
 
@@ -6849,6 +6852,8 @@ export async function registerRoutes(
         serviceLedgerByEmployee,
         serviceMode,
       });
+
+      console.log("[DEBUG payroll] serviceByEmployee result:", JSON.stringify(serviceByEmployee));
 
       const chargesByEmployee: Record<number, number> = {};
       for (const c of chargesInRange) {
