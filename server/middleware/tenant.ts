@@ -28,11 +28,21 @@ function getPublicPool(): Pool {
 
 export async function tenantMiddleware(req: Request, res: Response, next: NextFunction) {
   try {
-    const devSchema = process.env.TENANT_SCHEMA;
-    if (devSchema) {
-      req.tenantSchema = devSchema;
-      req.tenantId = parseInt(process.env.TENANT_ID || "1");
-      req.db = getTenantDb(devSchema);
+    /**
+     * TENANT_SCHEMA forces a single schema for all requests (Replit/local convenience).
+     * If this runs in production with TENANT_SCHEMA=public, every subdomain incorrectly
+     * serves La Antigua. Only honor the override in development, or when explicitly allowed.
+     */
+    const envSchema = process.env.TENANT_SCHEMA;
+    const useEnvTenantShortcut =
+      !!envSchema &&
+      (process.env.NODE_ENV !== "production" ||
+        process.env.ALLOW_ENV_TENANT_OVERRIDE === "true");
+
+    if (useEnvTenantShortcut) {
+      req.tenantSchema = envSchema;
+      req.tenantId = parseInt(process.env.TENANT_ID || "1", 10);
+      req.db = getTenantDb(envSchema);
       return next();
     }
 
