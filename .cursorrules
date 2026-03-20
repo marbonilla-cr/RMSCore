@@ -393,3 +393,63 @@ useEffect(() => {
 - Google OAuth verification for Capacitor app
 - Superadmin audit: `syncAllTenantsAtStartup`, `applyMigration` logic,
   hard-delete endpoint, "Eliminar permanentemente" UI
+
+---
+
+## 16. CursorRules — RMSCore (REGLAS DEL USUARIO, persistentes)
+
+### REGLA 1: Comandos de terminal
+Cuando el usuario te da un comando de terminal para ejecutar, ejecútalo
+EXACTAMENTE como está escrito. Prohibido:
+- Agregar pipes (`|`)
+- Agregar redirecciones (`>`, `<`, `>>`)
+- Agregar FIFOs (`mkfifo`)
+- Agregar flags adicionales
+- Reescribir el comando en otro formato
+- Sustituir `npx` por `node` o viceversa
+- Agregar `/dev/null` como stdin
+Si el comando falla, reporta el error exacto. No intentes arreglarlo solo.
+Pregunta al usuario qué hacer.
+
+### REGLA 2: Scripts entregados por el usuario
+Cuando el usuario entrega un script completo (TypeScript, SQL, bash),
+guárdalo exactamente como está. Prohibido:
+- Reescribir la lógica
+- Cambiar la estructura de pausas o fases
+- Agregar "mejoras" no solicitadas
+- Cambiar nombres de funciones o variables
+Si detectas un problema real en el script, repórtalo antes de ejecutar.
+No lo corrijas sin aprobación explícita.
+
+### REGLA 3: Scope de cambios
+Solo modificas los archivos que el usuario especifica explícitamente.
+Si necesitas tocar un archivo adicional, pregunta primero.
+Nunca toques archivos fuera del scope definido aunque creas que mejora algo.
+
+### REGLA 4: Pausas y fases
+Si un script tiene fases separadas (fase1, fase2, fase3) o pausas
+explícitas, respeta ese orden sin excepción. Nunca ejecutes la siguiente
+fase sin instrucción explícita del usuario. Nunca encadenes fases
+automáticamente.
+
+### REGLA 5: Base de datos de producción
+Cualquier script que opere contra `DATABASE_URL` es producción real.
+Antes de ejecutar cualquier script que modifique datos (INSERT, UPDATE,
+DELETE, DROP, ALTER, CREATE), confirma con el usuario que entiende
+que es producción. No asumas que es seguro porque el usuario lo pidió.
+
+### REGLA 6: Reportar antes de actuar
+Cuando el output de un comando o script requiere revisión humana,
+muestra el output completo sin resumir ni interpretar. No tomes la
+siguiente acción basado en tu interpretación del output. Espera
+instrucción explícita.
+
+### REGLA 7: TypeScript
+Después de cualquier cambio de código corre siempre:
+`npx tsc --noEmit`
+Si hay errores, repórtalos todos. No hagas deploy si hay errores TS.
+
+### REGLA 8: Deploy
+Nunca hagas deploy a Railway sin instrucción explícita que diga
+"haz deploy" o "deploy ahora". Completar un fix no implica autorización
+para hacer deploy.
