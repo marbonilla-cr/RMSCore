@@ -245,11 +245,15 @@ export default function TableDetailPage() {
 
   const sendRoundMutation = useMutation({
     mutationFn: async () => {
-      if (isDispatch && quickSaleOrderId) {
-        return apiRequest("POST", `/api/pos/orders/${quickSaleOrderId}/add-items`, { items: cart, sendToKds: false });
+      if (isDispatch) {
+        const dispatchOrderId = activeOrder?.id || quickSaleOrderId;
+        if (!dispatchOrderId) throw new Error("Orden de despacho no encontrada");
+        return apiRequest("POST", `/api/pos/orders/${dispatchOrderId}/add-items`, { items: cart, sendToKds: false });
       }
-      if (isQuickLike && quickSaleOrderId) {
-        return apiRequest("POST", `/api/waiter/orders/${quickSaleOrderId}/send-round`, { items: cart });
+      if (isQuickLike) {
+        const quickLikeOrderId = activeOrder?.id || quickSaleOrderId;
+        if (!quickLikeOrderId) throw new Error("Orden no encontrada");
+        return apiRequest("POST", `/api/waiter/orders/${quickLikeOrderId}/send-round`, { items: cart });
       }
       return apiRequest("POST", `/api/waiter/tables/${tableId}/send-round`, { items: cart });
     },

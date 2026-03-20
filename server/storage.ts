@@ -648,6 +648,16 @@ export async function updateOrder(id: number, data: Partial<any>, dbInstance?: t
   return order;
 }
 
+/** Parse money from DB numeric / string; NaN if unusable (never use raw Number({}) on unknown shapes). */
+function parseMoneySnapshot(v: unknown): number {
+  if (v == null) return NaN;
+  if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+  const s = String(v).trim();
+  if (!s) return NaN;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+
 export async function recalcOrderTotal(orderId: number, dbInstance?: typeof db) {
   const d = dbInstance || db;
   const items = await d.select().from(orderItems)
@@ -692,21 +702,47 @@ export async function recalcOrderTotal(orderId: number, dbInstance?: typeof db) 
     productTaxMap.get(ptc.productId)!.push(ptc);
   }
 
+  const catalogProductIds = Array.from(new Set(items.map(i => i.productId).filter((id): id is number => typeof id === "number" && id > 0)));
+  const catalogProducts = catalogProductIds.length > 0 ? await getProductsByIds(catalogProductIds, d) : [];
+  const catalogByProductId = new Map(catalogProducts.map(p => [p.id, p]));
+
   let subtotal = 0;
   let totalDiscountsAmt = 0;
   let totalTaxes = 0;
   let totalInclusiveTaxes = 0;
 
   const taxInserts: any[] = [];
+  const snapshotRepairs = new Map<number, string>();
 
   for (const item of items) {
     const mods = modsMap.get(item.id) || [];
-    const modTotal = mods.reduce((s, m) => s + Number(m.priceDeltaSnapshot) * m.qty, 0);
-    const lineSubtotal = (Number(item.productPriceSnapshot) + modTotal) * item.qty;
+    const modTotal = mods.reduce((s, m) => {
+      const delta = parseMoneySnapshot(m.priceDeltaSnapshot);
+      return s + (Number.isFinite(delta) ? delta : 0) * m.qty;
+    }, 0);
+
+    const catalog = catalogByProductId.get(item.productId);
+    const catalogUnit = catalog ? parseMoneySnapshot(catalog.price) : NaN;
+
+    let unitBase = parseMoneySnapshot(item.productPriceSnapshot);
+    if (!Number.isFinite(unitBase)) {
+      unitBase = Number.isFinite(catalogUnit) ? catalogUnit : 0;
+      if (item.id && Number.isFinite(catalogUnit)) {
+        snapshotRepairs.set(item.id, catalogUnit.toFixed(2));
+      }
+    } else if (unitBase === 0 && Number.isFinite(catalogUnit) && catalogUnit > 0) {
+      unitBase = catalogUnit;
+      snapshotRepairs.set(item.id, catalogUnit.toFixed(2));
+    }
+
+    const lineSubtotal = (unitBase + modTotal) * item.qty;
     subtotal += lineSubtotal;
 
     const itemDiscounts = discountsMap.get(item.id) || [];
-    const discountAmount = itemDiscounts.reduce((s, d) => s + Number(d.amountApplied), 0);
+    const discountAmount = itemDiscounts.reduce((s, disc) => {
+      const a = parseMoneySnapshot(disc.amountApplied);
+      return s + (Number.isFinite(a) ? a : 0);
+    }, 0);
     totalDiscountsAmt += discountAmount;
 
     const discountedSubtotal = lineSubtotal - discountAmount;
@@ -763,10 +799,16 @@ export async function recalcOrderTotal(orderId: number, dbInstance?: typeof db) 
     await d.insert(orderItemTaxes).values(taxInserts);
   }
 
-  const total = subtotal - totalDiscountsAmt + totalTaxes;
+  for (const [itemId, priceStr] of snapshotRepairs) {
+    await d.update(orderItems).set({ productPriceSnapshot: priceStr }).where(eq(orderItems.id, itemId));
+  }
+
+  const totalRaw = subtotal - totalDiscountsAmt + totalTaxes;
   const order = await getOrder(orderId, dbInstance);
   const paidAmount = Number(order?.paidAmount || 0);
-  const balanceDue = total - paidAmount;
+  const total = Number.isFinite(totalRaw) ? Math.max(0, totalRaw) : 0;
+  const balanceDueRaw = total - paidAmount;
+  const balanceDue = Number.isFinite(balanceDueRaw) ? Math.max(0, balanceDueRaw) : 0;
   await d.update(orders).set({
     totalAmount: total.toFixed(2),
     balanceDue: balanceDue.toFixed(2),
