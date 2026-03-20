@@ -7266,27 +7266,46 @@ export async function registerRoutes(
   });
 
   wss.on("connection", async (ws, _request, clientType?: string) => {
-    const hostHeader = _request?.headers?.host as string | undefined;
-    const slug = String(hostHeader ?? "").split(".")[0];
+    // IMPORTANT: For session-authenticated WS (e.g. Android print bridge register_as_print_bridge),
+    // rely on the session tenantSchema instead of Host header (Host can be "login.*" on mobile).
+    const sessTenantSchema = (_request as any)?.session?.tenantSchema as string | undefined;
 
-    let resolvedTenantId: number;
+    let resolvedTenantId: number = 0;
     try {
-      const { rows } = await pool.query(
-        `SELECT id FROM public.tenants WHERE slug = $1 LIMIT 1`,
-        [slug]
-      );
-
-      if (rows.length) {
-        resolvedTenantId = rows[0].id;
-      } else if (slug === "loyalty" || slug === "admin") {
-        resolvedTenantId = 0;
+      if (sessTenantSchema) {
+        const { rows } = await pool.query(
+          `SELECT id FROM public.tenants WHERE schema_name = $1 LIMIT 1`,
+          [sessTenantSchema]
+        );
+        if (rows.length) resolvedTenantId = rows[0].id;
       } else {
-        ws.close(1008, "Tenant no resuelto");
-        return;
+        const hostHeader = _request?.headers?.host as string | undefined;
+        const slug = String(hostHeader ?? "").split(".")[0];
+
+        const { rows } = await pool.query(
+          `SELECT id FROM public.tenants WHERE slug = $1 LIMIT 1`,
+          [slug]
+        );
+
+        if (rows.length) {
+          resolvedTenantId = rows[0].id;
+        } else if (slug === "loyalty" || slug === "admin") {
+          resolvedTenantId = 0;
+        } else if (clientType === "bridge_header") {
+          // Token-based bridge can still be authenticated later by its token (tenant may be resolved then).
+          resolvedTenantId = 0;
+        } else {
+          ws.close(1008, "Tenant no resuelto");
+          return;
+        }
       }
     } catch (err: any) {
-      ws.close(1008, "Error resolviendo tenant");
-      return;
+      if (clientType === "bridge_header") {
+        resolvedTenantId = 0;
+      } else {
+        ws.close(1008, "Error resolviendo tenant");
+        return;
+      }
     }
 
     wsClients.set(ws, { tenantId: resolvedTenantId });
