@@ -129,6 +129,7 @@ interface ReceiptData {
   date: string;
   openDrawer?: boolean;
   transactionCode?: string | null;
+  beeperNumber?: string | null;
 }
 
 export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): Buffer {
@@ -170,8 +171,18 @@ export function buildReceiptBuffer(data: ReceiptData, paperWidth: number = 80): 
     parts.push(line(tableStr));
     parts.push(CMD.BOLD_OFF);
   }
-  if (data.transactionCode) {
-    parts.push(line(`Código TX: ${data.transactionCode}`));
+  const identifier = data.beeperNumber || data.transactionCode;
+  const label = data.beeperNumber ? "Beeper" : "Código TX";
+  if (identifier) {
+    if (data.beeperNumber) {
+      parts.push(CMD.DOUBLE_ON);
+      parts.push(CMD.BOLD_ON);
+      parts.push(line(`${label}: ${identifier}`));
+      parts.push(CMD.NORMAL_SIZE);
+      parts.push(CMD.BOLD_OFF);
+    } else {
+      parts.push(line(`${label}: ${identifier}`));
+    }
   }
   parts.push(line(data.date));
   if (data.cashierName) parts.push(line(`Cajero: ${data.cashierName}`));

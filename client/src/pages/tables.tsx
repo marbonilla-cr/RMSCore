@@ -125,6 +125,7 @@ export default function TablesPage() {
   const [quickSaleLoading, setQuickSaleLoading] = useState(false);
   const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
   const [dispatchCustomerName, setDispatchCustomerName] = useState("Cliente Despacho");
+  const [dispatchBeeperNumber, setDispatchBeeperNumber] = useState("");
   const [dispatchLoading, setDispatchLoading] = useState(false);
   const prevQrCountsRef = useRef<Map<number, number>>(new Map());
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
@@ -143,6 +144,7 @@ export default function TablesPage() {
     queryKey: ["/api/waiter/tables"],
     refetchInterval: wsUp ? 10000 : 5000,
   });
+  const { data: businessConfig } = useQuery({ queryKey: ["/api/business-config"] });
 
   useEffect(() => {
     const tablesWithQr = tables.filter(t => t.pendingQrCount > 0);
@@ -302,11 +304,15 @@ export default function TablesPage() {
   const handleCreateDispatchOrder = async () => {
     setDispatchLoading(true);
     try {
-      const res = await apiRequest("POST", "/api/waiter/dispatch-orders", { customerName: dispatchCustomerName.trim() || "Cliente Despacho" });
+      const res = await apiRequest("POST", "/api/waiter/dispatch-orders", {
+        customerName: dispatchCustomerName.trim() || "Cliente Despacho",
+        ...((businessConfig as any)?.useBeeperSystem && dispatchBeeperNumber ? { beeperNumber: dispatchBeeperNumber } : {}),
+      });
       const data = await res.json();
       queryClient.invalidateQueries({ queryKey: ["/api/waiter/tables"] });
       setDispatchDialogOpen(false);
       setDispatchCustomerName("Cliente Despacho");
+      setDispatchBeeperNumber("");
       navigate(`/tables/dispatch/${data.id}`);
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -961,6 +967,12 @@ export default function TablesPage() {
                 placeholder="Cliente Despacho"
                 style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--r-sm)", border: "1.5px solid var(--border-ds)", background: "var(--s2)", color: "var(--text)", fontFamily: "var(--f-body)", fontSize: 14 }}
               />
+              {(businessConfig as any)?.useBeeperSystem && (
+                <div style={{ marginTop: 8 }}>
+                  <label>Numero de Beeper</label>
+                  <input type="text" placeholder="Ej: 42" value={dispatchBeeperNumber} onChange={e => setDispatchBeeperNumber(e.target.value)} maxLength={20}/>
+                </div>
+              )}
             </div>
             <div className="move-dialog-footer">
               <button className="move-cancel" onClick={() => setDispatchDialogOpen(false)}>Cancelar</button>
