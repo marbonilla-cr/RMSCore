@@ -297,8 +297,8 @@ function PayrollTab() {
   async function handleApproveDay(employeeId: number, businessDate: string, overtimeMinutes: number) {
     try {
       await apiRequest("POST", "/api/hr/overtime-approvals", { employeeId, businessDate, status: "APPROVED", overtimeMinutes });
-      refetchApprovals();
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      await refetchApprovals();
+      await refetch();
       toast({ title: "Horas extra aprobadas" });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -308,8 +308,8 @@ function PayrollTab() {
   async function handleRevertDay(employeeId: number, businessDate: string, overtimeMinutes: number) {
     try {
       await apiRequest("POST", "/api/hr/overtime-approvals", { employeeId, businessDate, status: "PENDING", overtimeMinutes });
-      refetchApprovals();
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      await refetchApprovals();
+      await refetch();
       toast({ title: "Aprobación revertida" });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -336,8 +336,8 @@ function PayrollTab() {
           rejectionReason: rejectReason.trim(),
         });
       }
-      refetchApprovals();
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      await refetchApprovals();
+      await refetch();
       toast({ title: "Horas extra rechazadas" });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -354,8 +354,8 @@ function PayrollTab() {
         status: "APPROVED",
         days,
       });
-      refetchApprovals();
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/payroll-report"] });
+      await refetchApprovals();
+      await refetch();
       toast({ title: `${days.length} días de extras aprobados` });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
