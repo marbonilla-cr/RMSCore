@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, setSessionToken } from "@/lib/queryClient";
 import { Loader2, Delete, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import logoImg from "@assets/LOGO-PNG-LECHERIA_Grande_1772160879830.png";
 
@@ -81,6 +81,28 @@ export default function AuthPage() {
     setError("");
     setLoading(true);
     try {
+      if (window.location.hostname === "login.rmscore.app") {
+        const email = u;
+        const res = await fetch("/api/auth/central-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: p }),
+          credentials: "include",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.message || "Error al iniciar sesión");
+        }
+        if (data.tenantUrl && typeof data.tenantUrl === "string") {
+          if (data.sessionToken) {
+            setSessionToken(data.sessionToken);
+          }
+          window.location.href = data.tenantUrl;
+          return;
+        }
+        throw new Error(data.message || "Respuesta inválida del servidor");
+      }
+
       await login(u, p);
       localStorage.setItem(LS_KEY, u);
     } catch (err: any) {

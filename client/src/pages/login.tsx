@@ -22,7 +22,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      if (isCentralLoginHost) {
+      if (window.location.hostname === "login.rmscore.app") {
         const email = username.trim();
         const res = await fetch("/api/auth/central-login", {
           method: "POST",
