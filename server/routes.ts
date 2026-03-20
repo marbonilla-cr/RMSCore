@@ -109,6 +109,16 @@ function broadcast(tenantId: number, event: string, data: unknown): void {
   }
 }
 
+function getSessionTenantSchema(req: Request): string {
+  const sessSchema = (req.session as any)?.tenantSchema as string | undefined;
+  if (sessSchema && req.tenantSchema === "public") return sessSchema;
+  return req.tenantSchema;
+}
+
+function getSessionTenantDb(req: Request) {
+  return getTenantDb(getSessionTenantSchema(req));
+}
+
 initDispatchJobs(broadcast);
 
 // Login rate limiter - per IP, 5 attempts per 15 minutes
@@ -1374,7 +1384,8 @@ export async function registerRoutes(
   // ==================== ADMIN: PRINTERS ====================
   app.get("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
     try {
-      const list = await req.db.select().from(printersTable).orderBy(asc(printersTable.name));
+      const dbx = getSessionTenantDb(req);
+      const list = await dbx.select().from(printersTable).orderBy(asc(printersTable.name));
       res.json(list);
     } catch (err: any) {
       console.error("[printers] GET error:", err.message);
@@ -1384,6 +1395,7 @@ export async function registerRoutes(
 
   app.post("/api/admin/printers", requireRole("MANAGER"), async (req, res) => {
     try {
+      const dbx = getSessionTenantDb(req);
       const body = { ...req.body };
       if (!body.bridgeId || body.bridgeId === "none") body.bridgeId = null;
       if (body.bridgeId == null && req.session?.userId)
@@ -1393,7 +1405,7 @@ export async function registerRoutes(
         port: Number(body.port) || 9100,
         paperWidth: Number(body.paperWidth) || 80,
       });
-      const [printer] = await req.db.insert(printersTable).values(parsed).returning();
+      const [printer] = await dbx.insert(printersTable).values(parsed).returning();
       res.status(201).json(printer);
     } catch (err: any) {
       console.error("[printers] POST error:", err.message);
@@ -1403,11 +1415,12 @@ export async function registerRoutes(
 
   app.patch("/api/admin/printers/:id", requireRole("MANAGER"), async (req, res) => {
     try {
+      const dbx = getSessionTenantDb(req);
       const data = { ...req.body };
       if (data.port !== undefined) data.port = Number(data.port) || 9100;
       if (data.paperWidth !== undefined) data.paperWidth = Number(data.paperWidth) || 80;
       if (data.bridgeId !== undefined) data.bridgeId = data.bridgeId || null;
-      const [printer] = await req.db.update(printersTable).set(data).where(eq(printersTable.id, parseInt(req.params.id as string))).returning();
+      const [printer] = await dbx.update(printersTable).set(data).where(eq(printersTable.id, parseInt(req.params.id as string))).returning();
       if (!printer) return res.status(404).json({ message: "Impresora no encontrada" });
       res.json(printer);
     } catch (err: any) {
@@ -1418,7 +1431,8 @@ export async function registerRoutes(
 
   app.delete("/api/admin/printers/:id", requireRole("MANAGER"), async (req, res) => {
     try {
-      await req.db.delete(printersTable).where(eq(printersTable.id, parseInt(req.params.id as string)));
+      const dbx = getSessionTenantDb(req);
+      await dbx.delete(printersTable).where(eq(printersTable.id, parseInt(req.params.id as string)));
       res.json({ ok: true });
     } catch (err: any) {
       console.error("[printers] DELETE error:", err.message);
@@ -7463,7 +7477,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/print-bridge/status", requireRole("MANAGER"), (req, res) => {
-    res.json({ available: isBridgeConnected(req.tenantSchema) });
+    res.json({ available: isBridgeConnected(getSessionTenantSchema(req)) });
   });
 
   app.post("/api/admin/print-bridge/test", requireRole("MANAGER"), async (_req, res) => {
@@ -7486,7 +7500,9 @@ export async function registerRoutes(
 
   app.get("/api/admin/print-bridges", requireRole("MANAGER"), async (req, res) => {
     try {
-      const rows = await req.db.select({
+      const tenantSchema = getSessionTenantSchema(req);
+      const dbx = getSessionTenantDb(req);
+      const rows = await dbx.select({
         id: printBridgesTable.id,
         bridgeId: printBridgesTable.bridgeId,
         displayName: printBridgesTable.displayName,
@@ -7496,7 +7512,7 @@ export async function registerRoutes(
       }).from(printBridgesTable).orderBy(printBridgesTable.createdAt);
 
       const live = new Set(
-        getConnectedBridgesForTenant(req.tenantSchema).map(c => c.bridgeId)
+        getConnectedBridgesForTenant(tenantSchema).map(c => c.bridgeId)
       );
       res.json(rows.map(b => ({ ...b, isConnected: live.has(b.bridgeId) })));
     } catch (err: any) {
@@ -7507,12 +7523,13 @@ export async function registerRoutes(
 
   app.post("/api/admin/print-bridges", requireRole("MANAGER"), async (req, res) => {
     try {
+      const dbx = getSessionTenantDb(req);
       const { displayName } = req.body;
       if (!displayName?.trim())
         return res.status(400).json({ error: 'displayName requerido' });
       const token = `rms-${crypto.randomBytes(20).toString('hex')}`;
       const bridgeId = `bridge-${crypto.randomBytes(4).toString('hex')}`;
-      const [created] = await req.db
+      const [created] = await dbx
         .insert(printBridgesTable)
         .values({ bridgeId, displayName: displayName.trim(), token, isActive: true })
         .returning();
@@ -7525,10 +7542,11 @@ export async function registerRoutes(
 
   app.patch("/api/admin/print-bridges/:id", requireRole("MANAGER"), async (req, res) => {
     try {
+      const dbx = getSessionTenantDb(req);
       const updates: any = {};
       if (req.body.displayName !== undefined) updates.displayName = req.body.displayName;
       if (req.body.isActive !== undefined) updates.isActive = req.body.isActive;
-      const [updated] = await req.db
+      const [updated] = await dbx
         .update(printBridgesTable).set(updates)
         .where(eq(printBridgesTable.id, parseInt(req.params.id as string)))
         .returning();
@@ -7542,19 +7560,21 @@ export async function registerRoutes(
 
   app.delete("/api/admin/print-bridges/:id", requireRole("MANAGER"), async (req, res) => {
     try {
+      const tenantSchema = getSessionTenantSchema(req);
+      const dbx = getSessionTenantDb(req);
       const id = parseInt(req.params.id as string);
-      const [bridge] = await req.db.select().from(printBridgesTable).where(eq(printBridgesTable.id, id));
+      const [bridge] = await dbx.select().from(printBridgesTable).where(eq(printBridgesTable.id, id));
       if (!bridge) return res.status(404).json({ error: "Bridge no encontrado" });
 
       const connectedIds = new Set(
-        getConnectedBridgesForTenant(req.tenantSchema).map(c => c.bridgeId)
+        getConnectedBridgesForTenant(tenantSchema).map(c => c.bridgeId)
       );
       if (connectedIds.has(bridge.bridgeId)) {
         return res.status(400).json({ error: "No se puede eliminar un bridge conectado. Desconéctelo primero." });
       }
 
-      await req.db.update(printersTable).set({ bridgeId: null }).where(eq(printersTable.bridgeId, bridge.bridgeId));
-      await req.db.delete(printBridgesTable).where(eq(printBridgesTable.id, id));
+      await dbx.update(printersTable).set({ bridgeId: null }).where(eq(printersTable.bridgeId, bridge.bridgeId));
+      await dbx.delete(printBridgesTable).where(eq(printBridgesTable.id, id));
       res.json({ success: true });
     } catch (err: any) {
       console.error("[bridges] DELETE error:", err.message);
@@ -7564,8 +7584,9 @@ export async function registerRoutes(
 
   app.post("/api/admin/print-bridges/:id/regenerate-token", requireRole("MANAGER"), async (req, res) => {
     try {
+      const dbx = getSessionTenantDb(req);
       const token = `rms-${crypto.randomBytes(20).toString('hex')}`;
-      await req.db.update(printBridgesTable).set({ token })
+      await dbx.update(printBridgesTable).set({ token })
         .where(eq(printBridgesTable.id, parseInt(req.params.id as string)));
       res.json({ token });
     } catch (err: any) {
@@ -7576,6 +7597,7 @@ export async function registerRoutes(
 
   app.post("/api/admin/printers/:id/test", requireRole("MANAGER"), async (req, res) => {
     try {
+      const tenantSchema = getSessionTenantSchema(req);
       const testPayload = Buffer.concat([
         Buffer.from('\x1B\x40'),
         Buffer.from('\x1B\x61\x01'),
@@ -7588,7 +7610,7 @@ export async function registerRoutes(
       ]).toString('base64');
 
       const result = await dispatchPrintJobViaBridge(
-        req.tenantSchema,
+        tenantSchema,
         parseInt(req.params.id as string),
         testPayload,
         'test'
