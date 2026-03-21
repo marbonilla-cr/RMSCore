@@ -444,10 +444,6 @@ export function computeServiceForRange(args: {
 
     const poolDay = eligibleEntries.reduce((s, e) => s + e.amount, 0);
 
-    if (poolDay > 0) {
-      console.log("[DEBUG compute] date:", dateStr, "poolDay:", poolDay, "entries:", eligibleEntries.length, "employeeRate:", employeeRate, "serviceMode:", serviceMode);
-    }
-
     if (poolDay <= 0 && unassignedDay <= 0) {
       allocationModeByDate[dateStr] = "UNASSIGNED";
       continue;

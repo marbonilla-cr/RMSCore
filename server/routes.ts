@@ -4532,10 +4532,13 @@ export async function registerRoutes(
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay ${Date.now() - t0}ms`);
       res.json({ ok: true, paymentId: payment.id });
     } catch (err: unknown) {
+      const isDev = process.env.NODE_ENV === "development";
       const msg = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : "";
-      console.error("[POS PAY ERROR]", msg, stack);
-      res.status(500).json({ message: msg });
+      console.error("Internal Server Error:", msg, isDev ? stack : "");
+      res.status(500).json({
+        message: isDev ? msg : "Error interno del servidor",
+      });
     }
   });
 
@@ -6809,8 +6812,6 @@ export async function registerRoutes(
           .where(and(gte(employeeCharges.businessDate, dateFrom), lte(employeeCharges.businessDate, dateTo))),
       ]);
 
-      console.log("[DEBUG payroll] serviceLedger count:", serviceLedger.length, "serviceFrom:", serviceFrom, "serviceTo:", serviceTo, "tenantSchema:", req.tenantSchema);
-
       const operationalWaiterIds = new Set<number>();
       for (const row of waiterIdsFromSalesRows.rows as any[]) {
         const id = Number(row.id);
@@ -6885,12 +6886,6 @@ export async function registerRoutes(
       });
 
       const serviceLedgerByEmployee: Record<string, Record<number, number>> = {};
-      if (serviceLedger.length > 0 && serviceLedger[0]) {
-        console.log("[DEBUG entry] first entry raw:", JSON.stringify(serviceLedger[0]));
-        console.log("[DEBUG entry] businessDate type:", typeof serviceLedger[0].businessDate);
-        console.log("[DEBUG entry] businessDate value repr:", JSON.stringify(serviceLedger[0].businessDate));
-      }
-
       for (const entry of serviceLedger) {
         const d = String(entry.businessDate || "").slice(0, 10);
         if (!d) continue;
@@ -6899,17 +6894,8 @@ export async function registerRoutes(
         serviceLedgerByEmployee[d][empId] = (serviceLedgerByEmployee[d][empId] || 0) + Number(entry.serviceAmount);
       }
 
-      console.log("[DEBUG payroll] serviceLedgerByEmployee keys:", Object.keys(serviceLedgerByEmployee).length);
-      console.log("[DEBUG payroll] sample entry:", JSON.stringify(Object.entries(serviceLedgerByEmployee).slice(0, 2)));
-
       const serviceModeParam = (req.query.serviceMode as string || "").toUpperCase();
       const serviceMode: "BOLSA" | "VENTA_MESERO" = serviceModeParam === "VENTA_MESERO" ? "VENTA_MESERO" : "BOLSA";
-
-      console.log("[DEBUG dates] serviceFrom:", serviceFrom, "serviceTo:", serviceTo);
-      console.log("[DEBUG dates] ledger dates:", Object.keys(serviceLedgerByEmployee));
-      console.log("[DEBUG dates] getDateRange result sample:", JSON.stringify(
-        [serviceFrom, serviceTo].map(d => new Date(d + "T12:00:00").toISOString().slice(0, 10))
-      ));
 
       const { result: serviceByEmployee, serviceUnassignedTotal, allocationModeByDate } = computeServiceForRange({
         hrConfig,
@@ -6918,8 +6904,6 @@ export async function registerRoutes(
         serviceLedgerByEmployee,
         serviceMode,
       });
-
-      console.log("[DEBUG payroll] serviceByEmployee result:", JSON.stringify(serviceByEmployee));
 
       const chargesByEmployee: Record<number, number> = {};
       for (const c of chargesInRange) {
