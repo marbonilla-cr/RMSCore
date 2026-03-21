@@ -4409,8 +4409,17 @@ export async function registerRoutes(
   app.post("/api/pos/pay", requirePermission("POS_PAY"), async (req, res) => {
     const t0 = Date.now();
     try {
-      const { orderId, paymentMethodId, amount, clientName, clientEmail, employeeId } = req.body;
+      const { orderId: rawOrderId, paymentMethodId: rawPmId, amount, clientName, clientEmail, employeeId } = req.body;
       const userId = req.session.userId!;
+
+      const orderId = Number(rawOrderId);
+      const paymentMethodId = Number(rawPmId);
+      if (!Number.isFinite(orderId) || orderId <= 0) {
+        return res.status(400).json({ message: "orderId inválido" });
+      }
+      if (!Number.isFinite(paymentMethodId) || paymentMethodId <= 0) {
+        return res.status(400).json({ message: "paymentMethodId inválido" });
+      }
 
       const [order, allPMs, cashSession] = await Promise.all([
         storage.getOrder(orderId, req.db),
@@ -4421,12 +4430,18 @@ export async function registerRoutes(
       if (order.status === "PAID") return res.json({ ok: true, alreadyPaid: true });
 
       const payAmount = Number(amount);
+      if (!Number.isFinite(payAmount) || payAmount <= 0) {
+        return res.status(400).json({ message: "Monto inválido" });
+      }
       const currentBalanceDue = Number(order.balanceDue || order.totalAmount || 0);
       if (payAmount > currentBalanceDue + 0.01) {
         return res.status(400).json({ message: `Monto excede el saldo pendiente (₡${currentBalanceDue.toFixed(2)})` });
       }
 
-      const pm = allPMs.find(m => m.id === paymentMethodId);
+      const pm = allPMs.find(m => Number(m.id) === paymentMethodId);
+      if (!pm) {
+        return res.status(400).json({ message: "Método de pago no encontrado o inactivo" });
+      }
       if (pm?.paymentCode === "CASH" && !cashSession) {
         return res.status(400).json({ message: "No hay caja abierta. Abra una sesión de caja antes de cobrar en efectivo." });
       }
@@ -4438,7 +4453,7 @@ export async function registerRoutes(
         orderId,
         splitId: null,
         amount: payAmount.toFixed(2),
-        paymentMethodId,
+        paymentMethodId: paymentMethodId,
         cashierUserId: userId,
         status: "PAID",
         clientNameSnapshot: clientName || null,
@@ -4516,8 +4531,11 @@ export async function registerRoutes(
 
       if (Date.now() - t0 > 200) console.log(`[PERF] POST /api/pos/pay ${Date.now() - t0}ms`);
       res.json({ ok: true, paymentId: payment.id });
-    } catch (err: any) {
-      res.status(500).json({ message: err.message });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : "";
+      console.error("[POS PAY ERROR]", msg, stack);
+      res.status(500).json({ message: msg });
     }
   });
 
@@ -7251,6 +7269,10 @@ export async function registerRoutes(
 
   httpServer.on("upgrade", (request, socket, head) => {
     const urlPath = (request.url || "").split("?")[0];
+    // Vite HMR (middlewareMode + hmr.path) se registra después en setupVite; no consumir el socket aquí.
+    if (urlPath === "/vite-hmr" || urlPath.startsWith("/vite-hmr/")) {
+      return;
+    }
     if (urlPath !== "/ws") {
       socket.destroy();
       return;
